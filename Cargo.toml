@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "runtime",
+    "sdk",
+    "aria2",
+    "plugins/*",
+]
+
+# ── Shared dependency versions ────────────────────────────────────────────────
+# Using workspace.dependencies lets us keep all version pins in one place.
+
+[workspace.dependencies]
+tokio      = { version = "1", features = ["full"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow     = "1"
+thiserror  = "1"
+tracing    = "0.1"
+reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# ── Workspace-wide release profile ───────────────────────────────────────────
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+
+# WASM plugin targets need a separate profile — set in each plugin's Cargo.toml
+[profile.wasm-release]
+inherits      = "release"
+opt-level     = "z"
+panic         = "abort"

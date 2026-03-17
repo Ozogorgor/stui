@@ -1,0 +1,76 @@
+# stui configuration file
+# Location: ~/.stui/config/stui.toml
+# All values shown are defaults. Remove a field to use the default.
+
+[app]
+log_level  = "info"           # trace | debug | info | warn | error
+plugin_dir = "~/.stui/plugins"
+cache_dir  = "~/.stui/cache"
+data_dir   = "~/.stui/data"
+theme_mode = "dark"           # dark | light
+
+[ui]
+theme         = "default"     # default | dark | light | custom
+mouse_support = false
+show_borders  = true
+panel_ratio   = "60/40"       # left/right panel width split
+
+[runtime]
+backend     = "bundled"       # bundled | external | daemon
+runtime_bin = ""              # path to stui-runtime if external
+socket_path = "~/.local/run/stui.sock"  # used in daemon mode
+
+[keybinds]
+quit          = "q"
+search        = "/"
+navigate_up   = "k"
+navigate_down = "j"
+select        = "enter"
+back          = "esc"
+help          = "?"
+settings      = ","
+
+# ── Player ────────────────────────────────────────────────────────────────────
+
+[player]
+# mpv_bin = "/usr/bin/mpv"
+default_volume = 100
+hwdec          = "auto"   # auto | vaapi | nvdec | videotoolbox | no
+cache_secs     = 20
+demuxer_max_mb = 50
+keep_open      = false
+# mpv_extra_flags = ["--vo=gpu", "--gpu-api=vulkan"]
+
+# ── Streaming ─────────────────────────────────────────────────────────────────
+
+[streaming]
+prefer_http       = true
+prefer_torrent    = false
+max_candidates    = 10
+auto_fallback     = true
+benchmark_streams = false
+
+# ── Subtitles ─────────────────────────────────────────────────────────────────
+
+[subtitles]
+auto_download      = false
+preferred_language = "eng"
+# download_dir     = "~/.stui/subtitles"
+default_delay      = 0.0
+
+# ── Providers ─────────────────────────────────────────────────────────────────
+# API keys are set via environment variables (TMDB_API_KEY, OMDB_API_KEY, etc.)
+
+[providers]
+enable_tmdb          = true
+enable_omdb          = false
+enable_imdb          = true
+enable_torrentio     = true
+enable_prowlarr      = false
+enable_opensubtitles = false
+
+# ── Stremio addons ────────────────────────────────────────────────────────────
+
+stremio_addons = [
+  # "https://torrentio.strem.fun/manifest.json",
+]

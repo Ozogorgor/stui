@@ -1,0 +1,316 @@
+//! Plugin supervisor — automatic restart, backoff, crash-loop detection,
+//! and memory-usage monitoring for external plugin processes.
+//!
+//! # Restart policy
+//!
+//! When a plugin exits unexpectedly the supervisor re-spawns it with
+//! exponential backoff starting at 1 s and capping at 60 s.
+//!
+//! If the plugin crashes more than `max_restarts` times within
+//! `crash_window_secs` seconds the supervisor marks it **permanently failed**
+//! and stops attempting restarts.  The `PluginRpcManager` will stop routing
+//! calls to it, and a warning is logged so the user can investigate.
+//!
+//! # Resource monitoring
+//!
+//! When `max_memory_mb` is set the supervisor polls `/proc/{pid}/status`
+//! every 10 seconds.  If VmRSS exceeds the limit the process is killed and
+//! a normal restart cycle begins.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use tokio::sync::{Mutex, RwLock};
+use tracing::{error, info, warn};
+
+use super::process::PluginProcess;
+use super::protocol::{PluginHandshake, RpcMediaItem, RpcStream, RpcSubtitleTrack};
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+/// Tunable parameters for a single plugin supervisor instance.
+#[derive(Debug, Clone)]
+pub struct SupervisorConfig {
+    /// Maximum number of restarts allowed within `crash_window_secs`.
+    pub max_restarts: u32,
+    /// Sliding window (seconds) for counting crashes.
+    pub crash_window_secs: u64,
+    /// Initial backoff delay (milliseconds) before the first restart.
+    pub backoff_base_ms: u64,
+    /// Maximum backoff delay (milliseconds).
+    pub backoff_max_ms: u64,
+    /// Kill the plugin if its resident memory (VmRSS) exceeds this many MB.
+    /// `None` disables memory monitoring.
+    pub max_memory_mb: Option<u64>,
+}
+
+impl Default for SupervisorConfig {
+    fn default() -> Self {
+        SupervisorConfig {
+            max_restarts:      5,
+            crash_window_secs: 60,
+            backoff_base_ms:   1_000,
+            backoff_max_ms:    60_000,
+            max_memory_mb:     Some(512),
+        }
+    }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
+/// Live health snapshot for a supervised plugin.
+#[derive(Debug, Clone, Default)]
+pub struct SupervisorStats {
+    /// Number of times the plugin has crashed since load.
+    pub crash_count: u32,
+    /// Number of successful restarts.
+    pub restart_count: u32,
+    /// Whether a plugin process is currently alive.
+    pub is_alive: bool,
+    /// Whether the supervisor has given up (crash loop detected).
+    pub permanently_failed: bool,
+}
+
+// ── Supervisor ────────────────────────────────────────────────────────────────
+
+/// Wraps a `PluginProcess` with automatic restart and resource monitoring.
+///
+/// All RPC methods delegate to the currently live `PluginProcess`.
+/// If the process is mid-restart callers receive an immediate error rather
+/// than blocking.
+pub struct PluginSupervisor {
+    /// Path to the plugin executable — used for respawns.
+    pub bin: PathBuf,
+    config:  SupervisorConfig,
+    /// The currently live process, or `None` while restarting.
+    process: Arc<RwLock<Option<Arc<PluginProcess>>>>,
+    /// Cached capability / handshake info from the last successful spawn.
+    pub info: Arc<RwLock<PluginHandshake>>,
+    stats:    Arc<Mutex<SupervisorStats>>,
+    /// Set to `true` when the crash loop threshold is reached.
+    failed:   Arc<AtomicBool>,
+}
+
+impl PluginSupervisor {
+    /// Spawn the plugin and start supervising it.
+    pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
+        let proc = PluginProcess::spawn(bin.clone()).await?;
+        let info = proc.info.clone();
+
+        let process  = Arc::new(RwLock::new(Some(Arc::new(proc))));
+        let info_arc = Arc::new(RwLock::new(info));
+        let stats    = Arc::new(Mutex::new(SupervisorStats { is_alive: true, ..Default::default() }));
+        let failed   = Arc::new(AtomicBool::new(false));
+
+        let s = PluginSupervisor { bin, config, process: Arc::clone(&process), info: Arc::clone(&info_arc), stats: Arc::clone(&stats), failed: Arc::clone(&failed) };
+
+        // Start the watchdog background task.
+        s.start_watchdog();
+
+        Ok(s)
+    }
+
+    /// Snapshot of the current health metrics.
+    pub async fn stats(&self) -> SupervisorStats {
+        self.stats.lock().await.clone()
+    }
+
+    /// `true` if the supervisor has permanently given up on this plugin.
+    pub fn is_failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
+    /// `true` if the plugin advertises the given capability.
+    pub async fn has_capability(&self, cap: &str) -> bool {
+        self.info.read().await.capabilities.iter().any(|c| c == cap)
+    }
+
+    /// Gracefully shut down the plugin and stop the supervisor.
+    pub async fn shutdown(&self) {
+        self.failed.store(true, Ordering::Relaxed); // prevent restart after shutdown
+        if let Some(proc) = self.process.read().await.as_ref().cloned() {
+            proc.shutdown().await;
+        }
+    }
+
+    // ── Delegating RPC methods ────────────────────────────────────────────
+
+    pub async fn catalog_search(&self, query: &str, tab: &str, page: u32) -> Result<Vec<RpcMediaItem>> {
+        self.with_process(|p| async move { p.catalog_search(query, tab, page).await }).await
+    }
+
+    pub async fn streams_resolve(&self, id: &str) -> Result<Vec<RpcStream>> {
+        self.with_process(|p| async move { p.streams_resolve(id).await }).await
+    }
+
+    pub async fn subtitles_fetch(&self, id: &str) -> Result<Vec<RpcSubtitleTrack>> {
+        self.with_process(|p| async move { p.subtitles_fetch(id).await }).await
+    }
+
+    // ── Internals ─────────────────────────────────────────────────────────
+
+    async fn with_process<F, Fut, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(Arc<PluginProcess>) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let proc = self.process.read().await.as_ref().cloned();
+        match proc {
+            Some(p) => f(p).await,
+            None    => anyhow::bail!("plugin '{}' is restarting", self.bin.display()),
+        }
+    }
+
+    /// Spawn the watchdog task that monitors the process for death and
+    /// optionally for memory overuse.
+    fn start_watchdog(&self) {
+        let process  = Arc::clone(&self.process);
+        let info_arc = Arc::clone(&self.info);
+        let stats    = Arc::clone(&self.stats);
+        let failed   = Arc::clone(&self.failed);
+        let bin      = self.bin.clone();
+        let config   = self.config.clone();
+
+        tokio::spawn(async move {
+            // Track crash timestamps within the sliding window.
+            let mut crash_times: Vec<Instant> = vec![];
+            let mut backoff_ms = config.backoff_base_ms;
+
+            loop {
+                // Wait for either the process to die or a memory overuse event.
+                let death_notify = {
+                    let guard = process.read().await;
+                    match guard.as_ref() {
+                        Some(p) => Arc::clone(&p.death_notify),
+                        None    => break, // supervisor shut down
+                    }
+                };
+
+                // Concurrently: wait for death OR poll memory every 10 s.
+                let memory_killed = tokio::select! {
+                    _ = death_notify.notified() => false,
+                    killed = poll_memory_loop(&process, config.max_memory_mb) => killed,
+                };
+
+                if failed.load(Ordering::Relaxed) {
+                    // Supervisor shut down intentionally — do not restart.
+                    break;
+                }
+
+                // ── Crash accounting ──────────────────────────────────────
+                let now = Instant::now();
+                let window = Duration::from_secs(config.crash_window_secs);
+                crash_times.retain(|t| now.duration_since(*t) < window);
+                crash_times.push(now);
+
+                {
+                    let mut s = stats.lock().await;
+                    s.crash_count += 1;
+                    s.is_alive     = false;
+                }
+
+                if crash_times.len() > config.max_restarts as usize {
+                    error!(
+                        plugin = %bin.display(),
+                        crashes = crash_times.len(),
+                        window  = config.crash_window_secs,
+                        "plugin crash loop detected — giving up"
+                    );
+                    failed.store(true, Ordering::Relaxed);
+                    stats.lock().await.permanently_failed = true;
+                    *process.write().await = None;
+                    break;
+                }
+
+                let reason = if memory_killed { "memory limit exceeded" } else { "unexpected exit" };
+                warn!(plugin = %bin.display(), reason, backoff_ms, "plugin died — restarting");
+
+                // Clear the dead process slot while we respawn.
+                *process.write().await = None;
+
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms = (backoff_ms * 2).min(config.backoff_max_ms);
+
+                match PluginProcess::spawn(bin.clone()).await {
+                    Ok(proc) => {
+                        info!(plugin = %proc.info.name, version = %proc.info.version, "plugin restarted");
+                        *info_arc.write().await = proc.info.clone();
+                        let mut s = stats.lock().await;
+                        s.restart_count += 1;
+                        s.is_alive       = true;
+                        *process.write().await = Some(Arc::new(proc));
+                        // Reset backoff on a successful start.
+                        backoff_ms = config.backoff_base_ms;
+                    }
+                    Err(e) => {
+                        error!(plugin = %bin.display(), err = %e, "plugin respawn failed");
+                        // Will loop back and try again after another backoff.
+                    }
+                }
+            }
+        });
+    }
+}
+
+// ── Memory monitoring ─────────────────────────────────────────────────────────
+
+/// Poll the process's resident memory every 10 seconds.
+/// Returns `true` if the process was killed for exceeding `max_memory_mb`.
+/// Returns `false` if the memory limit is not set (future: process died normally).
+async fn poll_memory_loop(
+    process: &Arc<RwLock<Option<Arc<PluginProcess>>>>,
+    max_memory_mb: Option<u64>,
+) -> bool {
+    let Some(limit_mb) = max_memory_mb else {
+        // No limit — block forever so the select! never picks this branch.
+        std::future::pending::<()>().await;
+        return false;
+    };
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        let pid = {
+            let guard = process.read().await;
+            guard.as_ref().and_then(|p| p.pid)
+        };
+
+        if let Some(pid) = pid {
+            if let Some(rss_mb) = read_proc_rss_mb(pid) {
+                if rss_mb > limit_mb {
+                    warn!(pid, rss_mb, limit_mb, "plugin exceeded memory limit — killing");
+                    // SIGKILL so the death_notify fires and triggers restart.
+                    let _ = nix_kill(pid);
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+/// Read the resident set size in MB from `/proc/{pid}/status` (Linux only).
+#[cfg(target_os = "linux")]
+fn read_proc_rss_mb(pid: u32) -> Option<u64> {
+    let content = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in content.lines() {
+        // VmRSS:    12345 kB
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb / 1024);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_proc_rss_mb(_pid: u32) -> Option<u64> { None }
+
+/// Send SIGKILL to a process by PID.
+fn nix_kill(pid: u32) -> std::io::Result<()> {
+    // Safety: we only send SIGKILL (9) which is always safe.
+    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}

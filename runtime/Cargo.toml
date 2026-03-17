@@ -1,0 +1,75 @@
+[package]
+name        = "stui-runtime"
+version     = "0.1.0"
+edition     = "2021"
+description = "High-performance backend runtime for stui"
+
+[lib]
+name        = "stui_runtime"
+crate-type  = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stui-runtime"
+path = "src/main.rs"
+
+[features]
+# Content-type feature flags — all on by default so the runtime is fully
+# featured out of the box.  Disable individually to build slim variants:
+#   cargo build --no-default-features --features "anime"  (anime-only runtime)
+default = ["torrent", "music", "anime", "radio", "wasm-host"]
+
+# Torrent / magnet stream resolution (TorrentProvider + aria2 bridge).
+torrent = []
+
+# Music catalog providers (Last.fm + MusicBrainz).
+music = []
+
+# Anime catalog providers (AniList + Jikan/MyAnimeList).
+anime = []
+
+# Radio catalog support — reserved for future RadioProvider.
+radio = []
+
+# Full WASM plugin execution (requires wasmtime).
+wasm-host = ["dep:wasmtime", "dep:wasmtime-wasi"]
+
+[dependencies]
+tokio             = { version = "1", features = ["full"] }
+serde             = { version = "1", features = ["derive"] }
+serde_json        = "1"
+toml              = "0.8"
+anyhow            = "1"
+thiserror         = "1"
+tracing           = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest           = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+dashmap           = "6"
+lru               = "0.12"
+semver            = "1"
+uuid              = { version = "1", features = ["v4"] }
+chrono            = { version = "0.4", features = ["serde"] }
+async-trait       = "0.1"
+scraper           = "0.20"
+urlencoding       = "2"
+dirs              = "5"
+notify            = "6"
+tokio-util        = { version = "0.7", features = ["codec"] }
+stui-aria2        = { path = "../aria2" }
+libc              = "0.2"
+sha2              = "0.10"
+flate2            = "1"
+tar               = "0.4"
+hex               = "0.4"
+
+# WASM host — only compiled in with --features wasm-host
+wasmtime      = { version = "22", optional = true, features = ["async", "cranelift"] }
+wasmtime-wasi = { version = "22", optional = true }
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+
+[profile.dev]
+opt-level = 1

@@ -1,0 +1,30 @@
+# jackett-provider — plugin manifest
+# Install at: ~/.stui/plugins/jackett-provider/plugin.toml
+
+[plugin]
+name        = "jackett-provider"
+version     = "0.1.0"
+description = "Search torrents via a local Jackett instance"
+author      = "stui"
+abi_version = 1
+type        = "stream-provider"  # provides torrent stream URLs
+
+# Environment variables the plugin reads at runtime.
+# Set these before launching stui, or add them to ~/.config/stui/config.toml
+[env]
+JACKETT_URL     = "http://localhost:9117"    # your Jackett base URL
+JACKETT_API_KEY = ""                         # Jackett → Dashboard → API Key
+
+# Jackett is on localhost — no external internet permission needed.
+# If your Jackett instance is remote, add its hostname here.
+[permissions]
+network = ["localhost", "127.0.0.1", "::1"]
+
+# Newznab categories we search:
+#   2000 = Movies  2010 = Movies/Foreign  2020 = Movies/Other
+#   5000 = TV       5040 = TV/HD            5070 = TV/Anime
+#   3000 = Audio    3010 = Audio/MP3        3040 = Audio/Lossless
+[search]
+movie_categories  = "2000,2010,2020"
+series_categories = "5000,5040,5070"
+music_categories  = "3000,3010,3040"
