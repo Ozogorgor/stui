@@ -2,31 +2,94 @@
 
 **stui** is a plugin-driven terminal streaming platform for Linux.
 
-A keyboard-native TUI for discovering and playing movies, series, music, radio,
-and podcasts — powered by a Rust async runtime and an extensible plugin system.
+A fast, keyboard-first TUI for discovering and playing movies, series, music, radio, and podcasts — powered by a Rust async runtime, intelligent stream selection, and a fully extensible plugin system.
 
 ```
-Search → Providers → Stream Candidates → Ranking → MPV
+Search → Providers → Streams → Rank → Play
 ```
+
+---
+
+## Status
+
+stui is currently in **active development**.
+
+* Core streaming, playback, and plugin system are implemented
+* Most high-level features are functional
+* Focus is shifting toward stability, performance, and reliability
+
+⚠️ Expect rough edges, incomplete providers, and occasional breakage.
+
+---
+
+## Why stui?
+
+stui is not just a TUI frontend — it is a **universal media runtime**.
+
+* Decouples discovery, resolution, and playback via plugins
+* Automatically ranks and selects the best stream across providers
+* Tracks provider reliability and adapts over time
+* Fully keyboard-driven — no mouse required
+* Designed for power users who live in the terminal
+
+Think:
+
+> mpv + plugin ecosystem + streaming intelligence
 
 ---
 
 ## Features
 
-- **Netflix-style poster grid** with detail overlays, cast, similar titles
-- **Universal Provider Protocol** — one interface for movies, music, radio, anime, podcasts
-- **Smart stream ranking** — blends quality score × provider reliability × latency
-- **Live stream switching** — switch quality mid-playback without restarting mpv
-- **Full mpv integration** — subtitle delay, audio track, volume, all from the TUI
-- **Plugin system** — RPC plugins in any language (Python, Go, Node, Rust)
-- **Torrentio RPC plugin** — working Python plugin included, stdlib only
-- **Provider health tracking** — unreliable providers are auto-penalised
-- **Per-provider rate limiting** — token-bucket throttle prevents 429 errors
-- **Live config updates** — change settings without restarting (`SetConfig` IPC)
-- **Settings screen** — in-TUI settings panel with Playback/Streaming/Subtitles/Providers
-- **Episode browser** — season/episode tree for series
-- **Help screen** — full keybinding reference, always in sync
-- **Daemon mode** — `stui-runtime daemon` for persistent cache and fast reconnect
+### Core
+
+* **Netflix-style poster grid** with detail overlays, cast, and similar titles
+* **Episode browser** — season/episode tree for series
+* **Collections & history** — resume playback and track progress
+* **Universal Provider Protocol (UPP)** — one interface for all media types
+
+### Playback
+
+* **Full mpv integration**
+
+  * subtitle delay
+  * audio track switching
+  * volume control
+  * playback control from TUI
+* **Live stream switching** — change quality without restarting playback
+* **Autoplay / binge mode**
+* **Smart stream ranking**
+
+  * quality × latency × provider reliability
+
+### Plugins
+
+* **RPC plugins (any language)** — Python, Go, Node, Rust
+* **WASM plugins** — sandboxed execution
+* **Provider health tracking**
+* **Per-provider rate limiting (token bucket)**
+
+### System
+
+* **Live config updates** (no restart required)
+* **Settings screen** (Playback / Streaming / Subtitles / Providers)
+* **Daemon mode** for persistent cache and fast startup
+* **Typed IPC protocol (v1)**
+* **Event-driven runtime (Tokio + EventBus)**
+
+---
+
+## Requirements
+
+* Linux (Wayland or X11)
+* `mpv` (required)
+* `mpd` (required)
+* `aria2c` (required for torrent streaming)
+* `python3` (for some plugins)
+
+Optional:
+
+* TMDB API key (metadata)
+* OpenSubtitles API key
 
 ---
 
@@ -40,64 +103,84 @@ Search → Providers → Stream Candidates → Ranking → MPV
 ./scripts/aria2c-start.sh
 export ARIA2_SECRET=<printed secret>
 
-# Optional: set API keys
+# Optional: API keys
 export TMDB_API_KEY=<key>
 export OS_API_KEY=<opensubtitles key>
 
 # Run
 ./dist/stui
 
-# Or daemon mode (persistent cache, fast reconnect)
+# Or daemon mode (faster startup, persistent cache)
 stui-runtime daemon &
 stui
 ```
+
+### First Run
+
+On first launch:
+
+* plugins are loaded
+* cache is initialized
+* first search may be slower than usual
 
 ---
 
 ## Keybindings
 
-| Key | Action |
-|-----|--------|
-| `/` | Search (full-screen) |
-| `?` | Help / keybinding reference |
-| `,` | Settings |
-| `1–4` | Switch tabs (Movies/Series/Music/Library) |
-| `↑↓` / `jk` | Navigate |
-| `enter` | Select |
-| `esc` | Back |
-| **Playback** | |
-| `space` | Pause/resume |
-| `←/→` | Seek ±10s |
-| `⇧←/⇧→` | Seek ±60s |
-| `]/[` | Volume ±5 |
-| `m` | Mute |
+| Key         | Action      |
+| ----------- | ----------- |
+| `/`         | Search      |
+| `?`         | Help        |
+| `,`         | Settings    |
+| `1–4`       | Switch tabs |
+| `↑↓` / `jk` | Navigate    |
+| `enter`     | Select      |
+| `esc`       | Back        |
+
+### Playback
+
+| Key       | Action                |
+| --------- | --------------------- |
+| `space`   | Pause / resume        |
+| `←/→`     | Seek ±10s             |
+| `⇧←/⇧→`   | Seek ±60s             |
+| `]/[`     | Volume ±5             |
+| `m`       | Mute                  |
 | `v` / `V` | Cycle subtitles / off |
-| `z` / `Z` | Subtitle delay ±0.1s |
-| `X` | Reset subtitle delay |
-| `a` | Cycle audio track |
-| `s` | Stream picker (switch quality) |
-| `n` | Next stream candidate |
-| `Q` | Stop playback |
+| `z` / `Z` | Subtitle delay ±0.1s  |
+| `X`       | Reset subtitle delay  |
+| `a`       | Cycle audio track     |
+| `s`       | Stream picker         |
+| `n`       | Next stream candidate |
+| `Q`       | Stop playback         |
 
 ---
 
-## Plugin System
+## Plugins
 
-stui supports two plugin types:
+Plugins power everything in stui.
 
-**RPC plugins** (recommended) — any language, stdio JSON-RPC protocol:
+They are responsible for:
+
+* searching content
+* providing streams
+* fetching subtitles
+* enriching metadata
+
+stui itself does **not** fetch media — plugins do.
+
+### Types
+
+**RPC plugins (recommended)**
+Any language using JSON-RPC over stdio.
 
 ```bash
 mkdir -p ~/.stui/plugins/my-plugin
 cp my-plugin.py plugin.json ~/.stui/plugins/my-plugin/
 ```
 
-**WASM plugins** — compiled to WebAssembly, sandboxed execution.
-
-A working Torrentio RPC plugin is included at `plugins/torrentio-rpc/`.
-
-See [`docs/upp.md`](docs/upp.md) for the Universal Provider Protocol spec,
-and [`docs/plugins.md`](docs/plugins.md) for the plugin API reference.
+**WASM plugins**
+Compiled to WebAssembly for sandboxed execution.
 
 ---
 
@@ -105,65 +188,89 @@ and [`docs/plugins.md`](docs/plugins.md) for the plugin API reference.
 
 ```
 TUI (Go / BubbleTea)
-  tui/internal/ui/
-    root.go          ← Screen stack (SearchScreen, StreamPickerScreen, EpisodeScreen, HelpScreen)
-    ui.go            ← Main model, IPC message handling, actions dispatch
-    screens/         ← detail.go, grid.go, settings.go
-    components/      ← player.go (full HUD), card.go, toast.go
-    actions/         ← Typed AppAction enum, key→action map
-        │
-        │ NDJSON (stdin/stdout or Unix socket)
-        ▼
+  ↓
+IPC (NDJSON / Unix socket)
+  ↓
 Runtime (Rust / Tokio)
-  engine/
-    pipeline.rs      ← Orchestration: search → resolve → rank → play
-    mod.rs           ← Engine: plugin dispatch, provider fan-out
-  providers/
-    mod.rs           ← Provider trait + ProviderCapabilities
-    health.rs        ← HealthRegistry: reliability scoring, blend_score()
-    capabilities.rs  ← ProviderCapabilities: catalog/streams/subtitles/metadata
-    throttle.rs      ← ProviderThrottle: token-bucket rate limiting
-  player/
-    state.rs         ← PlaybackState: authoritative mpv state model
-    commands.rs      ← PlayerCommand: typed control API
-    mpv.rs           ← MpvPlayer: IPC socket, 12 observed properties
-    manager.rs       ← PlayerManager: handle_command(), stream fallback
-  config/
-    manager.rs       ← ConfigManager: live updates via EventBus
-    types.rs         ← RuntimeConfig + PlaybackConfig/StreamingConfig/...
-  events/
-    event.rs         ← RuntimeEvent enum (21 variants)
-    bus.rs           ← EventBus: broadcast channel, emit/subscribe
-  quality/
-    mod.rs           ← rank() / rank_with_health(): quality × reliability blend
-    score.rs         ← QualityScore: resolution/codec/seeders/bitrate/source/HDR
-  ipc/v1/mod.rs      ← Typed IPC protocol (versioned)
-  error.rs           ← StuidError: is_recoverable(), user_message()
+  ├── Engine (pipeline orchestration)
+  ├── Providers (plugin interface + health + throttling)
+  ├── Player (mpv integration)
+  ├── Config (live updates)
+  ├── Events (EventBus)
+  ├── Quality (stream ranking)
 ```
+
+---
+
+## Configuration
+
+Configuration is managed via the Settings screen.
+
+* Stored at: `~/.config/stui/config.toml`
+* Updated live via IPC (`SetConfig`)
+* No restart required
+
+---
+
+## Debugging
+
+Run with debug logs:
+
+```bash
+RUST_LOG=debug stui
+```
+
+Common issues:
+
+* No streams → provider issue
+* Playback fails → mpv / network / resolver issue
+* Missing metadata → API keys not set
 
 ---
 
 ## Development
 
 ```bash
-# Run all tests
+# Run tests
 cargo test --workspace
 
-# Watch mode
+# Dev mode
 ./scripts/dev.sh
 
 # Build plugins
 ./scripts/build-plugins.sh
 
-# Test torrentio plugin directly
+# Test plugin directly
 python3 plugins/torrentio-rpc/plugin.py
 ```
 
 ---
 
-## Docs
+## Roadmap
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — runtime architecture deep-dive
-- [`docs/upp.md`](docs/upp.md) — Universal Provider Protocol specification
-- [`docs/plugins.md`](docs/plugins.md) — Plugin API reference
-- [`docs/runtime-ipc.md`](docs/runtime-ipc.md) — IPC wire protocol reference
+* Improved provider ecosystem
+* Better stream reliability heuristics
+* Subtitle auto-sync
+* Remote control / second-screen support
+* Plugin registry / discovery system
+
+---
+
+## Disclaimer
+
+stui does not host, store, or distribute any media.
+
+All content is provided by third-party plugins.
+Users are responsible for complying with local laws and regulations.
+
+The core project only provides:
+
+* a runtime
+* a plugin system
+* a playback interface
+
+---
+
+## Logo
+
+Terminal-first design (Tyrian purple 👀) — coming soon.
