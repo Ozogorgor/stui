@@ -1,6 +1,9 @@
 # Superpowers tooling state
 .superpowers/
 
+# Git worktrees
+.worktrees/
+
 # Rust build output
 target/
 
