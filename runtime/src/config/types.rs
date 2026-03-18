@@ -71,6 +71,10 @@ pub struct RuntimeConfig {
     /// Users can append community repos; they are merged at plugin-discovery time.
     #[serde(default = "defaults::plugin_repos")]
     pub plugin_repos: Vec<String>,
+
+    /// Stream quality ranking preferences.
+    #[serde(default)]
+    pub stream: StreamPreferences,
 }
 
 /// Logging configuration section.
@@ -394,6 +398,45 @@ impl Default for SkipperConfig {
     }
 }
 
+/// Stream quality ranking preferences (`[stream]` section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamPreferences {
+    /// Preferred protocol: `"http"` | `"torrent"` | `None` for auto.
+    pub preferred_protocol: Option<String>,
+    /// Maximum resolution to accept, e.g. `"1080p"`.
+    pub max_resolution:     Option<String>,
+    /// Maximum file size in megabytes.
+    pub max_size_mb:        Option<u64>,
+    /// Minimum seeder count for torrent streams (0 = no minimum).
+    pub min_seeders:        u32,
+    /// Labels/tags to avoid, e.g. `["CAM", "TS"]`.
+    pub avoid_labels:       Vec<String>,
+    /// Prefer HDR streams when available.
+    pub prefer_hdr:         bool,
+    /// Preferred codec names in priority order, e.g. `["hevc", "avc"]`.
+    pub preferred_codecs:   Vec<String>,
+    /// Weight applied to seeder count when scoring streams.
+    pub seeder_weight:      f64,
+    /// Exclude CAM/screener rips from candidates.
+    pub exclude_cam:        bool,
+}
+
+impl Default for StreamPreferences {
+    fn default() -> Self {
+        Self {
+            preferred_protocol: None,
+            max_resolution:     None,
+            max_size_mb:        None,
+            min_seeders:        0,
+            avoid_labels:       vec![],
+            prefer_hdr:         false,
+            preferred_codecs:   vec![],
+            seeder_weight:      1.0,
+            exclude_cam:        true,
+        }
+    }
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         RuntimeConfig {
@@ -411,6 +454,7 @@ impl Default for RuntimeConfig {
             mpd:            MpdConfig::default(),
             skipper:        SkipperConfig::default(),
             plugin_repos:   defaults::plugin_repos(),
+            stream:         StreamPreferences::default(),
         }
     }
 }

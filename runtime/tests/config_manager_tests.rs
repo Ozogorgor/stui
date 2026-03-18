@@ -164,6 +164,28 @@ async fn wrong_type_returns_error() {
     assert!(result.is_err(), "wrong type should return Err");
 }
 
+#[test]
+fn test_stream_preferences_default_values() {
+    let prefs = stui_runtime::config::types::StreamPreferences::default();
+    assert_eq!(prefs.preferred_protocol, None);
+    assert_eq!(prefs.max_resolution, None);
+    assert_eq!(prefs.max_size_mb, None);
+    assert_eq!(prefs.min_seeders, 0);
+    assert!(prefs.avoid_labels.is_empty());
+    assert!(!prefs.prefer_hdr);
+    assert!(prefs.preferred_codecs.is_empty());
+    assert_eq!(prefs.seeder_weight, 1.0);
+    assert!(prefs.exclude_cam);
+}
+
+#[test]
+fn test_runtime_config_has_stream_field() {
+    let cfg = stui_runtime::config::types::RuntimeConfig::default();
+    // stream field exists and has correct defaults
+    assert_eq!(cfg.stream.min_seeders, 0);
+    assert!(cfg.stream.exclude_cam);
+}
+
 #[tokio::test]
 async fn multiple_updates_accumulate() {
     let (mgr, _) = make_manager();
