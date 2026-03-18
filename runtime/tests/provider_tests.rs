@@ -25,6 +25,7 @@ fn entry(title: &str, year: &str, genre: &str, rating: &str, mt: MediaType) -> C
         imdb_id:     None,
         tmdb_id:     None,
         media_type:  mt,
+        ratings:     Default::default(),
     }
 }
 
@@ -102,7 +103,9 @@ fn test_filter_title_contains() {
     let mut fs = FilterSet::new();
     fs.add(Filter::title_contains("bat"));
     let result = fs.apply(entries);
-    assert_eq!(result.len(), 2);
+    // "Batman Begins" matches; "The Dark Knight" and "Oppenheimer" do not
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].title, "Batman Begins");
 }
 
 #[test]

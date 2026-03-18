@@ -16,6 +16,7 @@ fn stream(name: &str, quality: StreamQuality, provider: &str) -> Stream {
         mime:     None,
         quality,
         provider: provider.to_string(),
+        ..Default::default()
     }
 }
 
