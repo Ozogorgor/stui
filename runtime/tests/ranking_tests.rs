@@ -5,6 +5,7 @@
 
 use stui_runtime::quality::{rank, RankingPolicy};
 use stui_runtime::providers::{Stream, StreamQuality};
+use stui_runtime::config::types::StreamPreferences;
 
 fn stream(name: &str, quality: StreamQuality) -> Stream {
     Stream {
@@ -132,4 +133,50 @@ fn test_badge_contains_resolution() {
     let badge = ranked[0].badge();
     assert!(badge.contains("1080p"), "badge should include resolution label");
     assert!(badge.contains('★'), "badge should include score star");
+}
+
+#[test]
+fn test_stream_prefs_default_equals_ranking_policy_default() {
+    let prefs = StreamPreferences::default();
+    let policy = stui_runtime::quality::RankingPolicy::from(&prefs);
+    let default_policy = stui_runtime::quality::RankingPolicy::default();
+    assert_eq!(policy.resolution_weights, default_policy.resolution_weights);
+    assert_eq!(policy.seeder_weight, default_policy.seeder_weight);
+    assert_eq!(policy.exclude_cam, default_policy.exclude_cam);
+    assert_eq!(policy.min_seeders, default_policy.min_seeders);
+}
+
+#[test]
+fn test_max_resolution_1080p_zeroes_4k_weight() {
+    let prefs = StreamPreferences {
+        max_resolution: Some("1080p".to_string()),
+        ..Default::default()
+    };
+    let policy = stui_runtime::quality::RankingPolicy::from(&prefs);
+    assert_eq!(policy.resolution_weights[3], 0, "4K weight should be 0 when max is 1080p");
+    assert_eq!(policy.resolution_weights[2], 300, "1080p weight should be 300");
+}
+
+#[test]
+fn test_max_resolution_720p_zeroes_1080p_and_4k() {
+    let prefs = StreamPreferences {
+        max_resolution: Some("720p".to_string()),
+        ..Default::default()
+    };
+    let policy = stui_runtime::quality::RankingPolicy::from(&prefs);
+    assert_eq!(policy.resolution_weights[3], 0);
+    assert_eq!(policy.resolution_weights[2], 0);
+    assert_eq!(policy.resolution_weights[1], 200);
+}
+
+#[test]
+fn test_seeder_weight_and_min_seeders_forwarded() {
+    let prefs = StreamPreferences {
+        seeder_weight: 2.5,
+        min_seeders: 10,
+        ..Default::default()
+    };
+    let policy = stui_runtime::quality::RankingPolicy::from(&prefs);
+    assert_eq!(policy.seeder_weight, 2.5);
+    assert_eq!(policy.min_seeders, 10);
 }

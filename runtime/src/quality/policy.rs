@@ -12,6 +12,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use crate::config::types::StreamPreferences;
 
 /// Weights and preferences used by `QualityScore::from_stream`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +65,24 @@ impl RankingPolicy {
             seeder_weight:            3.0,
             exclude_cam:              true,
             min_seeders:              10,
+        }
+    }
+}
+
+impl From<&StreamPreferences> for RankingPolicy {
+    fn from(prefs: &StreamPreferences) -> Self {
+        let resolution_weights = match prefs.max_resolution.as_deref() {
+            Some("sd")    => [100,   0,   0,   0],
+            Some("720p")  => [100, 200,   0,   0],
+            Some("1080p") => [100, 200, 300,   0],
+            _             => [100, 200, 300, 400],
+        };
+        RankingPolicy {
+            resolution_weights,
+            prefer_lower_resolution: false,
+            seeder_weight:           prefs.seeder_weight,
+            exclude_cam:             prefs.exclude_cam,
+            min_seeders:             prefs.min_seeders,
         }
     }
 }
