@@ -14,16 +14,26 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{oneshot, Mutex, Notify};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::protocol::{
-    CatalogSearchParams, PluginHandshake, RpcMediaItem, RpcRequest, RpcResponse,
-    RpcStream, RpcSubtitleTrack, StreamsResolveParams, SubtitlesFetchParams,
+    ActionRequest, ActionResponse, CatalogSearchParams, PluginHandshake, RpcMediaItem, RpcRequest,
+    RpcResponse, RpcStream, RpcSubtitleTrack, StreamsResolveParams, SubtitlesFetchParams,
 };
+
+use crate::auth::OAuthReceiver;
+
+pub enum AuthPhase {
+    Idle,
+    Allocated(OAuthReceiver),
+    InProgress,
+}
+
+type SharedAuthPhase = Arc<tokio::sync::Mutex<AuthPhase>>;
 
 /// An active external plugin process.
 ///
@@ -42,7 +52,8 @@ pub struct PluginProcess {
     /// OS process ID, captured before the child handle is moved.
     pub pid:          Option<u32>,
 
-    stdin:         Arc<Mutex<ChildStdin>>,
+    stdin_tx:      mpsc::UnboundedSender<String>,
+    auth_phase:    SharedAuthPhase,
     /// Pending calls: correlation-id → response sender.
     pending:       Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
     _child:        Arc<Mutex<Child>>,
@@ -63,7 +74,17 @@ impl PluginProcess {
         let stdout = child.stdout.take().context("no stdout on plugin process")?;
         let pid    = child.id();
 
-        let stdin        = Arc::new(Mutex::new(stdin));
+        let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut stdin = stdin;
+            while let Some(line) = stdin_rx.recv().await {
+                let _ = stdin.write_all(line.as_bytes()).await;
+                let _ = stdin.flush().await;
+            }
+        });
+        let auth_phase: SharedAuthPhase = Arc::new(tokio::sync::Mutex::new(AuthPhase::Idle));
+
         let pending: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let death_notify = Arc::new(Notify::new());
@@ -71,22 +92,27 @@ impl PluginProcess {
 
         // Spawn the reader task — reads NDJSON lines and routes them to waiters.
         // When stdout closes (process exited), the loop ends and we fire death_notify.
-        let pending_rx    = Arc::clone(&pending);
-        let death_notify2 = Arc::clone(&death_notify);
+        let pending_rx     = Arc::clone(&pending);
+        let death_notify2  = Arc::clone(&death_notify);
+        let stdin_tx_loop  = stdin_tx.clone();
+        let auth_phase_loop = Arc::clone(&auth_phase);
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if line.trim().is_empty() { continue; }
-                match serde_json::from_str::<RpcResponse>(&line) {
-                    Ok(resp) => {
-                        let mut map = pending_rx.lock().await;
-                        if let Some(tx) = map.remove(&resp.id) {
-                            let _ = tx.send(resp);
-                        }
+                if let Ok(action) = serde_json::from_str::<ActionRequest>(&line) {
+                    tokio::spawn(handle_action(
+                        action,
+                        stdin_tx_loop.clone(),
+                        auth_phase_loop.clone(),
+                    ));
+                } else if let Ok(resp) = serde_json::from_str::<RpcResponse>(&line) {
+                    let mut map = pending_rx.lock().await;
+                    if let Some(tx) = map.remove(&resp.id) {
+                        let _ = tx.send(resp);
                     }
-                    Err(e) => {
-                        warn!("plugin sent invalid JSON: {e} — line: {line}");
-                    }
+                } else {
+                    warn!("plugin sent invalid JSON — line: {line}");
                 }
             }
             // stdout EOF — process has exited.
@@ -108,7 +134,8 @@ impl PluginProcess {
             bin,
             death_notify,
             pid,
-            stdin,
+            stdin_tx,
+            auth_phase,
             pending,
             _child:       child,
         };
@@ -140,12 +167,9 @@ impl PluginProcess {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id.clone(), tx);
 
-        {
-            let mut stdin = self.stdin.lock().await;
-            stdin.write_all(line.as_bytes()).await?;
-            stdin.write_all(b"\n").await?;
-            stdin.flush().await?;
-        }
+        self.stdin_tx
+            .send(format!("{line}\n"))
+            .map_err(|_| anyhow::anyhow!("plugin stdin channel closed"))?;
 
         debug!(method, id, "rpc call sent");
 
@@ -201,5 +225,135 @@ impl PluginProcess {
     /// Send a graceful shutdown request then kill the process.
     pub async fn shutdown(&self) {
         let _ = self.call("shutdown", serde_json::json!({})).await;
+    }
+}
+
+async fn handle_action(
+    req: ActionRequest,
+    stdin_tx: mpsc::UnboundedSender<String>,
+    auth_phase: SharedAuthPhase,
+) {
+    let response = match req.action.as_str() {
+        "auth_allocate_port" => {
+            // Check phase WITHOUT holding lock across the allocate_port().await.
+            {
+                let phase = auth_phase.lock().await;
+                if matches!(*phase, AuthPhase::InProgress) {
+                    send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                    return;
+                }
+            } // lock released before await
+
+            match crate::auth::allocate_port().await {
+                Ok((port, rx)) => {
+                    let mut phase = auth_phase.lock().await;
+                    if matches!(*phase, AuthPhase::InProgress) {
+                        send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                        return;
+                    }
+                    *phase = AuthPhase::Allocated(rx);
+                    ActionResponse::ok(&req.id, serde_json::json!({"port": port}))
+                }
+                Err(e) => ActionResponse::err(&req.id, format!("allocate_failed: {e}")),
+            }
+        }
+
+        "auth_open_and_wait" => {
+            let params = req.params.as_ref();
+
+            let url = match params.and_then(|p| p["url"].as_str()) {
+                Some(u) => u.to_string(),
+                None => {
+                    send_response(&stdin_tx, ActionResponse::err(&req.id, "invalid_params"));
+                    return;
+                }
+            };
+            let timeout_ms = params
+                .and_then(|p| p["timeout_ms"].as_u64())
+                .unwrap_or(120_000)
+                .clamp(1_000, 300_000);
+
+            let receiver = {
+                let mut phase = auth_phase.lock().await;
+                match std::mem::replace(&mut *phase, AuthPhase::InProgress) {
+                    AuthPhase::Allocated(rx) => rx,
+                    AuthPhase::Idle => {
+                        *phase = AuthPhase::Idle;
+                        send_response(&stdin_tx, ActionResponse::err(&req.id, "no_port_allocated"));
+                        return;
+                    }
+                    AuthPhase::InProgress => {
+                        *phase = AuthPhase::InProgress;
+                        send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                        return;
+                    }
+                }
+            }; // lock released here — no lock held across the await below
+
+            let result = crate::auth::open_and_wait(
+                &url,
+                receiver,
+                std::time::Duration::from_millis(timeout_ms),
+            ).await;
+
+            *auth_phase.lock().await = AuthPhase::Idle;
+
+            match result {
+                Ok(cb) => ActionResponse::ok(
+                    &req.id,
+                    serde_json::json!({"code": cb.code, "state": cb.state}),
+                ),
+                Err(crate::auth::AuthError::TimedOut) =>
+                    ActionResponse::err(&req.id, "timed_out"),
+                Err(crate::auth::AuthError::Denied { message }) =>
+                    ActionResponse::err(&req.id, format!("denied: {message}")),
+                Err(crate::auth::AuthError::BrowserOpenFailed(m)) =>
+                    ActionResponse::err(&req.id, format!("browser_open_failed: {m}")),
+                Err(crate::auth::AuthError::ReceiverDropped) =>
+                    ActionResponse::err(&req.id, "timed_out"),
+            }
+        }
+
+        _ => ActionResponse::err(&req.id, "unknown_action"),
+    };
+
+    send_response(&stdin_tx, response);
+}
+
+fn send_response(
+    stdin_tx: &mpsc::UnboundedSender<String>,
+    resp: ActionResponse,
+) {
+    if let Ok(line) = serde_json::to_string(&resp) {
+        let _ = stdin_tx.send(format!("{line}\n"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idle() -> AuthPhase { AuthPhase::Idle }
+
+    #[test]
+    fn test_auth_phase_transitions() {
+        let phase = idle();
+        assert!(matches!(phase, AuthPhase::Idle));
+    }
+
+    #[tokio::test]
+    async fn test_auth_phase_allocated_allows_realloc() {
+        let (port1, rx1) = crate::auth::allocate_port().await.unwrap();
+        let (_port2, rx2) = crate::auth::allocate_port().await.unwrap();
+        let mut phase = AuthPhase::Allocated(rx1);
+        phase = AuthPhase::Allocated(rx2);
+        assert!(matches!(phase, AuthPhase::Allocated(_)));
+        let _ = port1;
+    }
+
+    #[test]
+    fn test_auth_phase_in_progress_rejects_realloc() {
+        let phase = AuthPhase::InProgress;
+        assert!(matches!(phase, AuthPhase::InProgress));
     }
 }
