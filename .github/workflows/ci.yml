@@ -46,6 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ matrix.toolchain }}
+          components: rustfmt,clippy
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
@@ -156,7 +157,8 @@ jobs:
         run: ./runtime/target/release/stui-runtime --help
 
       - name: Test IPC handshake
-        run: timeout 2 ./runtime/target/release/stui-runtime || [[ $? -eq 2 ]]
+        # Runtime reads from stdin in IPC mode; timeout kills it (exit 124) — that's expected.
+        run: timeout 2 ./runtime/target/release/stui-runtime; code=$?; [[ $code -eq 0 || $code -eq 124 ]]
 
       - name: Cleanup
         run: rm -f tui/stui-test
