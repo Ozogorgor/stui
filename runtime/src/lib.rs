@@ -48,6 +48,7 @@ pub mod pipeline;
 pub mod plugin_rpc;
 pub mod registry;
 pub mod skipper;
+pub mod auth;
 
 
 // Re-export the most commonly used types at crate root for convenience.
