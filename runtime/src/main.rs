@@ -492,6 +492,7 @@ where
                     }
                 } else {
                     info!("grid update channel closed");
+                    break;
                 }
             }
 

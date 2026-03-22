@@ -26,6 +26,9 @@ func (s *IPCStore) Load() {
 	select {
 	case entries, ok := <-ch:
 		if !ok {
+			s.mu.Lock()
+			s.entries = make(map[string]Entry)
+			s.mu.Unlock()
 			return
 		}
 		s.mu.Lock()
@@ -97,13 +100,15 @@ func (s *IPCStore) Get(id string) *Entry {
 
 func (s *IPCStore) Remove(id string) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.entries[id]; ok {
+	_, ok := s.entries[id]
+	if ok {
 		delete(s.entries, id)
-		s.client.RemoveWatchHistoryEntry(id)
-		return true
 	}
-	return false
+	s.mu.Unlock()
+	if ok {
+		s.client.RemoveWatchHistoryEntry(id)
+	}
+	return ok
 }
 
 func (s *IPCStore) MarkCompleted(id string) {

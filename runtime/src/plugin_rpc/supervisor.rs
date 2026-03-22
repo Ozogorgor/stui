@@ -123,10 +123,10 @@ impl PluginSupervisor {
     pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
         let proc = PluginProcess::spawn(bin.clone()).await?;
         
-        // Apply CPU limit if configured
+        // Apply CPU limit if configured; failure is non-fatal (plugin still starts).
         if config.cpu_nice_value > 0 {
             if let Some(pid) = proc.pid {
-                apply_cpu_limit(pid, config.cpu_nice_value)?;
+                let _ = apply_cpu_limit(pid, config.cpu_nice_value);
             }
         }
 

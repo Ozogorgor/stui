@@ -175,9 +175,6 @@ pub struct RankingPolicy {
     /// If true, filter out CAM/HDCAM sources entirely.
     pub exclude_cam: bool,
 
-    /// Minimum acceptable seeder count for torrent streams (0 = no filter).
-    pub min_seeders: u32,
-
     /// User preferences for policy-based scoring.
     #[serde(default)]
     pub preferences: StreamPreferences,
@@ -190,7 +187,6 @@ impl Default for RankingPolicy {
             prefer_lower_resolution: false,
             seeder_weight: 1.0,
             exclude_cam: true,
-            min_seeders: 0,
             preferences: StreamPreferences::default(),
         }
     }
@@ -204,8 +200,7 @@ impl RankingPolicy {
             prefer_lower_resolution: true,
             seeder_weight: 1.2,
             exclude_cam: true,
-            min_seeders: 5,
-            preferences: StreamPreferences::default(),
+            preferences: StreamPreferences { min_seeders: 5, ..StreamPreferences::default() },
         }
     }
 
@@ -216,8 +211,7 @@ impl RankingPolicy {
             prefer_lower_resolution: false,
             seeder_weight: 3.0,
             exclude_cam: true,
-            min_seeders: 10,
-            preferences: StreamPreferences::default(),
+            preferences: StreamPreferences { min_seeders: 10, ..StreamPreferences::default() },
         }
     }
 }
