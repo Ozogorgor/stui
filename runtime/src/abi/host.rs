@@ -402,8 +402,9 @@ mod inner_impl {
                             }
                         };
 
-                        // Clamp timeout to [1000, 300000] ms
-                        let timeout_ms = (timeout_ms_raw as u64).clamp(1_000, 300_000);
+                        // Clamp timeout to [1000, 300000] ms; clamp before cast to
+                        // prevent a negative i32 wrapping to a huge u64 value.
+                        let timeout_ms = (timeout_ms_raw.clamp(1_000, 300_000)) as u64;
                         let timeout = std::time::Duration::from_millis(timeout_ms);
 
                         // No store borrows held across this await
