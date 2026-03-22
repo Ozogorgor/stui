@@ -16,6 +16,12 @@
 //! When `max_memory_mb` is set the supervisor polls `/proc/{pid}/status`
 //! every 10 seconds.  If VmRSS exceeds the limit the process is killed and
 //! a normal restart cycle begins.
+//!
+//! # Resource limits
+//!
+//! - `max_memory_mb`: Maximum resident memory (RSS) in MB
+//! - `max_cpu_percent`: Maximum CPU usage as percentage (0 = unlimited)
+//! - `request_timeout_ms`: Timeout for individual RPC calls in milliseconds
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::sync::{Mutex, RwLock};
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use super::process::PluginProcess;
@@ -45,6 +52,15 @@ pub struct SupervisorConfig {
     /// Kill the plugin if its resident memory (VmRSS) exceeds this many MB.
     /// `None` disables memory monitoring.
     pub max_memory_mb: Option<u64>,
+    /// Scheduling priority adjustment for the plugin process (0 = no adjustment).
+    /// Implemented via `nice` on Linux, which lowers the OS scheduling priority
+    /// so the plugin yields CPU to higher-priority processes.  This does NOT
+    /// enforce a hard CPU percentage cap — a plugin can still saturate a core
+    /// when the system is otherwise idle.
+    pub max_cpu_percent: u32,
+    /// Timeout for individual RPC calls in milliseconds.
+    /// If a call takes longer, it returns an error.
+    pub request_timeout_ms: u64,
 }
 
 impl Default for SupervisorConfig {
@@ -55,6 +71,8 @@ impl Default for SupervisorConfig {
             backoff_base_ms:   1_000,
             backoff_max_ms:    60_000,
             max_memory_mb:     Some(512),
+            max_cpu_percent:   0,
+            request_timeout_ms: 30_000,
         }
     }
 }
@@ -72,6 +90,10 @@ pub struct SupervisorStats {
     pub is_alive: bool,
     /// Whether the supervisor has given up (crash loop detected).
     pub permanently_failed: bool,
+    /// Current memory usage in MB (0 if unknown).
+    pub memory_mb: u64,
+    /// Number of requests that timed out.
+    pub timeout_count: u32,
 }
 
 // ── Supervisor ────────────────────────────────────────────────────────────────
@@ -98,6 +120,14 @@ impl PluginSupervisor {
     /// Spawn the plugin and start supervising it.
     pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
         let proc = PluginProcess::spawn(bin.clone()).await?;
+        
+        // Apply CPU limit if configured
+        if config.max_cpu_percent > 0 {
+            if let Some(pid) = proc.pid {
+                apply_cpu_limit(pid, config.max_cpu_percent)?;
+            }
+        }
+
         let info = proc.info.clone();
 
         let process  = Arc::new(RwLock::new(Some(Arc::new(proc))));
@@ -105,7 +135,14 @@ impl PluginSupervisor {
         let stats    = Arc::new(Mutex::new(SupervisorStats { is_alive: true, ..Default::default() }));
         let failed   = Arc::new(AtomicBool::new(false));
 
-        let s = PluginSupervisor { bin, config, process: Arc::clone(&process), info: Arc::clone(&info_arc), stats: Arc::clone(&stats), failed: Arc::clone(&failed) };
+        let s = PluginSupervisor { 
+            bin, 
+            config, 
+            process: Arc::clone(&process), 
+            info: Arc::clone(&info_arc), 
+            stats: Arc::clone(&stats), 
+            failed: Arc::clone(&failed),
+        };
 
         // Start the watchdog background task.
         s.start_watchdog();
@@ -139,15 +176,54 @@ impl PluginSupervisor {
     // ── Delegating RPC methods ────────────────────────────────────────────
 
     pub async fn catalog_search(&self, query: &str, tab: &str, page: u32) -> Result<Vec<RpcMediaItem>> {
-        self.with_process(|p| async move { p.catalog_search(query, tab, page).await }).await
+        let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
+        let result = timeout(timeout_duration, self.with_process(|p| async move { 
+            p.catalog_search(query, tab, page).await 
+        })).await;
+
+        match result {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                let mut s = self.stats.lock().await;
+                s.timeout_count += 1;
+                Err(anyhow::anyhow!("catalog_search timed out after {}ms", self.config.request_timeout_ms))
+            }
+        }
     }
 
     pub async fn streams_resolve(&self, id: &str) -> Result<Vec<RpcStream>> {
-        self.with_process(|p| async move { p.streams_resolve(id).await }).await
+        let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
+        let result = timeout(timeout_duration, self.with_process(|p| async move { 
+            p.streams_resolve(id).await 
+        })).await;
+
+        match result {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                let mut s = self.stats.lock().await;
+                s.timeout_count += 1;
+                Err(anyhow::anyhow!("streams_resolve timed out after {}ms", self.config.request_timeout_ms))
+            }
+        }
     }
 
     pub async fn subtitles_fetch(&self, id: &str) -> Result<Vec<RpcSubtitleTrack>> {
-        self.with_process(|p| async move { p.subtitles_fetch(id).await }).await
+        let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
+        let result = timeout(timeout_duration, self.with_process(|p| async move { 
+            p.subtitles_fetch(id).await 
+        })).await;
+
+        match result {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                let mut s = self.stats.lock().await;
+                s.timeout_count += 1;
+                Err(anyhow::anyhow!("subtitles_fetch timed out after {}ms", self.config.request_timeout_ms))
+            }
+        }
     }
 
     // ── Internals ─────────────────────────────────────────────────────────
@@ -192,7 +268,7 @@ impl PluginSupervisor {
                 // Concurrently: wait for death OR poll memory every 10 s.
                 let memory_killed = tokio::select! {
                     _ = death_notify.notified() => false,
-                    killed = poll_memory_loop(&process, config.max_memory_mb) => killed,
+                    killed = poll_memory_loop(&process, &stats, config.max_memory_mb) => killed,
                 };
 
                 if failed.load(Ordering::Relaxed) {
@@ -236,6 +312,12 @@ impl PluginSupervisor {
 
                 match PluginProcess::spawn(bin.clone()).await {
                     Ok(proc) => {
+                        // Re-apply CPU limit after restart
+                        if config.max_cpu_percent > 0 {
+                            if let Some(pid) = proc.pid {
+                                let _ = apply_cpu_limit(pid, config.max_cpu_percent);
+                            }
+                        }
                         info!(plugin = %proc.info.name, version = %proc.info.version, "plugin restarted");
                         *info_arc.write().await = proc.info.clone();
                         let mut s = stats.lock().await;
@@ -259,13 +341,15 @@ impl PluginSupervisor {
 
 /// Poll the process's resident memory every 10 seconds.
 /// Returns `true` if the process was killed for exceeding `max_memory_mb`.
+/// Updates `memory_mb` in stats on each poll.
 /// Returns `false` if the memory limit is not set (future: process died normally).
+#[allow(dead_code)]
 async fn poll_memory_loop(
     process: &Arc<RwLock<Option<Arc<PluginProcess>>>>,
+    stats: &Arc<Mutex<SupervisorStats>>,
     max_memory_mb: Option<u64>,
 ) -> bool {
     let Some(limit_mb) = max_memory_mb else {
-        // No limit — block forever so the select! never picks this branch.
         std::future::pending::<()>().await;
         return false;
     };
@@ -280,9 +364,13 @@ async fn poll_memory_loop(
 
         if let Some(pid) = pid {
             if let Some(rss_mb) = read_proc_rss_mb(pid) {
+                {
+                    let mut s = stats.lock().await;
+                    s.memory_mb = rss_mb;
+                }
+
                 if rss_mb > limit_mb {
                     warn!(pid, rss_mb, limit_mb, "plugin exceeded memory limit — killing");
-                    // SIGKILL so the death_notify fires and triggers restart.
                     let _ = nix_kill(pid);
                     return true;
                 }
@@ -292,6 +380,7 @@ async fn poll_memory_loop(
 }
 
 /// Read the resident set size in MB from `/proc/{pid}/status` (Linux only).
+#[allow(dead_code)]
 #[cfg(target_os = "linux")]
 fn read_proc_rss_mb(pid: u32) -> Option<u64> {
     let content = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -305,12 +394,63 @@ fn read_proc_rss_mb(pid: u32) -> Option<u64> {
     None
 }
 
+#[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
 fn read_proc_rss_mb(_pid: u32) -> Option<u64> { None }
 
 /// Send SIGKILL to a process by PID.
+#[allow(dead_code)]
 fn nix_kill(pid: u32) -> std::io::Result<()> {
     // Safety: we only send SIGKILL (9) which is always safe.
     let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
     if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}
+
+// ── CPU limiting ───────────────────────────────────────────────────────────────
+
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+fn apply_cpu_limit(pid: u32, max_cpu_percent: u32) -> Result<()> {
+    use std::process::Command;
+    
+    if max_cpu_percent == 0 || max_cpu_percent > 100 {
+        return Ok(());
+    }
+
+    let nice_value: i32 = if max_cpu_percent >= 80 {
+        0
+    } else if max_cpu_percent >= 60 {
+        5
+    } else if max_cpu_percent >= 40 {
+        10
+    } else if max_cpu_percent >= 20 {
+        15
+    } else {
+        19
+    };
+
+    let output = Command::new("renice")
+        .args(["-n", &nice_value.to_string(), "-p", &pid.to_string()])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            info!(pid, nice_value, "applied CPU limit via nice");
+            Ok(())
+        }
+        Ok(out) => {
+            warn!(pid, stderr = ?String::from_utf8_lossy(&out.stderr), "renice failed");
+            Err(anyhow::anyhow!("renice failed"))
+        }
+        Err(e) => {
+            warn!(pid, err = %e, "failed to execute renice");
+            Err(anyhow::anyhow!("failed to execute renice: {}", e))
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+fn apply_cpu_limit(_pid: u32, _max_cpu_percent: u32) -> Result<()> {
+    Ok(())
 }

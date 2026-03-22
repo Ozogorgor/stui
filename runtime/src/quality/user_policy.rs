@@ -243,14 +243,19 @@ mod tests {
         let mut policy = RankingPolicy::default();
         policy.preferences.avoid_labels = vec!["cam".to_string()];
 
-        let streams = vec![make_stream("1080p", 100, false)];
-        // Stream with "cam" in name would get penalty
+        let clean = make_stream("1080p", 100, false);
         let mut cam_stream = make_stream("1080p", 100, false);
         cam_stream.name = "CAM rip 1080p".to_string();
-        let streams = vec![streams[0].clone(), cam_stream];
+        let streams = vec![clean, cam_stream];
 
         let ranked = rank_streams(streams, &policy);
-        assert!(!ranked[0].stream.name.contains("CAM"));
+        assert!(!ranked[0].stream.name.contains("CAM"), "CAM stream should not rank first");
+        assert!(
+            ranked[1].score < ranked[0].score,
+            "avoided-label penalty must lower the score: got {} vs {}",
+            ranked[1].score,
+            ranked[0].score
+        );
     }
 
     #[test]

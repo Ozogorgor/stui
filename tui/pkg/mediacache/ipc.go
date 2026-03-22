@@ -63,8 +63,12 @@ func (s *IPCStore) LoadStats() ipc.MediaCacheStats {
 		return ipc.MediaCacheStats{}
 	}
 	ch := s.client.GetMediaCacheStats()
-	stats := <-ch
-	return stats
+	select {
+	case stats := <-ch:
+		return stats
+	case <-time.After(5 * time.Second):
+		return ipc.MediaCacheStats{}
+	}
 }
 
 func (s *IPCStore) Clear() error {
