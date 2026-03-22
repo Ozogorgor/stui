@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
     // ── Media cache ─────────────────────────────────────────────────────────
     let media_cache = Arc::new(mediacache::MediaCacheStore::new(
         mediacache::default_cache_path(),
-    ));
+    ).await);
     info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
 
     // ── Media storage ──────────────────────────────────────────────────────
