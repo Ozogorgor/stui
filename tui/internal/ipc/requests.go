@@ -156,6 +156,7 @@ func (c *Client) Resolve(entryID, provider string) {
 			"type":     "get_streams",
 			"id":       id,
 			"entry_id": entryID,
+			"provider": provider,
 		}
 		ch := c.sendWithID(id, payload)
 		raw := <-ch
