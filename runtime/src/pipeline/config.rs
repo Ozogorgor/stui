@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::catalog::Catalog;
 use crate::config::ConfigManager;
+use crate::engine::Engine;
 use crate::ipc::{
-    ErrorCode, PluginReposResponse, ProviderSchema, ProviderSettingsResponse,
+    ErrorCode, PluginReposResponse, ProviderField, ProviderSchema, ProviderSettingsResponse,
     Response, SetConfigRequest, SetPluginReposRequest,
 };
 
@@ -24,22 +24,69 @@ pub async fn run_set_config(config: &Arc<ConfigManager>, r: SetConfigRequest) ->
 
 // ── Provider settings ─────────────────────────────────────────────────────────
 
-/// Return the self-declared config schema for every active catalog provider.
+/// Return the config schema for all loaded plugins.
 ///
-/// Each provider implementing the `Provider` trait advertises its own fields —
-/// no hardcoded list here. New providers appear automatically.
-pub async fn run_get_provider_settings(catalog: &Arc<Catalog>) -> Response {
-    let providers: Vec<ProviderSchema> = catalog
-        .providers()
-        .iter()
-        .map(|p| ProviderSchema {
-            id:          p.name().to_string(),
-            name:        p.display_name().to_string(),
-            description: p.description().to_string(),
-            active:      p.is_active(),
-            fields:      p.config_schema(),
+/// Provider settings are loaded from WASM plugins via the Engine's plugin registry.
+/// Each plugin declares its config fields in `plugin.toml` under `[config]`,
+/// or they are auto-generated from `[env]` variables.
+pub async fn run_get_provider_settings(
+    engine: &Arc<Engine>,
+    config: &Arc<ConfigManager>,
+) -> Response {
+    let registry = engine.registry().read().await;
+    let config_snapshot = config.snapshot().await;
+    
+    let providers: Vec<ProviderSchema> = registry
+        .all_plugins()
+        .filter(|p| {
+            let ptype = &p.manifest.plugin.plugin_type;
+            ptype.is_metadata_provider() || ptype.is_stream_provider() || ptype.is_subtitle_provider()
+        })
+        .map(|plugin| {
+            let plugin_name = &plugin.manifest.plugin.name;
+            let fields: Vec<ProviderField> = plugin.manifest.config_fields()
+                .into_iter()
+                .map(|field| {
+                    let full_key = field.full_key(plugin_name);
+                    // Get current value - first check config, then env var
+                    let value = config_snapshot
+                        .plugins
+                        .get(plugin_name)
+                        .and_then(|p| p.get(&field.key).cloned())
+                        .or_else(|| {
+                            // Check environment variable (e.g., TMDB_API_KEY for tmdb-provider)
+                            let env_key = format!("{}_{}", plugin_name.to_uppercase(), field.key.replace('-', "_"));
+                            std::env::var(&env_key).ok()
+                        })
+                        .unwrap_or_default();
+                    
+                    let configured = !value.is_empty();
+                    
+                    ProviderField {
+                        key: full_key,
+                        label: field.label,
+                        hint: field.hint.unwrap_or_default(),
+                        masked: field.masked,
+                        configured,
+                        required: field.required,
+                        value,
+                    }
+                })
+                .collect();
+            
+            let active = !fields.is_empty() && fields.iter().all(|f| !f.required || f.configured);
+            
+            ProviderSchema {
+                id: plugin_name.clone(),
+                name: plugin.manifest.plugin.name.clone(),
+                description: plugin.manifest.plugin.description.clone().unwrap_or_default(),
+                plugin_type: plugin.manifest.plugin.plugin_type.to_string(),
+                active,
+                fields,
+            }
         })
         .collect();
+    
     Response::ProviderSettings(ProviderSettingsResponse { providers })
 }
 

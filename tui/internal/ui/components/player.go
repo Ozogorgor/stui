@@ -23,7 +23,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/pkg/bidi"
 	"github.com/stui/stui/pkg/theme"
@@ -305,32 +305,11 @@ func formatDuration(secs float64) string {
 }
 
 func padBetween(left, right string, width int) string {
-	// strip ANSI for length calculation — approximate
-	leftLen  := visibleLen(left)
-	rightLen := visibleLen(right)
-	pad := width - leftLen - rightLen
+	pad := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
 		pad = 1
 	}
 	return left + strings.Repeat(" ", pad) + right
-}
-
-func visibleLen(s string) int {
-	// Quick ANSI strip for width calculation
-	inEsc := false
-	n := 0
-	for _, r := range s {
-		if r == '\x1b' {
-			inEsc = true
-		}
-		if !inEsc {
-			n++
-		}
-		if inEsc && r == 'm' {
-			inEsc = false
-		}
-	}
-	return n
 }
 
 // ── MPD / audio HUD ───────────────────────────────────────────────────────────

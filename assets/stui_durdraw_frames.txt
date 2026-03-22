@@ -1,0 +1,136 @@
+============================================================
+  STUI — Durdraw Braille Animation Frames
+  Each frame = 3 lines × 4 braille chars
+  Paste each block into a Durdraw frame layer
+  Color: Tyrian purple (#9B5DE5) on black (#0e0a1a)
+============================================================
+
+── Frame 01: blank  [delay: 0.30s]
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+
+── Frame 02: reveal (4/39 dots)  [delay: 0.06s]
+⠀⢀⠀⠀
+⠀⠉⠁⠀
+⠀⠀⠀⠀
+
+── Frame 03: reveal (8/39 dots)  [delay: 0.06s]
+⠀⣠⡀⠀
+⠀⠙⠁⠀
+⠀⠀⠀⠀
+
+── Frame 04: reveal (13/39 dots)  [delay: 0.05s]
+⠀⣠⡀⠀
+⠈⠻⠋⠀
+⠀⠀⠀⠀
+
+── Frame 05: reveal (18/39 dots)  [delay: 0.05s]
+⢀⣴⣄⠀
+⠈⠻⠋⠀
+⠀⠀⠀⠀
+
+── Frame 06: reveal (23/39 dots)  [delay: 0.04s]
+⢀⣴⣄⠀
+⠙⠿⠛⠁
+⠀⠀⠀⠀
+
+── Frame 07: reveal (28/39 dots)  [delay: 0.04s]
+⢀⣾⣆⠀
+⠙⢿⠟⠁
+⠀⠀⠀⠀
+
+── Frame 08: reveal (33/39 dots)  [delay: 0.04s]
+⣠⣾⣦⡀
+⠛⢿⠟⠁
+⠀⠀⠀⠀
+
+── Frame 09: full triangle (39/39 dots)  [delay: 0.04s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+
+── Frame 10: hold full  [delay: 0.60s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+
+── Frame 11: pulse OFF  [delay: 0.12s]
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+
+── Frame 12: pulse ON  [delay: 0.09s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+
+── Frame 13: pulse OFF  [delay: 0.09s]
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+⠀⠀⠀⠀
+
+── Frame 14: pulse ON + READY  [delay: 0.50s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+
+── Frame 15: wordmark S  [delay: 0.05s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+S
+
+── Frame 16: wordmark ST  [delay: 0.05s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+ST
+
+── Frame 17: wordmark STU  [delay: 0.05s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+STU
+
+── Frame 18: wordmark STUI (hold)  [delay: 1.50s]
+⣠⣾⣦⡀
+⠻⣿⡿⠃
+⠀⠈⠀⠀
+STUI
+
+============================================================
+  DURDRAW IMPLEMENTATION NOTES
+============================================================
+
+CANVAS SETUP:
+  - Canvas size: 10 cols × 6 rows (gives breathing room)
+  - Braille block: top-left anchor at col 3, row 1
+  - Wordmark "STUI": row 5, col 3, letter-spacing 1
+  - Background: color index for black
+  - Foreground: color index for your nearest Tyrian purple
+    (xterm-256: color 99 = #875fff or 105 = #8787ff)
+    If using truecolor Durdraw: #9B5DE5
+
+LAYER STRUCTURE:
+  Layer 1 (bottom) — background fill
+  Layer 2 — braille play button block
+  Layer 3 — wordmark "STUI" (starts blank, types in on frame 15)
+
+LOOPING:
+  - Set animation to loop from frame 01 back after frame 18
+  - Total runtime: ~3.5s per loop
+
+BUFFERING VARIANT:
+  - On frame 10 (full hold), overlay "buffering..." text
+    below the braille block instead of the wordmark
+  - Switch to wordmark only on frame 14 (ready state)
+
+XTERM-256 PURPLE CANDIDATES:
+  57  = #5f00ff  (deep violet)
+  93  = #8700ff  (purple)
+  99  = #875fff  (soft purple)  ← closest to Tyrian
+  135 = #af5fff  (light purple)
+  141 = #af87ff  (lavender)
+
+============================================================

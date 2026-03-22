@@ -27,8 +27,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
@@ -41,7 +41,7 @@ import (
 // current session. Zero value is usable (all maps nil → treated as empty).
 type StreamRadarStats struct {
 	TotalBatches int
-	TotalStreams  int
+	TotalStreams int
 	Resolution   map[string]int
 	Provider     map[string]int
 	Protocol     map[string]int
@@ -143,7 +143,7 @@ func (m StreamRadarScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m StreamRadarScreen) View() string {
+func (m StreamRadarScreen) View() tea.View {
 	neon := lipgloss.NewStyle().Foreground(theme.T.Accent())
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	bold := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
@@ -164,7 +164,7 @@ func (m StreamRadarScreen) View() string {
 	if m.stats.TotalStreams == 0 {
 		empty := dim.Render("No streams resolved yet — browse and open a title to populate the radar.")
 		footer := "\n" + hintBar("q close")
-		return header + "\n\n  " + empty + footer
+		return tea.NewView(header + "\n\n  " + empty + footer)
 	}
 
 	// ── Column widths ────────────────────────────────────────────────────
@@ -181,7 +181,10 @@ func (m StreamRadarScreen) View() string {
 		}
 
 		// Sort by count desc, then label asc for ties.
-		type kv struct{ k string; v int }
+		type kv struct {
+			k string
+			v int
+		}
 		pairs := make([]kv, 0, len(counts))
 		maxVal := 0
 		for k, v := range counts {
@@ -240,5 +243,5 @@ func (m StreamRadarScreen) View() string {
 
 	footer := "\n\n" + hintBar("q close")
 
-	return "  " + header + "\n\n" + body + hdrLine + footer
+	return tea.NewView("  " + header + "\n\n" + body + hdrLine + footer)
 }

@@ -65,9 +65,15 @@ use stui_plugin_sdk::prelude::*;
 pub struct OpenSubtitlesProvider;
 
 impl StuiPlugin for OpenSubtitlesProvider {
-    fn name(&self) -> &str { "opensubtitles-provider" }
-    fn version(&self) -> &str { "0.1.0" }
-    fn plugin_type(&self) -> PluginType { PluginType::Provider }
+    fn name(&self) -> &str {
+        "opensubtitles-provider"
+    }
+    fn version(&self) -> &str {
+        "0.1.0"
+    }
+    fn plugin_type(&self) -> PluginType {
+        PluginType::Provider
+    }
 
     /// Search returns subtitle entries.
     ///
@@ -118,7 +124,8 @@ impl StuiPlugin for OpenSubtitlesProvider {
 
         plugin_info!("opensubtitles: {} subtitles found", resp.total_count);
 
-        let items: Vec<PluginEntry> = resp.data
+        let items: Vec<PluginEntry> = resp
+            .data
             .into_iter()
             .take(req.limit as usize)
             .map(|s| s.into_entry())
@@ -144,7 +151,9 @@ impl StuiPlugin for OpenSubtitlesProvider {
                 if let Some(stripped) = req.entry_id.strip_prefix("os:") {
                     match stripped.parse() {
                         Ok(id) => id,
-                        Err(_) => return PluginResult::err("INVALID_ID", "could not parse file_id"),
+                        Err(_) => {
+                            return PluginResult::err("INVALID_ID", "could not parse file_id")
+                        }
                     }
                 } else {
                     return PluginResult::err("INVALID_ID", "could not parse file_id");
@@ -155,10 +164,12 @@ impl StuiPlugin for OpenSubtitlesProvider {
         plugin_info!("opensubtitles: downloading file_id={}", file_id);
 
         // Ensure we have a JWT for the download endpoint
-        let jwt = ensure_jwt(&cfg)?;
+        let jwt = match ensure_jwt(&cfg) {
+            Ok(jwt) => jwt,
+            Err(e) => return PluginResult::err("AUTH_REQUIRED", &e),
+        };
 
-        let body = serde_json::to_string(&DownloadRequest { file_id })
-            .unwrap_or_default();
+        let body = serde_json::to_string(&DownloadRequest { file_id }).unwrap_or_default();
 
         let url = format!("https://{}/api/v1/download", cfg.base_url);
         let raw = match http_post_authed(&url, &body, &cfg, &jwt) {
@@ -175,7 +186,10 @@ impl StuiPlugin for OpenSubtitlesProvider {
             return PluginResult::err("DOWNLOAD_ERROR", "empty download link");
         }
 
-        plugin_info!("opensubtitles: got download link (remaining={})", dl.remaining);
+        plugin_info!(
+            "opensubtitles: got download link (remaining={})",
+            dl.remaining
+        );
 
         // The subtitle URL is the "stream_url" in stui terms — aria2 will
         // fetch it to ~/.stui/subtitles/{imdb_id}/
@@ -192,7 +206,7 @@ impl StuiPlugin for OpenSubtitlesProvider {
 #[derive(Deserialize)]
 struct SubtitleListResponse {
     #[serde(default)]
-    data:        Vec<SubtitleItem>,
+    data: Vec<SubtitleItem>,
     #[serde(default)]
     total_count: u32,
 }
@@ -200,7 +214,7 @@ struct SubtitleListResponse {
 #[derive(Deserialize)]
 struct SubtitleItem {
     #[serde(default)]
-    id:         String,
+    id: String,
     #[serde(default)]
     attributes: SubtitleAttributes,
 }
@@ -209,35 +223,35 @@ struct SubtitleItem {
 #[serde(rename_all = "snake_case")]
 struct SubtitleAttributes {
     #[serde(default)]
-    subtitle_id:     String,
+    subtitle_id: String,
     #[serde(default)]
-    language:        String,
+    language: String,
     #[serde(default)]
-    download_count:  u32,
+    download_count: u32,
     #[serde(default)]
-    ratings:         f32,
+    ratings: f32,
     #[serde(default)]
-    release:         String,        // release name, e.g. "Dune.2021.BluRay.1080p"
+    release: String, // release name, e.g. "Dune.2021.BluRay.1080p"
     #[serde(default)]
     hearing_impaired: bool,
     #[serde(default)]
-    ai_translated:   bool,
+    ai_translated: bool,
     #[serde(default)]
     machine_translated: bool,
     #[serde(default)]
-    hd:              bool,
+    hd: bool,
     #[serde(default)]
-    files:           Vec<SubtitleFile>,
+    files: Vec<SubtitleFile>,
     #[serde(default)]
     feature_details: FeatureDetails,
     #[serde(default)]
-    url:             String,
+    url: String,
 }
 
 #[derive(Deserialize, Default)]
 struct SubtitleFile {
     #[serde(default)]
-    file_id:   u64,
+    file_id: u64,
     #[serde(default)]
     file_name: Option<String>,
     #[serde(default)]
@@ -247,32 +261,45 @@ struct SubtitleFile {
 #[derive(Deserialize, Default)]
 struct FeatureDetails {
     #[serde(default)]
-    title:    String,
+    title: String,
     #[serde(default)]
-    year:     Option<u32>,
+    year: Option<u32>,
     #[serde(default)]
-    imdb_id:  Option<u64>,
+    imdb_id: Option<u64>,
     #[serde(default)]
-    tmdb_id:  Option<u64>,
+    tmdb_id: Option<u64>,
 }
 
 impl SubtitleItem {
     fn into_entry(self) -> PluginEntry {
         let a = &self.attributes;
         let file_id = a.files.first().map(|f| f.file_id).unwrap_or(0);
-        let file_name = a.files.first()
+        let file_name = a
+            .files
+            .first()
             .and_then(|f| f.file_name.clone())
             .unwrap_or_else(|| a.release.clone());
 
         // Flags
         let mut flags = Vec::new();
-        if a.hearing_impaired   { flags.push("HI"); }
-        if a.hd                 { flags.push("HD"); }
-        if a.ai_translated      { flags.push("AI"); }
-        if a.machine_translated { flags.push("MT"); }
+        if a.hearing_impaired {
+            flags.push("HI");
+        }
+        if a.hd {
+            flags.push("HD");
+        }
+        if a.ai_translated {
+            flags.push("AI");
+        }
+        if a.machine_translated {
+            flags.push("MT");
+        }
 
-        let flag_str = if flags.is_empty() { String::new() }
-            else { format!(" [{}]", flags.join(" ")) };
+        let flag_str = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", flags.join(" "))
+        };
 
         let title = format!(
             "[{}] {}{}  ★{:.1}  ↓{}",
@@ -283,18 +310,17 @@ impl SubtitleItem {
             a.download_count,
         );
 
-        let imdb_id = a.feature_details.imdb_id
-            .map(|i| format!("tt{:07}", i));
+        let imdb_id = a.feature_details.imdb_id.map(|i| format!("tt{:07}", i));
 
         PluginEntry {
             // Entry ID is the file_id — resolve() uses it directly
-            id:          format!("os:{}", file_id),
+            id: format!("os:{}", file_id),
             title,
-            year:        a.feature_details.year.map(|y| y.to_string()),
-            genre:       Some(a.language.clone()),
-            rating:      Some(format!("{:.1}", a.ratings)),
+            year: a.feature_details.year.map(|y| y.to_string()),
+            genre: Some(a.language.clone()),
+            rating: Some(format!("{:.1}", a.ratings)),
             description: Some(a.url.clone()),
-            poster_url:  None,
+            poster_url: None,
             imdb_id,
         }
     }
@@ -308,7 +334,7 @@ struct DownloadRequest {
 #[derive(Deserialize)]
 struct DownloadResponse {
     #[serde(default)]
-    link:      String,
+    link: String,
     #[serde(default)]
     file_name: Option<String>,
     #[serde(default)]
@@ -320,11 +346,11 @@ struct DownloadResponse {
 #[derive(Deserialize)]
 struct LoginResponse {
     #[serde(default)]
-    token:    String,
+    token: String,
     #[serde(default)]
     base_url: String,
     #[serde(default)]
-    status:   u16,
+    status: u16,
 }
 
 #[derive(Serialize)]
@@ -337,7 +363,7 @@ const JWT_CACHE_KEY: &str = "os_jwt";
 const BASE_URL_CACHE_KEY: &str = "os_base_url";
 
 /// Return a valid JWT, fetching one if necessary.
-fn ensure_jwt(cfg: &Config) -> Result<String, PluginResult<ResolveResponse>> {
+fn ensure_jwt(cfg: &Config) -> Result<String, String> {
     // Try cached token first
     if let Some(token) = cache_get(JWT_CACHE_KEY) {
         if !token.is_empty() {
@@ -347,21 +373,22 @@ fn ensure_jwt(cfg: &Config) -> Result<String, PluginResult<ResolveResponse>> {
 
     // No cached token — login required
     if cfg.username.is_empty() || cfg.password.is_empty() {
-        return Err(PluginResult::err(
-            "AUTH_REQUIRED",
+        return Err(
             "OS_USERNAME and OS_PASSWORD must be set for subtitle downloads. \
-             Anonymous users are limited to 5 downloads per 24h.",
-        ));
+             Anonymous users are limited to 5 downloads per 24h."
+                .into(),
+        );
     }
 
-    login(cfg).map_err(|e| PluginResult::err("LOGIN_FAILED", &e))
+    login(cfg)
 }
 
 fn login(cfg: &Config) -> Result<String, String> {
     let body = serde_json::to_string(&LoginRequest {
         username: &cfg.username,
         password: &cfg.password,
-    }).unwrap_or_default();
+    })
+    .unwrap_or_default();
 
     let url = format!("https://{}/api/v1/login", cfg.base_url);
 
@@ -370,8 +397,7 @@ fn login(cfg: &Config) -> Result<String, String> {
     // POST with Api-Key header encoded into the payload (see http_post_authed)
     let raw = http_post_anon(&url, &body, cfg)?;
 
-    let resp: LoginResponse = serde_json::from_str(&raw)
-        .map_err(|e| e.to_string())?;
+    let resp: LoginResponse = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
 
     if resp.status != 200 || resp.token.is_empty() {
         return Err(format!("login failed: status={}", resp.status));
@@ -383,7 +409,10 @@ fn login(cfg: &Config) -> Result<String, String> {
         cache_set(BASE_URL_CACHE_KEY, &resp.base_url);
     }
 
-    plugin_info!("opensubtitles: login successful, base_url={}", resp.base_url);
+    plugin_info!(
+        "opensubtitles: login successful, base_url={}",
+        resp.base_url
+    );
     Ok(resp.token)
 }
 
@@ -424,27 +453,42 @@ fn http_post_authed(url: &str, body: &str, cfg: &Config, jwt: &str) -> Result<St
 
 /// Inject `__stui_headers` into a JSON body so the runtime can set headers.
 fn inject_api_key_header(body: &str, api_key: &str) -> Result<String, String> {
-    let mut obj: serde_json::Value = serde_json::from_str(body)
-        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    let mut obj: serde_json::Value =
+        serde_json::from_str(body).unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
     if let Some(map) = obj.as_object_mut() {
         let mut headers = serde_json::Map::new();
-        headers.insert("Api-Key".into(),     serde_json::Value::String(api_key.into()));
-        headers.insert("User-Agent".into(),  serde_json::Value::String("stui v0.1.0".into()));
-        headers.insert("Content-Type".into(), serde_json::Value::String("application/json".into()));
+        headers.insert("Api-Key".into(), serde_json::Value::String(api_key.into()));
+        headers.insert(
+            "User-Agent".into(),
+            serde_json::Value::String("stui v0.1.0".into()),
+        );
+        headers.insert(
+            "Content-Type".into(),
+            serde_json::Value::String("application/json".into()),
+        );
         map.insert("__stui_headers".into(), serde_json::Value::Object(headers));
     }
     serde_json::to_string(&obj).map_err(|e| e.to_string())
 }
 
 fn inject_auth_headers(body: &str, api_key: &str, jwt: &str) -> Result<String, String> {
-    let mut obj: serde_json::Value = serde_json::from_str(body)
-        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    let mut obj: serde_json::Value =
+        serde_json::from_str(body).unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
     if let Some(map) = obj.as_object_mut() {
         let mut headers = serde_json::Map::new();
-        headers.insert("Api-Key".into(),       serde_json::Value::String(api_key.into()));
-        headers.insert("User-Agent".into(),    serde_json::Value::String("stui v0.1.0".into()));
-        headers.insert("Content-Type".into(),  serde_json::Value::String("application/json".into()));
-        headers.insert("Authorization".into(), serde_json::Value::String(format!("Bearer {}", jwt)));
+        headers.insert("Api-Key".into(), serde_json::Value::String(api_key.into()));
+        headers.insert(
+            "User-Agent".into(),
+            serde_json::Value::String("stui v0.1.0".into()),
+        );
+        headers.insert(
+            "Content-Type".into(),
+            serde_json::Value::String("application/json".into()),
+        );
+        headers.insert(
+            "Authorization".into(),
+            serde_json::Value::String(format!("Bearer {}", jwt)),
+        );
         map.insert("__stui_headers".into(), serde_json::Value::Object(headers));
     }
     serde_json::to_string(&obj).map_err(|e| e.to_string())
@@ -453,7 +497,7 @@ fn inject_auth_headers(body: &str, api_key: &str, jwt: &str) -> Result<String, S
 // ── Config ────────────────────────────────────────────────────────────────────
 
 struct Config {
-    api_key:  String,
+    api_key: String,
     username: String,
     password: String,
     language: String,
@@ -462,16 +506,15 @@ struct Config {
 
 impl Config {
     fn load() -> Result<Self, String> {
-        let api_key  = env_or("OS_API_KEY",  "");
+        let api_key = env_or("OS_API_KEY", "");
         let username = env_or("OS_USERNAME", "");
         let password = env_or("OS_PASSWORD", "");
         let language = env_or("OS_LANGUAGE", "en");
 
         if api_key.is_empty() {
-            return Err(
-                "OS_API_KEY is not set. \
-                 Get one at https://www.opensubtitles.com/en/consumers".into()
-            );
+            return Err("OS_API_KEY is not set. \
+                 Get one at https://www.opensubtitles.com/en/consumers"
+                .into());
         }
 
         // Use cached base_url (set after successful login) or default
@@ -479,7 +522,13 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "api.opensubtitles.com".into());
 
-        Ok(Config { api_key, username, password, language, base_url })
+        Ok(Config {
+            api_key,
+            username,
+            password,
+            language,
+            base_url,
+        })
     }
 }
 
@@ -493,17 +542,21 @@ fn env_or(var: &str, default: &str) -> String {
 fn url_encode(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9'
-            | '-' | '_' | '.' | '~' => vec![c],
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
             ' ' => vec!['+'],
             c => {
                 let mut buf = [0u8; 4];
                 let bytes = c.encode_utf8(&mut buf);
-                bytes.bytes().flat_map(|b| {
-                    vec!['%',
-                        char::from_digit((b >> 4) as u32, 16).unwrap_or('0'),
-                        char::from_digit((b & 0xf) as u32, 16).unwrap_or('0')]
-                }).collect::<Vec<_>>()
+                bytes
+                    .bytes()
+                    .flat_map(|b| {
+                        vec![
+                            '%',
+                            char::from_digit((b >> 4) as u32, 16).unwrap_or('0'),
+                            char::from_digit((b & 0xf) as u32, 16).unwrap_or('0'),
+                        ]
+                    })
+                    .collect::<Vec<_>>()
             }
         })
         .collect()

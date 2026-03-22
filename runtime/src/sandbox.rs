@@ -14,6 +14,7 @@ use crate::plugin::{ExecutionMode, LoadedPlugin, Permissions};
 
 // ── Capability types ─────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Capability {
     Network,
@@ -24,6 +25,7 @@ pub enum Capability {
 // ── Sandbox context ──────────────────────────────────────────────────────────
 
 /// A per-plugin sandbox context. Constructed when the plugin is loaded.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SandboxCtx {
     pub plugin_id: String,
@@ -38,6 +40,7 @@ pub struct SandboxCtx {
 }
 
 impl SandboxCtx {
+    #[allow(dead_code)]
     pub fn new(plugin: &LoadedPlugin, cache_dir: PathBuf, data_dir: PathBuf) -> Self {
         Self {
             plugin_id: plugin.id.clone(),
@@ -54,6 +57,7 @@ impl SandboxCtx {
         }
     }
 
+    #[allow(dead_code)]
     /// Check whether this plugin is allowed to use a given capability.
     pub fn check(&self, cap: &Capability) -> Result<()> {
         match cap {
@@ -92,6 +96,7 @@ impl SandboxCtx {
         }
     }
 
+    #[allow(dead_code)]
     fn allowed_fs_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
         for scope in &self.permissions.filesystem {
@@ -106,6 +111,7 @@ impl SandboxCtx {
         roots
     }
 
+    #[allow(dead_code)]
     pub fn http_client(&self) -> Result<reqwest::Client> {
         self.check(&Capability::Network)?;
         let client = reqwest::Client::builder()
@@ -119,14 +125,17 @@ impl SandboxCtx {
         Ok(client)
     }
 
+    #[allow(dead_code)]
     pub fn plugin_cache_dir(&self) -> PathBuf {
         self.cache_dir.join(&self.plugin_name)
     }
 
+    #[allow(dead_code)]
     pub fn plugin_data_dir(&self) -> PathBuf {
         self.data_dir.join(&self.plugin_name)
     }
 
+    #[allow(dead_code)]
     pub fn ensure_dirs(&self) -> Result<()> {
         if self.permissions.filesystem.contains(&"cache".to_string()) {
             std::fs::create_dir_all(self.plugin_cache_dir())?;
@@ -140,6 +149,7 @@ impl SandboxCtx {
 
 // ── WASM execution boundary (stub — wasmtime integration in Phase 2) ─────────
 
+#[allow(dead_code)]
 pub async fn call_wasm(
     ctx: &SandboxCtx,
     _wasm_path: &Path,

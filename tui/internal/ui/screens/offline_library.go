@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
@@ -50,18 +50,18 @@ var offlineTabs = []string{"movies", "series", "library"}
 
 // OfflineLibraryScreen shows the locally cached catalog.
 type OfflineLibraryScreen struct {
-	cache      *mediacache.Store
-	tabs       []string            // tabs that have cached data
-	activeTab  int                 // index into tabs
-	entries    []ipc.CatalogEntry  // entries for the current tab
-	cursor     int
-	width      int
-	height     int
+	cache     mediacache.StoreInterface
+	tabs      []string           // tabs that have cached data
+	activeTab int                // index into tabs
+	entries   []ipc.CatalogEntry // entries for the current tab
+	cursor    int
+	width     int
+	height    int
 }
 
 // NewOfflineLibraryScreen creates the screen, pre-selecting the first tab
 // that has cached data.
-func NewOfflineLibraryScreen(cache *mediacache.Store) OfflineLibraryScreen {
+func NewOfflineLibraryScreen(cache mediacache.StoreInterface) OfflineLibraryScreen {
 	m := OfflineLibraryScreen{cache: cache}
 	m.buildTabs()
 	return m
@@ -134,12 +134,13 @@ func (m OfflineLibraryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
+		mouse := msg.Mouse()
 		switch {
-		case msg.Button == tea.MouseButtonWheelUp:
+		case mouse.Button == tea.MouseWheelUp:
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case msg.Button == tea.MouseButtonWheelDown:
+		case mouse.Button == tea.MouseWheelDown:
 			if m.cursor < len(m.entries)-1 {
 				m.cursor++
 			}
@@ -148,7 +149,7 @@ func (m OfflineLibraryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m OfflineLibraryScreen) View() string {
+func (m OfflineLibraryScreen) View() tea.View {
 	neon := lipgloss.NewStyle().Foreground(theme.T.Accent())
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	bold := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
@@ -176,11 +177,11 @@ func (m OfflineLibraryScreen) View() string {
 	if total == 0 {
 		empty := dim.Render("No cached titles yet — browse while online to populate the library.")
 		footer := "\n\n" + hintBar("q close")
-		return "  " + header + "\n\n  " + empty + footer
+		return tea.NewView("  " + header + "\n\n  " + empty + footer)
 	}
 
 	if len(m.tabs) == 0 {
-		return "  " + header + "\n\n" + hintBar("q close")
+		return tea.NewView("  " + header + "\n\n" + hintBar("q close"))
 	}
 
 	// ── Left panel: tab list ──────────────────────────────────────────────
@@ -276,7 +277,7 @@ func (m OfflineLibraryScreen) View() string {
 
 	footer := hintBar("↑↓ navigate", "enter open", "tab/←→ switch tab", "q close")
 
-	return "  " + header + "\n\n" + body + "\n\n" + footer
+	return tea.NewView("  " + header + "\n\n" + body + "\n\n" + footer)
 }
 
 // olTruncate truncates s to n runes, adding "…" if needed.

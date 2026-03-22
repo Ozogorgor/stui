@@ -19,15 +19,20 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/actions"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
+
+const maxQueryLength = 256
 
 // SearchScreen is a self-contained screen for global incremental search.
 type SearchScreen struct {
@@ -42,25 +47,36 @@ type SearchScreen struct {
 	height    int
 	searchAll bool // true = search all tabs; false = active tab only
 	reqSeq    int  // monotonic counter to discard stale results
+	spinner   components.Spinner
+	debouncer *components.Debouncer
 }
 
 func NewSearchScreen(client *ipc.Client, activeTab ipc.MediaTab) SearchScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return SearchScreen{
 		client:    client,
 		activeTab: activeTab,
+		spinner:   *components.NewSpinner("searching…", dimStyle),
+		debouncer: components.NewDebouncer(150 * time.Millisecond),
 	}
 }
 
-func (s SearchScreen) Init() tea.Cmd { return nil }
+func (s SearchScreen) Init() tea.Cmd {
+	return s.spinner.Init()
+}
 
 func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
+
+	case spinner.TickMsg:
+		s.spinner.Update(m)
+		return s, nil
 
 	case tea.WindowSizeMsg:
 		s.width = m.Width
 		s.height = m.Height
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := m.String()
 
 		// ── Navigation and selection ──────────────────────────────────────
@@ -93,7 +109,7 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			// Toggle search all tabs
 			s.searchAll = !s.searchAll
 			if s.query != "" {
-				return s, s.dispatchSearch()
+				return s, s.debouncedSearch()
 			}
 
 		case "backspace":
@@ -105,16 +121,18 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					s.results = nil
 					s.loading = false
 					s.err = ""
+					s.spinner.Stop()
+					s.debouncer.Cancel()
 				} else {
-					return s, s.dispatchSearch()
+					return s, s.debouncedSearch()
 				}
 			}
 
 		default:
 			// Any printable character appends to query and triggers search
-			if m.Type == tea.KeyRunes {
+			if len(m.Text) > 0 && len(s.query) < maxQueryLength {
 				s.query += key
-				return s, s.dispatchSearch()
+				return s, s.debouncedSearch()
 			}
 		}
 
@@ -122,6 +140,7 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if m.Err != nil {
 			s.err = m.Err.Error()
 			s.loading = false
+			s.spinner.Stop()
 		} else {
 			// Deduplicate by ID across multi-tab responses: merge into results,
 			// keeping the first occurrence (earlier tabs take priority).
@@ -137,10 +156,41 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			}
 			s.loading = false
 			s.err = ""
+			s.spinner.Stop()
 		}
 	}
 
 	return s, nil
+}
+
+// debouncedSearch triggers a search after a short delay to batch rapid keystrokes.
+func (s *SearchScreen) debouncedSearch() tea.Cmd {
+	s.results = nil
+	s.cursor = 0
+	s.loading = true
+	s.err = ""
+	s.reqSeq++
+	s.spinner.Start()
+
+	s.debouncer.Trigger(s.reqSeq, func() {
+		if s.client == nil {
+			return
+		}
+		q := s.query
+		if s.searchAll {
+			tabs := []ipc.MediaTab{ipc.TabMovies, ipc.TabSeries, ipc.TabLibrary}
+			for _, t := range tabs {
+				s.client.Search(fmt.Sprintf("qs-%s-%s", t, q), q, t, 30, 0)
+			}
+		} else {
+			tab := s.activeTab
+			if tab == "" {
+				tab = ipc.TabMovies
+			}
+			s.client.Search(fmt.Sprintf("qs-%s-%s", tab, q), q, tab, 50, 0)
+		}
+	})
+	return nil
 }
 
 // dispatchSearch fires search request(s) and resets the result set.
@@ -150,6 +200,7 @@ func (s *SearchScreen) dispatchSearch() tea.Cmd {
 	s.loading = true
 	s.err = ""
 	s.reqSeq++
+	s.spinner.Start()
 	q := s.query
 
 	if s.client == nil {
@@ -193,10 +244,10 @@ func (s SearchScreen) selectCurrent() tea.Cmd {
 
 // ── View ─────────────────────────────────────────────────────────────────────
 
-func (s SearchScreen) View() string {
-	acc   := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim   := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	neon  := lipgloss.NewStyle().Foreground(theme.T.Neon())
+func (s SearchScreen) View() tea.View {
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 	muted := lipgloss.NewStyle().Foreground(theme.T.TextMuted())
 
 	var sb strings.Builder
@@ -211,7 +262,7 @@ func (s SearchScreen) View() string {
 	cursor := acc.Render("▌")
 	promptStr := acc.Render("/") + " " + s.query + cursor + scopeStr
 	if s.loading {
-		promptStr += dim.Render("  searching…")
+		promptStr += "  " + s.spinner.View()
 	}
 
 	sb.WriteString("\n  " + promptStr + "\n")
@@ -227,19 +278,19 @@ func (s SearchScreen) View() string {
 	// ── Empty state ────────────────────────────────────────────────────────────
 	if s.query == "" {
 		sb.WriteString("  " + dim.Render("Start typing to search…") + "\n")
-		return sb.String()
+		return tea.NewView(sb.String())
 	}
 
 	// ── Error state ────────────────────────────────────────────────────────────
 	if s.err != "" {
 		sb.WriteString("  " + lipgloss.NewStyle().Foreground(theme.T.Red()).Render("Error: "+s.err) + "\n")
-		return sb.String()
+		return tea.NewView(sb.String())
 	}
 
 	// ── No results ────────────────────────────────────────────────────────────
 	if len(s.results) == 0 && !s.loading {
 		sb.WriteString(dim.Render("  No results for \u201c"+s.query+"\u201d") + "\n")
-		return sb.String()
+		return tea.NewView(sb.String())
 	}
 
 	// ── Results list ──────────────────────────────────────────────────────────
@@ -248,19 +299,19 @@ func (s SearchScreen) View() string {
 		w = 80
 	}
 
-	// Visible window
-	listH := s.height - 7 // header(3) + toggle(1) + footer(3)
-	if listH < 4 {
-		listH = 4
-	}
-	start := 0
-	if s.cursor >= listH {
-		start = s.cursor - listH + 1
-	}
-	end := min(start+listH, len(s.results))
+	// Virtualized list rendering
+	vl := components.NewVirtualizedList(
+		len(s.results),
+		s.cursor,
+		s.height,
+		components.WithHeaderHeight(6), // prompt + toggle + blank lines
+		components.WithFooterHeight(1), // hint bar
+	)
 
-	if start > 0 {
-		sb.WriteString("  " + dim.Render("↑ more") + "\n")
+	start, end := vl.VisibleRange()
+	indicator := vl.ScrollIndicator(dim)
+	if indicator != "" {
+		sb.WriteString("  " + indicator + "\n")
 	}
 
 	for i := start; i < end; i++ {
@@ -302,14 +353,10 @@ func (s SearchScreen) View() string {
 		sb.WriteString(line + "\n")
 	}
 
-	if end < len(s.results) {
-		sb.WriteString("  " + dim.Render("↓ more") + "\n")
-	}
-
 	// ── Footer hint ────────────────────────────────────────────────────────────
 	sb.WriteString("\n" + hintBar("↑↓ navigate", "enter open", "a toggle scope", "esc close") + "\n")
 
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func searchTabBadge(tab string) string {

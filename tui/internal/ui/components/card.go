@@ -12,9 +12,10 @@ package components
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/pkg/bidi"
@@ -22,8 +23,8 @@ import (
 )
 
 const (
-	CardColumns    = 5    // Netflix-style: 5 columns
-	CardPosterRows = 9    // Height of the poster area in terminal rows
+	CardColumns    = 5 // Netflix-style: 5 columns
+	CardPosterRows = 9 // Height of the poster area in terminal rows
 	CardMinWidth   = 14
 )
 
@@ -66,7 +67,11 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	}
 	rating := ""
 	if entry.Rating != nil && *entry.Rating != "" {
-		rating = lipgloss.NewStyle().Foreground(theme.T.Yellow()).Render("★ " + *entry.Rating)
+		barWidth := 6
+		if w > 18 {
+			barWidth = 8
+		}
+		rating = CompactRatingBar(*entry.Rating, barWidth)
 	}
 	metaLine := lipgloss.NewStyle().
 		Foreground(theme.T.TextMuted()).
@@ -110,15 +115,15 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 
 // posterColorPalette is the shared color palette used for placeholder posters.
 // The same set is used for both grid cards and the detail view.
-var posterColorPalette = []lipgloss.Color{
-	"#1a0533", // deep violet
-	"#001a2e", // deep navy
-	"#0d1f0d", // dark green
-	"#2a1a00", // dark amber
-	"#1a001a", // deep magenta
-	"#001a1a", // deep teal
-	"#2a0a0a", // deep red
-	"#0a0a2a", // deep blue
+var posterColorPalette = []color.Color{
+	lipgloss.Color("#1a0533"), // deep violet
+	lipgloss.Color("#001a2e"), // deep navy
+	lipgloss.Color("#0d1f0d"), // dark green
+	lipgloss.Color("#2a1a00"), // dark amber
+	lipgloss.Color("#1a001a"), // deep magenta
+	lipgloss.Color("#001a1a"), // deep teal
+	lipgloss.Color("#2a0a0a"), // deep red
+	lipgloss.Color("#0a0a2a"), // deep blue
 }
 
 // RenderPosterPlaceholder generates a styled text block for when no block-art

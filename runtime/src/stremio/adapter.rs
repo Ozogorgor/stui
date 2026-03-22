@@ -1,16 +1,4 @@
 //! Stremio addon adapter — wraps a `StremioClient` as a `dyn Provider`.
-//!
-//! This is the glue that lets stui's engine treat any Stremio addon as just
-//! another built-in provider.  The engine discovers addons from
-//! `STUI_STREMIO_ADDONS` (comma-separated manifest URLs) and registers them
-//! alongside TMDB, IMDB, and WASM plugins.
-//!
-//! # Example
-//!
-//! ```bash
-//! export STUI_STREMIO_ADDONS="https://torrentio.strem.fun/manifest.json,\
-//!                              https://v3-cinemeta.strem.io/manifest.json"
-//! ```
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -22,6 +10,7 @@ use crate::providers::{Provider, Stream, StreamQuality};
 use super::client::StremioClient;
 use super::manifest::StremioManifest;
 
+#[allow(dead_code)]
 pub struct StremioAddon {
     client:   StremioClient,
     manifest: StremioManifest,
@@ -56,6 +45,7 @@ impl StremioAddon {
         addons
     }
 
+    #[allow(dead_code)]
     fn stremio_type_for_tab(tab: &MediaTab) -> &'static str {
         match tab {
             MediaTab::Movies   => "movie",
@@ -66,6 +56,7 @@ impl StremioAddon {
         }
     }
 
+    #[allow(dead_code)]
     fn supports_type(&self, t: &str) -> bool {
         self.manifest.types.iter().any(|mt| mt == t)
     }
@@ -144,6 +135,7 @@ impl Provider for StremioAddon {
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn meta_to_entry(m: super::manifest::StremioMeta, tab: &MediaTab, provider: &str) -> CatalogEntry {
     let year = m.year.as_ref().and_then(|v| {
         v.as_u64().map(|n| n.to_string())

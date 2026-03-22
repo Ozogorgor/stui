@@ -6,35 +6,17 @@ package screens
 // aggregator in the Rust runtime. Profiles are selected automatically based
 // on the entry's MediaType and genre string.
 //
-// Layout:
-//
-//   ⚖  Rating Weights               weighted-median · genre-aware
-//
-//   Profile selected by:  genre keyword (anime, documentary, horror)
-//                         or MediaType (series, music)  · else Movie default
-//
-//   Source            Movie  Series  Anime  Doc    Horror  Music
-//   ──────────────────────────────────────────────────────────────
-//   Rotten Tomatoes    35%    25%    15%    45%    25%    20%
-//   IMDB               30%    35%    20%    25%    30%    20%
-//   RT Audience        15%    25%    15%    10%    30%    30%
-//   TMDB               10%    15%    15%    10%    10%    20%
-//   AniList             —      —     35%     —      —      —
-//
-//   All scores normalised to 0–10 before weighting.
-//   Weights re-normalised to 1.0 when sources are missing.
-//   OMDB excluded — mirrors IMDB score (would double-count).
-//   Anime detected by genre keyword OR presence of an AniList score.
-//
 //   q close
 
 import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -59,10 +41,10 @@ type weightProfile struct {
 // runtime/src/catalog_engine/aggregator.rs — update both if weights change.
 var profileWeights = []weightProfile{
 	{"Rotten Tomatoes", "0–100%", 0.35, 0.25, 0.15, 0.45, 0.25, 0.20},
-	{"IMDB",            "0–10",   0.30, 0.35, 0.20, 0.25, 0.30, 0.20},
-	{"RT Audience",     "0–100%", 0.15, 0.25, 0.15, 0.10, 0.30, 0.30},
-	{"TMDB",            "0–10",   0.10, 0.15, 0.15, 0.10, 0.10, 0.20},
-	{"AniList",         "0–100",  0.00, 0.00, 0.35, 0.00, 0.00, 0.00},
+	{"IMDB", "0–10", 0.30, 0.35, 0.20, 0.25, 0.30, 0.20},
+	{"RT Audience", "0–100%", 0.15, 0.25, 0.15, 0.10, 0.30, 0.30},
+	{"TMDB", "0–10", 0.10, 0.15, 0.15, 0.10, 0.10, 0.20},
+	{"AniList", "0–100", 0.00, 0.00, 0.35, 0.00, 0.00, 0.00},
 }
 
 // profileHeaders are the column headings shown in the comparison table.
@@ -74,10 +56,24 @@ var profileHeaders = []string{"Movie", "Series", "Anime", "Doc", "Horror", "Musi
 type RatingWeightsScreen struct {
 	width  int
 	height int
+	table  *components.SortableTable
 }
 
 func NewRatingWeightsScreen() RatingWeightsScreen {
-	return RatingWeightsScreen{}
+	columns := []table.Column{
+		{Title: "Source", Width: 16},
+		{Title: "Scale", Width: 7},
+		{Title: "Movie", Width: 7},
+		{Title: "Series", Width: 7},
+		{Title: "Anime", Width: 7},
+		{Title: "Doc", Width: 7},
+		{Title: "Horror", Width: 7},
+		{Title: "Music", Width: 7},
+	}
+
+	return RatingWeightsScreen{
+		table: components.NewSortableTable(columns),
+	}
 }
 
 // ── screen.Screen interface ───────────────────────────────────────────────────
@@ -89,7 +85,7 @@ func (m RatingWeightsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "esc":
 			return m, func() tea.Msg { return screen.PopMsg{} }
@@ -98,18 +94,15 @@ func (m RatingWeightsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m RatingWeightsScreen) View() string {
+func (m RatingWeightsScreen) View() tea.View {
 	neon := lipgloss.NewStyle().Foreground(theme.T.Accent())
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	bold := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
-	gold := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
 
-	// ── Header ──────────────────────────────────────────────────────────
-	title  := neon.Render("⚖  Rating Weights")
-	sub    := dim.Render("weighted-median · genre-aware")
+	title := neon.Render("⚖  Rating Weights")
+	sub := dim.Render("weighted-median · genre-aware")
 	header := lipgloss.JoinHorizontal(lipgloss.Top, title, "   ", sub)
 
-	// ── Selection rule ───────────────────────────────────────────────────
 	rule := dim.Render("Profile selected by: ") +
 		bold.Render("genre keyword") +
 		dim.Render(" (anime, documentary, horror)") + "\n  " +
@@ -117,52 +110,28 @@ func (m RatingWeightsScreen) View() string {
 		bold.Render("MediaType") +
 		dim.Render(" (series, music)  · else Movie default")
 
-	// ── Comparison table ─────────────────────────────────────────────────
-	const (
-		colSource = 16
-		colScale  = 7
-		colWeight = 7  // "  35%  " or "   —   "
-	)
-
-	// Header row
-	hdrCells := []string{
-		fmt.Sprintf("%-*s", colSource, bold.Render("Source")),
-		fmt.Sprintf("%-*s", colScale,  bold.Render("Scale")),
-	}
-	for _, h := range profileHeaders {
-		hdrCells = append(hdrCells, fmt.Sprintf("%*s", colWeight, bold.Render(h)))
-	}
-	hdrRow := strings.Join(hdrCells, "  ")
-
-	divLen := colSource + colScale + (colWeight+2)*len(profileHeaders) + 2
-	divider := dim.Render(strings.Repeat("─", divLen))
-
-	// Data rows
-	getWeights := func(p weightProfile) []float64 {
-		return []float64{p.movie, p.series, p.anime, p.doc, p.horror, p.music}
-	}
-
-	var rows []string
-	for _, p := range profileWeights {
-		cells := []string{
-			fmt.Sprintf("%-*s", colSource, p.source),
-			fmt.Sprintf("%-*s", colScale,  dim.Render(p.scale)),
-		}
-		for _, w := range getWeights(p) {
-			var cell string
+	rows := make([][]string, len(profileWeights))
+	for i, p := range profileWeights {
+		weights := []float64{p.movie, p.series, p.anime, p.doc, p.horror, p.music}
+		row := []string{p.source, p.scale}
+		for _, w := range weights {
 			if w == 0.0 {
-				cell = fmt.Sprintf("%*s", colWeight, dim.Render("—"))
+				row = append(row, "—")
 			} else {
-				cell = fmt.Sprintf("%*s", colWeight, gold.Render(fmt.Sprintf("%2.0f%%", w*100)))
+				row = append(row, fmt.Sprintf("%2.0f%%", w*100))
 			}
-			cells = append(cells, cell)
 		}
-		rows = append(rows, strings.Join(cells, "  "))
+		rows[i] = row
 	}
+	m.table.SetData(rows)
 
-	table := strings.Join(append([]string{hdrRow, divider}, rows...), "\n  ")
+	tableH := m.height - 18
+	if tableH < 5 {
+		tableH = 10
+	}
+	m.table.SetHeight(tableH)
+	m.table.SetFocused(true)
 
-	// ── Footer notes ─────────────────────────────────────────────────────
 	notes := strings.Join([]string{
 		dim.Render("All scores normalised to 0–10 before weighting."),
 		dim.Render("Weights re-normalised to 1.0 when sources are missing."),
@@ -172,9 +141,9 @@ func (m RatingWeightsScreen) View() string {
 
 	footer := "\n\n" + hintBar("q close")
 
-	return "  " + header +
+	return tea.NewView("  " + header +
 		"\n\n  " + rule +
-		"\n\n  " + table +
+		"\n\n  " + dim.Render(m.table.View()) +
 		"\n\n  " + notes +
-		footer
+		footer)
 }

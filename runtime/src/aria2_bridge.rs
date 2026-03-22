@@ -20,8 +20,12 @@
 //   ARIA2_SECRET = <rpc-secret>
 //   ARIA2_DIR    = ~/Downloads/stui                 (default download directory)
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
+use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -30,6 +34,7 @@ use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 use stui_aria2::{Aria2Client, Aria2Config, Aria2Error, AddOptions, NotificationEvent};
+use crate::storage::aria2_translator::{Aria2Translator, DownloadSession, MediaType};
 
 // ── Wire message shapes ───────────────────────────────────────────────────────
 
@@ -75,8 +80,9 @@ pub struct Aria2Bridge {
 }
 
 struct BridgeInner {
-    client: Aria2Client,
-    cfg:    Aria2Config,
+    client:     Aria2Client,
+    cfg:        Aria2Config,
+    translator: Aria2Translator,
     /// GID → original URI, tracked for the started message
     active: Mutex<HashMap<String, String>>,
 }
@@ -88,7 +94,7 @@ impl Aria2Bridge {
     }
 
     /// Try to connect to aria2c. Returns None if not reachable (non-fatal).
-    pub async fn try_connect() -> Option<Self> {
+    pub async fn try_connect(translator: Aria2Translator) -> Option<Self> {
         let cfg = Aria2Config::from_env();
         match cfg.connect().await {
             Ok(client) => {
@@ -97,6 +103,7 @@ impl Aria2Bridge {
                     inner: Arc::new(BridgeInner {
                         client,
                         cfg,
+                        translator,
                         active: Mutex::new(HashMap::new()),
                     }),
                 })
@@ -111,10 +118,14 @@ impl Aria2Bridge {
 
     /// Add a download (magnet URI, torrent URL, or HTTP URL) and return its GID.
     /// Emits a download_started message to the writer immediately.
+    /// Also registers the session with the aria2 translator for path organization.
     pub async fn start_download(
         &self,
         uri: &str,
         out: &mut impl Write,
+        media_type: Option<MediaType>,
+        title: Option<&str>,
+        year: Option<u32>,
     ) -> Result<String, Aria2Error> {
         let dir = self.inner.cfg.dir.clone();
         let opts = AddOptions::streaming(&dir);
@@ -129,6 +140,18 @@ impl Aria2Bridge {
 
         // Track the GID
         self.inner.active.lock().await.insert(gid.clone(), uri.to_string());
+
+        // Register session with translator for path organization
+        let aria2_dir: PathBuf = dir.clone().into();
+        let session = DownloadSession::new(
+            gid.clone(),
+            title.unwrap_or("unknown").to_string(),
+            aria2_dir,
+            PathBuf::new(), // organized_base set later when metadata available
+            media_type.unwrap_or(MediaType::Movie),
+            year,
+        );
+        self.inner.translator.register_session(gid.clone(), session).await;
 
         // Emit started message
         let msg = serde_json::to_string(&DownloadStartedWire {
@@ -202,6 +225,11 @@ impl Aria2Bridge {
                     match notif.event {
                         NotificationEvent::DownloadComplete |
                         NotificationEvent::BtDownloadComplete => {
+                            // Handle completion with translator (organize files)
+                            if let Err(e) = self.inner.translator.on_download_complete(&notif.gid).await {
+                                error!(gid = %notif.gid, err = %e, "failed to organize files after download");
+                            }
+
                             let files = self.collect_files(&notif.gid).await;
                             let msg = serde_json::to_string(&DownloadCompleteWire {
                                 r#type: "download_complete",
@@ -216,6 +244,10 @@ impl Aria2Bridge {
                                 .ok()
                                 .and_then(|s| s.error_message)
                                 .unwrap_or_else(|| "unknown error".into());
+
+                            // Handle error with translator
+                            self.inner.translator.on_download_error(&notif.gid, &err_msg).await;
+
                             let msg = serde_json::to_string(&DownloadErrorWire {
                                 r#type:  "download_error",
                                 gid:     &notif.gid,
@@ -240,5 +272,34 @@ impl Aria2Bridge {
             Ok(st) => st.files.into_iter().map(|f| f.path).collect(),
             Err(_) => vec![],
         }
+    }
+
+    /// Update the organized base path for a download session.
+    /// Call this after resolving metadata (title, year) for proper folder organization.
+    pub async fn set_organized_base(&self, gid: &str, organized_base: PathBuf) {
+        let mut sessions = self.inner.translator.sessions.write().await;
+        if let Some(session) = sessions.get_mut(gid) {
+            session.organized_base = organized_base;
+            debug!(gid = %gid, "updated organized base for session");
+        }
+    }
+
+    /// Add a file mapping for a session (original filename → organized relative path).
+    pub async fn add_file_mapping(&self, gid: &str, original: &str, organized: PathBuf) {
+        let mut sessions = self.inner.translator.sessions.write().await;
+        if let Some(session) = sessions.get_mut(gid) {
+            session.add_file(original, organized.to_string_lossy().as_ref());
+            debug!(gid = %gid, original = %original, "added file mapping");
+        }
+    }
+
+    /// Remove a download session (cancels tracking).
+    pub async fn remove_session(&self, gid: &str) -> io::Result<()> {
+        self.inner.translator.remove_session(gid).await
+    }
+
+    /// Get the translator for external access.
+    pub fn translator(&self) -> &Aria2Translator {
+        &self.inner.translator
     }
 }

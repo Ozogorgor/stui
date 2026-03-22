@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
@@ -44,7 +44,7 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width  = m.Width
+		s.width = m.Width
 		s.height = m.Height
 
 	// Keep entries in sync with live IPC events even while the screen is open.
@@ -68,9 +68,9 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		for _, e := range s.entries {
 			if e.GID == m.GID {
 				e.Progress = m.Progress
-				e.Speed    = m.Speed
-				e.ETA      = m.ETA
-				e.Seeders  = m.Seeders
+				e.Speed = m.Speed
+				e.ETA = m.ETA
+				e.Seeders = m.Seeders
 				break
 			}
 		}
@@ -78,11 +78,11 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	case ipc.DownloadCompleteMsg:
 		for _, e := range s.entries {
 			if e.GID == m.GID {
-				e.Status   = "complete"
+				e.Status = "complete"
 				e.Progress = 1.0
-				e.Files    = m.Files
-				e.Speed    = ""
-				e.ETA      = ""
+				e.Files = m.Files
+				e.Speed = ""
+				e.ETA = ""
 				break
 			}
 		}
@@ -91,7 +91,7 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		for _, e := range s.entries {
 			if e.GID == m.GID {
 				e.Status = "error"
-				e.Error  = m.Message
+				e.Error = m.Message
 				break
 			}
 		}
@@ -121,7 +121,7 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				s.client.CancelDownload(e.GID)
 				// Mark as error locally (runtime will emit download_error shortly)
 				e.Status = "error"
-				e.Error  = "cancelled"
+				e.Error = "cancelled"
 			}
 		case "esc", "q":
 			return s, func() tea.Msg { return screen.PopMsg{} }
@@ -132,13 +132,13 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (s DownloadsScreen) View() string {
-	acc   := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim   := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	neon  := lipgloss.NewStyle().Foreground(theme.T.Neon())
+func (s DownloadsScreen) View() tea.View {
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 	green := lipgloss.NewStyle().Foreground(theme.T.Success())
-	red   := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
-	bold  := lipgloss.NewStyle().Bold(true)
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
+	bold := lipgloss.NewStyle().Bold(true)
 
 	var sb strings.Builder
 	sb.WriteString("\n  " + acc.Render("⬇  Torrent Downloads") + "\n\n")
@@ -147,7 +147,7 @@ func (s DownloadsScreen) View() string {
 		sb.WriteString("  " + dim.Render("No downloads yet.") + "\n")
 		sb.WriteString("  " + dim.Render("Press ") + acc.Render("D") + dim.Render(" in the stream picker to pre-download a torrent.") + "\n")
 		sb.WriteString("\n  " + dim.Render("[Esc] close") + "\n")
-		return sb.String()
+		return tea.NewView(sb.String())
 	}
 
 	w := s.width - 4
@@ -156,14 +156,14 @@ func (s DownloadsScreen) View() string {
 	}
 
 	// ── Header row ───────────────────────────────────────────────────────
-	titleW    := w - 42
+	titleW := w - 42
 	if titleW < 20 {
 		titleW = 20
 	}
 	hdr := dim.Render(
 		padRight("Title", titleW) + "  " +
-		padRight("Progress", 20)  + "  " +
-		padRight("Speed", 10) + "  ETA",
+			padRight("Progress", 20) + "  " +
+			padRight("Speed", 10) + "  ETA",
 	)
 	sb.WriteString("  " + hdr + "\n")
 	sb.WriteString("  " + dim.Render(strings.Repeat("─", w)) + "\n")
@@ -202,7 +202,7 @@ func (s DownloadsScreen) View() string {
 
 		// Speed / status
 		speedCell := padRight(e.Speed, 10)
-		etaCell   := e.ETA
+		etaCell := e.ETA
 
 		// Status badge
 		var statusBadge string
@@ -214,12 +214,12 @@ func (s DownloadsScreen) View() string {
 		case "complete":
 			statusBadge = green.Render("  ✓ complete")
 			progressCell = padRight(strings.Repeat("█", barW)+" 100%", 22)
-			speedCell    = ""
-			etaCell      = ""
+			speedCell = ""
+			etaCell = ""
 		case "error":
 			statusBadge = red.Render("  ✗ " + e.Error)
-			speedCell   = ""
-			etaCell     = ""
+			speedCell = ""
+			etaCell = ""
 		}
 
 		line := titlePad + "  " + progressCell + speedCell + "  " + etaCell + statusBadge
@@ -240,7 +240,7 @@ func (s DownloadsScreen) View() string {
 		acc.Render("[Esc]") + dim.Render(" close")
 	sb.WriteString("  " + footer + "\n")
 
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

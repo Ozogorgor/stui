@@ -21,7 +21,7 @@ type Entry struct {
 	ID          string  `json:"id"`
 	Title       string  `json:"title"`
 	Year        string  `json:"year,omitempty"`
-	Tab         string  `json:"tab"`              // "movies" | "series"
+	Tab         string  `json:"tab"` // "movies" | "series"
 	Provider    string  `json:"provider"`
 	ImdbID      string  `json:"imdb_id,omitempty"`
 	Position    float64 `json:"position"`          // seconds
@@ -43,6 +43,17 @@ func (e Entry) Progress() float64 {
 		f = 1
 	}
 	return f
+}
+
+// StoreInterface defines the interface for watch history stores.
+type StoreInterface interface {
+	Save() error
+	Upsert(e Entry)
+	Get(id string) *Entry
+	Remove(id string) bool
+	MarkCompleted(id string)
+	InProgress() []Entry
+	UpdatePosition(id string, position, duration float64) bool
 }
 
 // Store holds all watch history entries and the path to its backing file.

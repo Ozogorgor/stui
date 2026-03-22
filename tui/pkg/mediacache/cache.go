@@ -17,11 +17,21 @@ import (
 	"github.com/stui/stui/internal/ipc"
 )
 
+// StoreInterface defines the interface for media cache stores.
+type StoreInterface interface {
+	SaveTab(tab string, entries []ipc.CatalogEntry)
+	EntriesForTab(tab string) []ipc.CatalogEntry
+	AllEntries() []ipc.CatalogEntry
+	TotalCount() int
+	Clear() error
+	LastUpdated() int64
+}
+
 // CachedTab is one tab's worth of saved catalog data.
 type CachedTab struct {
-	Tab       string           `json:"tab"`
+	Tab       string             `json:"tab"`
 	Entries   []ipc.CatalogEntry `json:"entries"`
-	UpdatedAt int64            `json:"updated_at"` // unix timestamp
+	UpdatedAt int64              `json:"updated_at"` // unix timestamp
 }
 
 // Store holds the full on-disk media cache.

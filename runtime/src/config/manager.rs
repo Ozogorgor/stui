@@ -44,6 +44,8 @@
 //! | `providers.enable_torrentio`     | `bool`   | Toggles Torrentio          |
 //! | `app.theme_mode`                 | `String` | Changes theme              |
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -112,11 +114,12 @@ impl ConfigManager {
             value: value.to_string(),
         });
 
-        // Persist API key changes immediately so they survive restarts.
-        if key.starts_with("api_keys.") {
-            if let Err(e) = self.persist().await {
-                warn!(key, error = %e, "failed to persist config after api_key update");
-            }
+        // Persist API key and plugin config changes immediately so they survive restarts.
+        if key.starts_with("api_keys.") || key.starts_with("plugins.") {
+            self.persist().await.map_err(|e| {
+                warn!(key, error = %e, "failed to persist config after plugin config update");
+                e
+            })?;
         }
 
         Ok(())
@@ -166,6 +169,13 @@ impl ConfigManager {
     /// Persists the change to disk and broadcasts `ConfigChanged`.
     pub async fn set_plugin_repos(&self, mut repos: Vec<String>) -> Result<()> {
         const BUILTIN: &str = "https://plugins.stui.dev";
+        
+        // Normalize URLs: strip trailing slashes, deduplicate
+        repos = repos
+            .into_iter()
+            .map(|r| r.trim_end_matches('/').to_string())
+            .collect();
+        
         // Remove any existing copy of the built-in URL so we can prepend it once.
         repos.retain(|r| r != BUILTIN);
         repos.insert(0, BUILTIN.to_string());
@@ -182,9 +192,10 @@ impl ConfigManager {
             value: repos.join(","),
         });
 
-        if let Err(e) = self.persist().await {
+        self.persist().await.map_err(|e| {
             warn!(error = %e, "failed to persist config after plugin_repos update");
-        }
+            e
+        })?;
 
         Ok(())
     }
@@ -269,9 +280,6 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
         "api_keys.omdb" => {
             cfg.api_keys.omdb = Some(as_string(key, value)?);
         }
-        "api_keys.lastfm" => {
-            cfg.api_keys.lastfm = Some(as_string(key, value)?);
-        }
 
         // ── [app] ─────────────────────────────────────────────────────────
         "app.theme_mode" => {
@@ -310,6 +318,29 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
             cfg.skipper.max_intro_secs = as_f64(key, value)?;
         }
 
+        // ── [storage] ──────────────────────────────────────────────────────
+        "storage.movies" => {
+            cfg.storage.movies = as_pathbuf(key, value)?;
+        }
+        "storage.series" => {
+            cfg.storage.series = as_pathbuf(key, value)?;
+        }
+        "storage.music" => {
+            cfg.storage.music = as_pathbuf(key, value)?;
+        }
+        "storage.anime" => {
+            cfg.storage.anime = as_pathbuf(key, value)?;
+        }
+        "storage.podcasts" => {
+            cfg.storage.podcasts = as_pathbuf(key, value)?;
+        }
+
+        // ── [plugins.*] ────────────────────────────────────────────────────
+        // Dynamic plugin config keys: "plugins.{plugin_name}.{field_key}"
+        other if other.starts_with("plugins.") => {
+            apply_plugin_key(cfg, other, value)?;
+        }
+
         other => {
             return Err(StuidError::config(format!("unknown config key: {other}")));
         }
@@ -319,6 +350,27 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
 }
 
 // ── Type coercion helpers ─────────────────────────────────────────────────────
+
+fn apply_plugin_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
+    // Format: "plugins.{plugin_name}.{field_key}"
+    let parts: Vec<&str> = key.splitn(4, '.').collect();
+    if parts.len() != 4 || parts[0] != "plugins" {
+        return Err(StuidError::config(format!(
+            "invalid plugin config key format: {key} (expected plugins.{{name}}.{{field}})"
+        )));
+    }
+
+    let plugin_name = parts[1];
+    let field_key = parts[2];
+    let string_value = as_string(key, value)?;
+
+    cfg.plugins
+        .entry(plugin_name.to_string())
+        .or_default()
+        .insert(field_key.to_string(), string_value);
+
+    Ok(())
+}
 
 fn as_bool(key: &str, v: &Value) -> Result<bool> {
     v.as_bool().ok_or_else(|| {
@@ -335,6 +387,15 @@ fn as_f64(key: &str, v: &Value) -> Result<f64> {
 fn as_u32(key: &str, v: &Value) -> Result<u32> {
     v.as_u64()
         .and_then(|n| u32::try_from(n).ok())
+        .or_else(|| {
+            v.as_f64().and_then(|f| {
+                if f.fract() == 0.0 && f >= 0.0 && f <= u32::MAX as f64 {
+                    Some(f as u32)
+                } else {
+                    None
+                }
+            })
+        })
         .ok_or_else(|| {
             StuidError::config(format!("{key}: expected u32, got {v}"))
         })
@@ -343,6 +404,15 @@ fn as_u32(key: &str, v: &Value) -> Result<u32> {
 fn as_usize(key: &str, v: &Value) -> Result<usize> {
     v.as_u64()
         .map(|n| n as usize)
+        .or_else(|| {
+            v.as_f64().and_then(|f| {
+                if f.fract() == 0.0 && f >= 0.0 && f <= usize::MAX as f64 {
+                    Some(f as usize)
+                } else {
+                    None
+                }
+            })
+        })
         .ok_or_else(|| {
             StuidError::config(format!("{key}: expected usize, got {v}"))
         })
@@ -353,6 +423,14 @@ fn as_string(key: &str, v: &Value) -> Result<String> {
         .map(|s| s.to_string())
         .ok_or_else(|| {
             StuidError::config(format!("{key}: expected string, got {v}"))
+        })
+}
+
+fn as_pathbuf(key: &str, v: &Value) -> Result<std::path::PathBuf> {
+    v.as_str()
+        .map(|s| std::path::PathBuf::from(s))
+        .ok_or_else(|| {
+            StuidError::config(format!("{key}: expected path string, got {v}"))
         })
 }
 

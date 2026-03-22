@@ -2,14 +2,14 @@
 //!
 //! # Structure
 //!
-//! ```
+//! ```text
 //! player/
-//!   mod.rs      — this file, public re-exports
-//!   state.rs    — PlaybackState: authoritative model of what mpv is doing
-//!   commands.rs — PlayerCommand: typed control API (pause/seek/sub-delay/…)
-//!   mpv.rs      — MpvPlayer: spawn, IPC socket, event broadcast
-//!   bridge.rs   — PlayerBridge: route stream_url → aria2 or mpv
-//!   manager.rs  — PlayerManager: queue, candidates, command dispatch
+//!   mod.rs      - this file, public re-exports
+//!   state.rs    - PlaybackState: authoritative model of what mpv is doing
+//!   commands.rs - PlayerCommand: typed control API (pause/seek/sub-delay/...)
+//!   mpv.rs      - MpvPlayer: spawn, IPC socket, event broadcast
+//!   bridge.rs   - PlayerBridge: route stream_url to aria2 or mpv
+//!   manager.rs  - PlayerManager: queue, candidates, command dispatch
 //! ```
 //!
 //! # Playback pipeline
@@ -43,8 +43,12 @@ pub mod mpv;
 pub mod bridge;
 pub mod manager;
 
-pub use state::{PlaybackState, TrackInfo};
+#[allow(unused_imports)]
+pub use state::PlaybackState;
+#[allow(unused_imports)]
 pub use commands::PlayerCommand;
-pub use mpv::{MpvPlayer, MpvEvent, PlayerProgressEvent, PlayerStartedEvent, PlayerEndedReason};
+#[allow(unused_imports)]
+pub use mpv::{MpvPlayer, PlayerStartedEvent};
 pub use bridge::PlayerBridge;
+#[allow(unused_imports)]
 pub use manager::{PlayerManager, QueueEntry, PlaybackRecord};

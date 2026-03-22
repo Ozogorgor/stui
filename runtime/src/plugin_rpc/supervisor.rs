@@ -20,7 +20,9 @@
 //! # Resource limits
 //!
 //! - `max_memory_mb`: Maximum resident memory (RSS) in MB
-//! - `max_cpu_percent`: Maximum CPU usage as percentage (0 = unlimited)
+//! - `cpu_nice_value`: Scheduling priority (`nice` level) for the plugin process;
+//!   lowers OS scheduling priority so the plugin yields CPU to other processes.
+//!   Does **not** enforce a hard CPU cap. 0 = no adjustment.
 //! - `request_timeout_ms`: Timeout for individual RPC calls in milliseconds
 
 use std::path::PathBuf;
@@ -52,12 +54,12 @@ pub struct SupervisorConfig {
     /// Kill the plugin if its resident memory (VmRSS) exceeds this many MB.
     /// `None` disables memory monitoring.
     pub max_memory_mb: Option<u64>,
-    /// Scheduling priority adjustment for the plugin process (0 = no adjustment).
-    /// Implemented via `nice` on Linux, which lowers the OS scheduling priority
-    /// so the plugin yields CPU to higher-priority processes.  This does NOT
-    /// enforce a hard CPU percentage cap — a plugin can still saturate a core
-    /// when the system is otherwise idle.
-    pub max_cpu_percent: u32,
+    /// `nice` scheduling priority adjustment for the plugin process (0 = no adjustment).
+    /// On Linux, a positive value lowers scheduling priority so the plugin yields
+    /// CPU time to higher-priority processes.  This does **not** enforce a hard
+    /// CPU percentage cap — a plugin can still saturate a core when the system is
+    /// otherwise idle.  Typical range: 0 (normal) to 19 (lowest priority).
+    pub cpu_nice_value: u32,
     /// Timeout for individual RPC calls in milliseconds.
     /// If a call takes longer, it returns an error.
     pub request_timeout_ms: u64,
@@ -71,7 +73,7 @@ impl Default for SupervisorConfig {
             backoff_base_ms:   1_000,
             backoff_max_ms:    60_000,
             max_memory_mb:     Some(512),
-            max_cpu_percent:   0,
+            cpu_nice_value:   0,
             request_timeout_ms: 30_000,
         }
     }
@@ -122,9 +124,9 @@ impl PluginSupervisor {
         let proc = PluginProcess::spawn(bin.clone()).await?;
         
         // Apply CPU limit if configured
-        if config.max_cpu_percent > 0 {
+        if config.cpu_nice_value > 0 {
             if let Some(pid) = proc.pid {
-                apply_cpu_limit(pid, config.max_cpu_percent)?;
+                apply_cpu_limit(pid, config.cpu_nice_value)?;
             }
         }
 
@@ -310,12 +312,19 @@ impl PluginSupervisor {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 backoff_ms = (backoff_ms * 2).min(config.backoff_max_ms);
 
+                // Re-check after sleeping: shutdown() may have been called while
+                // we were waiting. Without this check we would spawn a new process
+                // after a graceful shutdown and then immediately orphan it.
+                if failed.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 match PluginProcess::spawn(bin.clone()).await {
                     Ok(proc) => {
                         // Re-apply CPU limit after restart
-                        if config.max_cpu_percent > 0 {
+                        if config.cpu_nice_value > 0 {
                             if let Some(pid) = proc.pid {
-                                let _ = apply_cpu_limit(pid, config.max_cpu_percent);
+                                let _ = apply_cpu_limit(pid, config.cpu_nice_value);
                             }
                         }
                         info!(plugin = %proc.info.name, version = %proc.info.version, "plugin restarted");
@@ -410,20 +419,20 @@ fn nix_kill(pid: u32) -> std::io::Result<()> {
 
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
-fn apply_cpu_limit(pid: u32, max_cpu_percent: u32) -> Result<()> {
+fn apply_cpu_limit(pid: u32, cpu_nice_value: u32) -> Result<()> {
     use std::process::Command;
     
-    if max_cpu_percent == 0 || max_cpu_percent > 100 {
+    if cpu_nice_value == 0 || cpu_nice_value > 100 {
         return Ok(());
     }
 
-    let nice_value: i32 = if max_cpu_percent >= 80 {
+    let nice_value: i32 = if cpu_nice_value >= 80 {
         0
-    } else if max_cpu_percent >= 60 {
+    } else if cpu_nice_value >= 60 {
         5
-    } else if max_cpu_percent >= 40 {
+    } else if cpu_nice_value >= 40 {
         10
-    } else if max_cpu_percent >= 20 {
+    } else if cpu_nice_value >= 20 {
         15
     } else {
         19
@@ -451,6 +460,6 @@ fn apply_cpu_limit(pid: u32, max_cpu_percent: u32) -> Result<()> {
 
 #[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
-fn apply_cpu_limit(_pid: u32, _max_cpu_percent: u32) -> Result<()> {
+fn apply_cpu_limit(_pid: u32, _cpu_nice_value: u32) -> Result<()> {
     Ok(())
 }

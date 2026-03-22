@@ -1,5 +1,7 @@
 //! Sort orders for catalog results.
 
+#![allow(dead_code)]
+
 use crate::catalog::CatalogEntry;
 
 #[derive(Debug, Clone, Default)]
@@ -20,12 +22,21 @@ pub enum SortOrder {
 }
 
 impl SortOrder {
+    #[allow(dead_code)]
     pub fn apply(&self, mut entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         match self {
             SortOrder::Rating => {
                 entries.sort_by(|a, b| {
-                    let ra: f64 = a.rating.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0.0);
-                    let rb: f64 = b.rating.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0.0);
+                    let ra: f64 = a
+                        .rating
+                        .as_deref()
+                        .and_then(|r| r.parse().ok())
+                        .unwrap_or(0.0);
+                    let rb: f64 = b
+                        .rating
+                        .as_deref()
+                        .and_then(|r| r.parse().ok())
+                        .unwrap_or(0.0);
                     rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
@@ -38,8 +49,16 @@ impl SortOrder {
             }
             SortOrder::Oldest => {
                 entries.sort_by(|a, b| {
-                    let ya: u32 = a.year.as_deref().and_then(|y| y.parse().ok()).unwrap_or(9999);
-                    let yb: u32 = b.year.as_deref().and_then(|y| y.parse().ok()).unwrap_or(9999);
+                    let ya: u32 = a
+                        .year
+                        .as_deref()
+                        .and_then(|y| y.parse().ok())
+                        .unwrap_or(9999);
+                    let yb: u32 = b
+                        .year
+                        .as_deref()
+                        .and_then(|y| y.parse().ok())
+                        .unwrap_or(9999);
                     ya.cmp(&yb)
                 });
             }
@@ -52,8 +71,16 @@ impl SortOrder {
             SortOrder::Popularity => {
                 // Without vote_count data we fall back to rating
                 entries.sort_by(|a, b| {
-                    let ra: f64 = a.rating.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0.0);
-                    let rb: f64 = b.rating.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0.0);
+                    let ra: f64 = a
+                        .rating
+                        .as_deref()
+                        .and_then(|r| r.parse().ok())
+                        .unwrap_or(0.0);
+                    let rb: f64 = b
+                        .rating
+                        .as_deref()
+                        .and_then(|r| r.parse().ok())
+                        .unwrap_or(0.0);
                     rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
                 });
             }

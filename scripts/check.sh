@@ -18,7 +18,7 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: $0 [--fix]"
             echo ""
-            echo "  --fix   Auto-apply formatting fixes (cargo fmt, gofmt -w)"
+            echo "  --fix   Auto-apply formatting fixes (cargo fmt, gofmt -w, golangci-lint)"
             exit 0
             ;;
     esac
@@ -49,6 +49,12 @@ if [[ "$FIX" == "true" ]]; then
     run "cargo fmt" cargo fmt
 else
     run "cargo fmt --check" cargo fmt --check
+fi
+
+if command -v cargo-audit &>/dev/null; then
+    run "cargo audit" cargo audit --deny warnings
+else
+    echo "  (cargo-audit not found — skipping; install with: cargo install cargo-audit)"
 fi
 
 # Clippy: deny warnings on the runtime crate itself, allow them in deps.
@@ -82,6 +88,17 @@ else
 fi
 
 run "go vet" go vet ./...
+
+# golangci-lint — comprehensive Go linter
+if command -v golangci-lint &>/dev/null; then
+    if [[ "$FIX" == "true" ]]; then
+        run "golangci-lint" golangci-lint run --fix ./...
+    else
+        run "golangci-lint" golangci-lint run ./...
+    fi
+else
+    echo "  (golangci-lint not found — skipping; install with: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$(go env GOPATH)/bin v1.61.0)"
+fi
 
 # staticcheck if available (optional but recommended)
 if command -v staticcheck &>/dev/null; then

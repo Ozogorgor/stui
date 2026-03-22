@@ -9,6 +9,5 @@ pub mod host;
 pub mod supervisor;
 pub mod types;
 
-pub use host::{WasmHost, WasmInstance};
-pub use supervisor::{WasmSupervisor, WasmSupervisorConfig, WasmSupervisorStats};
+pub use supervisor::{WasmSupervisor, WasmSupervisorConfig};
 pub use types::*;

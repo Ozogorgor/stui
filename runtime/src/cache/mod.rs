@@ -12,30 +12,18 @@
 //! All caches are cheap to clone (they share the underlying `Arc`).
 //! The runtime holds a single `RuntimeCache` that groups all three.
 //!
-//! Usage:
-//! ```rust
-//! let cache = RuntimeCache::new();
-//!
-//! // Search cache
-//! if let Some(hits) = cache.search.get(&key).await { return hits; }
-//! let fresh = provider.search(...).await?;
-//! cache.search.insert(key, fresh.clone()).await;
-//!
-//! // Stream cache
-//! if let Some(streams) = cache.streams.get(id).await { return streams; }
-//! ```
+//! See individual cache modules for detailed usage examples.
 
 pub mod search;
 pub mod metadata;
 pub mod streams;
-
-use std::sync::Arc;
 
 pub use search::SearchCache;
 pub use metadata::MetadataCache;
 pub use streams::StreamCache;
 
 /// Grouped handle — clone freely, all fields share the underlying Arc storage.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct RuntimeCache {
     pub search:   SearchCache,
@@ -62,6 +50,7 @@ impl Default for RuntimeCache {
 use std::time::{Duration, Instant};
 
 /// A single cache entry wrapping a value with an expiry timestamp.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct Ttl<V> {
     pub value:      V,
@@ -69,10 +58,12 @@ pub(crate) struct Ttl<V> {
 }
 
 impl<V: Clone> Ttl<V> {
+    #[allow(dead_code)]
     pub fn new(value: V, ttl: Duration) -> Self {
         Ttl { value, expires_at: Instant::now() + ttl }
     }
 
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         Instant::now() < self.expires_at
     }
@@ -81,20 +72,7 @@ impl<V: Clone> Ttl<V> {
 // ── CachePolicy ───────────────────────────────────────────────────────────────
 
 /// TTL configuration for each cache tier.
-///
-/// Constructed via `CachePolicy::default()` (production values) or
-/// `CachePolicy::for_testing()` (very short TTLs to keep tests fast).
-/// Inject into `RuntimeCache::new_with_policy` when non-default TTLs
-/// are needed (e.g. different policies per deployment environment).
-///
-/// # Production defaults
-///
-/// | Cache tier   | Default TTL | Rationale |
-/// |-------------|-------------|-----------|
-/// | Search      | 5 minutes   | Providers are queryable; short TTL avoids stale trending |
-/// | Metadata    | 24 hours    | Ratings/descriptions rarely change |
-/// | Streams     | 10 minutes  | Magnet trackers, direct URLs may go stale |
-/// | Catalog     | 30 minutes  | Grid refresh feels live without hammering providers |
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CachePolicy {
     /// How long to cache full-text search results.

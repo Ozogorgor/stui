@@ -11,6 +11,8 @@
 //!                            on wake-up, fetches fresh `status`+`currentsong`
 //!                            and pushes an `mpd_status` event to the TUI
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

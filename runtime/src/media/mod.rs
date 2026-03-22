@@ -10,19 +10,20 @@
 //!   EpisodeInfo    — attaches to MediaType::Episode
 //!   TrackInfo      — attaches to MediaType::Track / Album
 
+pub mod episode;
 pub mod id;
 pub mod item;
-pub mod episode;
 pub mod source;
 pub mod stream;
 pub mod track;
 
+pub use episode::EpisodeInfo;
 pub use id::MediaId;
 pub use item::MediaItem;
-pub use episode::EpisodeInfo;
-pub use track::TrackInfo;
 pub use source::MediaSource;
-pub use stream::{StreamCandidate, StreamProtocol, BundledSubtitle};
+#[allow(unused_imports)]
+pub use stream::{BundledSubtitle, StreamCandidate, StreamProtocol};
+pub use track::TrackInfo;
 
 // Re-export MediaType here so the rest of the codebase imports from one place.
 // ipc.rs keeps its own copy for wire-format stability; media/ is the canonical

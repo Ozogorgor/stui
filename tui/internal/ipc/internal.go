@@ -27,14 +27,12 @@ func (c *Client) ping() (bool, error) {
 		RuntimeVersion string `json:"runtime_version"`
 		VersionOK      bool   `json:"version_ok"`
 	}
-	if err := resp.decodeData(&pong); err == nil {
-		c.NegotiatedIPCVersion = pong.IPCVersion
-		c.RuntimeVersion = pong.RuntimeVersion
-		return pong.VersionOK, nil
+	if err := resp.decodeData(&pong); err != nil {
+		return false, fmt.Errorf("ipc: failed to decode pong data: %w", err)
 	}
-
-	c.NegotiatedIPCVersion = IPCVersion
-	return true, nil
+	c.NegotiatedIPCVersion = pong.IPCVersion
+	c.RuntimeVersion = pong.RuntimeVersion
+	return pong.VersionOK, nil
 }
 
 func (c *Client) nextID() string {
@@ -136,6 +134,23 @@ func (c *Client) readLoop() {
 		c.program.Send(RuntimeErrorMsg{Err: fmt.Errorf("ipc: runtime stdout closed: %w", err)})
 	}
 	logger.Info("read loop terminated")
+
+	// Drain all pending response channels so goroutines waiting on them
+	// don't block forever now that the runtime is gone.
+	c.drainPending(fmt.Errorf("ipc: runtime process exited"))
+}
+
+// drainPending unblocks all callers that are waiting for a response by
+// sending them an error and then clearing the pending map.
+// Must be called after the readLoop exits.
+func (c *Client) drainPending(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, ch := range c.pending {
+		ch <- RawResponse{Err: err}
+		close(ch)
+		delete(c.pending, id)
+	}
 }
 
 func (c *Client) dispatchUnsolicited(raw RawResponse) {

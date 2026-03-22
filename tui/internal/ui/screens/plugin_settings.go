@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -61,20 +63,24 @@ type PluginSettingsScreen struct {
 
 	width  int
 	height int
+
+	spinner components.Spinner
 }
 
 // NewPluginSettingsScreen creates the screen and immediately requests provider data.
 func NewPluginSettingsScreen(client *ipc.Client) *PluginSettingsScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return &PluginSettingsScreen{
 		client:  client,
 		loading: true,
+		spinner: *components.NewSpinner("loading…", dimStyle),
 	}
 }
 
 // ── screen.Screen interface ───────────────────────────────────────────────────
 
 func (m *PluginSettingsScreen) Init() tea.Cmd {
-	// Fire the IPC call; result arrives as ProviderSettingsResultMsg
+	m.spinner.Start()
 	return func() tea.Msg {
 		m.client.GetProviderSettings()
 		return nil
@@ -84,6 +90,10 @@ func (m *PluginSettingsScreen) Init() tea.Cmd {
 func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case spinner.TickMsg:
+		m.spinner.Update(msg)
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -91,21 +101,25 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	// ── Provider data arrived ──────────────────────────────────────────────
 	case ipc.ProviderSettingsResultMsg:
 		m.loading = false
+		m.spinner.Stop()
 		if msg.Err != nil {
 			m.status = fmt.Sprintf("Error loading providers: %v", msg.Err)
 			return m, nil
 		}
 		m.providers = msg.Providers
-		// Build empty input buffers
+		// Build input buffers, pre-filled with existing config values
 		m.inputs = make([][]string, len(m.providers))
 		for i, p := range m.providers {
 			m.inputs[i] = make([]string, len(p.Fields))
+			for j, f := range p.Fields {
+				m.inputs[i][j] = f.Value
+			}
 		}
 		m.provCursor = 0
 		m.fieldCursor = 0
 
 	// ── Keyboard ──────────────────────────────────────────────────────────
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.loading {
 			return m, nil
 		}
@@ -166,8 +180,8 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 }
 
 // updateEditing handles key input while a field is being edited.
-func (m *PluginSettingsScreen) updateEditing(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
-	switch msg.Type {
+func (m *PluginSettingsScreen) updateEditing(msg tea.KeyPressMsg) (screen.Screen, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		m.editing = false
 		m.status = ""
@@ -192,8 +206,8 @@ func (m *PluginSettingsScreen) updateEditing(msg tea.KeyMsg) (screen.Screen, tea
 		}
 
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.inputs[m.provCursor][m.fieldCursor] += msg.String()
+		if len(msg.Text) > 0 {
+			m.inputs[m.provCursor][m.fieldCursor] += msg.Text
 		}
 	}
 
@@ -209,19 +223,19 @@ func (m *PluginSettingsScreen) currentProvider() ipc.ProviderSchema {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m *PluginSettingsScreen) View() string {
+func (m *PluginSettingsScreen) View() tea.View {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
 	header := accentStyle.Render("🔑  Provider Settings")
 
 	if m.loading {
-		return header + "\n\n" + dimStyle.Render("  Loading…") + "\n"
+		return tea.NewView(header + "\n\n  " + m.spinner.View() + "\n")
 	}
 
 	if len(m.providers) == 0 {
-		return header + "\n\n" + dimStyle.Render("  No providers found.") + "\n"
+		return tea.NewView(header + "\n\n" + dimStyle.Render("  No providers found.") + "\n")
 	}
 
 	// ── Left panel: provider list ──────────────────────────────────────────
@@ -327,7 +341,7 @@ func (m *PluginSettingsScreen) View() string {
 
 			boxStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				Width(rightW - 6).
+				Width(rightW-6).
 				Padding(0, 1)
 			if focused {
 				boxStyle = boxStyle.BorderForeground(theme.T.Accent())
@@ -365,5 +379,5 @@ func (m *PluginSettingsScreen) View() string {
 		footer = hintStr
 	}
 
-	return header + "\n\n" + body + "\n\n" + footer + "\n"
+	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
 }

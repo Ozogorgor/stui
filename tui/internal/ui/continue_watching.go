@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/state"
@@ -33,7 +33,7 @@ const cwMaxItems = 5
 
 // cwItems returns in-progress entries for the given tab ID, sorted by
 // LastWatched descending, capped at cwMaxItems.
-func cwItems(store *watchhistory.Store, tabID string) []watchhistory.Entry {
+func cwItems(store watchhistory.StoreInterface, tabID string) []watchhistory.Entry {
 	all := store.InProgress()
 	var filtered []watchhistory.Entry
 	for _, e := range all {

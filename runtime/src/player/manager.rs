@@ -10,11 +10,11 @@
 //!
 //! # Lifecycle
 //!
-//! ```
-//! manager.play_item(item)        → starts playback, sets current
-//! manager.enqueue(item)          → adds to tail of queue
-//! manager.skip()                 → stops current, plays next in queue
-//! manager.on_playback_ended(why) → called by bridge; auto-advances if queue non-empty
+//! ```text
+//! manager.play_item(item)        -> starts playback, sets current
+//! manager.enqueue(item)          -> adds to tail of queue
+//! manager.skip()                 -> stops current, plays next in queue
+//! manager.on_playback_ended(why) -> called by bridge; auto-advances if queue non-empty
 //! ```
 
 use std::collections::VecDeque;
@@ -33,6 +33,7 @@ use super::state::PlaybackState;
 
 // ── Queue entry ───────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
     pub item:     MediaItem,
@@ -45,6 +46,7 @@ pub struct QueueEntry {
 
 // ── Playback record ───────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PlaybackRecord {
     pub item:       MediaItem,
@@ -57,6 +59,7 @@ pub struct PlaybackRecord {
 
 // ── PlayerManager ─────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct PlayerManager {
     bridge:  PlayerBridge,
     inner:   Arc<Mutex<ManagerState>>,
@@ -204,6 +207,8 @@ impl PlayerManager {
             &entry.provider,
             entry.item.imdb_id.as_deref().unwrap_or(""),
             None,
+            Some(entry.item.media_type.clone()),
+            entry.item.year,
         ).await;
     }
 

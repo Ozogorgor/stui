@@ -45,13 +45,13 @@
 //!
 //! # Module structure
 //!
-//! ```
+//! ```text
 //! plugin_rpc/
-//!   mod.rs        ← this file
-//!   protocol.rs   ← wire types (RpcRequest, RpcResponse, PluginHandshake, …)
-//!   process.rs    ← PluginProcess: spawn, handshake, call()
-//!   supervisor.rs ← PluginSupervisor: restart, backoff, crash-loop, memory limit
-//!   manager.rs    ← PluginRpcManager: discovery, routing, fan-out, shutdown
+//!   mod.rs        - this file
+//!   protocol.rs   - wire types (RpcRequest, RpcResponse, PluginHandshake, ...)
+//!   process.rs    - PluginProcess: spawn, handshake, call()
+//!   supervisor.rs - PluginSupervisor: restart, backoff, crash-loop, memory limit
+//!   manager.rs    - PluginRpcManager: discovery, routing, fan-out, shutdown
 //! ```
 
 pub mod manager;
@@ -60,6 +60,9 @@ pub mod protocol;
 pub mod supervisor;
 
 pub use manager::PluginRpcManager;
+#[allow(unused_imports)]
 pub use process::PluginProcess;
+#[allow(unused_imports)]
 pub use protocol::{PluginHandshake, RpcRequest, RpcResponse};
+#[allow(unused_imports)]
 pub use supervisor::{PluginSupervisor, SupervisorConfig, SupervisorStats};

@@ -40,12 +40,48 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/pkg/theme"
 )
 
 // ── Config ─────────────────────────────────────────────────────────────────────
+
+type VisualizerMode int
+
+const (
+	VisualizerModeBars   VisualizerMode = iota // standard frequency bars
+	VisualizerModeMirror                       // mirrored bars (centered, symmetric)
+	VisualizerModeFilled                       // filled bars with rounded tops
+	VisualizerModeLED                          // LED-style discrete levels
+)
+
+var visualizerModeStrings = map[VisualizerMode]string{
+	VisualizerModeBars:   "bars",
+	VisualizerModeMirror: "mirror",
+	VisualizerModeFilled: "filled",
+	VisualizerModeLED:    "led",
+}
+
+func (m VisualizerMode) String() string {
+	if s, ok := visualizerModeStrings[m]; ok {
+		return s
+	}
+	return "bars"
+}
+
+func VisualizerModeFromString(s string) VisualizerMode {
+	switch strings.ToLower(s) {
+	case "mirror":
+		return VisualizerModeMirror
+	case "filled":
+		return VisualizerModeFilled
+	case "led":
+		return VisualizerModeLED
+	default:
+		return VisualizerModeBars
+	}
+}
 
 // VisualizerBackend identifies which external tool drives the visualization.
 type VisualizerBackend int
@@ -59,13 +95,14 @@ const (
 // VisualizerConfig holds all user-configurable settings for the visualizer.
 // These settings are TUI-local and not sent to the Rust runtime.
 type VisualizerConfig struct {
-	Backend    VisualizerBackend
-	Bars       int    // number of frequency bars (10–60)
-	Height     int    // visualizer height in terminal rows (4–20)
-	Framerate  int    // target refresh rate in fps (10–60)
-	Symmetric  bool   // mirror bars left↔right
-	Gradient   bool   // shade bars from accent (top) to dim (bottom)
-	InputMethod string // audio input method: "pulse" | "pipewire" | "alsa"
+	Backend     VisualizerBackend
+	Bars        int            // number of frequency bars (10–60)
+	Height      int            // visualizer height in terminal rows (4–20)
+	Framerate   int            // target refresh rate in fps (10–60)
+	Mode        VisualizerMode // visualization style
+	Gradient    bool           // shade bars from accent (top) to dim (bottom)
+	InputMethod string         // audio input method: "pulse" | "pipewire" | "alsa"
+	PeakHold    bool           // show peak hold indicators
 }
 
 // DefaultVisualizerConfig returns sensible defaults (visualizer off).
@@ -75,9 +112,10 @@ func DefaultVisualizerConfig() VisualizerConfig {
 		Bars:        20,
 		Height:      8,
 		Framerate:   20,
-		Symmetric:   false,
+		Mode:        VisualizerModeBars,
 		Gradient:    true,
 		InputMethod: "pulse",
+		PeakHold:    true,
 	}
 }
 
@@ -106,23 +144,27 @@ type VisualizerErrMsg struct{ Err error }
 
 // ── Visualizer ────────────────────────────────────────────────────────────────
 
-// Visualizer manages an external audio visualizer subprocess and exposes
-// normalized bar heights for rendering inside the TUI.
-//
-// Safe for concurrent use. The pointer is shared across Model value copies
-// (Bubble Tea clones Model on every Update).
+const peakHoldFrames = 30 // frames to hold peak before decaying
+
 type Visualizer struct {
-	mu     sync.RWMutex
-	cfg    VisualizerConfig
-	bars   []float64     // normalized amplitudes 0.0–1.0, len = cfg.Bars
-	cancel context.CancelFunc
-	done   chan struct{}  // closed when the reader goroutine exits
+	mu      sync.RWMutex
+	cfg     VisualizerConfig
+	bars    []float64 // normalized amplitudes 0.0–1.0, len = cfg.Bars
+	peaks   []float64 // peak hold values (decay over time)
+	peakAge []int     // frames since last peak update
+	cancel  context.CancelFunc
+	done    chan struct{} // closed when the reader goroutine exits
 }
 
 // NewVisualizer creates a Visualizer in the stopped state.
 func NewVisualizer(cfg VisualizerConfig) *Visualizer {
 	n := clampInt(cfg.Bars, 1, 120)
-	v := &Visualizer{cfg: cfg, bars: make([]float64, n)}
+	v := &Visualizer{
+		cfg:     cfg,
+		bars:    make([]float64, n),
+		peaks:   make([]float64, n),
+		peakAge: make([]int, n),
+	}
 	v.done = make(chan struct{})
 	close(v.done) // already "done" — nothing running
 	return v
@@ -135,7 +177,10 @@ func (v *Visualizer) Reconfigure(cfg VisualizerConfig) tea.Cmd {
 	v.Stop()
 	v.mu.Lock()
 	v.cfg = cfg
-	v.bars = make([]float64, clampInt(cfg.Bars, 1, 120))
+	n := clampInt(cfg.Bars, 1, 120)
+	v.bars = make([]float64, n)
+	v.peaks = make([]float64, n)
+	v.peakAge = make([]int, n)
 	v.mu.Unlock()
 	if cfg.Backend == VisualizerOff {
 		return nil
@@ -191,7 +236,19 @@ func (v *Visualizer) Start() error {
 			v.mu.Lock()
 			for i, b := range buf {
 				if i < len(v.bars) {
-					v.bars[i] = float64(b) / 255.0
+					val := float64(b) / 255.0
+					v.bars[i] = val
+					if cfg.PeakHold {
+						if val >= v.peaks[i] {
+							v.peaks[i] = val
+							v.peakAge[i] = 0
+						} else {
+							v.peakAge[i]++
+							if v.peakAge[i] > peakHoldFrames {
+								v.peaks[i] = val
+							}
+						}
+					}
 				}
 			}
 			v.mu.Unlock()
@@ -213,6 +270,8 @@ func (v *Visualizer) Stop() {
 	v.mu.Lock()
 	for i := range v.bars {
 		v.bars[i] = 0
+		v.peaks[i] = 0
+		v.peakAge[i] = 0
 	}
 	v.mu.Unlock()
 	// Re-initialize to a closed "done" so future Stop calls are safe
@@ -291,26 +350,49 @@ gravity = 100
 }
 
 func buildChromaCmd(ctx context.Context, cfg VisualizerConfig) (*exec.Cmd, error) {
-	// chroma (https://github.com/yuri-xyz/chroma) raw binary output.
-	// Each frame is cfg.Bars bytes (0-255 per bar), same protocol as cava 8-bit raw.
-	return exec.CommandContext(ctx, "chroma",
+	bars := clampInt(cfg.Bars, 1, 200)
+	fps := clampInt(cfg.Framerate, 1, 200)
+
+	args := []string{
 		"--output", "raw",
-		"--bars", fmt.Sprintf("%d", clampInt(cfg.Bars, 1, 200)),
-		"--fps", fmt.Sprintf("%d", clampInt(cfg.Framerate, 1, 200)),
-	), nil
+		"--bars", fmt.Sprintf("%d", bars),
+		"--fps", fmt.Sprintf("%d", fps),
+	}
+
+	if cfg.InputMethod != "" {
+		switch cfg.InputMethod {
+		case "alsa":
+			args = append(args, "--backend", "alsa")
+		case "pipewire":
+			args = append(args, "--backend", "pipewire")
+		}
+	}
+
+	return exec.CommandContext(ctx, "chroma", args...), nil
+}
+
+func IsChromaInstalled() bool {
+	_, err := exec.LookPath("chroma")
+	return err == nil
+}
+
+func IsCavaInstalled() bool {
+	_, err := exec.LookPath("cava")
+	return err == nil
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
-// blockRunes maps sub-cell fill amount (0–8 eighths) to Unicode block chars.
 var blockRunes = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-// RenderBars renders the current frequency bars into a multi-line lipgloss
-// string ready for embedding in the MPD HUD. width is the available columns.
+var ledChars = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
+
 func (v *Visualizer) RenderBars(width int) string {
 	v.mu.RLock()
 	raw := make([]float64, len(v.bars))
 	copy(raw, v.bars)
+	peaks := make([]float64, len(v.peaks))
+	copy(peaks, v.peaks)
 	cfg := v.cfg
 	v.mu.RUnlock()
 
@@ -320,8 +402,8 @@ func (v *Visualizer) RenderBars(width int) string {
 
 	bars := raw
 
-	// Symmetric: mirror the bar array around the centre
-	if cfg.Symmetric {
+	switch cfg.Mode {
+	case VisualizerModeMirror:
 		n := len(bars)
 		mirrored := make([]float64, n*2)
 		for i, b := range bars {
@@ -329,42 +411,61 @@ func (v *Visualizer) RenderBars(width int) string {
 			mirrored[n+i] = b
 		}
 		bars = mirrored
+		peakMirrored := make([]float64, n*2)
+		for i, p := range peaks {
+			peakMirrored[n-1-i] = p
+			peakMirrored[n+i] = p
+		}
+		peaks = peakMirrored
 	}
 
-	// Each bar occupies 2 columns (glyph + space); fit to available width
 	maxBars := width / 2
 	if maxBars < 1 {
 		maxBars = 1
 	}
 	if len(bars) > maxBars {
 		bars = bars[:maxBars]
+		peaks = peaks[:maxBars]
 	}
 
 	height := clampInt(cfg.Height, 1, 40)
 
-	// Build per-bar rune columns
 	cols := make([][]rune, len(bars))
+	peakCols := make([]bool, len(bars))
+
 	for i, h := range bars {
 		col := make([]rune, height)
-		// Total sub-cell fill (0 to height*8 eighths)
-		totalEighths := int(h * float64(height) * 8.0)
-		for row := 0; row < height; row++ {
-			// row 0 = top row, row height-1 = bottom row
-			rowsBelow := height - 1 - row
-			remaining := totalEighths - rowsBelow*8
-			switch {
-			case remaining <= 0:
-				col[row] = ' '
-			case remaining >= 8:
-				col[row] = '█'
-			default:
-				col[row] = blockRunes[remaining]
+		peakEighths := int(peaks[i] * float64(height) * 8.0)
+		peakCols[i] = cfg.PeakHold && peakEighths > 0
+
+		switch cfg.Mode {
+		case VisualizerModeLED:
+			for row := 0; row < height; row++ {
+				threshold := float64(height-row) / float64(height)
+				if h >= threshold {
+					col[row] = '█'
+				} else {
+					col[row] = ' '
+				}
+			}
+		default:
+			totalEighths := int(h * float64(height) * 8.0)
+			for row := 0; row < height; row++ {
+				rowsBelow := height - 1 - row
+				remaining := totalEighths - rowsBelow*8
+				switch {
+				case remaining <= 0:
+					col[row] = ' '
+				case remaining >= 8:
+					col[row] = '█'
+				default:
+					col[row] = blockRunes[remaining]
+				}
 			}
 		}
 		cols[i] = col
 	}
 
-	// Calculate left padding to centre the bars
 	totalW := len(cols)*2 - 1
 	padLeft := (width - totalW) / 2
 	if padLeft < 0 {
@@ -372,29 +473,39 @@ func (v *Visualizer) RenderBars(width int) string {
 	}
 	indent := strings.Repeat(" ", padLeft)
 
-	// Render rows top-to-bottom
 	accent := theme.T.Accent()
 	dim := theme.T.TextDim()
+	gold := lipgloss.Color("#FFD700")
 	var sb strings.Builder
 
 	for row := 0; row < height; row++ {
 		sb.WriteString(indent)
 
-		var rowStyle lipgloss.Style
-		if cfg.Gradient {
-			// Top rows → accent colour, bottom rows → dim
-			frac := float64(height-1-row) / float64(height-1)
-			if frac >= 0.45 {
-				rowStyle = lipgloss.NewStyle().Foreground(accent)
-			} else {
-				rowStyle = lipgloss.NewStyle().Foreground(dim)
-			}
-		} else {
-			rowStyle = lipgloss.NewStyle().Foreground(accent)
-		}
-
 		for j, col := range cols {
-			sb.WriteString(rowStyle.Render(string(col[row])))
+			var rowStyle lipgloss.Style
+			if cfg.Gradient {
+				frac := float64(height-1-row) / float64(height-1)
+				if frac >= 0.45 {
+					rowStyle = lipgloss.NewStyle().Foreground(accent)
+				} else {
+					rowStyle = lipgloss.NewStyle().Foreground(dim)
+				}
+			} else {
+				rowStyle = lipgloss.NewStyle().Foreground(accent)
+			}
+
+			r := col[row]
+			if r != ' ' {
+				if peakCols[j] {
+					threshold := float64(height-row) / float64(height)
+					if peaks[j] >= threshold && (row == 0 || col[row-1] == ' ') {
+						rowStyle = lipgloss.NewStyle().Foreground(gold)
+					}
+				}
+				sb.WriteString(rowStyle.Render(string(r)))
+			} else {
+				sb.WriteString(" ")
+			}
 			if j < len(cols)-1 {
 				sb.WriteRune(' ')
 			}

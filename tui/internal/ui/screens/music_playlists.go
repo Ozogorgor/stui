@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -27,27 +29,20 @@ type MusicPlaylistsScreen struct {
 	// Save-mode: prompt user for new playlist name
 	saving   bool
 	saveName string
+	spinner  components.Spinner
 }
 
 // NewMusicPlaylistsScreen creates a new playlists screen. Loading starts immediately.
 func NewMusicPlaylistsScreen(client *ipc.Client) MusicPlaylistsScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return MusicPlaylistsScreen{
 		client:      client,
 		loadingList: true,
+		spinner:     *components.NewSpinner("loading playlists…", dimStyle),
 	}
 }
 
-// Init triggers the initial playlist fetch.
-func (s MusicPlaylistsScreen) Init() tea.Cmd {
-	return func() tea.Msg {
-		if s.client != nil {
-			s.client.MpdGetPlaylists()
-		}
-		return nil
-	}
-}
-
-// fetchPreview sets previewFor/loadingPreview and returns a Cmd that fetches
+// fetchPreviewCmd sets previewFor/loadingPreview and returns a Cmd that fetches
 // tracks for the named playlist. Call only when s is addressable (i.e. after
 // mutation via value copy pattern).
 func fetchPreviewCmd(client *ipc.Client, name string) tea.Cmd {
@@ -67,9 +62,24 @@ func (s MusicPlaylistsScreen) hoveredPlaylistName() string {
 	return s.playlists[s.cursor].Name
 }
 
+// Init triggers the initial playlist fetch.
+func (s MusicPlaylistsScreen) Init() tea.Cmd {
+	s.spinner.Start()
+	return func() tea.Msg {
+		if s.client != nil {
+			s.client.MpdGetPlaylists()
+		}
+		return nil
+	}
+}
+
 // Update handles incoming messages and key events.
 func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd) {
 	switch m := msg.(type) {
+
+	case spinner.TickMsg:
+		s.spinner.Update(m)
+		return s, nil
 
 	case tea.WindowSizeMsg:
 		s.width = m.Width
@@ -77,6 +87,7 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 
 	case ipc.MpdPlaylistsResultMsg:
 		s.loadingList = false
+		s.spinner.Stop()
 		if m.Err == nil {
 			s.playlists = m.Playlists
 		}
@@ -95,7 +106,7 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 			}
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if s.saving {
 			return s.updateSaveMode(m)
 		}
@@ -105,7 +116,7 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 	return s, nil
 }
 
-func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyMsg) (MusicPlaylistsScreen, tea.Cmd) {
+func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylistsScreen, tea.Cmd) {
 	switch m.String() {
 	case "j", "down":
 		if s.cursor < len(s.playlists)-1 {
@@ -154,7 +165,7 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyMsg) (MusicPlaylistsScre
 	return s, nil
 }
 
-func (s MusicPlaylistsScreen) updateSaveMode(m tea.KeyMsg) (MusicPlaylistsScreen, tea.Cmd) {
+func (s MusicPlaylistsScreen) updateSaveMode(m tea.KeyPressMsg) (MusicPlaylistsScreen, tea.Cmd) {
 	switch m.String() {
 	case "esc":
 		s.saving = false
@@ -177,8 +188,8 @@ func (s MusicPlaylistsScreen) updateSaveMode(m tea.KeyMsg) (MusicPlaylistsScreen
 		}
 	default:
 		// Append printable characters.
-		if m.Type == tea.KeyRunes {
-			s.saveName += m.String()
+		if len(m.Text) > 0 {
+			s.saveName += m.Text
 		}
 	}
 	return s, nil
@@ -230,10 +241,10 @@ func (s MusicPlaylistsScreen) HandleMouse(x, localY int) (MusicPlaylistsScreen, 
 
 // View renders the playlists screen within the given width/height constraints.
 func (s MusicPlaylistsScreen) View(w, h int) string {
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
-	altStyle    := lipgloss.NewStyle().Foreground(theme.T.AccentAlt())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	altStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt())
 
 	footerText := "  enter load · a append · d delete · s save queue"
 	footerLine := dimStyle.Render(footerText)
@@ -246,7 +257,7 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 
 	if s.loadingList {
 		var sb strings.Builder
-		sb.WriteString(dimStyle.Render("  Loading playlists…") + "\n")
+		sb.WriteString("  " + s.spinner.View() + "\n")
 		for i := 1; i < bodyH; i++ {
 			sb.WriteString("\n")
 		}
@@ -325,7 +336,7 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 			if song.Duration > 0 {
 				dur = fmtMusicDuration(song.Duration)
 			}
-			titleStr  := truncate(song.Title, rightW-30)
+			titleStr := truncate(song.Title, rightW-30)
 			artistStr := truncate(song.Artist, 16)
 			line := fmt.Sprintf("  %-*s  %-16s  %s", rightW-34, titleStr, artistStr, dur)
 			rightLines = append(rightLines, textStyle.Render(line))

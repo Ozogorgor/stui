@@ -15,12 +15,10 @@
 //! Community stream providers live in the WASM plugin system:
 //! `~/.stui/plugins/prowlarr-provider.wasm`, etc.
 
-#[cfg(feature = "torrent")]
-pub mod torrent;
 pub mod direct;
 pub mod vod;
 
-#[cfg(feature = "torrent")]
-pub use torrent::TorrentProvider;
+#[allow(unused_imports)]
 pub use direct::DirectProvider;
+#[allow(unused_imports)]
 pub use vod::VodProvider;

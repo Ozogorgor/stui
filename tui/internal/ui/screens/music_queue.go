@@ -21,9 +21,11 @@ import (
 	"math"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -39,14 +41,17 @@ type MusicQueueScreen struct {
 	nowArtist  string
 	nowSongID  int32 // from MpdStatusMsg.SongID; 0 if unknown
 	nowSongPos int32 // from MpdStatusMsg.SongPos; -1 if unknown
+	spinner    components.Spinner
 }
 
 // NewMusicQueueScreen creates a new queue screen and triggers the initial fetch.
 func NewMusicQueueScreen(client *ipc.Client) MusicQueueScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	s := MusicQueueScreen{
 		client:     client,
 		loading:    true,
 		nowSongPos: -1,
+		spinner:    *components.NewSpinner("loading queue…", dimStyle),
 	}
 	if client != nil {
 		client.MpdGetQueue()
@@ -93,6 +98,10 @@ func (s MusicQueueScreen) isCurrentTrack(t ipc.MpdTrack) bool {
 func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	switch m := msg.(type) {
 
+	case spinner.TickMsg:
+		s.spinner.Update(m)
+		return s, nil
+
 	case tea.WindowSizeMsg:
 		s.width = m.Width
 		s.height = m.Height
@@ -102,9 +111,11 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			s.tracks = m.Tracks
 		}
 		s.loading = false
+		s.spinner.Stop()
 
 	case ipc.MpdQueueChangedMsg:
 		s.loading = true
+		s.spinner.Start()
 		return s, func() tea.Msg {
 			s.client.MpdGetQueue()
 			return nil
@@ -152,10 +163,10 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 
 // View renders the queue screen within the given width/height constraints.
 func (s MusicQueueScreen) View(w, h int) string {
-	accentStyle  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle     := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle    := lipgloss.NewStyle().Foreground(theme.T.Text())
-	cursorStyle  := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
+	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	cursorStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
 
 	footerLine := hintBar("enter play", "d remove", "c clear", "g top", "G bottom")
 
@@ -173,6 +184,14 @@ func (s MusicQueueScreen) View(w, h int) string {
 		listW = w - rightPanelW - 1 // 1 for separator
 	}
 
+	// Virtualized list rendering (for scroll calculation)
+	vl := components.NewVirtualizedList(
+		len(s.tracks),
+		s.cursor,
+		listHeight,
+		components.WithScrollMode(components.ScrollModeCenter),
+	)
+
 	// Header
 	headerText := fmt.Sprintf("Queue (%d tracks · %s)", len(s.tracks), fmtMusicDuration(s.totalDuration()))
 	header := accentStyle.Render(headerText)
@@ -180,9 +199,15 @@ func (s MusicQueueScreen) View(w, h int) string {
 	var sb strings.Builder
 	sb.WriteString(header + "\n")
 
+	// Add scroll indicator if there are more items above
+	start, _ := vl.VisibleRange()
+	if start > 0 {
+		sb.WriteString(dimStyle.Render("↑ more\n"))
+	}
+
 	// Loading / empty states
 	if s.loading && len(s.tracks) == 0 {
-		sb.WriteString(dimStyle.Render("  Loading queue…") + "\n")
+		sb.WriteString("  " + s.spinner.View() + "\n")
 		sb.WriteString(footerLine + "\n")
 		return sb.String()
 	}
@@ -206,19 +231,6 @@ func (s MusicQueueScreen) View(w, h int) string {
 		return sb.String()
 	}
 
-	// Scrolling: keep cursor visible
-	scroll := 0
-	if len(s.tracks) > listHeight {
-		// Center cursor when possible
-		scroll = s.cursor - listHeight/2
-		if scroll < 0 {
-			scroll = 0
-		}
-		if scroll > len(s.tracks)-listHeight {
-			scroll = len(s.tracks) - listHeight
-		}
-	}
-
 	// Column widths for the list pane
 	// Prefix: 3, Pos: 3, space: 1, Duration: 5, space: 1 → fixed = 13
 	// Remaining split: ~40% title, rest artist
@@ -236,12 +248,9 @@ func (s MusicQueueScreen) View(w, h int) string {
 	}
 
 	// Build list lines
+	_, end := vl.VisibleRange()
 	var listLines []string
-	end := scroll + listHeight
-	if end > len(s.tracks) {
-		end = len(s.tracks)
-	}
-	for i := scroll; i < end; i++ {
+	for i := start; i < end; i++ {
 		t := s.tracks[i]
 		isCurrent := s.isCurrentTrack(t)
 		isCursor := i == s.cursor

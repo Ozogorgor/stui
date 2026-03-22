@@ -9,19 +9,32 @@
 //! println!("{}", cfg.plugin_dir.display());
 //! ```
 //!
+//! # Secrets Management
+//!
+//! API keys and passwords are loaded from:
+//! 1. Environment variables (highest priority)
+//! 2. `~/.stui/secrets.env` file
+//!
+//! See [`secrets`] module for details.
+//!
 //! # Structure
 //!
-//! ```
+//! ```text
 //! config/
-//!   mod.rs      — this file; re-exports load() and RuntimeConfig
-//!   types.rs    — RuntimeConfig + nested structs (LoggingConfig, PlaybackConfig)
-//!   loader.rs   — TOML file parsing + STUI_* env-var overrides
+//!   mod.rs      - this file; re-exports load() and RuntimeConfig
+//!   types.rs    - RuntimeConfig + nested structs (LoggingConfig, PlaybackConfig)
+//!   loader.rs   - TOML file parsing + STUI_* env-var overrides
+//!   secrets.rs  - Secure secrets loading from .env file
+//!   manager.rs  - Live config hot-reload
 //! ```
 
 pub mod loader;
 pub mod types;
 pub mod manager;
+pub mod secrets;
 
 pub use loader::load;
-pub use types::{LoggingConfig, PlaybackConfig, ProvidersConfig, StreamingConfig, SubtitlesConfig, RuntimeConfig};
+#[allow(unused_imports)]
+pub use types::{PlaybackConfig, ProvidersConfig, StreamingConfig, SubtitlesConfig};
+pub use types::{LoggingConfig, RuntimeConfig};
 pub use manager::ConfigManager;

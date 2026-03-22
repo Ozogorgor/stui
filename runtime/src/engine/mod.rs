@@ -2,24 +2,28 @@
 //!
 //! # Structure
 //!
-//! ```
+//! ```text
 //! engine/
-//!   mod.rs       ← Engine struct: plugin registry, search/resolve/metadata dispatch
-//!   pipeline.rs  ← Pipeline struct: top-level orchestration (search → resolve → play)
+//!   mod.rs       - Engine struct: plugin registry, search/resolve/metadata dispatch
+//!   pipeline.rs  - Pipeline struct: top-level orchestration (search -> resolve -> play)
 //! ```
 //!
 //! Both live here because they are tightly related: the Pipeline *owns* an
 //! Engine and delegates all plugin calls to it.  Keeping them in the same
 //! module folder makes this dependency clear at a glance.
 
+#![allow(dead_code)]
+
 pub mod pipeline;
+#[allow(unused_imports)]
 pub use pipeline::Pipeline;
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::bail;
+use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -30,7 +34,8 @@ use crate::ipc::{
     PluginLoadedResponse, PluginStatus, PluginUnloadedResponse, ResolveResponse, Response,
     SearchResponse,
 };
-use crate::plugin::{self, ExecutionMode, LoadedPlugin, PluginCapability};
+use crate::plugin::{ExecutionMode, LoadedPlugin};
+use crate::plugin as plugin;
 use crate::sandbox::SandboxCtx;
 use crate::{resolver, scraper};
 
@@ -98,12 +103,18 @@ impl PluginRegistry {
     pub fn find_subtitle_providers(&self) -> Vec<&LoadedPlugin> {
         self.find_by_capability(crate::plugin::PluginCapability::Subtitles)
     }
+
+    /// Get all loaded plugins.
+    pub fn all_plugins(&self) -> impl Iterator<Item = &LoadedPlugin> {
+        self.plugins.values()
+    }
 }
 
 // ── Engine ───────────────────────────────────────────────────────────────────
 
 use crate::cache::RuntimeCache;
 
+#[derive(Clone)]
 pub struct Engine {
     registry:  Arc<RwLock<PluginRegistry>>,
     cache_dir: std::path::PathBuf,
@@ -123,6 +134,11 @@ impl Engine {
     }
 
     // ── Plugin lifecycle ──────────────────────────────────────────────────
+
+    /// Access the plugin registry (read-only).
+    pub fn registry(&self) -> &Arc<RwLock<PluginRegistry>> {
+        &self.registry
+    }
 
     pub async fn load_plugin(&self, plugin_dir: &Path) -> Result<Response> {
         let manifest = plugin::load_manifest(plugin_dir)?;
@@ -202,6 +218,7 @@ impl Engine {
                 version: p.manifest.plugin.version.clone(),
                 plugin_type: p.manifest.plugin.plugin_type.to_string(),
                 status: PluginStatus::Loaded,
+                tags: p.manifest.plugin.tags.clone(),
             })
             .collect();
         Response::PluginList(PluginListResponse { plugins })
@@ -515,6 +532,17 @@ impl Engine {
         policy:   &crate::quality::RankingPolicy,
         built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
     ) -> Vec<crate::quality::StreamCandidate> {
+        self.ranked_streams_with_circuit_breaker(entry_id, policy, built_in, None).await
+    }
+
+    /// Ranked streams with optional circuit breaker for failure tracking.
+    pub async fn ranked_streams_with_circuit_breaker(
+        &self,
+        entry_id: &str,
+        policy:   &crate::quality::RankingPolicy,
+        built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
+        circuit_breaker: Option<&crate::providers::CircuitBreaker>,
+    ) -> Vec<crate::quality::StreamCandidate> {
         // Check stream cache first
         if let Some(cached) = self.cache.streams.get(entry_id).await {
             return crate::quality::rank(cached, policy);
@@ -522,18 +550,54 @@ impl Engine {
 
         // Fan out to all stream-capable built-in providers concurrently.
         let mut set = tokio::task::JoinSet::new();
-        for provider in built_in.iter().filter(|p| p.has_streams()) {
-            let p  = std::sync::Arc::clone(provider);
+        let mut skipped_providers = vec![];
+        let cb_clone = circuit_breaker.map(|cb| cb.clone());
+
+        for provider in built_in.iter() {
+            if !provider.has_streams() {
+                continue;
+            }
+            let provider_name = provider.name().to_string();
+
+            // Check circuit breaker if available
+            if let Some(cb) = cb_clone.as_ref() {
+                if !cb.is_available(&provider_name).await {
+                    skipped_providers.push(provider_name);
+                    continue;
+                }
+            }
+
+            let p = std::sync::Arc::clone(provider);
             let id = entry_id.to_string();
-            set.spawn(async move { p.streams(&id).await });
+            set.spawn(async move {
+                let result = p.streams(&id).await;
+                (provider_name, result)
+            });
+        }
+
+        if !skipped_providers.is_empty() {
+            info!(providers = ?skipped_providers, "circuit breakers open for providers");
         }
 
         let mut all_streams = vec![];
         while let Some(result) = set.join_next().await {
             match result {
-                Ok(Ok(mut streams)) => all_streams.append(&mut streams),
-                Ok(Err(e))          => warn!("stream provider error: {e}"),
-                Err(e)              => warn!("stream task panicked: {e}"),
+                Ok((provider_name, Ok(mut streams))) => {
+                    all_streams.append(&mut streams);
+                    // Record success with circuit breaker
+                    if let Some(cb) = &cb_clone {
+                        cb.record_success(&provider_name).await;
+                    }
+                }
+                Ok((provider_name, Err(e))) => {
+                    warn!(provider = provider_name, err = %e, "stream provider error");
+                    if let Some(cb) = &cb_clone {
+                        cb.record_failure(&provider_name).await;
+                    }
+                }
+                Err(e) => {
+                    warn!("stream task panicked: {e}");
+                }
             }
         }
 

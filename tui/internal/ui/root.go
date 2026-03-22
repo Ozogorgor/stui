@@ -36,7 +36,7 @@ package ui
 // time as they grow beyond ~100 lines.
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stui/stui/internal/ui/screen"
 )
 
@@ -76,11 +76,11 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// ── Global keys ────────────────────────────────────────────────────
-	if key, ok := msg.(tea.KeyMsg); ok {
-		switch key.Type {
-		case tea.KeyCtrlC:
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		switch key.String() {
+		case "ctrl+c", "q":
 			return r, tea.Quit
-		case tea.KeyEscape:
+		case "esc":
 			if len(r.history) > 0 {
 				// Pop the previous screen
 				prev := r.history[len(r.history)-1]
@@ -109,7 +109,7 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View delegates to the active screen.
-func (r RootModel) View() string {
+func (r RootModel) View() tea.View {
 	return r.active.View()
 }
 
@@ -142,6 +142,6 @@ func (s LegacyScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return s, cmd
 }
 
-func (s LegacyScreen) View() string {
+func (s LegacyScreen) View() tea.View {
 	return s.m.View()
 }

@@ -2,13 +2,13 @@ package screen
 
 // screen.go — Screen interface and navigation primitives.
 
-import tea "github.com/charmbracelet/bubbletea"
+import tea "charm.land/bubbletea/v2"
 
 // Screen is the contract every stui screen must satisfy.
 type Screen interface {
 	Init() tea.Cmd
 	Update(msg tea.Msg) (Screen, tea.Cmd)
-	View() string
+	View() tea.View
 }
 
 // TransitionMsg is sent as a Cmd to tell RootModel to swap screens.

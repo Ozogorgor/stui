@@ -24,6 +24,8 @@
 //!
 //! No special cases needed per media type.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 /// Coarse content-type classification.
@@ -74,40 +76,50 @@ impl MediaSource {
     /// Short label suitable for display in the TUI tab bar.
     pub fn tab_label(&self) -> &'static str {
         match self {
-            MediaSource::Movie     => "Movies",
-            MediaSource::Series    => "Series",
-            MediaSource::Episode   => "Series",   // groups with Series in UI
-            MediaSource::Track     => "Music",
-            MediaSource::Album     => "Music",
-            MediaSource::Radio     => "Radio",
-            MediaSource::Podcast   => "Podcasts",
-            MediaSource::Video     => "Videos",
+            MediaSource::Movie => "Movies",
+            MediaSource::Series => "Series",
+            MediaSource::Episode => "Series", // groups with Series in UI
+            MediaSource::Track => "Music",
+            MediaSource::Album => "Music",
+            MediaSource::Radio => "Radio",
+            MediaSource::Podcast => "Podcasts",
+            MediaSource::Video => "Videos",
             MediaSource::LocalFile => "Library",
-            MediaSource::Unknown   => "Other",
+            MediaSource::Unknown => "Other",
         }
     }
 
     /// Returns true if this source type is audio-only (no video track expected).
     pub fn is_audio_only(&self) -> bool {
-        matches!(self, MediaSource::Track | MediaSource::Album | MediaSource::Radio | MediaSource::Podcast)
+        matches!(
+            self,
+            MediaSource::Track | MediaSource::Album | MediaSource::Radio | MediaSource::Podcast
+        )
     }
 
     /// Returns true if this source typically resolves via torrent or magnet.
     pub fn supports_torrent(&self) -> bool {
-        matches!(self, MediaSource::Movie | MediaSource::Series | MediaSource::Episode | MediaSource::Track | MediaSource::Album)
+        matches!(
+            self,
+            MediaSource::Movie
+                | MediaSource::Series
+                | MediaSource::Episode
+                | MediaSource::Track
+                | MediaSource::Album
+        )
     }
 
     /// Best-guess `MediaSource` from a legacy `MediaTab` string.
     pub fn from_tab_str(tab: &str) -> Self {
         match tab.to_lowercase().as_str() {
-            "movies"   => MediaSource::Movie,
-            "series"   => MediaSource::Series,
-            "music"    => MediaSource::Track,
-            "library"  => MediaSource::LocalFile,
-            "radio"    => MediaSource::Radio,
+            "movies" => MediaSource::Movie,
+            "series" => MediaSource::Series,
+            "music" => MediaSource::Track,
+            "library" => MediaSource::LocalFile,
+            "radio" => MediaSource::Radio,
             "podcasts" => MediaSource::Podcast,
-            "videos"   => MediaSource::Video,
-            _          => MediaSource::Unknown,
+            "videos" => MediaSource::Video,
+            _ => MediaSource::Unknown,
         }
     }
 

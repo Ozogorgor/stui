@@ -8,9 +8,9 @@
 //!
 //! Controlled by `LoggingConfig::level` (from `stui.toml`) or the
 //! `STUI_LOG` environment variable, which takes precedence.
-//! Uses the standard `tracing` filter syntax, e.g.:
+//! Uses the standard `tracing` filter syntax:
 //!
-//! ```
+//! ```text
 //! STUI_LOG=stui_runtime=debug,warn   # debug for this crate, warn elsewhere
 //! STUI_LOG=debug                     # everything at debug
 //! ```
@@ -20,7 +20,6 @@
 //! If `LoggingConfig::log_file` is set, a second layer appends structured
 //! JSON logs to that file.  Useful for post-mortem debugging of daemon mode.
 
-use std::path::Path;
 use tracing::info;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
@@ -37,11 +36,9 @@ use crate::config::LoggingConfig;
 /// Subsequent calls are silently ignored (guard against double-init in tests).
 pub fn init(cfg: &LoggingConfig) {
     // STUI_LOG env var takes precedence over config file level
-    let filter_str = std::env::var("STUI_LOG")
-        .unwrap_or_else(|_| cfg.level.clone());
+    let filter_str = std::env::var("STUI_LOG").unwrap_or_else(|_| cfg.level.clone());
 
-    let filter = EnvFilter::try_new(&filter_str)
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_new(&filter_str).unwrap_or_else(|_| EnvFilter::new("info"));
 
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)
@@ -62,7 +59,7 @@ pub fn init(cfg: &LoggingConfig) {
 /// Convenience wrapper: init with just a level string (useful in tests).
 pub fn init_with_level(level: &str) {
     let cfg = LoggingConfig {
-        level:    level.to_string(),
+        level: level.to_string(),
         log_file: None,
     };
     init(&cfg);

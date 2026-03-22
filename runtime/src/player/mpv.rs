@@ -29,15 +29,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::state::{PlaybackState, TrackInfo};
+use super::state::TrackInfo;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 // ── Public event types ────────────────────────────────────────────────────────
 
@@ -110,6 +109,7 @@ impl MpvPlayer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<MpvEvent> {
         self.inner.event_tx.subscribe()
     }

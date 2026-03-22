@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/actions"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -31,7 +33,7 @@ type EpisodeScreen struct {
 	client       *ipc.Client
 	title        string
 	seriesID     string
-	seasons      []int         // available season numbers
+	seasons      []int // available season numbers
 	seasonCursor int
 	episodes     []episodeItem // episodes for the selected season
 	epCursor     int
@@ -40,12 +42,14 @@ type EpisodeScreen struct {
 	width        int
 	gridView     bool // true = grid cell layout; false = list layout
 	bingeEnabled bool // true = auto-play next episode on end-of-file
+	spinner      components.Spinner
 }
 
 // episodeItem is aliased from ipc.EpisodeEntry
 type episodeItem = ipc.EpisodeEntry
 
 func NewEpisodeScreen(client *ipc.Client, title, seriesID string, autoplayDefault bool) EpisodeScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return EpisodeScreen{
 		client:       client,
 		title:        title,
@@ -53,13 +57,14 @@ func NewEpisodeScreen(client *ipc.Client, title, seriesID string, autoplayDefaul
 		loading:      true,
 		seasons:      []int{1, 2, 3, 4, 5}, // populated from metadata
 		bingeEnabled: autoplayDefault,
+		spinner:      *components.NewSpinner("loading episodes…", dimStyle),
 	}
 }
 
 // gridCols returns how many cells fit across the episode panel.
 func (s EpisodeScreen) gridCols() int {
 	const seasonW = 16
-	const cellW   = 6 // "[E01] " — 6 chars per cell
+	const cellW = 6 // "[E01] " — 6 chars per cell
 	avail := s.width - seasonW - 4
 	if avail < cellW {
 		return 1
@@ -72,6 +77,7 @@ func (s EpisodeScreen) gridCols() int {
 }
 
 func (s EpisodeScreen) Init() tea.Cmd {
+	s.spinner.Start()
 	if s.client != nil && s.seriesID != "" && len(s.seasons) > 0 {
 		s.client.LoadEpisodes(s.seriesID, s.seasons[0])
 	}
@@ -80,6 +86,10 @@ func (s EpisodeScreen) Init() tea.Cmd {
 
 func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
+
+	case spinner.TickMsg:
+		s.spinner.Update(m)
+		return s, nil
 
 	case tea.WindowSizeMsg:
 		s.width = m.Width
@@ -90,6 +100,7 @@ func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.episodes = m.Episodes
 			s.epCursor = 0
 			s.loading = false
+			s.spinner.Stop()
 		}
 
 	case tea.KeyMsg:
@@ -216,17 +227,17 @@ func (s EpisodeScreen) playSelected() tea.Cmd {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (s EpisodeScreen) View() string {
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+func (s EpisodeScreen) View() tea.View {
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 
 	var sb strings.Builder
 	sb.WriteString("\n  " + acc.Render("\U0001f4fa "+s.title) + "\n\n")
 
 	if s.loading {
-		sb.WriteString(dim.Render("  Loading episodes\u2026") + "\n")
-		return sb.String()
+		sb.WriteString("  " + s.spinner.View() + "\n")
+		return tea.NewView(sb.String())
 	}
 
 	const seasonW = 16
@@ -257,7 +268,7 @@ func (s EpisodeScreen) View() string {
 	navHint := hintBar("←→↑↓ navigate", "enter play", "esc back")
 	sb.WriteString("\n\n" + navHint + "   " + modeHint + "   " + bingeHint + "\n")
 
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func (s EpisodeScreen) renderSeasonPanel(acc, dim lipgloss.Style, w int) string {

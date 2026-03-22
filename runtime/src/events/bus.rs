@@ -2,29 +2,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! // In startup code:
-//! let bus = Arc::new(EventBus::new());
-//!
-//! // Emitting (any module with a bus handle):
-//! bus.emit(RuntimeEvent::SearchRequested {
-//!     query: "Interstellar".into(),
-//!     tab:   "movies".into(),
-//! });
-//!
-//! // Subscribing (e.g. in a background task):
-//! let mut rx = bus.subscribe();
-//! tokio::spawn(async move {
-//!     while let Ok(event) = rx.recv().await {
-//!         match event {
-//!             RuntimeEvent::PlaybackStarted { title, .. } => {
-//!                 // scrobble to Trakt, update history, etc.
-//!             }
-//!             _ => {}
-//!         }
-//!     }
-//! });
-//! ```
+//! See the [events module](crate::events) for detailed usage examples.
 //!
 //! # Backpressure
 //!
@@ -37,6 +15,8 @@
 //!
 //! Call `EventBus::spawn_logger` to attach a background task that logs
 //! every event at TRACE level.  Useful during development.
+
+#![allow(dead_code)]
 
 use std::sync::Arc;
 
@@ -81,15 +61,18 @@ impl EventBus {
     ///
     /// Subscribers created *after* an event is emitted will not receive
     /// that event (broadcast semantics).
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<RuntimeEvent> {
         self.sender.subscribe()
     }
 
     /// Number of active subscribers.
+    #[allow(dead_code)]
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
     }
 
+    #[allow(dead_code)]
     /// Spawn a background task that logs every event at TRACE level.
     ///
     /// Returns immediately; the task runs until the bus is dropped.

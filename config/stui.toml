@@ -2,6 +2,19 @@
 # Location: ~/.stui/config/stui.toml
 # All values shown are defaults. Remove a field to use the default.
 
+# IMPORTANT: API keys and passwords should NOT be stored here.
+# Instead, use ~/.stui/secrets.env (see below) or environment variables.
+#
+# Secrets file (~/.stui/secrets.env) format:
+#   TMDB_API_KEY=your_tmdb_key
+#   OMDB_API_KEY=your_omdb_key
+#   LASTFM_API_KEY=your_lastfm_key
+#   MPD_PASSWORD=your_mpd_password
+#   PROWLARR_API_KEY=your_prowlarr_key
+#   OPENSUBTITLES_API_KEY=your_opensubtitles_key
+#
+# Permissions: chmod 600 ~/.stui/secrets.env
+
 [app]
 log_level  = "info"           # trace | debug | info | warn | error
 plugin_dir = "~/.stui/plugins"
@@ -59,7 +72,8 @@ preferred_language = "eng"
 default_delay      = 0.0
 
 # ── Providers ─────────────────────────────────────────────────────────────────
-# API keys are set via environment variables (TMDB_API_KEY, OMDB_API_KEY, etc.)
+# API keys are loaded from ~/.stui/secrets.env or environment variables.
+# See the Secrets section above for details.
 
 [providers]
 enable_tmdb          = true

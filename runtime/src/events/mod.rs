@@ -2,11 +2,11 @@
 //!
 //! # Module structure
 //!
-//! ```
+//! ```text
 //! events/
-//!   mod.rs    ← this file; re-exports EventBus and RuntimeEvent
-//!   event.rs  ← RuntimeEvent enum (all variants)
-//!   bus.rs    ← EventBus: emit(), subscribe(), spawn_logger()
+//!   mod.rs    - this file; re-exports EventBus and RuntimeEvent
+//!   event.rs  - RuntimeEvent enum (all variants)
+//!   bus.rs    - EventBus: emit(), subscribe(), spawn_logger()
 //! ```
 //!
 //! # Architecture overview
@@ -36,7 +36,7 @@
 //!
 //! Create one `EventBus` in `main.rs` and inject it into subsystems:
 //!
-//! ```rust
+//! ```text
 //! let bus = Arc::new(EventBus::new());
 //! bus.spawn_logger(); // enable with STUI_LOG=trace
 //!

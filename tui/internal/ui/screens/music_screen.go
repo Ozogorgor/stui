@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -50,10 +50,10 @@ func (t MusicSubTab) String() string {
 
 // MusicScreen is the top-level container for all Music sub-tabs.
 type MusicScreen struct {
-	client    *ipc.Client
-	active    MusicSubTab
-	width     int
-	height    int
+	client *ipc.Client
+	active MusicSubTab
+	width  int
+	height int
 
 	browse    MusicBrowseScreen
 	queue     MusicQueueScreen
@@ -93,9 +93,9 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 		s.height = m.Height
 		// Fan out to all sub-screens.
 		var b1, b2, b3, b4 tea.Cmd
-		s.browse, b1    = s.browse.Update(m)
-		s.queue, b2     = s.queue.Update(m)
-		s.library, b3   = s.library.Update(m)
+		s.browse, b1 = s.browse.Update(m)
+		s.queue, b2 = s.queue.Update(m)
+		s.library, b3 = s.library.Update(m)
 		s.playlists, b4 = s.playlists.Update(m)
 		return s, tea.Batch(b1, b2, b3, b4)
 
@@ -124,24 +124,10 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Wheel events: delegate to active sub-screen as synthetic j/k keypresses.
-		if m.Button == tea.MouseButtonWheelUp || m.Button == tea.MouseButtonWheelDown {
-			keyStr := "j"
-			if m.Button == tea.MouseButtonWheelUp {
-				keyStr = "k"
-			}
-			keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(keyStr)}
-			var cmd tea.Cmd
-			switch s.active {
-			case MusicBrowse:
-				s.browse, cmd = s.browse.Update(keyMsg)
-			case MusicQueue:
-				s.queue, cmd = s.queue.Update(keyMsg)
-			case MusicLibrary:
-				s.library, cmd = s.library.Update(keyMsg)
-			case MusicPlaylists:
-				s.playlists, cmd = s.playlists.Update(keyMsg)
-			}
-			return s, cmd
+		mouse := m.Mouse()
+		if mouse.Button == tea.MouseWheelUp || mouse.Button == tea.MouseWheelDown {
+			// Wheel events are handled - navigation happens through parent model
+			return s, nil
 		}
 		return s, nil
 
@@ -149,15 +135,15 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 		// Fan out all other messages to ALL sub-screens so they maintain state.
 		var cmds []tea.Cmd
 		var c tea.Cmd
-		s.browse, c    = s.browse.Update(msg)
+		s.browse, c = s.browse.Update(msg)
 		if c != nil {
 			cmds = append(cmds, c)
 		}
-		s.queue, c     = s.queue.Update(msg)
+		s.queue, c = s.queue.Update(msg)
 		if c != nil {
 			cmds = append(cmds, c)
 		}
-		s.library, c   = s.library.Update(msg)
+		s.library, c = s.library.Update(msg)
 		if c != nil {
 			cmds = append(cmds, c)
 		}
@@ -170,7 +156,7 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 }
 
 // View renders the sub-tab bar followed by the active sub-screen.
-func (s MusicScreen) View() string {
+func (s MusicScreen) View() tea.View {
 	tabBar := s.renderSubTabBar()
 	subH := s.height - 2
 	if subH < 0 {
@@ -187,13 +173,13 @@ func (s MusicScreen) View() string {
 	case MusicPlaylists:
 		body = s.playlists.View(s.width, subH)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, tabBar, body)
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, tabBar, body))
 }
 
 // renderSubTabBar builds the two-line sub-tab header.
 func (s MusicScreen) renderSubTabBar() string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
 	tabs := []MusicSubTab{MusicBrowse, MusicQueue, MusicLibrary, MusicPlaylists}
 	var parts []string

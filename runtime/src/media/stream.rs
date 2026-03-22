@@ -13,6 +13,8 @@
 //!
 //! The `quality` module scores candidates; this module owns the data model.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 // ── StreamProtocol ────────────────────────────────────────────────────────────
@@ -76,7 +78,9 @@ impl StreamProtocol {
     pub fn is_direct(&self) -> bool {
         matches!(
             self,
-            StreamProtocol::Http | StreamProtocol::Hls | StreamProtocol::Dash
+            StreamProtocol::Http
+                | StreamProtocol::Hls
+                | StreamProtocol::Dash
                 | StreamProtocol::Rtmp
         )
     }
@@ -123,7 +127,6 @@ pub struct StreamCandidate {
     pub subtitles: Vec<BundledSubtitle>,
 
     // ── Extended fields (populated when available) ────────────────────────
-
     /// Approximate total file size in bytes (used to estimate download time).
     pub size_bytes: Option<u64>,
 
@@ -147,8 +150,8 @@ pub struct StreamCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundledSubtitle {
     pub language: String,
-    pub url:      String,
-    pub format:   String, // "srt" | "vtt" | "ass"
+    pub url: String,
+    pub format: String, // "srt" | "vtt" | "ass"
 }
 
 impl StreamCandidate {
@@ -160,17 +163,17 @@ impl StreamCandidate {
             protocol,
             name: url.clone(),
             url,
-            provider:        provider.into(),
-            quality:         None,
-            bitrate_kbps:    None,
-            seeders:         None,
-            source:          None,
-            codec:           None,
-            subtitles:       vec![],
-            size_bytes:      None,
-            audio_lang:      None,
-            subtitle_langs:  vec![],
-            latency_ms:      None,
+            provider: provider.into(),
+            quality: None,
+            bitrate_kbps: None,
+            seeders: None,
+            source: None,
+            codec: None,
+            subtitles: vec![],
+            size_bytes: None,
+            audio_lang: None,
+            subtitle_langs: vec![],
+            latency_ms: None,
             throughput_kbps: None,
         }
     }

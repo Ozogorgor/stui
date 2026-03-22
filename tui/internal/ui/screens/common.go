@@ -4,7 +4,7 @@ package screens
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/pkg/theme"
 )
 

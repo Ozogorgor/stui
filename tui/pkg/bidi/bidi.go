@@ -27,7 +27,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/text/unicode/bidi"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Mode controls how bidirectional text is handled.

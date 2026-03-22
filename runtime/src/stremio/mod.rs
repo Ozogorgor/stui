@@ -30,6 +30,9 @@ pub mod manifest;
 pub mod client;
 pub mod adapter;
 
+#[allow(unused_imports)]
 pub use manifest::StremioManifest;
+#[allow(unused_imports)]
 pub use client::StremioClient;
+#[allow(unused_imports)]
 pub use adapter::StremioAddon;

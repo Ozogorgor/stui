@@ -18,19 +18,23 @@ use tracing::debug;
 use crate::cache::Ttl;
 use crate::ipc::DetailEntry;
 
+#[allow(dead_code)]
 const TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Thread-safe metadata / detail cache.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct MetadataCache {
     inner: Arc<RwLock<HashMap<String, Ttl<DetailEntry>>>>,
 }
 
 impl MetadataCache {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         MetadataCache { inner: Arc::new(RwLock::new(HashMap::new())) }
     }
 
+    #[allow(dead_code)]
     /// Look up a cached detail entry.
     pub async fn get(&self, id: &str) -> Option<DetailEntry> {
         let map = self.inner.read().await;
@@ -44,6 +48,7 @@ impl MetadataCache {
         }
     }
 
+    #[allow(dead_code)]
     /// Store enriched detail for an entry.
     pub async fn insert(&self, id: impl Into<String>, detail: DetailEntry) {
         let key = id.into();
@@ -51,10 +56,12 @@ impl MetadataCache {
         self.inner.write().await.insert(key, Ttl::new(detail, TTL));
     }
 
+    #[allow(dead_code)]
     pub async fn evict_expired(&self) {
         self.inner.write().await.retain(|_, v| v.is_valid());
     }
 
+    #[allow(dead_code)]
     pub async fn clear(&self) {
         self.inner.write().await.clear();
     }

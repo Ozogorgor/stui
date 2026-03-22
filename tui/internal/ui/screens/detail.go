@@ -37,10 +37,11 @@ package screens
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/state"
@@ -270,9 +271,17 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 
 	// Apply scroll offset
 	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return lipgloss.NewStyle().
+			Background(theme.T.Bg()).
+			Padding(1, 2).
+			Width(w).
+			Height(h).
+			Render("")
+	}
 	scroll := ds.InfoScroll
-	if scroll > len(lines)-1 {
-		scroll = max(0, len(lines)-1)
+	if scroll >= len(lines) {
+		scroll = len(lines) - 1
 	}
 	visibleLines := lines[scroll:]
 	// Cap to available height
@@ -312,7 +321,7 @@ func renderCastRow(
 			Render(role)
 		linkStr = theme.T.DetailLinkStyle().Render("  enter → search")
 	} else {
-		nameStr = theme.T.DetailCastStyle().Width(nameW+2).Render("  " + name)
+		nameStr = theme.T.DetailCastStyle().Width(nameW + 2).Render("  " + name)
 		roleStr = theme.T.DetailRoleStyle().Width(roleW).Render(role)
 		linkStr = lipgloss.NewStyle().Foreground(theme.T.Border()).Render("  ↵")
 	}
@@ -372,7 +381,7 @@ func renderSimilarRow(ds *DetailState, w, h int) string {
 		posterBlock := lipgloss.NewStyle().
 			Background(bg).
 			Width(miniW).
-			Height(cardH - 3).
+			Height(cardH-3).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(inits)
 
@@ -419,10 +428,14 @@ func renderSimilarRow(ds *DetailState, w, h int) string {
 		Render(content)
 }
 
-func similarCardBg(title string) lipgloss.Color {
-	colors := []lipgloss.Color{
-		"#0d0d25", "#0a1a0a", "#1a0a0a",
-		"#0a0a1a", "#1a1a00", "#001a1a",
+func similarCardBg(title string) color.Color {
+	colors := []color.Color{
+		lipgloss.Color("#0d0d25"),
+		lipgloss.Color("#0a1a0a"),
+		lipgloss.Color("#1a0a0a"),
+		lipgloss.Color("#0a0a1a"),
+		lipgloss.Color("#1a1a00"),
+		lipgloss.Color("#001a1a"),
 	}
 	return colors[components.TitleHash(title)%len(colors)]
 }
@@ -566,4 +579,3 @@ func formatDetailDuration(secs float64) string {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-

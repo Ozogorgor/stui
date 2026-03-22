@@ -26,6 +26,7 @@ pub mod error;
 pub mod events;
 pub mod indexer;
 pub mod ipc;
+pub mod ipc_batcher;
 pub mod logging;
 pub mod media;
 pub mod mpd_bridge;
@@ -38,7 +39,9 @@ pub mod sandbox;
 pub mod scraper;
 pub mod stremio;
 pub mod streamer;
-pub mod theme_watcher;
+pub mod storage;
+pub mod watchhistory;
+pub mod mediacache;
 
 // `pipeline` ties the stages together into a single orchestrated flow.
 pub mod pipeline;
@@ -54,4 +57,5 @@ pub use error::StuidError;
 pub use engine::Pipeline;
 pub use events::{EventBus, RuntimeEvent};
 pub use config::ConfigManager;
+#[allow(unused_imports)]
 pub use providers::{HealthRegistry, ProviderThrottle};

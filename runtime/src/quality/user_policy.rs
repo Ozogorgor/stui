@@ -66,11 +66,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
     let qr = quality_rank(&stream.quality);
     if qr > 0 {
         let pts = qr as i64 * 15;
-        add_reason(
-            &mut reasons,
-            pts,
-            &format!("quality {} +{} pts", stream.quality, pts),
-        );
+        add_reason(&mut reasons, pts, &format!("quality {}", stream.quality));
         total += pts;
     }
 
@@ -79,11 +75,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
         if let Some(cap) = resolution_cap_rank(max_res) {
             if qr > cap {
                 let pts = -40;
-                add_reason(
-                    &mut reasons,
-                    pts,
-                    &format!("exceeds max {} \u{2212}40", max_res),
-                );
+                add_reason(&mut reasons, pts, &format!("exceeds max {}", max_res));
                 total += pts;
             }
         }
@@ -98,11 +90,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
                 .contains(&prefer_proto.to_lowercase())
         {
             let pts = 25;
-            add_reason(
-                &mut reasons,
-                pts,
-                &format!("preferred protocol {} +25", prefer_proto),
-            );
+            add_reason(&mut reasons, pts, &format!("preferred protocol {}", prefer_proto));
             total += pts;
         }
     }
@@ -111,11 +99,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
     let seeders = stream.seeders.unwrap_or(0) as i64;
     if seeders > 0 {
         let bonus = seeders.min(20);
-        add_reason(
-            &mut reasons,
-            bonus,
-            &format!("{} seeders +{}", seeders, bonus),
-        );
+        add_reason(&mut reasons, bonus, &format!("{} seeders", seeders));
         total += bonus;
 
         // Min seeders penalty
@@ -124,7 +108,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
             add_reason(
                 &mut reasons,
                 pts,
-                &format!("below min seeders ({}) \u{2212}30", prefs.min_seeders),
+                &format!("below min seeders ({})", prefs.min_seeders),
             );
             total += pts;
         }
@@ -156,7 +140,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
     // HDR preference
     if prefs.prefer_hdr && stream.hdr {
         let pts = 15;
-        add_reason(&mut reasons, pts, "HDR +15");
+        add_reason(&mut reasons, pts, "HDR");
         total += pts;
     }
 
@@ -166,7 +150,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
         for prefer in &prefs.prefer_codecs {
             if codec_lower.contains(&prefer.to_lowercase()) {
                 let pts = 10;
-                add_reason(&mut reasons, pts, &format!("codec {} +10", prefer));
+                add_reason(&mut reasons, pts, &format!("codec {}", prefer));
                 total += pts;
                 break;
             }
@@ -177,7 +161,7 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
     if stream.score > 0 {
         let pts = (stream.score / 10) as i64;
         if pts > 0 {
-            add_reason(&mut reasons, pts, &format!("provider score +{}", pts));
+            add_reason(&mut reasons, pts, "provider score");
             total += pts;
         }
     }

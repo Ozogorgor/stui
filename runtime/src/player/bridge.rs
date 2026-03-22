@@ -31,15 +31,16 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::aria2_bridge::Aria2Bridge;
 use crate::config::types::PlaybackConfig;
 use crate::engine::Engine;
 use crate::mpd_bridge::MpdBridge;
-use crate::ipc::MediaTab;
+use crate::ipc::{MediaTab, MediaType};
+use crate::storage::aria2_translator::MediaType as Aria2MediaType;
 use super::mpv::{MpvEvent, MpvPlayer, PlayerEndedReason};
-use crate::streamer::{is_video_file, Streamer};
+use crate::streamer::Streamer;
 
 // ── Wire shapes ───────────────────────────────────────────────────────────────
 
@@ -76,6 +77,8 @@ pub struct PlayerBridge {
     aria2:        Option<Aria2Bridge>,
     mpd:          Option<MpdBridge>,
     engine:       Arc<Engine>,
+    storage:      Arc<crate::storage::MediaStorage>,
+    watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
     ipc_tx:       mpsc::Sender<String>,
     data_dir:     String,
     playback_cfg: PlaybackConfig,
@@ -86,6 +89,8 @@ impl PlayerBridge {
         engine:       Arc<Engine>,
         aria2:        Option<Aria2Bridge>,
         mpd:          Option<MpdBridge>,
+        storage:      Arc<crate::storage::MediaStorage>,
+        watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
         ipc_tx:       mpsc::Sender<String>,
         data_dir:     String,
         playback_cfg: PlaybackConfig,
@@ -99,17 +104,18 @@ impl PlayerBridge {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, aria2, mpd, engine, ipc_tx, data_dir, playback_cfg }
+        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     /// Access the underlying `MpvPlayer` for typed command dispatch.
     pub fn mpv(&self) -> &MpvPlayer {
         &self.mpv
     }
 
-    pub async fn play(&self, entry_id: &str, provider: &str, imdb_id: &str, tab: Option<MediaTab>) {
+    pub async fn play(&self, entry_id: &str, provider: &str, imdb_id: &str, tab: Option<MediaTab>, media_type: Option<MediaType>, year: Option<u32>) {
         info!("player_bridge: play entry_id={} provider={}", entry_id, provider);
 
         let stream_url = match self.engine.resolve_raw(entry_id, provider).await {
@@ -133,7 +139,7 @@ impl PlayerBridge {
         }
 
         let sub_path = find_subtitle(&self.data_dir, imdb_id);
-        self.start_stream(&stream_url, title, sub_path.as_deref()).await;
+        self.start_stream(entry_id, &stream_url, title, sub_path.as_deref(), media_type, year).await;
     }
 
     pub async fn stop(&self) {
@@ -142,13 +148,14 @@ impl PlayerBridge {
 
     /// Download a torrent/magnet URL via aria2 without launching mpv.
     /// Progress events are emitted automatically by the aria2 bridge monitors.
-    pub async fn download_only(&self, url: &str, title: &str) {
+    pub async fn download_only(&self, url: &str, title: &str, media_type: Option<MediaType>, year: Option<u32>) {
         let Some(ref aria2) = self.aria2 else {
             warn!("player_bridge: download_only — aria2 not available");
             return;
         };
+        let aria2_media_type = media_type.map(|m| Aria2MediaType::from_ipc(&m));
         let mut sink = std::io::sink();
-        match aria2.start_download(url, &mut sink).await {
+        match aria2.start_download(url, &mut sink, aria2_media_type, Some(title), year).await {
             Ok(gid) => {
                 let msg = serde_json::to_string(&serde_json::json!({
                     "type":  "download_started",
@@ -187,15 +194,15 @@ impl PlayerBridge {
 
     // ── Routing ───────────────────────────────────────────────────────────────
 
-    async fn start_stream(&self, url: &str, title: &str, sub: Option<&str>) {
+    async fn start_stream(&self, entry_id: &str, url: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
         if is_torrent_url(url) || is_magnet(url) {
-            self.play_via_aria2(url, title, sub).await;
+            self.play_via_aria2(entry_id, url, title, sub, media_type, year).await;
         } else {
             self.launch_mpv(url, title, sub).await;
         }
     }
 
-    async fn play_via_aria2(&self, uri: &str, title: &str, sub: Option<&str>) {
+    async fn play_via_aria2(&self, entry_id: &str, uri: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
         let Some(aria2) = &self.aria2 else {
             warn!("player_bridge: aria2 not available");
             self.push_ended(
@@ -205,12 +212,18 @@ impl PlayerBridge {
             return;
         };
 
+        let aria2_media_type = media_type.map(|m| Aria2MediaType::from_ipc(&m)).unwrap_or(Aria2MediaType::Movie);
+
         // Start download
         let mut sink = std::io::sink();
-        let gid = match aria2.start_download(uri, &mut sink).await {
+        let gid = match aria2.start_download(uri, &mut sink, Some(aria2_media_type.clone()), Some(title), year).await {
             Ok(g)  => g,
             Err(e) => { self.push_ended("error", &e.to_string()).await; return; }
         };
+
+        // Calculate and set organized path based on media type and title
+        let organized_base = self.calculate_organized_path(&aria2_media_type, title, year);
+        aria2.set_organized_base(&gid, organized_base.clone()).await;
 
         // Emit download_started with human-readable title to IPC.
         let started = serde_json::to_string(&serde_json::json!({
@@ -221,7 +234,7 @@ impl PlayerBridge {
         })).unwrap_or_default();
         let _ = self.ipc_tx.send(started).await;
 
-        info!("player_bridge: aria2 gid={gid}");
+        info!("player_bridge: aria2 gid={gid} organized={}", organized_base.display());
 
         // ── Adaptive pre-roll (blocks until buffer is safe) ───────────────
         let streamer = Streamer::new(self.ipc_tx.clone());
@@ -236,6 +249,10 @@ impl PlayerBridge {
                 return;
             }
         };
+
+        // Update watch history with the downloaded file path
+        self.watch_history.update_file_path(entry_id, &file_path).await;
+        debug!(entry_id = %entry_id, path = %file_path, "updated watch history with file path");
 
         // ── Launch mpv ────────────────────────────────────────────────────
         if !self.playback_cfg.terminal_vo.is_empty() {
@@ -256,8 +273,12 @@ impl PlayerBridge {
         let gid2     = gid.clone();
         let streamer2 = streamer.clone();
         tokio::spawn(async move {
+            let Some(ref aria2) = bridge2.aria2 else {
+                warn!("stall guard: aria2 unavailable; skipping stall guard");
+                return;
+            };
             streamer2.run_stall_guard(
-                bridge2.aria2.as_ref().unwrap().client(),
+                aria2.client(),
                 &gid2,
                 &bridge2.mpv,
                 plan,
@@ -303,7 +324,7 @@ impl PlayerBridge {
                 return;
             };
             let mut sink = std::io::sink();
-            let gid = match aria2.start_download(url, &mut sink).await {
+            let gid = match aria2.start_download(url, &mut sink, Some(Aria2MediaType::Music), Some(title), None).await {
                 Ok(g)  => g,
                 Err(e) => {
                     let msg = e.to_string();
@@ -442,4 +463,16 @@ fn find_subtitle(data_dir: &str, imdb_id: &str) -> Option<String> {
         }
     }
     None
+}
+
+impl PlayerBridge {
+    fn calculate_organized_path(&self, media_type: &Aria2MediaType, title: &str, year: Option<u32>) -> std::path::PathBuf {
+        use Aria2MediaType::*;
+        match media_type {
+            Movie | AnimeMovie => self.storage.movie_folder(title, year),
+            Series | AnimeSeries => self.storage.series_folder(title, year),
+            Music => self.storage.artist_folder(title),
+            Podcast => self.storage.podcast_folder(title),
+        }
+    }
 }

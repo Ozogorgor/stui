@@ -35,12 +35,15 @@ func (s *IPCStore) LoadTab(tab string) {
 	}
 	go func() {
 		ch := s.client.GetMediaCacheTab(tab)
-		cached := <-ch
-		if cached.Tab != "" {
-			s.mu.Lock()
-			s.tabs[cached.Tab] = cached.Entries
-			s.updated[cached.Tab] = cached.UpdatedAt
-			s.mu.Unlock()
+		select {
+		case cached := <-ch:
+			if cached.Tab != "" {
+				s.mu.Lock()
+				s.tabs[cached.Tab] = cached.Entries
+				s.updated[cached.Tab] = cached.UpdatedAt
+				s.mu.Unlock()
+			}
+		case <-time.After(5 * time.Second):
 		}
 	}()
 }
@@ -51,10 +54,15 @@ func (s *IPCStore) LoadAll() {
 	}
 	go func() {
 		ch := s.client.GetMediaCacheAll()
-		entries := <-ch
-		s.mu.Lock()
-		s.tabs["_all"] = entries
-		s.mu.Unlock()
+		select {
+		case entries := <-ch:
+			now := time.Now().Unix()
+			s.mu.Lock()
+			s.tabs["_all"] = entries
+			s.updated["_all"] = now
+			s.mu.Unlock()
+		case <-time.After(5 * time.Second):
+		}
 	}()
 }
 

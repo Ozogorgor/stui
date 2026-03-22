@@ -14,6 +14,7 @@ use crate::ipc::{MediaEntry, MediaTab};
 
 // ── Cache key ─────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     pub provider: String,
@@ -33,6 +34,7 @@ impl CacheKey {
 
 // ── Cache entry ───────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
     pub items: Vec<MediaEntry>,
@@ -40,6 +42,7 @@ pub struct CacheEntry {
 }
 
 impl CacheEntry {
+    #[allow(dead_code)]
     pub fn new(items: Vec<MediaEntry>) -> Self {
         Self {
             items,
@@ -47,6 +50,7 @@ impl CacheEntry {
         }
     }
 
+    #[allow(dead_code)]
     /// Returns true if this entry is older than `ttl_secs` seconds.
     pub fn is_stale(&self, ttl_secs: i64) -> bool {
         let age = chrono::Utc::now() - self.fetched_at;
@@ -56,9 +60,12 @@ impl CacheEntry {
 
 // ── Indexer ───────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 const DEFAULT_CAPACITY: usize = 512; // max cached query results
+#[allow(dead_code)]
 const DEFAULT_TTL_SECS: i64 = 300;   // 5 minutes
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Indexer {
     cache: Arc<Mutex<LruCache<CacheKey, CacheEntry>>>,

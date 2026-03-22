@@ -73,6 +73,7 @@ pub struct MediaItem {
 }
 
 impl MediaItem {
+    #[allow(dead_code)]
     /// Deduplication key: prefer IMDB id, fall back to normalised title+year.
     pub fn dedup_key(&self) -> String {
         if let Some(ref id) = self.imdb_id {
@@ -81,10 +82,13 @@ impl MediaItem {
         format!(
             "{}:{}",
             self.title.to_lowercase().trim().replace(' ', "-"),
-            self.year.map(|y| y.to_string()).unwrap_or_else(|| "?".into()),
+            self.year
+                .map(|y| y.to_string())
+                .unwrap_or_else(|| "?".into()),
         )
     }
 
+    #[allow(dead_code)]
     /// True if this item has enough data to display in the grid.
     pub fn is_displayable(&self) -> bool {
         !self.title.is_empty()
@@ -99,22 +103,22 @@ impl From<CatalogEntry> for MediaItem {
     fn from(e: CatalogEntry) -> Self {
         let year = e.year.as_deref().and_then(|y| y.parse().ok());
         MediaItem {
-            id:          MediaId::new(&e.provider, &e.id),
-            title:       e.title,
-            media_type:  e.media_type,
+            id: MediaId::new(&e.provider, &e.id),
+            title: e.title,
+            media_type: e.media_type,
             year,
             description: e.description,
-            genres:      e.genre,
-            rating:      e.rating,
-            ratings:     e.ratings,
-            poster_url:  e.poster_url,
-            poster_art:  e.poster_art,
-            imdb_id:     e.imdb_id,
-            tmdb_id:     e.tmdb_id,
-            episode:     None,
-            track:       None,
-            provider:    e.provider,
-            tab:         e.tab,
+            genres: e.genre,
+            rating: e.rating,
+            ratings: e.ratings,
+            poster_url: e.poster_url,
+            poster_art: e.poster_art,
+            imdb_id: e.imdb_id,
+            tmdb_id: e.tmdb_id,
+            episode: None,
+            track: None,
+            provider: e.provider,
+            tab: e.tab,
         }
     }
 }
@@ -122,20 +126,20 @@ impl From<CatalogEntry> for MediaItem {
 impl From<MediaItem> for CatalogEntry {
     fn from(m: MediaItem) -> Self {
         CatalogEntry {
-            id:          m.id.key.clone(),
-            title:       m.title,
-            year:        m.year.map(|y| y.to_string()),
-            genre:       m.genres,
-            rating:      m.rating,
-            ratings:     m.ratings,
+            id: m.id.key.clone(),
+            title: m.title,
+            year: m.year.map(|y| y.to_string()),
+            genre: m.genres,
+            rating: m.rating,
+            ratings: m.ratings,
             description: m.description,
-            poster_url:  m.poster_url,
-            poster_art:  m.poster_art,
-            provider:    m.provider,
-            tab:         m.tab,
-            imdb_id:     m.imdb_id,
-            tmdb_id:     m.tmdb_id,
-            media_type:  m.media_type,
+            poster_url: m.poster_url,
+            poster_art: m.poster_art,
+            provider: m.provider,
+            tab: m.tab,
+            imdb_id: m.imdb_id,
+            tmdb_id: m.tmdb_id,
+            media_type: m.media_type,
         }
     }
 }

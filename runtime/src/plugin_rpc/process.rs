@@ -15,7 +15,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex, Notify};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -89,7 +89,11 @@ impl PluginProcess {
                     }
                 }
             }
-            // stdout EOF — process has exited; wake the supervisor.
+            // stdout EOF — process has exited.
+            // Drop all pending senders so every in-flight call() gets
+            // RecvError::Closed immediately instead of waiting 30 seconds.
+            pending_rx.lock().await.clear();
+            // Wake the supervisor so it can restart the process.
             death_notify2.notify_one();
         });
 

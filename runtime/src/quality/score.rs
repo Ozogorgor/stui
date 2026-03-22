@@ -1,17 +1,17 @@
 //! Quality score computation for a single stream.
 
-use crate::providers::{HdrFormat, Stream, StreamQuality};
 use super::policy::RankingPolicy;
+use crate::providers::{HdrFormat, Stream, StreamQuality};
 
 /// Composite quality score.  All sub-scores are in 0–N points; `total()` sums them.
 #[derive(Debug, Clone, Default)]
 pub struct QualityScore {
     pub resolution: u32, // 0–400
-    pub codec:      u32, // 0–150
-    pub seeders:    u32, // 0–150
-    pub bitrate:    u32, // 0–150
-    pub source:     u32, // 0–100
-    pub hdr_bonus:  u32, // 0–50
+    pub codec: u32,      // 0–150
+    pub seeders: u32,    // 0–150
+    pub bitrate: u32,    // 0–150
+    pub source: u32,     // 0–100
+    pub hdr_bonus: u32,  // 0–50
 }
 
 impl QualityScore {
@@ -28,10 +28,10 @@ impl QualityScore {
 
         // ── Resolution ────────────────────────────────────────────────────
         let resolution = match stream.quality {
-            StreamQuality::Uhd4k  => policy.resolution_weights[3],
+            StreamQuality::Uhd4k => policy.resolution_weights[3],
             StreamQuality::Hd1080 => policy.resolution_weights[2],
-            StreamQuality::Hd720  => policy.resolution_weights[1],
-            StreamQuality::Sd     => policy.resolution_weights[0],
+            StreamQuality::Hd720 => policy.resolution_weights[1],
+            StreamQuality::Sd => policy.resolution_weights[0],
             StreamQuality::Unknown => {
                 // Fall back to name-string inference
                 if name_up.contains("2160") || name_up.contains("4K") {
@@ -49,10 +49,10 @@ impl QualityScore {
         // ── Codec — explicit field wins, name-parse as fallback ───────────
         let codec = if let Some(ref c) = stream.codec {
             match c.to_uppercase().as_str() {
-                "AV1"                    => 150,
+                "AV1" => 150,
                 "HEVC" | "H265" | "X265" => 120,
-                "H264" | "X264" | "AVC"  => 90,
-                _                        => 50,
+                "H264" | "X264" | "AVC" => 90,
+                _ => 50,
             }
         } else if name_up.contains("AV1") {
             150
@@ -65,7 +65,8 @@ impl QualityScore {
         };
 
         // ── Seeders — explicit field wins, name-parse as fallback ─────────
-        let seeders = stream.seeders
+        let seeders = stream
+            .seeders
             .or_else(|| extract_seeders(&stream.name))
             .map(|s| {
                 // Log-scale: 150 pts at 100+ seeds, 75 pts at 10 seeds
@@ -75,7 +76,8 @@ impl QualityScore {
             .unwrap_or(0);
 
         // ── Bitrate — explicit field wins, name-parse as fallback ─────────
-        let bitrate = stream.bitrate_kbps
+        let bitrate = stream
+            .bitrate_kbps
             .or_else(|| extract_bitrate_kbps(&stream.name))
             .map(|kbps| {
                 let capped = kbps.min(40_000) as f64;
@@ -84,7 +86,10 @@ impl QualityScore {
             .unwrap_or(0);
 
         // ── Source ────────────────────────────────────────────────────────
-        let source = if name_up.contains("BLURAY") || name_up.contains("BLU-RAY") || name_up.contains("BDREMUX") {
+        let source = if name_up.contains("BLURAY")
+            || name_up.contains("BLU-RAY")
+            || name_up.contains("BDREMUX")
+        {
             100
         } else if name_up.contains("WEBDL") || name_up.contains("WEB-DL") {
             80
@@ -107,7 +112,14 @@ impl QualityScore {
             HdrFormat::from_name(&stream.name).score()
         };
 
-        QualityScore { resolution, codec, seeders, bitrate, source, hdr_bonus }
+        QualityScore {
+            resolution,
+            codec,
+            seeders,
+            bitrate,
+            source,
+            hdr_bonus,
+        }
     }
 }
 
@@ -118,7 +130,11 @@ fn extract_seeders(name: &str) -> Option<u32> {
         if let Some(pos) = lower.find(pattern) {
             // scan backwards for digits
             let prefix = &lower[..pos].trim_end();
-            let digits: String = prefix.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = prefix
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             if !digits.is_empty() {
                 let reversed: String = digits.chars().rev().collect();
                 return reversed.parse().ok();
@@ -133,7 +149,9 @@ fn extract_bitrate_kbps(name: &str) -> Option<u32> {
     let lower = name.to_lowercase();
     if let Some(pos) = lower.find("mbps") {
         let prefix = lower[..pos].trim_end();
-        let digits: String = prefix.chars().rev()
+        let digits: String = prefix
+            .chars()
+            .rev()
             .take_while(|c| c.is_ascii_digit() || *c == '.')
             .collect();
         if !digits.is_empty() {
@@ -143,7 +161,9 @@ fn extract_bitrate_kbps(name: &str) -> Option<u32> {
     }
     if let Some(pos) = lower.find("kbps") {
         let prefix = lower[..pos].trim_end();
-        let digits: String = prefix.chars().rev()
+        let digits: String = prefix
+            .chars()
+            .rev()
             .take_while(|c| c.is_ascii_digit())
             .collect();
         if !digits.is_empty() {

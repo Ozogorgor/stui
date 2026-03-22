@@ -16,8 +16,8 @@
 //!
 //! ## Directory convention
 //! Each plugin lives in its own subdirectory:
-//! ```
-//! ~/.stui/plugins/
+//! ```text
+//! $HOME/.stui/plugins/
 //!   my-provider/
 //!     plugin.toml
 //!     plugin.wasm
@@ -70,6 +70,7 @@ impl Discovery {
     }
 
     /// Subscribe to plugin toast notifications.
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<PluginToast> {
         self.toast_tx.subscribe()
     }
@@ -132,8 +133,8 @@ impl Discovery {
     async fn load_one(&self, dir: &Path) -> Result<String> {
         let manifest = load_manifest(dir)?;
         let name = manifest.plugin.name.clone();
-        let version = manifest.plugin.version.clone();
-        let ptype = manifest.plugin.plugin_type.to_string();
+        let _version = manifest.plugin.version.clone();
+        let _ptype = manifest.plugin.plugin_type.to_string();
 
         // Engine.load_plugin does full validation + sandbox setup
         // We use the engine's existing method directly

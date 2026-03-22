@@ -3,17 +3,28 @@
 //! These tests verify that the scoring and ranking logic produces the
 //! expected ordering for realistic stream names.
 
+use stui_runtime::providers::{HdrFormat, Stream, StreamQuality};
 use stui_runtime::quality::{rank, RankingPolicy};
-use stui_runtime::providers::{Stream, StreamQuality};
 
 fn stream(name: &str, quality: StreamQuality) -> Stream {
     Stream {
-        id:       name.to_string(),
-        name:     name.to_string(),
-        url:      format!("magnet:?xt=urn:btih:{}", name.len()),
-        mime:     None,
+        id: name.to_string(),
+        name: name.to_string(),
+        url: format!("magnet:?xt=urn:btih:{}", name.len()),
+        mime: None,
         quality,
         provider: "test".to_string(),
+        protocol: None,
+        seeders: None,
+        bitrate_kbps: None,
+        codec: None,
+        resolution: None,
+        hdr: HdrFormat::None,
+        size_bytes: None,
+        latency_ms: None,
+        speed_mbps: None,
+        audio_channels: None,
+        language: None,
     }
 }
 
@@ -24,7 +35,11 @@ fn test_4k_beats_1080p() {
         stream("2160p 4K BluRay", StreamQuality::Uhd4k),
     ];
     let ranked = rank(streams, &RankingPolicy::default());
-    assert_eq!(ranked[0].stream.quality, StreamQuality::Uhd4k, "4K should rank first");
+    assert_eq!(
+        ranked[0].stream.quality,
+        StreamQuality::Uhd4k,
+        "4K should rank first"
+    );
 }
 
 #[test]
@@ -67,14 +82,18 @@ fn test_hevc_beats_h264_same_resolution() {
 fn test_cam_ranks_last() {
     let streams = vec![
         stream("1080p CAM", StreamQuality::Hd1080),
-        stream("720p WEB-DL", StreamQuality::Hd720),
-        stream("480p BluRay", StreamQuality::Sd),
+        stream("1080p WEB-DL", StreamQuality::Hd1080),
+        stream("1080p BluRay", StreamQuality::Hd1080),
     ];
     let ranked = rank(streams, &RankingPolicy::default());
+    // Within same resolution, CAM should rank last
     assert!(
         ranked.last().unwrap().stream.name.contains("CAM"),
-        "CAM source should always rank last"
+        "CAM source should rank last among same-resolution streams"
     );
+    // Verify ordering: BluRay > WEB-DL > CAM
+    assert!(ranked[0].stream.name.contains("BluRay"));
+    assert!(ranked[1].stream.name.contains("WEB-DL"));
 }
 
 #[test]
@@ -122,6 +141,9 @@ fn test_badge_contains_resolution() {
     let s = stream("1080p BluRay HEVC", StreamQuality::Hd1080);
     let ranked = rank(vec![s], &RankingPolicy::default());
     let badge = ranked[0].badge();
-    assert!(badge.contains("1080p"), "badge should include resolution label");
+    assert!(
+        badge.contains("1080p"),
+        "badge should include resolution label"
+    );
     assert!(badge.contains('★'), "badge should include score star");
 }

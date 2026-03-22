@@ -12,13 +12,13 @@
 //!
 //! # Plugin directory layout
 //!
-//! ```
-//! ~/.stui/plugins/
+//! ```text
+//! $HOME/.stui/plugins/
 //!   torrentio/
-//!     plugin           ← executable (any language)
-//!     plugin.json      ← optional static manifest (name, version, capabilities)
+//!     plugin           - executable (any language)
+//!     plugin.json      - optional static manifest (name, version, capabilities)
 //!   opensubtitles/
-//!     plugin.py        ← Python plugin (needs python3 in PATH)
+//!     plugin.py        - Python plugin (needs python3 in PATH)
 //!     plugin.json
 //! ```
 //!
@@ -33,12 +33,13 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::supervisor::{PluginSupervisor, SupervisorConfig};
-use super::protocol::{RpcMediaItem, RpcStream, RpcSubtitleTrack};
+use super::protocol::{RpcMediaItem, RpcStream};
 use crate::catalog::CatalogEntry;
 use crate::ipc::{MediaTab, SubtitleTrack};
 use crate::providers::Stream;
 
 /// Manages all external plugin processes for the runtime.
+#[allow(dead_code)]
 pub struct PluginRpcManager {
     plugins: Arc<RwLock<Vec<Arc<PluginSupervisor>>>>,
     config:  SupervisorConfig,
@@ -68,7 +69,10 @@ impl PluginRpcManager {
     /// `plugin.py`, `plugin.js`, `plugin.rb`, or any file matching the
     /// executable bit.  The first match is spawned.
     pub async fn discover_and_load(&self, plugin_dir: &Path) {
-        let Ok(mut entries) = tokio::fs::read_dir(plugin_dir).await else { return };
+        let Ok(mut entries) = tokio::fs::read_dir(plugin_dir).await else {
+            warn!(path = %plugin_dir.display(), "plugin directory not found or not accessible");
+            return;
+        };
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
@@ -86,7 +90,7 @@ impl PluginRpcManager {
                     self.plugins.write().await.push(Arc::new(sup));
                 }
                 Err(e) => {
-                    warn!("failed to load RPC plugin from {}: {e}", path.display());
+                    warn!(path = %path.display(), err = %e, "failed to load RPC plugin");
                 }
             }
         }
@@ -124,7 +128,7 @@ impl PluginRpcManager {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(rd) = std::fs::read_dir(dir) {
                 for entry in rd.flatten() {
-                    let meta = entry.metadata().unwrap_or_else(|_| return entry.metadata().unwrap());
+                    let Ok(meta) = entry.metadata() else { continue; };
                     if meta.permissions().mode() & 0o111 != 0 && meta.is_file() {
                         return Ok(entry.path());
                     }
@@ -261,6 +265,7 @@ impl Default for PluginRpcManager {
 
 // ── Type conversions ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
     use crate::ipc::MediaType;
     CatalogEntry {
@@ -281,8 +286,9 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
     }
 }
 
+#[allow(dead_code)]
 fn rpc_stream_to_stream(s: RpcStream) -> Stream {
-    use crate::providers::{HdrFormat, StreamQuality};
+    use crate::providers::StreamQuality;
 
     let quality = s.quality.as_deref()
         .map(StreamQuality::from_label)
@@ -316,6 +322,7 @@ fn rpc_stream_to_stream(s: RpcStream) -> Stream {
         hdr,
         size_bytes:     s.size_bytes,
         latency_ms:     None,
+        speed_mbps:     None,
         audio_channels: s.audio_channels,
         language:       s.language,
     }

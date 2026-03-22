@@ -30,10 +30,13 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -89,19 +92,59 @@ type PluginManagerScreen struct {
 
 	width  int
 	height int
+
+	// Spinners
+	pluginsSpinner  components.Spinner
+	registrySpinner components.Spinner
+
+	// Tables
+	installedTable *components.SortableTable
+	availableTable *components.SortableTable
+	updatesTable   *components.SortableTable
 }
 
 func NewPluginManagerScreen(client *ipc.Client) *PluginManagerScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+
+	installedCols := []table.Column{
+		{Title: "Name", Width: 22},
+		{Title: "Version", Width: 9},
+		{Title: "Type", Width: 8},
+		{Title: "Tags", Width: 15},
+		{Title: "Status", Width: 12},
+	}
+
+	availableCols := []table.Column{
+		{Title: "Name", Width: 22},
+		{Title: "Version", Width: 9},
+		{Title: "Type", Width: 8},
+		{Title: "Status", Width: 15},
+	}
+
+	updatesCols := []table.Column{
+		{Title: "Name", Width: 22},
+		{Title: "Installed", Width: 9},
+		{Title: "Latest", Width: 9},
+		{Title: "Type", Width: 10},
+	}
+
 	return &PluginManagerScreen{
-		client:     client,
-		plLoading:  true,
-		regLoading: true,
+		client:          client,
+		plLoading:       true,
+		regLoading:      true,
+		pluginsSpinner:  *components.NewSpinner("loading installed plugins…", dimStyle),
+		registrySpinner: *components.NewSpinner("fetching plugin registry…", dimStyle),
+		installedTable:  components.NewSortableTable(installedCols),
+		availableTable:  components.NewSortableTable(availableCols),
+		updatesTable:    components.NewSortableTable(updatesCols),
 	}
 }
 
 // ── screen.Screen interface ───────────────────────────────────────────────────
 
 func (m *PluginManagerScreen) Init() tea.Cmd {
+	m.pluginsSpinner.Start()
+	m.registrySpinner.Start()
 	return func() tea.Msg {
 		m.client.ListPlugins()
 		m.client.BrowseRegistry()
@@ -112,29 +155,39 @@ func (m *PluginManagerScreen) Init() tea.Cmd {
 func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case spinner.TickMsg:
+		m.pluginsSpinner.Update(msg)
+		m.registrySpinner.Update(msg)
+		return m, nil
+
 	case tea.WindowSizeMsg:
-		m.width  = msg.Width
+		m.width = msg.Width
 		m.height = msg.Height
 
 	case ipc.PluginListMsg:
 		m.plLoading = false
+		m.pluginsSpinner.Stop()
 		if msg.Err != nil {
 			m.status = "Error loading plugins: " + msg.Err.Error()
 		} else {
 			m.plugins = msg.Plugins
+			m.updateInstalledTable()
 		}
 		m.recomputeUpdates()
 
 	case ipc.RegistryBrowseResultMsg:
 		m.regLoading = false
+		m.registrySpinner.Stop()
 		if msg.Err != nil {
 			m.status = "Registry error: " + msg.Err.Error()
 		} else {
-			m.registry    = msg.Entries
+			m.registry = msg.Entries
 			m.failedRepos = msg.FailedRepos
-			m.available   = pmFilterUninstalled(msg.Entries)
+			m.available = pmFilterUninstalled(msg.Entries)
+			m.updateAvailableTable()
 		}
 		m.recomputeUpdates()
+		m.updateUpdatesTable()
 
 	case ipc.PluginInstallResultMsg:
 		m.installing = false
@@ -143,19 +196,19 @@ func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		} else {
 			m.status = fmt.Sprintf("'%s' v%s installed — refreshing…", msg.Name, msg.Version)
 			// Refresh both lists to reflect the new state.
-			m.plLoading  = true
+			m.plLoading = true
 			m.regLoading = true
 			m.client.ListPlugins()
 			m.client.BrowseRegistry()
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m *PluginManagerScreen) handleKey(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
+func (m *PluginManagerScreen) handleKey(msg tea.KeyPressMsg) (screen.Screen, tea.Cmd) {
 	if m.installing {
 		return m, nil
 	}
@@ -198,7 +251,7 @@ func (m *PluginManagerScreen) handleInstalledKey(key string) (screen.Screen, tea
 			m.plCursor++
 		}
 	case "u", "x":
-		if len(m.plugins) > 0 && !m.plLoading {
+		if len(m.plugins) > 0 && m.plCursor < len(m.plugins) && !m.plLoading {
 			p := m.plugins[m.plCursor]
 			m.client.UnloadPlugin(p.ID)
 			m.status = fmt.Sprintf("Unloading '%s'…", p.Name)
@@ -255,9 +308,9 @@ func (m *PluginManagerScreen) handleUpdatesKey(key string) (screen.Screen, tea.C
 			m.client.InstallPlugin(u.entry.Name, u.entry.Version, u.entry.BinaryURL, u.entry.Checksum)
 		}
 	case "r":
-		m.plLoading  = true
+		m.plLoading = true
 		m.regLoading = true
-		m.status     = ""
+		m.status = ""
 		m.client.ListPlugins()
 		m.client.BrowseRegistry()
 	}
@@ -283,9 +336,9 @@ func (m *PluginManagerScreen) recomputeUpdates() {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m *PluginManagerScreen) View() string {
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+func (m *PluginManagerScreen) View() tea.View {
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 	warn := lipgloss.NewStyle().Foreground(theme.T.Warn())
 
@@ -308,9 +361,9 @@ func (m *PluginManagerScreen) View() string {
 	sb.WriteString("  ")
 	for i, label := range tabLabels {
 		if i == int(m.tab) {
-			sb.WriteString(acc.Render("["+label+"]"))
+			sb.WriteString(acc.Render("[" + label + "]"))
 		} else {
-			sb.WriteString(dim.Render(" "+label+" "))
+			sb.WriteString(dim.Render(" " + label + " "))
 		}
 		sb.WriteString(dim.Render(tabCounts[i]))
 		if i < len(tabLabels)-1 {
@@ -331,7 +384,18 @@ func (m *PluginManagerScreen) View() string {
 	}
 
 	// ── Status bar ────────────────────────────────────────────────────────
-	if m.status != "" {
+	if m.installing {
+		spinnerView := m.pluginsSpinner.View()
+		pb := components.NewProgressBar(0.5, 1,
+			components.WithWidth(20),
+			components.WithShowValue(false),
+		)
+		installingStyle := lipgloss.NewStyle().Foreground(theme.T.Neon())
+		sb.WriteString("\n  " + installingStyle.Render(spinnerView) + " " + pb.View() + "\n")
+		if m.status != "" {
+			sb.WriteString("  " + dim.Render(m.status) + "\n")
+		}
+	} else if m.status != "" {
 		style := neon
 		if strings.HasPrefix(m.status, "Error") || strings.HasPrefix(m.status, "Install failed") {
 			style = warn
@@ -341,126 +405,72 @@ func (m *PluginManagerScreen) View() string {
 
 	// ── Footer ────────────────────────────────────────────────────────────
 	sb.WriteString("\n" + hintBar("tab/shift+tab switch tab", "R repos", "esc close") + "\n")
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func (m *PluginManagerScreen) viewInstalled() string {
-	acc   := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim   := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	text  := lipgloss.NewStyle().Foreground(theme.T.Text())
-	green := lipgloss.NewStyle().Foreground(theme.T.Success())
-	red   := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
 	var sb strings.Builder
 
 	if m.plLoading {
-		sb.WriteString("  " + dim.Render("Loading installed plugins…") + "\n")
+		sb.WriteString("  " + m.pluginsSpinner.View() + "\n")
 		return sb.String()
 	}
 	if len(m.plugins) == 0 {
-		sb.WriteString("  " + dim.Render("No plugins currently loaded.") + "\n")
-		sb.WriteString("  " + dim.Render("Press ") + acc.Render("tab") + dim.Render(" to browse Available plugins.") + "\n")
+		sb.WriteString("\n" + theme.T.EmptyStateStyle("📦", "No plugins loaded", "Press 'Tab' to browse available plugins") + "\n")
 		return sb.String()
 	}
 
-	hdr := fmt.Sprintf("  %-22s %-9s %-8s  Status", "Name", "Version", "Type")
-	sb.WriteString(dim.Render(hdr) + "\n")
-
-	for i, p := range m.plugins {
-		sel := i == m.plCursor
-
-		prefix := "  "
-		nameS  := text.Render(fmt.Sprintf("%-22s", truncate(p.Name, 22)))
-		if sel {
-			prefix = "▶ "
-			nameS  = acc.Render(fmt.Sprintf("%-22s", truncate(p.Name, 22)))
-		}
-
-		ver   := dim.Render(fmt.Sprintf("%-9s", truncate(p.Version, 9)))
-		ptype := dim.Render(fmt.Sprintf("%-8s", truncate(p.PluginType, 8)))
-
-		var badge string
-		switch strings.ToLower(p.Status) {
-		case "loaded":
-			badge = green.Render("✓ loaded")
-		case "failed":
-			badge = red.Render("✗ failed")
-		case "disabled":
-			badge = dim.Render("○ disabled")
-		default:
-			badge = dim.Render(p.Status)
-		}
-
-		sb.WriteString(prefix + nameS + "  " + ver + "  " + ptype + "  " + badge + "\n")
+	availH := m.height - 10
+	if availH < 1 {
+		availH = 20
 	}
 
-	sb.WriteString("\n  " + dim.Render("[↑↓] navigate  [u] unload  [r] refresh") + "\n")
+	m.installedTable.SetHeight(availH)
+	m.installedTable.SetFocused(true)
+
+	tableView := m.installedTable.View()
+
+	sb.WriteString(dim.Render(tableView))
+	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("u", "unload") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
 }
 
 func (m *PluginManagerScreen) viewAvailable() string {
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	text := lipgloss.NewStyle().Foreground(theme.T.Text())
-	green := lipgloss.NewStyle().Foreground(theme.T.Success())
-	warn := lipgloss.NewStyle().Foreground(theme.T.Warn())
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
 	var sb strings.Builder
 
 	if m.regLoading {
-		sb.WriteString("  " + dim.Render("Fetching plugin registry…") + "\n")
+		sb.WriteString("  " + m.registrySpinner.View() + "\n")
 		return sb.String()
 	}
 	if len(m.failedRepos) > 0 {
-		sb.WriteString("  " + warn.Render(fmt.Sprintf("⚠  %d repo(s) unreachable", len(m.failedRepos))) + "\n\n")
+		sb.WriteString("  " + theme.T.WarnPill("⚠ "+fmt.Sprintf("%d repo(s) unreachable", len(m.failedRepos))) + "\n\n")
 	}
 	if len(m.available) == 0 {
-		sb.WriteString("  " + green.Render("✓ All available plugins are already installed.") + "\n")
+		sb.WriteString("  " + theme.T.SuccessPill("✓ All available plugins are already installed") + "\n")
 		return sb.String()
 	}
 
-	descW := m.contentWidth() - 2 - 22 - 2 - 9 - 2 - 8 - 2
-	if descW < 10 {
-		descW = 10
-	}
-	if descW > 55 {
-		descW = 55
+	availH := m.height - 10
+	if availH < 1 {
+		availH = 20
 	}
 
-	hdr := fmt.Sprintf("  %-22s %-9s %-8s  Description", "Name", "Version", "Type")
-	sb.WriteString(dim.Render(hdr) + "\n")
+	m.availableTable.SetHeight(availH)
+	m.availableTable.SetFocused(true)
 
-	for i, e := range m.available {
-		sel := i == m.avCursor
+	tableView := m.availableTable.View()
 
-		prefix := "  "
-		nameS  := text.Render(fmt.Sprintf("%-22s", truncate(e.Name, 22)))
-		if sel {
-			prefix = "▶ "
-			nameS  = acc.Render(fmt.Sprintf("%-22s", truncate(e.Name, 22)))
-		}
-
-		ver   := dim.Render(fmt.Sprintf("%-9s", truncate(e.Version, 9)))
-		ptype := dim.Render(fmt.Sprintf("%-8s", truncate(e.PluginType, 8)))
-		desc  := text.Render(truncate(e.Description, descW))
-
-		line := prefix + nameS + "  " + ver + "  " + ptype + "  " + desc
-		if sel && m.installing {
-			line += "  " + warn.Render("installing…")
-		}
-		sb.WriteString(line + "\n")
-	}
-
-	sb.WriteString("\n  " + dim.Render("[↑↓] navigate  [enter] install  [r] refresh") + "\n")
+	sb.WriteString(dim.Render(tableView))
+	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("enter", "install") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
 }
 
 func (m *PluginManagerScreen) viewUpdates() string {
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
-	text := lipgloss.NewStyle().Foreground(theme.T.Text())
-	warn := lipgloss.NewStyle().Foreground(theme.T.Warn())
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
 	var sb strings.Builder
 
@@ -469,36 +479,74 @@ func (m *PluginManagerScreen) viewUpdates() string {
 		return sb.String()
 	}
 	if len(m.updates) == 0 {
-		sb.WriteString("  " + acc.Render("✓ All plugins are up to date.") + "\n")
+		sb.WriteString("  " + theme.T.SuccessPill("✓ All plugins are up to date") + "\n")
 		return sb.String()
 	}
 
-	hdr := fmt.Sprintf("  %-22s %-9s → %-9s  Type", "Name", "Installed", "Latest")
-	sb.WriteString(dim.Render(hdr) + "\n")
-
-	for i, u := range m.updates {
-		sel := i == m.upCursor
-
-		prefix := "  "
-		nameS  := text.Render(fmt.Sprintf("%-22s", truncate(u.plugin.Name, 22)))
-		if sel {
-			prefix = "▶ "
-			nameS  = acc.Render(fmt.Sprintf("%-22s", truncate(u.plugin.Name, 22)))
-		}
-
-		installed := dim.Render(fmt.Sprintf("%-9s", truncate(u.plugin.Version, 9)))
-		latest    := neon.Render(fmt.Sprintf("%-9s", truncate(u.entry.Version, 9)))
-		ptype     := dim.Render(truncate(u.entry.PluginType, 8))
-
-		line := prefix + nameS + "  " + installed + "→ " + latest + "  " + ptype
-		if sel && m.installing {
-			line += "  " + warn.Render("updating…")
-		}
-		sb.WriteString(line + "\n")
+	availH := m.height - 10
+	if availH < 1 {
+		availH = 20
 	}
 
-	sb.WriteString("\n  " + dim.Render("[↑↓] navigate  [enter/u] update  [r] refresh") + "\n")
+	m.updatesTable.SetHeight(availH)
+	m.updatesTable.SetFocused(true)
+
+	tableView := m.updatesTable.View()
+
+	sb.WriteString(dim.Render(tableView))
+	if m.installing {
+		sb.WriteString("  " + theme.T.WarnPill("updating…") + "\n")
+	}
+	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("u", "update") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
+}
+
+func (m *PluginManagerScreen) updateInstalledTable() {
+	rows := make([][]string, len(m.plugins))
+	for i, p := range m.plugins {
+		tags := ""
+		if len(p.Tags) > 0 {
+			tags = strings.Join(p.Tags, ",")
+		}
+		rows[i] = []string{
+			truncate(p.Name, 22),
+			truncate(p.Version, 9),
+			truncate(p.PluginType, 8),
+			truncate(tags, 15),
+			p.Status,
+		}
+	}
+	m.installedTable.SetData(rows)
+}
+
+func (m *PluginManagerScreen) updateAvailableTable() {
+	rows := make([][]string, len(m.available))
+	for i, e := range m.available {
+		status := "available"
+		if e.Installed {
+			status = "installed"
+		}
+		rows[i] = []string{
+			truncate(e.Name, 22),
+			truncate(e.Version, 9),
+			truncate(e.PluginType, 8),
+			status,
+		}
+	}
+	m.availableTable.SetData(rows)
+}
+
+func (m *PluginManagerScreen) updateUpdatesTable() {
+	rows := make([][]string, len(m.updates))
+	for i, u := range m.updates {
+		rows[i] = []string{
+			truncate(u.plugin.Name, 22),
+			truncate(u.plugin.Version, 9),
+			truncate(u.entry.Version, 9),
+			truncate(u.entry.PluginType, 10),
+		}
+	}
+	m.updatesTable.SetData(rows)
 }
 
 func (m *PluginManagerScreen) contentWidth() int {

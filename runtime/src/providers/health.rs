@@ -16,16 +16,9 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! let registry = HealthRegistry::new();
-//!
-//! // Record an outcome:
-//! registry.record_success("torrentio", 342 /* ms */);
-//! registry.record_failure("broken-scraper", FailureKind::Timeout);
-//!
-//! // Score a candidate (higher = better):
-//! let score = registry.reliability_score("torrentio");
-//! ```
+//! See module tests for usage examples.
+
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -49,45 +42,49 @@ pub enum FailureKind {
 /// Accumulated statistics for one provider.
 #[derive(Debug, Clone)]
 pub struct ProviderStats {
-    pub name:            String,
-    pub request_count:   u64,
-    pub success_count:   u64,
-    pub failure_count:   u64,
-    pub timeout_count:   u64,
-    pub empty_count:     u64,
+    pub name: String,
+    pub request_count: u64,
+    pub success_count: u64,
+    pub failure_count: u64,
+    pub timeout_count: u64,
+    pub empty_count: u64,
     /// Sum of all response latencies in milliseconds.
-    latency_sum_ms:      u64,
+    latency_sum_ms: u64,
     /// Timestamp of first request (for rate-based metrics).
-    first_seen:          Option<Instant>,
+    first_seen: Option<Instant>,
     /// Timestamp of last successful request.
-    pub last_success:    Option<Instant>,
+    pub last_success: Option<Instant>,
 }
 
 impl ProviderStats {
     fn new(name: &str) -> Self {
         ProviderStats {
-            name:          name.to_string(),
+            name: name.to_string(),
             request_count: 0,
             success_count: 0,
             failure_count: 0,
             timeout_count: 0,
-            empty_count:   0,
+            empty_count: 0,
             latency_sum_ms: 0,
-            first_seen:    None,
-            last_success:  None,
+            first_seen: None,
+            last_success: None,
         }
     }
 
     /// Fraction of non-empty successful responses (0.0–1.0).
     pub fn success_rate(&self) -> f64 {
-        if self.request_count == 0 { return 1.0; } // benefit of the doubt
+        if self.request_count == 0 {
+            return 1.0;
+        } // benefit of the doubt
         let good = self.success_count.saturating_sub(self.empty_count);
         good as f64 / self.request_count as f64
     }
 
     /// Average response latency in milliseconds.
     pub fn avg_latency_ms(&self) -> f64 {
-        if self.success_count == 0 { return 0.0; }
+        if self.success_count == 0 {
+            return 0.0;
+        }
         self.latency_sum_ms as f64 / self.success_count as f64
     }
 
@@ -135,8 +132,10 @@ impl HealthRegistry {
     ///
     /// `latency_ms` is the wall-clock time from request start to first result.
     pub fn record_success(&self, provider: &str, latency_ms: u64) {
-        let mut map = self.inner.lock().unwrap();
-        let s = map.entry(provider.to_string()).or_insert_with(|| ProviderStats::new(provider));
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let s = map
+            .entry(provider.to_string())
+            .or_insert_with(|| ProviderStats::new(provider));
         s.request_count += 1;
         s.success_count += 1;
         s.latency_sum_ms += latency_ms;
@@ -146,15 +145,20 @@ impl HealthRegistry {
 
     /// Record a provider failure.
     pub fn record_failure(&self, provider: &str, kind: FailureKind) {
-        let mut map = self.inner.lock().unwrap();
-        let s = map.entry(provider.to_string()).or_insert_with(|| ProviderStats::new(provider));
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let s = map
+            .entry(provider.to_string())
+            .or_insert_with(|| ProviderStats::new(provider));
         s.request_count += 1;
         s.failure_count += 1;
         s.first_seen.get_or_insert(Instant::now());
         match kind {
             FailureKind::Timeout => s.timeout_count += 1,
-            FailureKind::Empty   => { s.empty_count += 1; s.failure_count -= 1; }
-            FailureKind::Error   => {}
+            FailureKind::Empty => {
+                s.empty_count += 1;
+                s.failure_count -= 1;
+            }
+            FailureKind::Error => {}
         }
     }
 
@@ -162,8 +166,10 @@ impl HealthRegistry {
 
     /// Get a clone of stats for one provider (returns defaults if unknown).
     pub fn stats(&self, provider: &str) -> ProviderStats {
-        let map = self.inner.lock().unwrap();
-        map.get(provider).cloned().unwrap_or_else(|| ProviderStats::new(provider))
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.get(provider)
+            .cloned()
+            .unwrap_or_else(|| ProviderStats::new(provider))
     }
 
     /// Reliability score for `provider` (0.0–1.0, higher = more reliable).
@@ -173,24 +179,39 @@ impl HealthRegistry {
 
     /// All provider stats, sorted by reliability descending.
     pub fn all_stats(&self) -> Vec<ProviderStats> {
-        let map = self.inner.lock().unwrap();
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let mut v: Vec<ProviderStats> = map.values().cloned().collect();
-        v.sort_by(|a, b| b.reliability_score().partial_cmp(&a.reliability_score()).unwrap());
+        v.sort_by(|a, b| {
+            b.reliability_score()
+                .partial_cmp(&a.reliability_score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         v
     }
 
     /// Providers with a reliability score below `threshold` (for warnings).
     pub fn degraded_providers(&self, threshold: f64) -> Vec<String> {
-        let map = self.inner.lock().unwrap();
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.values()
             .filter(|s| s.request_count >= 3 && s.reliability_score() < threshold)
             .map(|s| s.name.clone())
             .collect()
     }
+
+    /// Get reliability scores for all providers as a HashMap.
+    /// Used by `rank_with_health` to blend quality with reliability.
+    pub fn all_reliability_scores(&self) -> HashMap<String, f64> {
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.iter()
+            .map(|(name, stats)| (name.clone(), stats.reliability_score()))
+            .collect()
+    }
 }
 
 impl Default for HealthRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Score blend helper ────────────────────────────────────────────────────────
@@ -223,7 +244,7 @@ mod tests {
         r.record_success("p", 200);
         r.record_failure("p", FailureKind::Error);
         let s = r.stats("p");
-        assert!((s.success_rate() - 2.0/3.0).abs() < 1e-6);
+        assert!((s.success_rate() - 2.0 / 3.0).abs() < 1e-6);
     }
 
     #[test]

@@ -20,4 +20,4 @@
 pub mod client;
 pub mod bridge;
 
-pub use bridge::{MpdBridge, MpdOutput};
+pub use bridge::MpdBridge;

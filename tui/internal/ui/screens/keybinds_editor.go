@@ -25,8 +25,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ui/actions"
 	"github.com/stui/stui/internal/ui/screen"
@@ -140,7 +140,7 @@ func (s KeybindsEditorScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s KeybindsEditorScreen) View() string {
+func (s KeybindsEditorScreen) View() tea.View {
 	accent  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	dim     := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	normal  := lipgloss.NewStyle().Foreground(theme.T.Text())
@@ -190,5 +190,5 @@ func (s KeybindsEditorScreen) View() string {
 		footer = hintBar("↑↓ navigate", "enter rebind", "r reset", "R reset all", "esc back")
 	}
 	sb.WriteString(footer + "\n")
-	return sb.String()
+	return tea.NewView(sb.String())
 }

@@ -34,7 +34,7 @@ async fn set_player_hwdec() {
 #[tokio::test]
 async fn set_player_cache_secs() {
     let (mgr, _) = make_manager();
-    mgr.set_number("player.cache_secs", 30.0).await.unwrap();
+    mgr.set_number("player.cache_secs", 30_f64).await.unwrap();
     let snap = mgr.snapshot().await;
     assert_eq!(snap.playback.cache_secs, 30);
 }

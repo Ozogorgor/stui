@@ -5,8 +5,8 @@ package screens
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ui/actions"
 	"github.com/stui/stui/internal/ui/screen"
@@ -34,7 +34,7 @@ func (h HelpScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return h, nil
 }
 
-func (h HelpScreen) View() string {
+func (h HelpScreen) View() tea.View {
 	accent   := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	normal   := lipgloss.NewStyle().Foreground(theme.T.Text())
 	keyStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Width(18)
@@ -51,5 +51,5 @@ func (h HelpScreen) View() string {
 	}
 
 	sb.WriteString(hintBar("esc close") + "\n")
-	return sb.String()
+	return tea.NewView(sb.String())
 }

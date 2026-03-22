@@ -9,7 +9,7 @@ use serde_json::json;
 use tracing::warn;
 
 use crate::engine::Engine;
-use crate::ipc::{MediaTab, MpdOutputInfo, MpdOutputsResponse, PlayerCmd, PlayerCommandRequest, Response, ErrorCode};
+use crate::ipc::{MediaTab, MediaType, MpdOutputInfo, MpdOutputsResponse, PlayerCmd, PlayerCommandRequest, Response, ErrorCode};
 use crate::mpd_bridge::MpdBridge;
 use crate::player::PlayerBridge;
 use crate::skipper::Skipper;
@@ -22,13 +22,15 @@ use crate::skipper::Skipper;
 /// `tab` is `Some(Music|Radio|Podcasts)` for audio (→ MPD),
 /// `None` for video (→ mpv).
 pub fn run_play(
-    player:   PlayerBridge,
-    skipper:  Arc<Skipper>,
-    engine:   Arc<Engine>,
-    entry_id: String,
-    provider: String,
-    imdb_id:  String,
-    tab:      Option<MediaTab>,
+    player:     PlayerBridge,
+    skipper:    Arc<Skipper>,
+    engine:     Arc<Engine>,
+    entry_id:   String,
+    provider:   String,
+    imdb_id:    String,
+    tab:        Option<MediaTab>,
+    media_type: Option<MediaType>,
+    year:       Option<u32>,
 ) {
     // Fire-and-forget: launch playback
     let p = player.clone();
@@ -36,7 +38,7 @@ pub fn run_play(
     let prov = provider.clone();
     let iid = imdb_id.clone();
     tokio::spawn(async move {
-        p.play(&eid, &prov, &iid, tab).await;
+        p.play(&eid, &prov, &iid, tab, media_type, year).await;
     });
 
     // Fire-and-forget: fingerprint + skip detection (video only — needs HTTP URL)

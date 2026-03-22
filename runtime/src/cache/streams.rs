@@ -18,19 +18,23 @@ use tracing::debug;
 use crate::cache::Ttl;
 use crate::providers::Stream;
 
+#[allow(dead_code)]
 const TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Thread-safe resolved-stream cache.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StreamCache {
     inner: Arc<RwLock<HashMap<String, Ttl<Vec<Stream>>>>>,
 }
 
 impl StreamCache {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         StreamCache { inner: Arc::new(RwLock::new(HashMap::new())) }
     }
 
+    #[allow(dead_code)]
     /// Return cached streams if present and not expired.
     pub async fn get(&self, id: &str) -> Option<Vec<Stream>> {
         let map = self.inner.read().await;
@@ -44,6 +48,7 @@ impl StreamCache {
         }
     }
 
+    #[allow(dead_code)]
     /// Cache streams for an entry_id, replacing any previous value.
     pub async fn insert(&self, id: impl Into<String>, streams: Vec<Stream>) {
         let key = id.into();
@@ -51,10 +56,12 @@ impl StreamCache {
         self.inner.write().await.insert(key, Ttl::new(streams, TTL));
     }
 
+    #[allow(dead_code)]
     pub async fn evict_expired(&self) {
         self.inner.write().await.retain(|_, v| v.is_valid());
     }
 
+    #[allow(dead_code)]
     pub async fn clear(&self) {
         self.inner.write().await.clear();
     }

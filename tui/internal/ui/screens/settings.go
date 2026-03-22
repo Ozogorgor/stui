@@ -39,9 +39,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -58,6 +58,18 @@ func init() {
 	} else {
 		settingsHomeDir = h
 	}
+}
+
+func isValidPath(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	abs = filepath.Clean(abs)
+	if strings.HasPrefix(abs, "..") {
+		return false
+	}
+	return true
 }
 
 // ── Setting item types ────────────────────────────────────────────────────────
@@ -77,14 +89,14 @@ const (
 // settingItem represents one configurable value in a category.
 type settingItem struct {
 	label       string
-	key         string      // dot-separated config key e.g. "player.default_volume"
+	key         string // dot-separated config key e.g. "player.default_volume"
 	kind        settingKind
 	boolVal     bool
 	intVal      int
 	floatVal    float64
 	choiceVals  []string
 	choiceIdx   int
-	strVal      string      // current path value for settingPath items
+	strVal      string // current path value for settingPath items
 	description string // shown in the footer when focused
 	minVal      int    // lower bound for settingInt; 0 = no lower bound
 	maxVal      int    // upper bound for settingInt; 0 = no upper bound
@@ -174,12 +186,12 @@ type SettingsChangedMsg struct {
 // SettingsModel is the standalone settings screen.
 // It implements the screen.Screen interface.
 type SettingsModel struct {
-	categories   []settingCategory
-	catCursor    int  // which category is selected
-	itemCursor   int  // which item within the category is focused
-	inCategory   bool // true = navigating items; false = navigating categories
-	width        int
-	height       int
+	categories []settingCategory
+	catCursor  int  // which category is selected
+	itemCursor int  // which item within the category is focused
+	inCategory bool // true = navigating items; false = navigating categories
+	width      int
+	height     int
 	// Path editing state — active when the user is editing a settingPath item.
 	editing   bool
 	editInput textinput.Model
@@ -205,7 +217,12 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			case "enter":
 				// Confirm: write the typed value back to the item.
 				item := m.categories[m.catCursor].items[m.itemCursor]
-				item.strVal = m.editInput.Value()
+				newPath := m.editInput.Value()
+				if item.kind == settingPath && !isValidPath(newPath) {
+					m.editing = false
+					return m, nil
+				}
+				item.strVal = newPath
 				m.editing = false
 				return m, settingChangedCmd(item)
 			case "esc":
@@ -232,8 +249,9 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.MouseMsg:
+		mouse := msg.Mouse()
 		switch {
-		case msg.Button == tea.MouseButtonWheelUp:
+		case mouse.Button == tea.MouseWheelUp:
 			if !m.inCategory {
 				if m.catCursor > 0 {
 					m.catCursor--
@@ -244,7 +262,7 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					m.itemCursor--
 				}
 			}
-		case msg.Button == tea.MouseButtonWheelDown:
+		case mouse.Button == tea.MouseWheelDown:
 			if !m.inCategory {
 				if m.catCursor < len(m.categories)-1 {
 					m.catCursor++
@@ -256,36 +274,39 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					m.itemCursor++
 				}
 			}
-		case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
-			// Layout: header at row 0, blank at row 1, body at row 2+.
-			// Left panel is leftW=18 wide with PaddingLeft(1).
-			const leftPanelW = 19 // 18 width + 1 padding
-			bodyRow := msg.Y - 2
-			if bodyRow < 0 {
-				break
-			}
-			if msg.X < leftPanelW+2 {
-				// Left panel: category click.
-				if bodyRow < len(m.categories) {
-					m.catCursor = bodyRow
-					m.inCategory = false
-					m.itemCursor = 0
+		case mouse.Button == tea.MouseLeft:
+			// Handle click events
+			if clickMsg, ok := msg.(tea.MouseClickMsg); ok && clickMsg.Button == tea.MouseLeft {
+				// Layout: header at row 0, blank at row 1, body at row 2+.
+				// Left panel is leftW=18 wide with PaddingLeft(1).
+				const leftPanelW = 19 // 18 width + 1 padding
+				bodyRow := mouse.Y - 2
+				if bodyRow < 0 {
+					break
 				}
-			} else {
-				// Right panel: rows 0=cat header, 1=blank, 2+=items.
-				itemRow := bodyRow - 2
-				if itemRow >= 0 {
-					cat := m.categories[m.catCursor]
-					if itemRow < len(cat.items) {
-						m.inCategory = true
-						m.itemCursor = itemRow
+				if mouse.X < leftPanelW+2 {
+					// Left panel: category click.
+					if bodyRow < len(m.categories) {
+						m.catCursor = bodyRow
+						m.inCategory = false
+						m.itemCursor = 0
+					}
+				} else {
+					// Right panel: rows 0=cat header, 1=blank, 2+=items.
+					itemRow := bodyRow - 2
+					if itemRow >= 0 {
+						cat := m.categories[m.catCursor]
+						if itemRow < len(cat.items) {
+							m.inCategory = true
+							m.itemCursor = itemRow
+						}
 					}
 				}
 			}
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 
 		// ── Category navigation (left panel) ───────────────────────────
@@ -340,7 +361,7 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 						if inputW < 20 {
 							inputW = 20
 						}
-						ti.Width = inputW
+						ti.SetWidth(inputW)
 						ti.CharLimit = 512
 						cmd := ti.Focus() // Focus() returns blink cmd — must not be dropped
 						m.editInput = ti
@@ -424,9 +445,9 @@ func settingChangedCmd(item *settingItem) tea.Cmd {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m SettingsModel) View() string {
+func (m SettingsModel) View() tea.View {
 	if m.width == 0 {
-		return "  ⚙  Settings\n"
+		return tea.NewView("  ⚙  Settings\n")
 	}
 
 	// Styles
@@ -549,7 +570,7 @@ func (m SettingsModel) View() string {
 		footer = hintBar("↑↓ navigate", "enter select/toggle", "+/- adjust", "← back", "esc exit")
 	}
 
-	return header + "\n\n" + body + "\n\n" + footer + "\n"
+	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
 }
 
 // ── Default categories ────────────────────────────────────────────────────────
@@ -711,41 +732,41 @@ func defaultCategories() []settingCategory {
 					label:       "Configure API Keys",
 					key:         "providers.open_settings",
 					kind:        settingAction,
-					description: "Enter API keys for TMDB, OMDB, Last.fm and more",
+					description: "Enter API keys for TMDB, OMDB, and other providers",
 				},
 				{
-					label:   "TMDB",
-					key:     "providers.enable_tmdb",
-					kind:    settingBool,
-					boolVal: true,
+					label:       "TMDB",
+					key:         "providers.enable_tmdb",
+					kind:        settingBool,
+					boolVal:     true,
 					description: "TMDB metadata (requires API key — configure above)",
 				},
 				{
-					label:   "OMDB",
-					key:     "providers.enable_omdb",
-					kind:    settingBool,
-					boolVal: false,
+					label:       "OMDB",
+					key:         "providers.enable_omdb",
+					kind:        settingBool,
+					boolVal:     false,
 					description: "OMDB metadata fallback (requires API key — configure above)",
 				},
 				{
-					label:   "Torrentio",
-					key:     "providers.enable_torrentio",
-					kind:    settingBool,
-					boolVal: true,
+					label:       "Torrentio",
+					key:         "providers.enable_torrentio",
+					kind:        settingBool,
+					boolVal:     true,
 					description: "Torrent streams via Torrentio RPC plugin",
 				},
 				{
-					label:   "Prowlarr",
-					key:     "providers.enable_prowlarr",
-					kind:    settingBool,
-					boolVal: false,
+					label:       "Prowlarr",
+					key:         "providers.enable_prowlarr",
+					kind:        settingBool,
+					boolVal:     false,
 					description: "Prowlarr indexer (requires PROWLARR_URL)",
 				},
 				{
-					label:   "OpenSubtitles",
-					key:     "providers.enable_opensubtitles",
-					kind:    settingBool,
-					boolVal: false,
+					label:       "OpenSubtitles",
+					key:         "providers.enable_opensubtitles",
+					kind:        settingBool,
+					boolVal:     false,
 					description: "OpenSubtitles (requires OS_API_KEY)",
 				},
 			},
@@ -944,12 +965,12 @@ func defaultCategories() []settingCategory {
 				},
 				// ── Visualizer ───────────────────────────────────────────────
 				{
-					label:       "Visualizer",
+					label:       "Viz backend",
 					key:         "visualizer.backend",
 					kind:        settingChoice,
 					choiceVals:  []string{"off", "cava", "chroma"},
 					choiceIdx:   0,
-					description: "Frequency visualizer backend: off, cava, or chroma (requires the binary on $PATH)",
+					description: "Frequency visualizer: off/cava/chroma (install with: cargo install chroma --features audio)",
 				},
 				{
 					label:       "Viz bars",
@@ -973,11 +994,19 @@ func defaultCategories() []settingCategory {
 					description: "Target animation framerate in fps (10–60)",
 				},
 				{
-					label:       "Viz symmetric",
-					key:         "visualizer.symmetric",
+					label:       "Viz mode",
+					key:         "visualizer.mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"bars", "mirror", "filled", "led"},
+					choiceIdx:   0,
+					description: "Visualization style: bars, mirror, filled, or led",
+				},
+				{
+					label:       "Viz peak hold",
+					key:         "visualizer.peak_hold",
 					kind:        settingBool,
-					boolVal:     false,
-					description: "Mirror bars left↔right for a symmetric display",
+					boolVal:     true,
+					description: "Show peak hold indicators on bars",
 				},
 				{
 					label:       "Viz gradient",
@@ -1028,6 +1057,47 @@ func defaultCategories() []settingCategory {
 			},
 		},
 		{
+			name: "Storage",
+			icon: "💾",
+			items: []*settingItem{
+				{
+					label:       "Movies folder",
+					key:         "storage.movies",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Videos", "Movies"),
+					description: "Where organized movie files are stored",
+				},
+				{
+					label:       "Series folder",
+					key:         "storage.series",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Videos", "Series"),
+					description: "Where organized TV series files are stored",
+				},
+				{
+					label:       "Anime folder",
+					key:         "storage.anime",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Videos", "Anime"),
+					description: "Where organized anime files are stored",
+				},
+				{
+					label:       "Music folder",
+					key:         "storage.music",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Music"),
+					description: "Where organized music files are stored",
+				},
+				{
+					label:       "Podcasts folder",
+					key:         "storage.podcasts",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Music", "Podcasts"),
+					description: "Where podcast episodes are stored",
+				},
+			},
+		},
+		{
 			name: "Stats for Nerds",
 			icon: "📊",
 			items: []*settingItem{
@@ -1054,6 +1124,34 @@ func defaultCategories() []settingCategory {
 					key:         "stats.clear_cache",
 					kind:        settingAction,
 					description: "Delete the local media cache (mediacache.json) — next launch will refetch from providers",
+				},
+			},
+		},
+		{
+			name: "Accessibility",
+			icon: "♿",
+			items: []*settingItem{
+				{
+					label:       "Color scheme",
+					key:         "ui.color_scheme",
+					kind:        settingChoice,
+					choiceVals:  []string{"default", "high-contrast", "monochrome"},
+					choiceIdx:   0,
+					description: "Color palette: default, high-contrast (for low vision), or monochrome",
+				},
+				{
+					label:       "Reduced motion",
+					key:         "ui.reduced_motion",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Disable animations, spinners, and transitions",
+				},
+				{
+					label:       "Screen reader mode",
+					key:         "ui.screen_reader",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Optimize output for screen readers (plain text, no colors)",
 				},
 			},
 		},

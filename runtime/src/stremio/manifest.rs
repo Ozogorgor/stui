@@ -4,93 +4,98 @@
 
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioManifest {
-    pub id:          String,
-    pub name:        String,
-    pub version:     String,
+    pub id: String,
+    pub name: String,
+    pub version: String,
     pub description: Option<String>,
-    pub logo:        Option<String>,
-    pub resources:   Vec<serde_json::Value>, // "catalog", "stream", "subtitles", …
-    pub types:       Vec<String>,            // "movie", "series", "anime", "music"
-    pub catalogs:    Vec<StremioManifestCatalog>,
+    pub logo: Option<String>,
+    pub resources: Vec<serde_json::Value>, // "catalog", "stream", "subtitles", …
+    pub types: Vec<String>,                // "movie", "series", "anime", "music"
+    pub catalogs: Vec<StremioManifestCatalog>,
     #[serde(default)]
     pub behavior_hints: BehaviorHints,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioManifestCatalog {
-    pub r#type: String,   // "movie", "series"
-    pub id:     String,   // e.g. "top"
-    pub name:   String,   // human-readable
+    pub r#type: String, // "movie", "series"
+    pub id: String,     // e.g. "top"
+    pub name: String,   // human-readable
     #[serde(default)]
-    pub extra:  Vec<StremioExtra>,
+    pub extra: Vec<StremioExtra>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioExtra {
-    pub name:     String,
+    pub name: String,
     #[serde(default)]
     pub is_required: bool,
     #[serde(default)]
-    pub options:  Vec<String>,
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BehaviorHints {
     #[serde(default)]
-    pub adult:           bool,
+    pub adult: bool,
     #[serde(default)]
-    pub p2p:             bool,
+    pub p2p: bool,
     #[serde(default)]
-    pub configurable:    bool,
+    pub configurable: bool,
     #[serde(default)]
     pub configuration_required: bool,
 }
 
 // ── Stremio resource response types ──────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioMeta {
-    pub id:          String,
-    pub r#type:      String,
-    pub name:        String,
-    pub year:        Option<serde_json::Value>, // sometimes u32, sometimes String
+    pub id: String,
+    pub r#type: String,
+    pub name: String,
+    pub year: Option<serde_json::Value>, // sometimes u32, sometimes String
     pub description: Option<String>,
-    pub poster:      Option<String>,
-    pub background:  Option<String>,
-    pub logo:        Option<String>,
-    pub rating:      Option<f64>,
-    pub genres:      Option<Vec<String>>,
+    pub poster: Option<String>,
+    pub background: Option<String>,
+    pub logo: Option<String>,
+    pub rating: Option<f64>,
+    pub genres: Option<Vec<String>>,
     #[serde(rename = "imdbRating")]
     pub imdb_rating: Option<String>,
     #[serde(rename = "imdb_id")]
-    pub imdb_id:     Option<String>,
+    pub imdb_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioCatalogResponse {
     pub metas: Vec<StremioMeta>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioStream {
     /// Direct URL, magnet, or infoHash
-    pub url:          Option<String>,
-    pub title:        Option<String>,
-    pub name:         Option<String>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub name: Option<String>,
     #[serde(rename = "infoHash")]
-    pub info_hash:    Option<String>,
+    pub info_hash: Option<String>,
     #[serde(rename = "fileIdx")]
-    pub file_idx:     Option<u32>,
+    pub file_idx: Option<u32>,
     pub behavior_hints: Option<StreamBehaviorHints>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamBehaviorHints {
     #[serde(rename = "bingeGroup")]
-    pub binge_group:   Option<String>,
+    pub binge_group: Option<String>,
     #[serde(rename = "notWebReady")]
     pub not_web_ready: Option<bool>,
 }
@@ -100,13 +105,15 @@ pub struct StremioStreamResponse {
     pub streams: Vec<StremioStream>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioSubtitle {
-    pub id:  String,
+    pub id: String,
     pub url: String,
     pub lang: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioSubtitleResponse {
     pub subtitles: Vec<StremioSubtitle>,

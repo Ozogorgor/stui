@@ -21,9 +21,11 @@ package screens
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -42,23 +44,28 @@ type PluginReposScreen struct {
 	status  string
 
 	// Add-mode: user is typing a new URL
-	adding  bool
-	addBuf  string
+	adding bool
+	addBuf string
 
 	width  int
 	height int
+
+	spinner components.Spinner
 }
 
 func NewPluginReposScreen(client *ipc.Client) *PluginReposScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return &PluginReposScreen{
 		client:  client,
 		loading: true,
+		spinner: *components.NewSpinner("loading…", dimStyle),
 	}
 }
 
 // ── screen.Screen interface ───────────────────────────────────────────────────
 
 func (m *PluginReposScreen) Init() tea.Cmd {
+	m.spinner.Start()
 	return func() tea.Msg {
 		m.client.GetPluginRepos()
 		return nil
@@ -68,12 +75,17 @@ func (m *PluginReposScreen) Init() tea.Cmd {
 func (m *PluginReposScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case spinner.TickMsg:
+		m.spinner.Update(msg)
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 
 	case ipc.PluginReposResultMsg:
 		m.loading = false
+		m.spinner.Stop()
 		if msg.Err != nil {
 			m.status = "Error: " + msg.Err.Error()
 			// Fall back to showing just the built-in repo
@@ -86,7 +98,7 @@ func (m *PluginReposScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.repos = append([]string{builtinRepo}, m.repos...)
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.loading {
 			return m, nil
 		}
@@ -144,8 +156,8 @@ func (m *PluginReposScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m *PluginReposScreen) updateAdding(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
-	switch msg.Type {
+func (m *PluginReposScreen) updateAdding(msg tea.KeyPressMsg) (screen.Screen, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEsc:
 		m.adding = false
 		m.addBuf = ""
@@ -180,8 +192,8 @@ func (m *PluginReposScreen) updateAdding(msg tea.KeyMsg) (screen.Screen, tea.Cmd
 		}
 
 	default:
-		if msg.Type == tea.KeyRunes {
-			m.addBuf += msg.String()
+		if len(msg.Text) > 0 {
+			m.addBuf += msg.Text
 		}
 	}
 	return m, nil
@@ -189,16 +201,16 @@ func (m *PluginReposScreen) updateAdding(msg tea.KeyMsg) (screen.Screen, tea.Cmd
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m *PluginReposScreen) View() string {
+func (m *PluginReposScreen) View() tea.View {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
-	warnStyle   := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	warnStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
 
 	header := accentStyle.Render("🧩  Plugin Repositories")
 
 	if m.loading {
-		return header + "\n\n" + dimStyle.Render("  Loading…") + "\n"
+		return tea.NewView(header + "\n\n  " + m.spinner.View() + "\n")
 	}
 
 	var lines []string
@@ -281,7 +293,7 @@ func (m *PluginReposScreen) View() string {
 		footer = hintStr
 	}
 
-	return header + "\n\n" + body + "\n\n" + footer + "\n"
+	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
 }
 
 func (m *PluginReposScreen) addInputWidth() int {

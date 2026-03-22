@@ -1,5 +1,6 @@
 //! Integration tests for providers, catalog filters, and aggregation.
 
+use std::collections::HashMap;
 use stui_runtime::catalog::CatalogEntry;
 use stui_runtime::catalog_engine::{
     aggregator::CatalogAggregator,
@@ -12,19 +13,20 @@ use stui_runtime::ipc::MediaType;
 
 fn entry(title: &str, year: &str, genre: &str, rating: &str, mt: MediaType) -> CatalogEntry {
     CatalogEntry {
-        id:          title.to_lowercase().replace(' ', "-"),
-        title:       title.to_string(),
-        year:        Some(year.to_string()),
-        genre:       Some(genre.to_string()),
-        rating:      Some(rating.to_string()),
+        id: title.to_lowercase().replace(' ', "-"),
+        title: title.to_string(),
+        year: Some(year.to_string()),
+        genre: Some(genre.to_string()),
+        rating: Some(rating.to_string()),
         description: None,
-        poster_url:  None,
-        poster_art:  None,
-        provider:    "test".to_string(),
-        tab:         "movies".to_string(),
-        imdb_id:     None,
-        tmdb_id:     None,
-        media_type:  mt,
+        poster_url: None,
+        poster_art: None,
+        provider: "test".to_string(),
+        tab: "movies".to_string(),
+        imdb_id: None,
+        tmdb_id: None,
+        media_type: mt,
+        ratings: HashMap::new(),
     }
 }
 
@@ -97,12 +99,15 @@ fn test_filter_title_contains() {
     let entries = vec![
         movie("The Dark Knight", "2008", "Action", "9.0"),
         movie("Batman Begins", "2005", "Action", "8.2"),
+        movie("The Batman", "2022", "Action", "8.4"),
         movie("Oppenheimer", "2023", "Drama", "8.5"),
     ];
     let mut fs = FilterSet::new();
     fs.add(Filter::title_contains("bat"));
     let result = fs.apply(entries);
-    assert_eq!(result.len(), 2);
+    assert_eq!(result.len(), 2); // Batman Begins and The Batman
+    assert!(result.iter().any(|e| e.title == "Batman Begins"));
+    assert!(result.iter().any(|e| e.title == "The Batman"));
 }
 
 #[test]
@@ -177,11 +182,20 @@ fn test_aggregator_deduplicates_by_title_year() {
 
     let mut e2 = movie("Dune", "2021", "Sci-Fi", "");
     e2.provider = "imdb".to_string();
-    e2.rating   = None;
+    e2.rating = None;
 
     let result = CatalogAggregator::new().apply(vec![e1, e2]);
     assert_eq!(result.len(), 1, "duplicate entries should be merged");
-    assert!(result[0].provider.contains("tmdb"), "provider list should include both");
+    assert!(
+        result[0].provider.contains("tmdb"),
+        "provider list should include tmdb; got: {}",
+        result[0].provider
+    );
+    assert!(
+        result[0].provider.contains("imdb"),
+        "provider list should include imdb; got: {}",
+        result[0].provider
+    );
 }
 
 #[test]
@@ -196,7 +210,10 @@ fn test_aggregator_fills_missing_fields() {
 
     let result = CatalogAggregator::new().apply(vec![base, enriched]);
     assert_eq!(result.len(), 1);
-    assert!(result[0].description.is_some(), "description should be filled from secondary");
+    assert!(
+        result[0].description.is_some(),
+        "description should be filled from secondary"
+    );
 }
 
 #[test]

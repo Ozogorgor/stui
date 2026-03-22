@@ -24,9 +24,10 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -63,7 +64,7 @@ type MusicLibraryScreen struct {
 	loadingSongs   bool
 
 	// Dir browser state
-	dirPath    []string      // breadcrumb stack; empty = root
+	dirPath    []string // breadcrumb stack; empty = root
 	dirEntries []ipc.MpdDirEntry
 	dirCursor  int
 	dirScroll  int
@@ -467,24 +468,16 @@ func (s MusicLibraryScreen) handleDirMouse(x, localY int) MusicLibraryScreen {
 
 // libScroll computes the scroll offset for a pane column, mirroring buildPaneLines.
 func libScroll(n, cursor, maxH int) int {
-	if n <= maxH {
-		return 0
-	}
-	scroll := cursor - maxH/2
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll > n-maxH {
-		scroll = n - maxH
-	}
-	return scroll
+	vl := components.NewVirtualizedList(n, cursor, maxH, components.WithScrollMode(components.ScrollModeCenter))
+	start, _ := vl.VisibleRange()
+	return start
 }
 
 // View renders the library screen within the given width/height constraints.
 func (s MusicLibraryScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
 	if s.dirMode {
 		return s.viewDir(w, h, accentStyle, dimStyle, textStyle)

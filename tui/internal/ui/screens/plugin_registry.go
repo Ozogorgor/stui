@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -43,18 +45,23 @@ type PluginRegistryScreen struct {
 
 	width  int
 	height int
+
+	spinner components.Spinner
 }
 
 func NewPluginRegistryScreen(client *ipc.Client) *PluginRegistryScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return &PluginRegistryScreen{
 		client:  client,
 		loading: true,
+		spinner: *components.NewSpinner("fetching index…", dimStyle),
 	}
 }
 
 // ── screen.Screen interface ───────────────────────────────────────────────────
 
 func (m *PluginRegistryScreen) Init() tea.Cmd {
+	m.spinner.Start()
 	return func() tea.Msg {
 		m.client.BrowseRegistry()
 		return nil
@@ -64,12 +71,17 @@ func (m *PluginRegistryScreen) Init() tea.Cmd {
 func (m *PluginRegistryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case spinner.TickMsg:
+		m.spinner.Update(msg)
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 
 	case ipc.RegistryBrowseResultMsg:
 		m.loading = false
+		m.spinner.Stop()
 		if msg.Err != nil {
 			m.status = "Error: " + msg.Err.Error()
 			return m, nil
@@ -142,17 +154,17 @@ func (m *PluginRegistryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-func (m *PluginRegistryScreen) View() string {
-	accentStyle  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle     := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle    := lipgloss.NewStyle().Foreground(theme.T.Text())
-	greenStyle   := lipgloss.NewStyle().Foreground(theme.T.Green())
-	warnStyle    := lipgloss.NewStyle().Foreground(theme.T.Yellow())
+func (m *PluginRegistryScreen) View() tea.View {
+	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	greenStyle := lipgloss.NewStyle().Foreground(theme.T.Green())
+	warnStyle := lipgloss.NewStyle().Foreground(theme.T.Yellow())
 
 	header := accentStyle.Render("🔌  Plugin Registry")
 
 	if m.loading {
-		return header + "\n\n" + dimStyle.Render("  Fetching index…") + "\n"
+		return tea.NewView(header + "\n\n  " + m.spinner.View() + "\n")
 	}
 
 	var sb strings.Builder
@@ -164,22 +176,22 @@ func (m *PluginRegistryScreen) View() string {
 		// Column header
 		hdr := fmt.Sprintf("  %-22s %-8s %-7s %s", "Name", "Version", "Type", "Description")
 		sb.WriteString(dimStyle.Render(hdr) + "\n")
-		sb.WriteString(dimStyle.Render("  " + strings.Repeat("─", m.rowWidth()-2)) + "\n")
+		sb.WriteString(dimStyle.Render("  "+strings.Repeat("─", m.rowWidth()-2)) + "\n")
 
 		for i, e := range m.entries {
 			isSelected := i == m.cursor
 
-			prefix    := "  "
+			prefix := "  "
 			nameStyle := textStyle
 			if isSelected {
-				prefix    = "▶ "
+				prefix = "▶ "
 				nameStyle = accentStyle
 			}
 
-			name    := fmt.Sprintf("%-22s", truncate(e.Name, 22))
-			ver     := fmt.Sprintf("%-8s", truncate(e.Version, 8))
-			ptype   := fmt.Sprintf("%-7s", truncate(e.PluginType, 7))
-			desc    := truncate(e.Description, m.descWidth())
+			name := fmt.Sprintf("%-22s", truncate(e.Name, 22))
+			ver := fmt.Sprintf("%-8s", truncate(e.Version, 8))
+			ptype := fmt.Sprintf("%-7s", truncate(e.PluginType, 7))
+			desc := truncate(e.Description, m.descWidth())
 
 			installed := ""
 			if e.Installed {
@@ -216,7 +228,7 @@ func (m *PluginRegistryScreen) View() string {
 	}
 	sb.WriteString(hint + "\n")
 
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func (m *PluginRegistryScreen) rowWidth() int {

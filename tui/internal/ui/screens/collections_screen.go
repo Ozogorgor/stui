@@ -27,8 +27,8 @@ import (
 	"math"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/pkg/collections"
@@ -59,7 +59,7 @@ const continueWatchingName = "Continue Watching"
 // It follows the same value-receiver / copy-on-update pattern as MusicScreen.
 type CollectionsScreen struct {
 	store        *collections.Store
-	historyStore *watchhistory.Store
+	historyStore watchhistory.StoreInterface
 	width        int
 	height       int
 
@@ -69,14 +69,14 @@ type CollectionsScreen struct {
 	rightScroll int
 
 	// Inline text-input modes (new collection / rename)
-	inputMode  bool   // true = creating new collection
+	inputMode  bool // true = creating new collection
 	inputBuf   string
-	renameMode bool   // true = renaming leftCursor collection
+	renameMode bool // true = renaming leftCursor collection
 	renameBuf  string
 }
 
 // NewCollectionsScreen creates a ready-to-use CollectionsScreen.
-func NewCollectionsScreen(store *collections.Store, history *watchhistory.Store) CollectionsScreen {
+func NewCollectionsScreen(store *collections.Store, history watchhistory.StoreInterface) CollectionsScreen {
 	return CollectionsScreen{store: store, historyStore: history}
 }
 
@@ -270,26 +270,34 @@ func (s CollectionsScreen) handleKey(key string) (CollectionsScreen, tea.Cmd) {
 }
 
 func (s CollectionsScreen) handleMouse(msg tea.MouseMsg) (CollectionsScreen, tea.Cmd) {
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
+	mouse := msg.Mouse()
+
+	switch mouse.Button {
+	case tea.MouseWheelUp:
 		return s.handleKey("k")
-	case tea.MouseButtonWheelDown:
+	case tea.MouseWheelDown:
 		return s.handleKey("j")
 	}
 
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	// Handle click events
+	switch m := msg.(type) {
+	case tea.MouseClickMsg:
+		if m.Button != tea.MouseLeft {
+			return s, nil
+		}
+	default:
 		return s, nil
 	}
 
 	headerH := 1 // header row
-	bodyY := msg.Y - headerH
+	bodyY := mouse.Y - headerH
 	if bodyY < 0 {
 		return s, nil
 	}
 
 	rightPaneX := collLeftWidth + 1 // start of right pane
 
-	if msg.X < collLeftWidth {
+	if mouse.X < collLeftWidth {
 		// Click in left pane
 		s.activePane = collectionsPaneLeft
 		idx := bodyY
@@ -298,7 +306,7 @@ func (s CollectionsScreen) handleMouse(msg tea.MouseMsg) (CollectionsScreen, tea
 			s.rightCursor = 0
 			s.rightScroll = 0
 		}
-	} else if msg.X >= rightPaneX {
+	} else if mouse.X >= rightPaneX {
 		// Click in right pane
 		s.activePane = collectionsPaneRight
 		entries := s.currentEntries()
@@ -366,14 +374,14 @@ func formatCollDuration(secs float64) string {
 // ── View ─────────────────────────────────────────────────────────────────────
 
 // View renders the full Collections tab.
-func (s CollectionsScreen) View() string {
+func (s CollectionsScreen) View() tea.View {
 	if s.width == 0 {
-		return ""
+		return tea.NewView("")
 	}
 	header := s.renderHeader()
 	body := s.renderBody()
 	footer := s.renderFooter()
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
 }
 
 func (s CollectionsScreen) renderHeader() string {
@@ -678,4 +686,3 @@ func collTabBadge(tab string) string {
 		return tab
 	}
 }
-

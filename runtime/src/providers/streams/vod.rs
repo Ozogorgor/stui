@@ -7,6 +7,8 @@
 //! Currently a stub — no built-in VOD service is implemented.
 //! Community VOD adapters can be added as WASM plugins.
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 

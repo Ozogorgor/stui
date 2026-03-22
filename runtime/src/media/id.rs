@@ -12,20 +12,23 @@
 //! a single catalog and lets the engine route resolution requests to the
 //! correct provider without extra metadata.
 
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MediaId {
     /// The provider namespace (e.g. "tmdb", "imdb", "prowlarr", "local").
     pub namespace: String,
     /// The provider-local key (e.g. IMDB ID, internal numeric ID, file path).
-    pub key:       String,
+    pub key: String,
 }
 
 impl MediaId {
     pub fn new(namespace: impl Into<String>, key: impl Into<String>) -> Self {
-        MediaId { namespace: namespace.into(), key: key.into() }
+        MediaId {
+            namespace: namespace.into(),
+            key: key.into(),
+        }
     }
 
     /// Parse a `"namespace:key"` string. If there is no colon, the whole
@@ -34,15 +37,16 @@ impl MediaId {
         match s.find(':') {
             Some(i) => MediaId {
                 namespace: s[..i].to_string(),
-                key:       s[i+1..].to_string(),
+                key: s[i + 1..].to_string(),
             },
             None => MediaId {
                 namespace: "unknown".to_string(),
-                key:       s.to_string(),
+                key: s.to_string(),
             },
         }
     }
 
+    #[allow(dead_code)]
     /// Serialize to the canonical `"namespace:key"` wire form.
     pub fn to_string_id(&self) -> String {
         format!("{}:{}", self.namespace, self.key)
@@ -56,9 +60,13 @@ impl fmt::Display for MediaId {
 }
 
 impl From<&str> for MediaId {
-    fn from(s: &str) -> Self { MediaId::parse(s) }
+    fn from(s: &str) -> Self {
+        MediaId::parse(s)
+    }
 }
 
 impl From<String> for MediaId {
-    fn from(s: String) -> Self { MediaId::parse(&s) }
+    fn from(s: String) -> Self {
+        MediaId::parse(&s)
+    }
 }

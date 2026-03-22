@@ -21,6 +21,8 @@
 //! `RuntimeEvent` is an internal enum — it does not cross the IPC boundary.
 //! For TUI notifications, emit the appropriate `ipc::Response` separately.
 
+#![allow(dead_code)]
+
 use crate::catalog::CatalogEntry;
 use crate::quality::StreamCandidate;
 
@@ -32,57 +34,48 @@ use crate::quality::StreamCandidate;
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {
     // ── Search & catalog ─────────────────────────────────────────────────
-
     /// User submitted a search query (before providers are contacted).
-    SearchRequested {
-        query: String,
-        tab:   String,
-    },
+    SearchRequested { query: String, tab: String },
 
     /// A provider returned search results.
     SearchResultsReady {
-        query:    String,
-        tab:      String,
+        query: String,
+        tab: String,
         provider: String,
-        count:    usize,
+        count: usize,
     },
 
     // ── Stream resolution ─────────────────────────────────────────────────
-
     /// A media item was selected and stream resolution has started.
-    MediaSelected {
-        entry_id: String,
-        title:    String,
-    },
+    MediaSelected { entry_id: String, title: String },
 
     /// Stream candidates have been resolved and ranked for a media item.
     StreamsResolved {
-        entry_id:   String,
+        entry_id: String,
         candidates: Vec<StreamCandidate>,
     },
 
     /// The best candidate was selected for playback.
     StreamSelected {
-        entry_id:  String,
-        url:       String,
-        protocol:  String,
-        quality:   Option<String>,
+        entry_id: String,
+        url: String,
+        protocol: String,
+        quality: Option<String>,
     },
 
     // ── Playback ──────────────────────────────────────────────────────────
-
     /// mpv has started playing a file/URL.
     PlaybackStarted {
-        title:    String,
-        url:      String,
+        title: String,
+        url: String,
         duration: f64,
     },
 
     /// Periodic progress tick (~1 Hz) during active playback.
     PlaybackProgress {
-        position:      f64,
-        duration:      f64,
-        paused:        bool,
+        position: f64,
+        duration: f64,
+        paused: bool,
         cache_percent: f64,
     },
 
@@ -90,96 +83,85 @@ pub enum RuntimeEvent {
     PlaybackEnded {
         /// `"eof"` | `"quit"` | `"error"`
         reason: String,
-        error:  Option<String>,
+        error: Option<String>,
     },
 
     /// User requested a stream switch mid-playback (next candidate).
-    StreamSwitchRequested {
-        entry_id: String,
-    },
+    StreamSwitchRequested { entry_id: String },
 
     // ── Provider health ───────────────────────────────────────────────────
-
     /// A provider returned an error for a request.
-    ProviderError {
-        provider: String,
-        message:  String,
-    },
+    ProviderError { provider: String, message: String },
 
     /// A provider succeeded — used for health-score tracking.
-    ProviderSuccess {
-        provider:   String,
-        latency_ms: u64,
-    },
+    ProviderSuccess { provider: String, latency_ms: u64 },
 
     /// A provider was rate-limited (HTTP 429).
     ProviderRateLimited {
-        provider:          String,
-        retry_after_secs:  u64,
+        provider: String,
+        retry_after_secs: u64,
     },
 
     /// A provider timed out.
-    ProviderTimedOut {
-        provider:   String,
-        timeout_ms: u64,
-    },
+    ProviderTimedOut { provider: String, timeout_ms: u64 },
 
     /// All stream candidates failed or were exhausted.
-    AllCandidatesExhausted {
-        entry_id: String,
+    AllCandidatesExhausted { entry_id: String },
+
+    // ── Circuit breaker ─────────────────────────────────────────────────────
+    /// A provider's circuit breaker opened (too many failures).
+    CircuitOpened {
+        provider: String,
+        failures: u64,
+        recovery_timeout_secs: u64,
     },
 
-    // ── Plugin lifecycle ──────────────────────────────────────────────────
+    /// A provider's circuit breaker closed (provider recovered).
+    CircuitClosed { provider: String },
 
+    /// A provider's circuit breaker transitioned to half-open (testing recovery).
+    CircuitHalfOpen { provider: String },
+
+    // ── Plugin lifecycle ──────────────────────────────────────────────────
     /// A plugin was successfully loaded (WASM or RPC).
     PluginLoaded {
-        id:           String,
-        name:         String,
-        version:      String,
+        id: String,
+        name: String,
+        version: String,
         capabilities: Vec<String>,
     },
 
     /// A plugin was unloaded (directory removed or explicit call).
-    PluginUnloaded {
-        id:   String,
-        name: String,
-    },
+    PluginUnloaded { id: String, name: String },
 
     /// A plugin emitted an error.
-    PluginError {
-        name:    String,
-        message: String,
-    },
+    PluginError { name: String, message: String },
 
     // ── Cache ─────────────────────────────────────────────────────────────
-
     /// A cache entry was populated (for observability / metrics).
     CachePopulated {
         cache: String, // "search" | "metadata" | "streams" | "catalog"
-        key:   String,
+        key: String,
     },
 
     // ── Catalog grid ─────────────────────────────────────────────────────
-
     /// The catalog grid for a tab was refreshed from a provider.
     CatalogRefreshed {
-        tab:     String,
+        tab: String,
         entries: Vec<CatalogEntry>,
-        source:  String, // "cache" | "live"
+        source: String, // "cache" | "live"
     },
 
     // ── Config ───────────────────────────────────────────────────────────
-
     /// A runtime config value was changed at runtime (via SetConfig IPC).
     ConfigChanged {
         /// Dot-separated config key, e.g. `"player.default_volume"`.
-        key:   String,
+        key: String,
         /// JSON-serialised new value.
         value: String,
     },
 
     // ── Shutdown ──────────────────────────────────────────────────────────
-
     /// A graceful shutdown was requested.
     ShutdownRequested,
 }
@@ -188,27 +170,30 @@ impl RuntimeEvent {
     /// Short label for logging/tracing.
     pub fn name(&self) -> &'static str {
         match self {
-            RuntimeEvent::SearchRequested       { .. } => "search_requested",
-            RuntimeEvent::SearchResultsReady    { .. } => "search_results_ready",
-            RuntimeEvent::MediaSelected         { .. } => "media_selected",
-            RuntimeEvent::StreamsResolved       { .. } => "streams_resolved",
-            RuntimeEvent::StreamSelected        { .. } => "stream_selected",
-            RuntimeEvent::PlaybackStarted       { .. } => "playback_started",
-            RuntimeEvent::PlaybackProgress      { .. } => "playback_progress",
-            RuntimeEvent::PlaybackEnded         { .. } => "playback_ended",
+            RuntimeEvent::SearchRequested { .. } => "search_requested",
+            RuntimeEvent::SearchResultsReady { .. } => "search_results_ready",
+            RuntimeEvent::MediaSelected { .. } => "media_selected",
+            RuntimeEvent::StreamsResolved { .. } => "streams_resolved",
+            RuntimeEvent::StreamSelected { .. } => "stream_selected",
+            RuntimeEvent::PlaybackStarted { .. } => "playback_started",
+            RuntimeEvent::PlaybackProgress { .. } => "playback_progress",
+            RuntimeEvent::PlaybackEnded { .. } => "playback_ended",
             RuntimeEvent::StreamSwitchRequested { .. } => "stream_switch_requested",
-            RuntimeEvent::ProviderError         { .. } => "provider_error",
-            RuntimeEvent::ProviderSuccess       { .. } => "provider_success",
-            RuntimeEvent::PluginLoaded          { .. } => "plugin_loaded",
-            RuntimeEvent::PluginUnloaded        { .. } => "plugin_unloaded",
-            RuntimeEvent::PluginError           { .. } => "plugin_error",
-            RuntimeEvent::CachePopulated        { .. } => "cache_populated",
-            RuntimeEvent::CatalogRefreshed      { .. } => "catalog_refreshed",
-            RuntimeEvent::ShutdownRequested             => "shutdown_requested",
-            RuntimeEvent::ProviderRateLimited   { .. } => "provider_rate_limited",
-            RuntimeEvent::ProviderTimedOut      { .. } => "provider_timed_out",
-            RuntimeEvent::AllCandidatesExhausted{ .. } => "all_candidates_exhausted",
-            RuntimeEvent::ConfigChanged         { .. } => "config_changed",
+            RuntimeEvent::ProviderError { .. } => "provider_error",
+            RuntimeEvent::ProviderSuccess { .. } => "provider_success",
+            RuntimeEvent::PluginLoaded { .. } => "plugin_loaded",
+            RuntimeEvent::PluginUnloaded { .. } => "plugin_unloaded",
+            RuntimeEvent::PluginError { .. } => "plugin_error",
+            RuntimeEvent::CachePopulated { .. } => "cache_populated",
+            RuntimeEvent::CatalogRefreshed { .. } => "catalog_refreshed",
+            RuntimeEvent::ShutdownRequested => "shutdown_requested",
+            RuntimeEvent::ProviderRateLimited { .. } => "provider_rate_limited",
+            RuntimeEvent::ProviderTimedOut { .. } => "provider_timed_out",
+            RuntimeEvent::AllCandidatesExhausted { .. } => "all_candidates_exhausted",
+            RuntimeEvent::ConfigChanged { .. } => "config_changed",
+            RuntimeEvent::CircuitOpened { .. } => "circuit_opened",
+            RuntimeEvent::CircuitClosed { .. } => "circuit_closed",
+            RuntimeEvent::CircuitHalfOpen { .. } => "circuit_half_open",
         }
     }
 }

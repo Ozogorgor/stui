@@ -7,18 +7,18 @@
 //! `sources/` module:
 //!
 //! ```text
-//! scraper   → find raw sources (URLs, torrent pages, API results)
-//! resolver  → convert sources into typed StreamCandidates
-//! streamer  → prepare / buffer the chosen StreamCandidate for playback
+//! scraper   -> find raw sources (URLs, torrent pages, API results)
+//! resolver  -> convert sources into typed StreamCandidates
+//! streamer  -> prepare / buffer the chosen StreamCandidate for playback
 //! ```
 //!
 //! When that refactor happens, the three files should become:
-//! ```
+//! ```text
 //! sources/
-//!   mod.rs       — shared Source/StreamCandidate types
-//!   scraper.rs   — source discovery
-//!   resolver.rs  — candidate construction
-//!   streamer.rs  — adaptive buffering
+//!   mod.rs       - shared Source/StreamCandidate types
+//!   scraper.rs   - source discovery
+//!   resolver.rs  - candidate construction
+//!   streamer.rs  - adaptive buffering
 //! ```
 //!
 //! Until then they are kept separate to avoid a large churn commit.

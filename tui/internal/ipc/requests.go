@@ -232,12 +232,14 @@ func (c *Client) LoadEpisodes(seriesID string, season int) {
 		ch := c.sendWithID(id, payload)
 		raw := <-ch
 		if raw.Err != nil {
+			c.program.Send(StatusMsg{Text: "episodes load failed: " + raw.Err.Error()})
 			return
 		}
 		var resp struct {
 			Episodes []EpisodeEntry `json:"episodes"`
 		}
 		if err := raw.decodeData(&resp); err != nil {
+			c.program.Send(StatusMsg{Text: "episodes load failed: " + err.Error()})
 			return
 		}
 		c.program.Send(EpisodesLoadedMsg{
@@ -598,8 +600,8 @@ func (c *Client) GetWatchHistoryEntry(id string) <-chan WatchHistoryEntry {
 	go func() {
 		reqID := c.nextID()
 		respCh := c.sendWithID(reqID, map[string]any{
-			"type": "get_watch_history_entry",
-			"id":   id,
+			"type":     "get_watch_history_entry",
+			"entry_id": id,
 		})
 		raw := <-respCh
 		if raw.Err != nil {

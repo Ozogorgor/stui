@@ -19,9 +19,11 @@ use tracing::debug;
 use crate::cache::Ttl;
 use crate::catalog::CatalogEntry;
 
+#[allow(dead_code)]
 const TTL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Cache key for a search request.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchKey {
     pub tab:   String,
@@ -30,6 +32,7 @@ pub struct SearchKey {
 }
 
 impl SearchKey {
+    #[allow(dead_code)]
     pub fn new(tab: impl Into<String>, query: &str, page: u32) -> Self {
         SearchKey {
             tab:   tab.into(),
@@ -57,6 +60,7 @@ impl SearchCache {
         SearchCache { inner: Arc::new(RwLock::new(HashMap::new())) }
     }
 
+    #[allow(dead_code)]
     /// Try to retrieve cached results for this key.
     /// Returns `None` if the key is absent or the entry has expired.
     pub async fn get(&self, key: &SearchKey) -> Option<Vec<CatalogEntry>> {
@@ -71,18 +75,21 @@ impl SearchCache {
         }
     }
 
+    #[allow(dead_code)]
     /// Store results for this key, replacing any existing entry.
     pub async fn insert(&self, key: SearchKey, items: Vec<CatalogEntry>) {
         debug!("search cache INSERT tab={} q={:?} n={}", key.tab, key.query, items.len());
         self.inner.write().await.insert(key, Ttl::new(items, TTL));
     }
 
+    #[allow(dead_code)]
     /// Evict all expired entries. Call periodically to reclaim memory.
     pub async fn evict_expired(&self) {
         let mut map = self.inner.write().await;
         map.retain(|_, v| v.is_valid());
     }
 
+    #[allow(dead_code)]
     /// Drop everything — useful on plugin reload when data may be stale.
     pub async fn clear(&self) {
         self.inner.write().await.clear();

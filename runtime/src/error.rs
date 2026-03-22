@@ -23,6 +23,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)]
+
 use thiserror::Error;
 
 /// The master error enum for the stui runtime.
@@ -73,17 +75,18 @@ pub enum StuidError {
     Ipc(String),
 
     // ── Provider health ───────────────────────────────────────────────────
-
     /// Provider was rate-limited (HTTP 429 or explicit backoff).
     #[error("provider '{provider}' rate limited (retry after {retry_after_secs}s)")]
-    RateLimited { provider: String, retry_after_secs: u64 },
+    RateLimited {
+        provider: String,
+        retry_after_secs: u64,
+    },
 
     /// Provider did not respond within the allowed timeout.
     #[error("provider '{provider}' timed out after {timeout_ms}ms")]
     ProviderTimeout { provider: String, timeout_ms: u64 },
 
     // ── Streaming ─────────────────────────────────────────────────────────
-
     /// A stream that was playing has failed mid-playback.
     #[error("stream failed ({reason}): {url}")]
     StreamFailure { url: String, reason: String },
@@ -93,7 +96,6 @@ pub enum StuidError {
     AllCandidatesExhausted { entry_id: String },
 
     // ── Cache ─────────────────────────────────────────────────────────────
-
     #[error("cache error: {0}")]
     Cache(String),
 
@@ -115,15 +117,23 @@ impl StuidError {
     }
 
     pub fn plugin_load(name: impl Into<String>, reason: impl Into<String>) -> Self {
-        StuidError::PluginLoad { name: name.into(), reason: reason.into() }
+        StuidError::PluginLoad {
+            name: name.into(),
+            reason: reason.into(),
+        }
     }
 
     pub fn provider(provider: impl Into<String>, reason: impl Into<String>) -> Self {
-        StuidError::Provider { provider: provider.into(), reason: reason.into() }
+        StuidError::Provider {
+            provider: provider.into(),
+            reason: reason.into(),
+        }
     }
 
     pub fn no_stream(entry_id: impl Into<String>) -> Self {
-        StuidError::NoStream { entry_id: entry_id.into() }
+        StuidError::NoStream {
+            entry_id: entry_id.into(),
+        }
     }
 
     pub fn mpv(msg: impl Into<String>) -> Self {
@@ -139,11 +149,17 @@ impl StuidError {
     }
 
     pub fn rate_limited(provider: impl Into<String>, retry_after_secs: u64) -> Self {
-        StuidError::RateLimited { provider: provider.into(), retry_after_secs }
+        StuidError::RateLimited {
+            provider: provider.into(),
+            retry_after_secs,
+        }
     }
 
     pub fn stream_failure(url: impl Into<String>, reason: impl Into<String>) -> Self {
-        StuidError::StreamFailure { url: url.into(), reason: reason.into() }
+        StuidError::StreamFailure {
+            url: url.into(),
+            reason: reason.into(),
+        }
     }
 
     // ── Classification ────────────────────────────────────────────────────
@@ -156,10 +172,10 @@ impl StuidError {
         matches!(
             self,
             StuidError::Provider { .. }
-            | StuidError::RateLimited { .. }
-            | StuidError::ProviderTimeout { .. }
-            | StuidError::StreamFailure { .. }
-            | StuidError::NoStream { .. }
+                | StuidError::RateLimited { .. }
+                | StuidError::ProviderTimeout { .. }
+                | StuidError::StreamFailure { .. }
+                | StuidError::NoStream { .. }
         )
     }
 
@@ -168,30 +184,25 @@ impl StuidError {
         matches!(
             self,
             StuidError::Provider { .. }
-            | StuidError::RateLimited { .. }
-            | StuidError::ProviderTimeout { .. }
+                | StuidError::RateLimited { .. }
+                | StuidError::ProviderTimeout { .. }
         )
     }
 
     /// A short, user-friendly message suitable for a TUI toast notification.
     pub fn user_message(&self) -> String {
         match self {
-            StuidError::NoStream { entry_id } =>
-                format!("No streams found for \"{entry_id}\""),
-            StuidError::RateLimited { provider, retry_after_secs } =>
-                format!("{provider} rate limited — retrying in {retry_after_secs}s"),
-            StuidError::ProviderTimeout { provider, .. } =>
-                format!("{provider} timed out"),
-            StuidError::StreamFailure { reason, .. } =>
-                format!("Stream failed: {reason}"),
-            StuidError::AllCandidatesExhausted { .. } =>
-                "No working streams found".to_string(),
-            StuidError::Mpv(msg) =>
-                format!("Player error: {msg}"),
-            StuidError::PluginNotFound(name) =>
-                format!("Plugin not found: {name}"),
-            other =>
-                other.to_string(),
+            StuidError::NoStream { entry_id } => format!("No streams found for \"{entry_id}\""),
+            StuidError::RateLimited {
+                provider,
+                retry_after_secs,
+            } => format!("{provider} rate limited — retrying in {retry_after_secs}s"),
+            StuidError::ProviderTimeout { provider, .. } => format!("{provider} timed out"),
+            StuidError::StreamFailure { reason, .. } => format!("Stream failed: {reason}"),
+            StuidError::AllCandidatesExhausted { .. } => "No working streams found".to_string(),
+            StuidError::Mpv(msg) => format!("Player error: {msg}"),
+            StuidError::PluginNotFound(name) => format!("Plugin not found: {name}"),
+            other => other.to_string(),
         }
     }
 }

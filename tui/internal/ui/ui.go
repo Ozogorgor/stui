@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/state"
@@ -25,6 +25,13 @@ import (
 	"github.com/stui/stui/pkg/theme"
 	"github.com/stui/stui/pkg/watchhistory"
 )
+
+func getIfKey(key, target, value string) *string {
+	if key == target {
+		return &value
+	}
+	return nil
+}
 
 // ── Options ───────────────────────────────────────────────────────────────────
 
@@ -119,9 +126,9 @@ type Model struct {
 	collectionsScreen screens.CollectionsScreen
 
 	// Watch history — tracks playback positions for resume support
-	historyStore         *watchhistory.Store
-	historyPending       watchhistory.Entry // metadata captured when Play() is dispatched
-	historyLastSavedPos  float64            // last position flushed to disk (throttle)
+	historyStore        *watchhistory.IPCStore
+	historyPending      watchhistory.Entry // metadata captured when Play() is dispatched
+	historyLastSavedPos float64            // last position flushed to disk (throttle)
 
 	// nowPlayingEntry captures full metadata for the currently playing item so
 	// history can be populated even after the detail overlay is closed.
@@ -156,7 +163,7 @@ type Model struct {
 
 	// Torrent / aria2 download tracking.
 	// downloadOrder preserves insertion order; downloadMap is for O(1) lookup.
-	downloadOrder []string                    // GIDs in arrival order
+	downloadOrder []string // GIDs in arrival order
 	downloadMap   map[string]*ipc.DownloadEntry
 
 	// Buffering overlay — non-nil while pre-roll or stall-guard is in progress.
@@ -173,17 +180,30 @@ type Model struct {
 	streamStats screens.StreamRadarStats
 
 	// Media cache — persists catalog grid data for offline browsing.
-	mediaCache *mediacache.Store
+	mediaCache mediacache.StoreInterface
 }
 
 func New(opts Options) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search titles, genres, people\u2026"
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	ti.TextStyle = lipgloss.NewStyle().Foreground(theme.T.Text())
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(theme.T.Accent())
+	ti.SetStyles(textinput.Styles{
+		Blurred: textinput.StyleState{
+			Text:        lipgloss.NewStyle().Foreground(theme.T.Text()),
+			Placeholder: lipgloss.NewStyle().Foreground(theme.T.TextMuted()),
+			Prompt:      lipgloss.NewStyle().Foreground(theme.T.AccentAlt()),
+		},
+		Focused: textinput.StyleState{
+			Text:        lipgloss.NewStyle().Foreground(theme.T.Text()),
+			Placeholder: lipgloss.NewStyle().Foreground(theme.T.TextMuted()),
+			Prompt:      lipgloss.NewStyle().Foreground(theme.T.Accent()),
+		},
+		Cursor: textinput.CursorStyle{
+			Color: lipgloss.Color("#7c3aed"),
+			Blink: true,
+		},
+	})
 	ti.CharLimit = 120
-	ti.Width = 40
+	ti.SetWidth(40)
 
 	// Load user keybinds from disk and apply them before any UI events fire.
 	if kb, err := keybinds.Load(keybinds.DefaultPath()); err == nil && len(kb) > 0 {
@@ -205,7 +225,6 @@ func New(opts Options) Model {
 	}
 
 	collStore := collections.Load(collections.DefaultPath())
-	histStore := watchhistory.Load(watchhistory.DefaultPath())
 	mcStore := mediacache.Load(mediacache.DefaultPath())
 
 	// Pre-seed the grid map from cache so fetchSimilar and the grid renderer
@@ -228,8 +247,8 @@ func New(opts Options) Model {
 		sessionPath:       sessionPath,
 		pendingQueueURIs:  sess.QueueURIs,
 		collectionsStore:  collStore,
-		collectionsScreen: screens.NewCollectionsScreen(collStore, histStore),
-		historyStore:      histStore,
+		collectionsScreen: screens.NewCollectionsScreen(collStore, nil),
+		historyStore:      nil,
 		bingeCountdown:    -1,
 		downloadMap:       make(map[string]*ipc.DownloadEntry),
 		notifyCfg:         notify.DefaultConfig(),
@@ -264,7 +283,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.state.Width = msg.Width
 		m.state.Height = msg.Height
-		m.search.Width = max(20, msg.Width/3)
+		m.search.SetWidth(max(20, msg.Width/3))
 		m.musicScreen, _ = m.musicScreen.Update(msg)
 		m.collectionsScreen = m.collectionsScreen.SetSize(msg.Width, msg.Height)
 
@@ -278,6 +297,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client.ListPlugins()
 		var musicInitCmd tea.Cmd
 		m.musicScreen, musicInitCmd = m.musicScreen.SetClient(m.client)
+		m.historyStore = watchhistory.NewIPCStore(msg.client)
+		m.historyStore.Load()
+		m.collectionsScreen = screens.NewCollectionsScreen(m.collectionsStore, m.historyStore)
+		m.mediaCache = mediacache.NewIPCStore(msg.client)
+		for tab := range m.grids {
+			m.mediaCache.SaveTab(tab, m.grids[tab])
+		}
 		return m, musicInitCmd
 
 	case ipc.RuntimeReadyMsg:
@@ -497,12 +523,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.nowPlaying = np
 			}
 		}
-		np.Buffering      = true
-		np.BufferReason   = msg.Reason
-		np.BufferFill     = msg.FillPercent
+		np.Buffering = true
+		np.BufferReason = msg.Reason
+		np.BufferFill = msg.FillPercent
 		np.BufferSpeedMbps = msg.SpeedMbps
-		np.BufferPreRoll  = msg.PreRollSecs
-		np.BufferEta      = msg.EtaSecs
+		np.BufferPreRoll = msg.PreRollSecs
+		np.BufferEta = msg.EtaSecs
 		if msg.Reason == "stall_guard" {
 			m.state.StatusMsg = fmt.Sprintf("\u23f8 Buffering\u2026 %.0f%%  %.1f MB/s", msg.FillPercent, msg.SpeedMbps)
 		} else {
@@ -545,8 +571,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Duration > 0 {
 				entry.Duration = msg.Duration
 			}
-			m.historyStore.Upsert(entry)
-			go func(hs *watchhistory.Store) { _ = hs.Save() }(m.historyStore)
+			if m.historyStore != nil {
+				m.historyStore.Upsert(entry)
+			}
 		}
 
 	case ipc.PlayerTerminalTakeoverMsg:
@@ -586,7 +613,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Mark watch history as completed on natural end-of-file.
 			if m.historyStore != nil {
 				m.historyStore.MarkCompleted(m.nowPlayingEntryID)
-				go func(hs *watchhistory.Store) { _ = hs.Save() }(m.historyStore)
 			}
 		}
 		m.nowPlayingEntryID = ""
@@ -600,7 +626,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Reason == "eof" && m.bingeCtx != nil && m.bingeCtx.BingeEnabled {
 			if m.bingeCtx.CurrentIdx+1 < len(m.bingeCtx.Episodes) {
 				countdown := m.state.Settings.AutoplayCountdown
-			if countdown <= 0 {
+				if countdown <= 0 {
 					countdown = 5
 				}
 				m.bingeCountdown = countdown
@@ -632,18 +658,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ipc.DownloadProgressMsg:
 		if e, ok := m.downloadMap[msg.GID]; ok {
 			e.Progress = msg.Progress
-			e.Speed    = msg.Speed
-			e.ETA      = msg.ETA
-			e.Seeders  = msg.Seeders
+			e.Speed = msg.Speed
+			e.ETA = msg.ETA
+			e.Seeders = msg.Seeders
 		}
 
 	case ipc.DownloadCompleteMsg:
 		if e, ok := m.downloadMap[msg.GID]; ok {
-			e.Status   = "complete"
+			e.Status = "complete"
 			e.Progress = 1.0
-			e.Files    = msg.Files
-			e.Speed    = ""
-			e.ETA      = ""
+			e.Files = msg.Files
+			e.Speed = ""
+			e.ETA = ""
 			if m.notifyCfg.OnDownload {
 				title := e.Title
 				if title == "" {
@@ -656,9 +682,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ipc.DownloadErrorMsg:
 		if e, ok := m.downloadMap[msg.GID]; ok {
 			e.Status = "error"
-			e.Error  = msg.Message
+			e.Error = msg.Message
 		}
-
 
 	case bingeTickMsg:
 		if m.bingeCountdown > 0 {
@@ -728,9 +753,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if v, ok := msg.Value.(int); ok {
 					cfg.Framerate = v
 				}
-			case "visualizer.symmetric":
+			case "visualizer.mode":
+				if v, ok := msg.Value.(string); ok {
+					cfg.Mode = components.VisualizerModeFromString(v)
+				}
+			case "visualizer.peak_hold":
 				if v, ok := msg.Value.(bool); ok {
-					cfg.Symmetric = v
+					cfg.PeakHold = v
 				}
 			case "visualizer.gradient":
 				if v, ok := msg.Value.(bool); ok {
@@ -744,7 +773,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.visualizer.Reconfigure(cfg)
 		}
 		if m.client != nil {
-			m.client.SetConfig(msg.Key, msg.Value)
+			// Handle storage path changes via SetStoragePaths
+			if strings.HasPrefix(msg.Key, "storage.") {
+				if v, ok := msg.Value.(string); ok {
+					m.client.SetStoragePaths(ipc.SetStoragePathsRequest{
+						Movies:   getIfKey(msg.Key, "storage.movies", v),
+						Series:   getIfKey(msg.Key, "storage.series", v),
+						Anime:    getIfKey(msg.Key, "storage.anime", v),
+						Music:    getIfKey(msg.Key, "storage.music", v),
+						Podcasts: getIfKey(msg.Key, "storage.podcasts", v),
+					})
+				}
+			} else {
+				m.client.SetConfig(msg.Key, msg.Value)
+			}
 		}
 		// Mirror local-state flags immediately
 		switch msg.Key {
@@ -759,6 +801,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ui.bidi_mode":
 			if v, ok := msg.Value.(string); ok {
 				bidi.SetMode(bidi.Mode(v))
+			}
+		case "ui.color_scheme":
+			if v, ok := msg.Value.(string); ok {
+				switch v {
+				case "high-contrast":
+					theme.T.Apply(theme.HighContrast())
+				case "monochrome":
+					theme.T.Apply(theme.Monochrome())
+				default:
+					theme.T.Apply(theme.Default())
+				}
+			}
+		case "ui.reduced_motion":
+			if v, ok := msg.Value.(bool); ok {
+				components.SetReducedMotion(v)
 			}
 		case "streaming.auto_delete_video":
 			if v, ok := msg.Value.(bool); ok {
@@ -901,7 +958,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -928,15 +985,16 @@ func (m Model) sessionSaveCmd() tea.Cmd {
 // ── Mouse handling ────────────────────────────────────────────────────────────
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	mouse := msg.Mouse()
 	switch {
-	case msg.Button == tea.MouseButtonWheelUp:
-		return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	case msg.Button == tea.MouseButtonWheelDown:
-		return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+	case mouse.Button == tea.MouseWheelUp:
+		return m.handleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	case mouse.Button == tea.MouseWheelDown:
+		return m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	case mouse.Button == tea.MouseLeft:
 		topBarY := m.overlayRowCount()
-		y := msg.Y
-		x := msg.X
+		y := mouse.Y
+		x := mouse.X
 		if y == topBarY {
 			// Click on top tab bar — hit-test which tab was clicked.
 			if tab, ok := m.hitTestTopTabBar(x); ok {
@@ -956,18 +1014,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.state.ActiveTab == state.TabCollections {
-			// Relay to collections screen with Y relative to content (after top bar).
-			relMsg := msg
-			relMsg.Y = y - topBarY - 1
 			var cmd tea.Cmd
-			m.collectionsScreen, cmd = m.collectionsScreen.Update(relMsg)
+			m.collectionsScreen, cmd = m.collectionsScreen.Update(msg)
 			return m, cmd
 		}
 		if m.screen == screenList {
 			// Click on a result row in the list view.
-			topBarRows := topBarY + 1                // overlay + top bar
-			colHeaderRow := topBarRows               // column header row
-			bodyStartY := colHeaderRow + 1           // result rows start here
+			topBarRows := topBarY + 1      // overlay + top bar
+			colHeaderRow := topBarRows     // column header row
+			bodyStartY := colHeaderRow + 1 // result rows start here
 			bodyRow := y - bodyStartY
 			if bodyRow >= 0 {
 				availH := max(1, m.state.Height-9)
@@ -1106,7 +1161,7 @@ func (m *Model) activeNowPlaying() *components.NowPlayingState {
 
 // ── Key routing ───────────────────────────────────────────────────────────────
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// ── Binge countdown intercept ──────────────────────────────────────────
@@ -2056,15 +2111,19 @@ func (m *Model) dispatchSearch(query string) {
 }
 
 func (m Model) currentGridEntries() []ipc.CatalogEntry {
-	return m.grids[m.state.ActiveTab.MediaTabID()]
+	if entries, ok := m.grids[m.state.ActiveTab.MediaTabID()]; ok {
+		return entries
+	}
+	return nil
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.state.Width == 0 {
-		return "Loading\u2026"
+		return tea.NewView("Loading\u2026")
 	}
+	var content string
 	if m.screen == screenDetail && m.detail != nil {
 		overlay := screens.RenderDetailOverlay(
 			m.detail,
@@ -2073,14 +2132,19 @@ func (m Model) View() string {
 			m.state.ActiveTab,
 			m.state.RuntimeStatus.String(),
 		)
-		return m.applyToast(overlay)
+		content = m.applyToast(overlay)
+	} else {
+		base := lipgloss.JoinVertical(lipgloss.Left,
+			m.viewTopBar(),
+			m.viewMain(),
+			m.viewStatusBar(),
+		)
+		content = m.applyToast(base)
 	}
-	base := lipgloss.JoinVertical(lipgloss.Left,
-		m.viewTopBar(),
-		m.viewMain(),
-		m.viewStatusBar(),
-	)
-	return m.applyToast(base)
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 func (m Model) applyToast(base string) string {
@@ -2153,7 +2217,7 @@ func (m Model) applyToast(base string) string {
 		m.state.Width, m.state.Height,
 		lipgloss.Right, lipgloss.Bottom,
 		toastStr,
-		lipgloss.WithWhitespaceBackground(lipgloss.NoColor{}),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle()),
 	)
 }
 
@@ -2168,8 +2232,8 @@ func (m Model) viewBingeOverlay() string {
 	}
 	ep := m.bingeCtx.Episodes[nextIdx]
 
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 
 	epLabel := fmt.Sprintf("S%02dE%02d", ep.Season, ep.Episode)
@@ -2204,8 +2268,8 @@ func (m Model) viewBufferingOverlay() string {
 	}
 	buf := m.playerBuffer
 
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 
 	label := "Buffering"
@@ -2221,7 +2285,7 @@ func (m Model) viewBufferingOverlay() string {
 	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barW-filled)
 
-	pct  := fmt.Sprintf("%.0f%%", buf.FillPercent)
+	pct := fmt.Sprintf("%.0f%%", buf.FillPercent)
 	info := fmt.Sprintf("%s MiB/s", strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", buf.SpeedMbps), "0"), "."))
 	if buf.EtaSecs > 0 {
 		info += fmt.Sprintf("  ETA %ds", int(buf.EtaSecs))
@@ -2249,10 +2313,10 @@ func (m Model) viewBufferingOverlay() string {
 
 func (m Model) viewMain() string {
 	if m.state.ActiveTab == state.TabMusic {
-		return m.musicScreen.View()
+		return m.musicScreen.View().Content
 	}
 	if m.state.ActiveTab == state.TabCollections {
-		return m.collectionsScreen.View()
+		return m.collectionsScreen.View().Content
 	}
 	// Continue Watching row (Movies and Series tabs only)
 	var cwSection string

@@ -10,6 +10,7 @@ use super::manifest::{
 };
 
 /// HTTP client bound to one addon's base URL.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StremioClient {
     http:     Client,
@@ -33,6 +34,7 @@ impl StremioClient {
         }
     }
 
+    #[allow(dead_code)]
     pub fn base_url(&self) -> &str { &self.base_url }
 
     // ── Manifest ──────────────────────────────────────────────────────────

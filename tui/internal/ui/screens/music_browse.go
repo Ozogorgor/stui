@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -114,9 +114,9 @@ func (s MusicBrowseScreen) HandleMouse(x, localY int) MusicBrowseScreen {
 
 // View renders the browse screen within the given width/height constraints.
 func (s MusicBrowseScreen) View(w, h int) string {
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
 	footerLine := hintBar("enter add to queue", "/ search", "↑↓ navigate")
 
@@ -163,9 +163,9 @@ func (s MusicBrowseScreen) View(w, h int) string {
 	}
 
 	// Column widths: title takes most, then provider, then year.
-	yearW     := 6
+	yearW := 6
 	providerW := 12
-	titleW    := w - providerW - yearW - 4 // 4 for spacing
+	titleW := w - providerW - yearW - 4 // 4 for spacing
 	if titleW < 10 {
 		titleW = 10
 	}
@@ -177,7 +177,7 @@ func (s MusicBrowseScreen) View(w, h int) string {
 	}
 	for i := scroll; i < end; i++ {
 		e := results[i]
-		titleStr    := fmt.Sprintf("%-*s", titleW, truncate(e.Title, titleW))
+		titleStr := fmt.Sprintf("%-*s", titleW, truncate(e.Title, titleW))
 		providerStr := fmt.Sprintf("%-*s", providerW, truncate(e.Provider, providerW))
 		yearStr := ""
 		if e.Year != nil {

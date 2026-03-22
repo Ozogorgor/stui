@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::catalog::Catalog;
 use crate::engine::Engine;
-use crate::ipc::{self, ErrorCode, MediaEntry, Response, SearchRequest, SearchResponse};
+use crate::ipc::{self, MediaEntry, Response, SearchRequest, SearchResponse};
 
 /// Handle a `search` IPC request.
 ///

@@ -19,8 +19,10 @@
 //! `supported_media` declares which `MediaSource` types the provider handles.
 //! A `None` value means "all types" (opt-in to everything).
 
-use std::fmt;
+#![allow(dead_code)]
+
 use crate::media::MediaSource;
+use std::fmt;
 
 /// The full capability profile of a provider.
 ///
@@ -51,11 +53,11 @@ impl ProviderCapabilities {
     /// A provider that supplies everything (metadata + streams + subtitles).
     pub fn full() -> Self {
         ProviderCapabilities {
-            catalog:         true,
-            search:          true,
-            streams:         true,
-            subtitles:       true,
-            metadata:        true,
+            catalog: true,
+            search: true,
+            streams: true,
+            subtitles: true,
+            metadata: true,
             supported_media: None,
         }
     }
@@ -63,11 +65,11 @@ impl ProviderCapabilities {
     /// A metadata-only provider (no streams, no subtitles).
     pub fn metadata_only() -> Self {
         ProviderCapabilities {
-            catalog:         true,
-            search:          true,
-            streams:         false,
-            subtitles:       false,
-            metadata:        true,
+            catalog: true,
+            search: true,
+            streams: false,
+            subtitles: false,
+            metadata: true,
             supported_media: None,
         }
     }
@@ -75,11 +77,11 @@ impl ProviderCapabilities {
     /// A stream-only provider (e.g. Torrentio — no metadata).
     pub fn streams_only() -> Self {
         ProviderCapabilities {
-            catalog:         false,
-            search:          false,
-            streams:         true,
-            subtitles:       false,
-            metadata:        false,
+            catalog: false,
+            search: false,
+            streams: true,
+            subtitles: false,
+            metadata: false,
             supported_media: None,
         }
     }
@@ -87,11 +89,11 @@ impl ProviderCapabilities {
     /// A subtitle-only provider (e.g. OpenSubtitles).
     pub fn subtitles_only() -> Self {
         ProviderCapabilities {
-            catalog:         false,
-            search:          false,
-            streams:         false,
-            subtitles:       true,
-            metadata:        false,
+            catalog: false,
+            search: false,
+            streams: false,
+            subtitles: true,
+            metadata: false,
             supported_media: None,
         }
     }
@@ -145,11 +147,21 @@ impl Default for ProviderCapabilities {
 impl fmt::Display for ProviderCapabilities {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut caps = vec![];
-        if self.catalog   { caps.push("catalog"); }
-        if self.search    { caps.push("search"); }
-        if self.streams   { caps.push("streams"); }
-        if self.subtitles { caps.push("subtitles"); }
-        if self.metadata  { caps.push("metadata"); }
+        if self.catalog {
+            caps.push("catalog");
+        }
+        if self.search {
+            caps.push("search");
+        }
+        if self.streams {
+            caps.push("streams");
+        }
+        if self.subtitles {
+            caps.push("subtitles");
+        }
+        if self.metadata {
+            caps.push("metadata");
+        }
         write!(f, "[{}]", caps.join(", "))
     }
 }

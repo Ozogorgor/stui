@@ -9,7 +9,6 @@
 //! - The `token:` prefix is prepended to the secret by the client automatically
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // ── GID ───────────────────────────────────────────────────────────────────────
 
@@ -77,27 +76,39 @@ impl DownloadStatus {
     /// Progress as a fraction 0.0–1.0, or None if total is unknown.
     pub fn progress(&self) -> Option<f64> {
         let total = parse_u64(&self.total_length)?;
-        let done  = parse_u64(&self.completed_length)?;
-        if total == 0 { return None; }
+        let done = parse_u64(&self.completed_length)?;
+        if total == 0 {
+            return None;
+        }
         Some(done as f64 / total as f64)
     }
 
     /// Download speed in bytes/s.
-    pub fn speed_bps(&self) -> u64 { parse_u64(&self.download_speed).unwrap_or(0) }
+    pub fn speed_bps(&self) -> u64 {
+        parse_u64(&self.download_speed).unwrap_or(0)
+    }
 
     /// ETA in seconds, None if speed is zero or progress unknown.
     pub fn eta_secs(&self) -> Option<u64> {
-        let total   = parse_u64(&self.total_length)?;
-        let done    = parse_u64(&self.completed_length)?;
-        let speed   = self.speed_bps();
+        let total = parse_u64(&self.total_length)?;
+        let done = parse_u64(&self.completed_length)?;
+        let speed = self.speed_bps();
         let remaining = total.saturating_sub(done);
-        if speed == 0 { return None; }
+        if speed == 0 {
+            return None;
+        }
         Some(remaining / speed)
     }
 
-    pub fn is_complete(&self) -> bool { self.status == "complete" }
-    pub fn is_active(&self)   -> bool { self.status == "active" }
-    pub fn is_error(&self)    -> bool { self.status == "error" }
+    pub fn is_complete(&self) -> bool {
+        self.status == "complete"
+    }
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+    pub fn is_error(&self) -> bool {
+        self.status == "error"
+    }
 }
 
 /// BitTorrent-specific metadata in a DownloadStatus.
@@ -125,7 +136,7 @@ pub struct TorrentInfo {
 #[serde(rename_all = "camelCase")]
 pub struct FileInfo {
     pub index: String,
-    pub path:  String,
+    pub path: String,
     #[serde(default)]
     pub length: String,
     #[serde(default)]
@@ -139,7 +150,7 @@ pub struct FileInfo {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UriInfo {
-    pub uri:    String,
+    pub uri: String,
     /// "used" | "waiting"
     pub status: String,
 }
@@ -152,13 +163,13 @@ pub struct GlobalStat {
     /// Overall download speed in bytes/s.
     pub download_speed: String,
     /// Overall upload speed in bytes/s.
-    pub upload_speed:   String,
+    pub upload_speed: String,
     /// Number of active downloads.
-    pub num_active:     String,
+    pub num_active: String,
     /// Number of waiting downloads.
-    pub num_waiting:    String,
+    pub num_waiting: String,
     /// Number of stopped downloads (within --max-download-result).
-    pub num_stopped:    String,
+    pub num_stopped: String,
 }
 
 // ── Options ───────────────────────────────────────────────────────────────────
@@ -226,7 +237,7 @@ impl AddOptions {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
-    pub version:          String,
+    pub version: String,
     pub enabled_features: Vec<String>,
 }
 
@@ -236,7 +247,7 @@ pub struct VersionInfo {
 #[derive(Debug, Clone)]
 pub struct Notification {
     pub event: NotificationEvent,
-    pub gid:   Gid,
+    pub gid: Gid,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,11 +264,11 @@ pub enum NotificationEvent {
 impl NotificationEvent {
     pub fn from_method(method: &str) -> Self {
         match method {
-            "aria2.onDownloadStart"    => Self::DownloadStart,
-            "aria2.onDownloadPause"    => Self::DownloadPause,
-            "aria2.onDownloadStop"     => Self::DownloadStop,
+            "aria2.onDownloadStart" => Self::DownloadStart,
+            "aria2.onDownloadPause" => Self::DownloadPause,
+            "aria2.onDownloadStop" => Self::DownloadStop,
             "aria2.onDownloadComplete" => Self::DownloadComplete,
-            "aria2.onDownloadError"    => Self::DownloadError,
+            "aria2.onDownloadError" => Self::DownloadError,
             "aria2.onBtDownloadComplete" => Self::BtDownloadComplete,
             other => Self::Unknown(other.to_string()),
         }
@@ -269,17 +280,18 @@ impl NotificationEvent {
 #[derive(Serialize)]
 pub(crate) struct RpcRequest<'a> {
     pub jsonrpc: &'static str,
-    pub id:      String,
-    pub method:  &'a str,
-    pub params:  serde_json::Value,
+    pub id: String,
+    pub method: &'a str,
+    pub params: serde_json::Value,
 }
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct RpcResponse {
     #[serde(default)]
+    #[allow(dead_code)]
     pub id: Option<String>,
     pub result: Option<serde_json::Value>,
-    pub error:  Option<RpcError>,
+    pub error: Option<RpcError>,
     // For WebSocket notifications — has "method" instead of id/result
     #[serde(default)]
     pub method: Option<String>,
@@ -289,7 +301,7 @@ pub(crate) struct RpcResponse {
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct RpcError {
-    pub code:    i32,
+    pub code: i32,
     pub message: String,
 }
 

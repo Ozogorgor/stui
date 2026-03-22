@@ -9,19 +9,16 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! let agg = CatalogAggregator::new();
-//! let results = agg
-//!     .with_filter(Filter::genre("Sci-Fi"))
-//!     .with_filter(Filter::year_range(2010, 2024))
-//!     .with_sort(SortOrder::Rating)
-//!     .apply(raw_entries);
-//! ```
+//! See [`aggregators`](crate::catalog_engine::aggregator) module for detailed usage examples.
 
 pub mod aggregator;
 pub mod filters;
 pub mod ranking;
 
 pub use aggregator::CatalogAggregator;
+#[allow(unused_imports)]
+pub use aggregator::{weighted_median, weighted_rating};
+#[allow(unused_imports)]
 pub use filters::{Filter, FilterSet};
+#[allow(unused_imports)]
 pub use ranking::SortOrder;

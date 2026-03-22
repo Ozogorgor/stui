@@ -8,6 +8,8 @@
 //!   - Ends with .mkv/.mp4/.webm → direct progressive HTTP
 //!   - Otherwise → hand to yt-dlp inside mpv
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use async_trait::async_trait;
 

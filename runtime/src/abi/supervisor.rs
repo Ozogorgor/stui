@@ -23,6 +23,8 @@
 //! `abi/host.rs`).  When a plugin exceeds its limit, wasmtime returns a `Trap`
 //! which the supervisor catches here and turns into a reload cycle.
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

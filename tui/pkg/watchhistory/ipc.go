@@ -30,6 +30,7 @@ func (s *IPCStore) Load() {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		s.entries = make(map[string]Entry)
 		for _, e := range entries {
 			year := ""
 			if e.Year != nil {

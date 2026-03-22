@@ -3,23 +3,20 @@
 //! Load order (later entries win):
 //!   1. Compiled-in `RuntimeConfig::default()`
 //!   2. `~/.stui/config/stui.toml` (if present, silently skipped otherwise)
-//!   3. Environment variable overrides (`STUI_*`)
+//!   3. `~/.stui/secrets.env` (API keys and passwords)
+//!   4. Environment variable overrides (`STUI_*`, `*_API_KEY`, etc.)
 
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+use super::secrets::Secrets;
 use super::types::RuntimeConfig;
 
-/// Load the runtime configuration.
-///
-/// Reads from the default config file location and applies any
-/// `STUI_*` environment variable overrides on top.
 pub fn load() -> RuntimeConfig {
     let path = default_config_path();
     load_from(path.as_deref())
 }
 
-/// Load from a specific path (useful for tests).
 pub fn load_from(path: Option<&Path>) -> RuntimeConfig {
     let mut cfg = RuntimeConfig::default();
 
@@ -38,6 +35,7 @@ pub fn load_from(path: Option<&Path>) -> RuntimeConfig {
         }
     }
 
+    apply_secrets(&mut cfg);
     apply_env_overrides(&mut cfg);
     cfg
 }
@@ -52,7 +50,27 @@ fn default_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".stui").join("config").join("stui.toml"))
 }
 
-/// Apply `STUI_*` environment variable overrides to an existing config.
+fn apply_secrets(cfg: &mut RuntimeConfig) {
+    let secrets = Secrets::load();
+
+    if let Some(key) = secrets.tmdb_api_key() {
+        cfg.api_keys.tmdb.get_or_insert(key);
+    }
+    if let Some(key) = secrets.omdb_api_key() {
+        cfg.api_keys.omdb.get_or_insert(key);
+    }
+    if let Some(pwd) = secrets.mpd_password() {
+        cfg.mpd.password.get_or_insert(pwd);
+    }
+
+    debug!(
+        "secrets applied: tmdb={}, omdb={}, mpd={}",
+        cfg.api_keys.tmdb.is_some(),
+        cfg.api_keys.omdb.is_some(),
+        cfg.mpd.password.is_some()
+    );
+}
+
 fn apply_env_overrides(cfg: &mut RuntimeConfig) {
     if let Ok(v) = std::env::var("STUI_PLUGIN_DIR") {
         cfg.plugin_dir = PathBuf::from(v);
@@ -69,7 +87,6 @@ fn apply_env_overrides(cfg: &mut RuntimeConfig) {
     if let Ok(v) = std::env::var("STUI_LOG") {
         cfg.logging.level = v;
     }
-    // STUI_STREMIO_ADDONS — comma-separated list of manifest URLs
     if let Ok(v) = std::env::var("STUI_STREMIO_ADDONS") {
         let addons: Vec<String> = v
             .split(',')
@@ -79,6 +96,17 @@ fn apply_env_overrides(cfg: &mut RuntimeConfig) {
             .collect();
         if !addons.is_empty() {
             cfg.stremio_addons = addons;
+        }
+    }
+    if let Ok(v) = std::env::var("STUI_PLUGIN_REPOS") {
+        let repos: Vec<String> = v
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if !repos.is_empty() {
+            cfg.plugin_repos = repos;
         }
     }
 }

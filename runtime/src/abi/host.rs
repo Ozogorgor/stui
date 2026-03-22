@@ -12,12 +12,16 @@
 //!
 //! To enable: add `--features wasm-host` to `cargo build`.
 
+#![allow(dead_code)]
+
 use std::path::Path;
 
 use tracing::{debug, info};
 
 use super::types::*;
 use crate::sandbox::SandboxCtx;
+
+const WASM_HTTP_TIMEOUT_SECS: u64 = 15;
 
 // ── Public interface ──────────────────────────────────────────────────────────
 
@@ -95,16 +99,14 @@ impl WasmHost {
 
 #[cfg(feature = "wasm-host")]
 mod inner_impl {
-    use std::path::Path;
-    use std::sync::{Arc, Mutex};
-
-    use tracing::{debug, warn};
+    use std::sync::Mutex;
     use wasmtime::*;
     use wasmtime_wasi::WasiCtxBuilder;
     use wasmtime_wasi::preview1::WasiP1Ctx;
 
     use super::*;
     use crate::sandbox::SandboxCtx;
+    use tracing::warn;
 
     pub struct WasmInner {
         store: Mutex<Store<HostState>>,
@@ -151,6 +153,7 @@ mod inner_impl {
         wasi: WasiP1Ctx,
         ctx: SandboxCtx,
         /// Reusable buffer for HTTP responses written into plugin memory
+        #[allow(dead_code)]
         http_buf: Vec<u8>,
         /// Per-plugin KV cache — persists across calls within a session.
         /// Keys starting with "__env:" are pre-populated from plugin.toml [env].
@@ -162,7 +165,7 @@ mod inner_impl {
     impl WasmInner {
         pub async fn load(
             wasm_path:     &Path,
-            plugin_name:   &str,
+            _plugin_name:   &str,
             ctx:           &SandboxCtx,
             max_memory_mb: u64,
         ) -> Result<Self, AbiError> {
@@ -241,7 +244,20 @@ mod inner_impl {
                             warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked: host not in network_hosts");
                             return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
                         }
-                        let result = reqwest::get(&url).await;
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .build();
+                        let client = match client {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!(plugin=%caller.data().ctx.plugin_name, err=%e, "client builder failed, using default");
+                                reqwest::Client::builder()
+                                    .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                                    .build()
+                                    .unwrap_or_else(|_| reqwest::Client::default())
+                            }
+                        };
+                        let result = client.get(&url).send().await;
                         let (status, body) = match result {
                             Ok(r)  => (r.status().as_u16(), r.text().await.unwrap_or_default()),
                             Err(e) => (0, e.to_string()),
@@ -280,7 +296,10 @@ mod inner_impl {
                             .and_then(|m| m.remove("__stui_headers"))
                             .unwrap_or_default();
 
-                        let client = reqwest::Client::new();
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .build()
+                            .unwrap_or_else(|_| reqwest::Client::new());
                         let mut req = client.post(&url)
                             .header("Content-Type", "application/json")
                             .body(body);
@@ -343,7 +362,7 @@ mod inner_impl {
         }
 
         pub fn abi_version(&self) -> i32 {
-            let mut store = self.store.lock().unwrap();
+            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
             self.instance
                 .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
                 .ok()
@@ -354,7 +373,7 @@ mod inner_impl {
         pub async fn call_export(&self, fn_name: &str, json_input: &str) -> Result<String, AbiError> {
             let input_bytes = json_input.as_bytes();
             let input_len = input_bytes.len() as i32;
-            let mut store = self.store.lock().unwrap();
+            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
 
             // Allocate input buffer in plugin memory
             let alloc = self.instance

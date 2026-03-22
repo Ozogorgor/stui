@@ -24,6 +24,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -31,9 +32,20 @@ use tracing::{debug, warn};
 
 static SECRETS: OnceLock<Secrets> = OnceLock::new();
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Secrets {
     values: HashMap<String, String>,
+}
+
+impl fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let known = self.count_known_vars();
+        let total = self.values.len();
+        f.debug_struct("Secrets")
+            .field("known_keys_present", &known)
+            .field("total_keys", &total)
+            .finish()
+    }
 }
 
 impl Secrets {
@@ -44,8 +56,8 @@ impl Secrets {
                 secrets.load_from_file();
                 secrets.load_from_env();
                 debug!(
-                    "secrets loaded: {} from env vars, {} total keys",
-                    secrets.count_env_vars(),
+                    "secrets loaded: {} known keys present, {} total keys",
+                    secrets.count_known_vars(),
                     secrets.values.len()
                 );
                 secrets
@@ -84,7 +96,9 @@ impl Secrets {
         }
     }
 
-    fn count_env_vars(&self) -> usize {
+    /// Returns the number of known secret keys present in the loaded values,
+    /// regardless of whether they were loaded from a file or the environment.
+    fn count_known_vars(&self) -> usize {
         self.values
             .keys()
             .filter(|k| KNOWN_SECRET_VARS.contains(&k.as_str()))

@@ -1,40 +1,46 @@
-//! Built-in content providers.
+//! Content providers for stream resolution.
 //!
-//! Each provider implements the [`Provider`] trait and can be registered
-//! with the catalog on startup without needing a WASM plugin — they are
-//! compiled directly into the runtime for performance and reliability.
+//! # Architecture
 //!
-//! External / community providers still use the plugin system (WASM).
+//! - **Catalog/Metadata providers** (TMDB, IMDB, OMDB, AniList, etc.) are now
+//!   loaded as WASM plugins via the Engine. See `plugins/` directory.
 //!
-//! # Unified Provider Interface
+//! - **Stream providers** provide playable stream URLs. These are currently
+//!   built-in for performance but could also be WASM plugins in the future.
 //!
-//! Modelled on Stremio's addon contract — every provider speaks the same
-//! three-method language regardless of its backend:
+//! # Provider Trait
+//!
+//! Built-in stream providers implement the `Provider` trait:
 //!
 //! ```text
-//! catalog(tab, query) → Vec<CatalogEntry>   # browsing / search
-//! streams(id)         → Vec<Stream>          # resolve playable URLs
-//! subtitles(id)       → Vec<SubtitleTrack>   # optional subtitle tracks
+//! streams(id)       -> Vec<Stream>          # resolve playable URLs
+//! subtitles(id)     -> Vec<SubtitleTrack>   # optional subtitle tracks
 //! ```
 //!
-//! Built-in providers implement all three.  Plugin providers implement
-//! `catalog` and optionally `streams` / `subtitles` — the runtime falls
-//! back to empty lists if a plugin omits them.
+#![allow(dead_code)]
 
-/// Metadata providers (TMDB, IMDB, OMDB) — catalog enrichment, no stream URLs.
-pub mod metadata;
 /// Stream providers — resolve entry IDs to playable URLs.
 pub mod streams;
 /// Provider health tracking — reliability metrics for smart stream ranking.
 pub mod health;
+/// Stream benchmarking — measures HTTP throughput and latency for stream ranking.
+pub mod benchmark;
 /// Provider capability declarations — what each provider can do.
 pub mod capabilities;
 /// Provider rate-limit throttle — per-provider token-bucket and backoff.
 pub mod throttle;
+/// Circuit breaker — prevents cascading failures by disabling failing providers.
+pub mod circuit_breaker;
 
+#[allow(unused_imports)]
 pub use health::{HealthRegistry, ProviderStats, FailureKind, blend_score};
 pub use capabilities::ProviderCapabilities;
+#[allow(unused_imports)]
 pub use throttle::ProviderThrottle;
+#[allow(unused_imports)]
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats};
+#[allow(unused_imports)]
+pub use benchmark::StreamBenchmarker;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -134,6 +140,10 @@ pub struct Stream {
     /// Populated by the stream benchmarking pass when enabled.
     #[serde(default)]
     pub latency_ms:     Option<u32>,
+    /// Measured download throughput in megabits per second.
+    /// Populated by the stream benchmarking pass when enabled.
+    #[serde(default)]
+    pub speed_mbps:    Option<f64>,
     /// Audio channel layout, e.g. `"2.0"`, `"5.1"`, `"7.1 Atmos"`.
     #[serde(default)]
     pub audio_channels: Option<String>,
@@ -254,15 +264,6 @@ pub trait Provider: Send + Sync {
     /// The engine uses this to skip providers that can't help for a given
     /// source type — no wasted round trips.  Returning `None` means the
     /// provider supports all source types (opt-in to everything).
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// fn supported_sources(&self) -> Option<Vec<MediaSource>> {
-    ///     Some(vec![MediaSource::Movie, MediaSource::Series])
-    /// }
-    /// ```
-    fn supported_sources(&self) -> Option<Vec<crate::media::MediaSource>> { None }
 
     /// True if this provider can supply subtitles.
     fn has_subtitles(&self) -> bool { false }

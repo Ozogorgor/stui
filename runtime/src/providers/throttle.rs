@@ -11,17 +11,9 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! let throttle = ProviderThrottle::new();
-//! throttle.set_limit("tmdb", 4);      // 4 req/s
-//! throttle.set_limit("torrentio", 2); // 2 req/s
-//!
-//! // Before every provider request:
-//! throttle.acquire("tmdb").await;     // waits if tokens exhausted
-//!
-//! // On receiving HTTP 429:
-//! throttle.record_rate_limited("tmdb", 60); // 60s cooldown
-//! ```
+//! See module tests for usage examples.
+
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::Arc;

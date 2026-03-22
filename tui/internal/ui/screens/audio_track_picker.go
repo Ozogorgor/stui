@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
@@ -110,21 +110,21 @@ func (s *AudioTrackPickerScreen) refreshTracks(all []ipc.TrackInfo) {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (s *AudioTrackPickerScreen) View() string {
+func (s *AudioTrackPickerScreen) View() tea.View {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 	activeStyle := lipgloss.NewStyle().Foreground(theme.T.Success())
 
 	header := accentStyle.Render("🔊  Audio Tracks")
 
 	if len(s.tracks) == 0 {
-		return header + "\n\n" + dimStyle.Render("  No audio tracks found.") + "\n\n" +
-			dimStyle.Render("  esc back") + "\n"
+		return tea.NewView(header + "\n\n" + dimStyle.Render("  No audio tracks found.") + "\n\n" +
+			dimStyle.Render("  esc back") + "\n")
 	}
 
 	// Column widths
-	idW   := 3
+	idW := 3
 	langW := 10
 	titleW := 26
 
@@ -150,7 +150,7 @@ func (s *AudioTrackPickerScreen) View() string {
 			rowStyle = textStyle
 		}
 
-		lang  := audioLang(t)
+		lang := audioLang(t)
 		title := t.Title
 		if title == "" {
 			title = "—"
@@ -174,7 +174,7 @@ func (s *AudioTrackPickerScreen) View() string {
 	body := strings.Join(rows, "\n")
 	footer := hintBar("↑↓ navigate", "enter select", "esc back")
 
-	return header + "\n\n" + body + "\n\n" + footer + "\n"
+	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
 }
 
 // audioLang returns the best language label: title (if short) > lang > "Track N".
