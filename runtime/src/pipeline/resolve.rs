@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::catalog::Catalog;
 use crate::config::ConfigManager;
-use crate::engine::Engine;
+use crate::engine::{Engine, TraceEmitter};
 use crate::ipc::{GetStreamsRequest, Response, StreamInfoWire, StreamsResponse};
 use crate::providers::{HealthRegistry, StreamBenchmarker};
 
@@ -35,26 +35,22 @@ pub async fn run_get_streams(
     config: &Arc<ConfigManager>,
     health: &Arc<HealthRegistry>,
     bench: &StreamBenchmarker,
+    trace: &Arc<TraceEmitter>,
     r: GetStreamsRequest,
 ) -> Response {
     let cfg = config.snapshot().await;
     let benchmark_enabled = cfg.streaming.benchmark_streams;
     let health_map = health.all_reliability_scores();
 
-    // Get all stream providers from the registry
     let reg = engine.registry().read().await;
     let providers = reg.find_stream_providers();
-    
-    // For now, stream resolution is provider-specific
-    // We collect streams from all providers that support this entry
+
     let mut all_streams: Vec<crate::providers::Stream> = vec![];
     let mut errors = vec![];
-    
+
     for provider in providers {
-        // Try to resolve streams via WASM plugin
         match engine.resolve_raw(&r.entry_id, &provider.manifest.plugin.name).await {
             Ok(result) => {
-                // Convert resolve result to stream
                 let quality_label = result.quality.clone().unwrap_or_else(|| "Unknown".to_string());
                 let stream = crate::providers::Stream {
                     id: result.stream_url.clone(),
@@ -82,9 +78,22 @@ pub async fn run_get_streams(
             }
         }
     }
+    drop(reg);
 
-    // If no streams found from providers, return empty
+    // Emit per-provider errors; detect timeout errors separately
+    for err in &errors {
+        if let Some((name, msg)) = err.split_once(": ") {
+            let msg_lower = msg.to_lowercase();
+            if msg_lower.contains("timeout") || msg_lower.contains("timed out") {
+                trace.fallback("timeout");
+            } else {
+                trace.provider_error(name, msg);
+            }
+        }
+    }
+
     if all_streams.is_empty() {
+        trace.fallback("no streams after resolve");
         return Response::StreamsResult(StreamsResponse {
             id: r.id,
             entry_id: r.entry_id,
@@ -95,6 +104,7 @@ pub async fn run_get_streams(
     // Apply benchmarking if enabled
     if benchmark_enabled {
         all_streams = bench.probe_all(&all_streams).await;
+        trace.bench(all_streams.len());
     }
 
     // Apply health-based re-ranking if health data available
@@ -131,9 +141,18 @@ pub async fn run_get_streams(
 
     // Convert to wire format
     let streams: Vec<StreamInfoWire> = candidates
-        .into_iter()
-        .map(|c| stream_to_wire(c.stream, c.score.total()))
+        .iter()
+        .map(|c| stream_to_wire(c.stream.clone(), c.score.total()))
         .collect();
+
+    if streams.is_empty() {
+        trace.fallback("no streams after bench");
+    } else {
+        let best_score = candidates.first()
+            .map(|c| c.score.total() as f64 / 100.0)
+            .unwrap_or(0.0);
+        trace.rank(1, best_score);
+    }
 
     Response::StreamsResult(StreamsResponse {
         id: r.id,

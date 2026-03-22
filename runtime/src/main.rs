@@ -625,11 +625,11 @@ async fn handle_line(
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
 
-        Request::Search(r)    => pipeline::search::run_search(engine, catalog, r).await,
+        Request::Search(r)    => pipeline::search::run_search(engine, catalog, trace, r).await,
 
         Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 
-        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, r).await,
+        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, trace, r).await,
 
         Request::Metadata(r) => Response::error(
             Some(r.id), ErrorCode::MetadataFailed,
