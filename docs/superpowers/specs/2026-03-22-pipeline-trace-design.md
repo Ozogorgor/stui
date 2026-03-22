@@ -165,14 +165,19 @@ resolve_streams_with_benchmark()
 - **enabled flag** — `enable()` → `is_enabled()` returns true
 - **format correctness** — enable, call each helper with known args via `with_writer`, assert line matches expected format
 
-### Integration tests (`pipeline.rs`)
+### Integration tests (`pipeline/resolve.rs`)
 
-- **happy path trace** — stub catalog with 2 providers / 3 streams, construct emitter via `with_writer` then call `.enable()`, call `resolve_streams_with_benchmark`, assert output contains `search: 2 providers`, `resolve: 3 streams`, `bench:`, `rank:`
+The actual IPC-invoked pipeline handlers live in `runtime/src/pipeline/search.rs` and
+`runtime/src/pipeline/resolve.rs` (not `engine/pipeline.rs` — that struct is not used
+by the IPC loop). Integration tests exercise the functions directly.
+
+- **happy path trace** — call `run_get_streams` with 2 providers / 3 streams, construct emitter via `with_writer` then call `.enable()`, assert output contains `resolve: 3 streams`, `bench:`, `rank:`
 - **fallback on zero streams** — stub returns empty list after bench, assert `fallback: no streams after bench`
 - **disabled by default** — no `enable()` call, assert output buffer is empty after a full resolve
 - **provider error** — stub one provider to return an error, assert `provider: <name> failed (...)` appears in output
-- **circuit open** — stub circuit breaker to reject a provider, assert `fallback: circuit open: <name>` appears
-- **timeout fallback** — stub resolve to hit timeout path, assert `fallback: timeout` appears
+- **timeout fallback** — stub resolve to produce an error containing "timeout", assert `fallback: timeout` appears in output
+
+Note: circuit-open fallback requires circuit-breaker plumbing in `run_get_streams` which is not present in this iteration; it is deferred. Timeout is detected by matching the error string from failed `resolve_raw` calls.
 
 ## Files Touched
 
@@ -180,9 +185,13 @@ resolve_streams_with_benchmark()
 |---|---|
 | `runtime/src/engine/trace.rs` | **New** — `TraceEmitter` struct |
 | `runtime/src/engine/mod.rs` | Export `trace` module |
-| `runtime/src/engine/pipeline.rs` | Add `trace: Arc<TraceEmitter>` field; emit at 5+ pipeline points |
-| `runtime/src/ipc/` | Add `SetTrace { enabled: bool }` command variant |
-| `tui/cmd/stui/main.go` | Send `SetTrace` IPC message when `-v` flag is set |
+| `runtime/src/pipeline/search.rs` | Add `trace` param; emit `trace.search()` + `trace.resolve()` |
+| `runtime/src/pipeline/resolve.rs` | Add `trace` param; emit bench/rank/fallback/provider_error/timeout points |
+| `runtime/src/main.rs` | Create `Arc<TraceEmitter>`, pass to `handle_line()`, handle `SetTrace` request |
+| `runtime/src/ipc/v1/mod.rs` | Add `SetTrace { enabled: bool }` variant to `Request` enum |
+| `tui/internal/ipc/requests.go` | Add `SetTrace(enabled bool)` method |
+| `tui/internal/ui/ui.go` | Add `Verbose bool` to `Options`; call `SetTrace` after handshake |
+| `tui/cmd/stui/main.go` | Pass `Verbose: *verbose` in `ui.Options` |
 
 ## Configuration
 
