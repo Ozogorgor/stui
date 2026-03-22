@@ -6,11 +6,11 @@
 //! All current types live in `v1/`.  A future `v2/` can introduce breaking
 //! changes while `v1/` stays importable for clients that haven't upgraded.
 //!
-//! ```
+//! ```text
 //! ipc/
-//!   mod.rs    ← this file; re-exports the active version (v1)
-//!   v1/       ← all current wire types
-//!     mod.rs  ← Request, Response, events, domain types
+//!   mod.rs    - this file; re-exports the active version (v1)
+//!   v1/       - all current wire types
+//!     mod.rs  - Request, Response, events, domain types
 //! ```
 //!
 //! # Selecting a protocol version
@@ -42,70 +42,105 @@ pub const CURRENT_VERSION: u32 = 1;
 
 // Re-export everything from v1 so existing `use crate::ipc::Foo` imports
 // continue to compile with zero changes throughout the codebase.
+#[allow(unused_imports)]
 pub use v1::{
-    // Requests
-    Request,
-    PlayRequest,
-    PlayerCommandRequest,
-    SearchRequest,
-    ResolveRequest,
-    GetStreamsRequest,
-    MetadataRequest,
-    LoadPluginRequest,
-    UnloadPluginRequest,
-
-    // Responses
-    Response,
-    SearchResponse,
-    ResolveResponse,
-    StreamsResponse,
-    StreamInfoWire,
-    MetadataResponse,
-    PluginListResponse,
-    PluginLoadedResponse,
-    PluginUnloadedResponse,
-    ErrorResponse,
-
-    // Out-of-band events
-    GridUpdateEvent,
-    PluginToastEvent,
-    PlayerStartedEvent,
-    PlayerProgressEvent,
-    PlayerEndedEvent,
-
-    // Domain types
-    MediaType,
-    MediaTab,
-    MediaEntry,
-    SubtitleTrack,
-    PluginInfo,
-    PluginStatus,
-    ErrorCode,
-
-    // Backward-compat aliases
-    GridUpdateMsg,
+    ClearMediaCacheRequest,
     DetailEntry,
 
+    ErrorCode,
+
+    ErrorResponse,
+
+    GetMediaCacheAllRequest,
+    GetMediaCacheStatsRequest,
+    // Media cache types
+    GetMediaCacheTabRequest,
+    GetStreamsRequest,
+    // Watch history types
+    GetWatchHistoryEntryRequest,
+    GetWatchHistoryInProgressRequest,
+    // Out-of-band events
+    GridUpdateEvent,
+    // Backward-compat aliases
+    GridUpdateMsg,
+    // Registry types
+    InstallPluginRequest,
+    LoadPluginRequest,
+    MarkWatchHistoryCompletedRequest,
+    MediaCacheAllResponse,
+    MediaCacheClearResponse,
+    MediaCacheStatsResponse,
+    MediaCacheTabResponse,
+    MediaEntry,
+    MediaTab,
+    // Domain types
+    MediaType,
+    MetadataRequest,
+    MetadataResponse,
+    // MPD output types
+    MpdOutputInfo,
+    MpdOutputsResponse,
+
+    PlayRequest,
     // New typed command types
     PlayerCmd,
-    SetConfigRequest,
+    PlayerCommandRequest,
+    PlayerEndedEvent,
 
+    PlayerProgressEvent,
+    PlayerStartedEvent,
+    PluginInfo,
+    PluginInstalledResponse,
+
+    PluginListResponse,
+    PluginLoadedResponse,
+    PluginReposResponse,
+
+    PluginStatus,
+    PluginToastEvent,
+    PluginUnloadedResponse,
     // Provider settings schema
     ProviderField,
     ProviderSchema,
     ProviderSettingsResponse,
 
-    // MPD output types
-    MpdOutputInfo,
-    MpdOutputsResponse,
+    // Stream ranking types
+    RankStreamsRequest,
+    RankStreamsResponse,
+    RankedStreamWire,
+    // Stream policy types
+    SetStreamPolicyRequest,
+    StreamPolicyResponse,
+    RegistryEntryWire,
+    RegistryIndexResponse,
+    RemoveWatchHistoryEntryRequest,
+    // Requests
+    Request,
+    ResolveRequest,
+    ResolveResponse,
+    // Responses
+    Response,
+    SearchRequest,
+    SearchResponse,
+    SetConfigRequest,
 
     // Plugin repo types
     SetPluginReposRequest,
-    PluginReposResponse,
+    // Storage paths types
+    SetStoragePathsRequest,
+    StoragePathsResponse,
+    StreamInfoWire,
+    StreamPreferencesWire,
+    StreamsResponse,
+    SubtitleTrack,
+    UnloadPluginRequest,
 
-    // Registry types
-    InstallPluginRequest,
-    RegistryEntryWire,
-    RegistryIndexResponse,
-    PluginInstalledResponse,
+    UpdateWatchHistoryPositionRequest,
+    UpsertWatchHistoryEntryRequest,
+    WatchHistoryEntryResponse,
+    WatchHistoryEntryWire,
+    WatchHistoryInProgressResponse,
+    WatchHistoryPositionUpdateResponse,
+    WatchHistoryRemoveResponse,
+    WatchHistoryUpsertResponse,
 };

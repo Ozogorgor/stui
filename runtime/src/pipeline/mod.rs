@@ -12,9 +12,12 @@
 //! | `playback`  | Fire player + skipper tasks; typed player commands  |
 //! | `config`    | Live config updates, provider settings, plugin repos|
 //! | `registry`  | Browse registry index + install plugins             |
+//! | `rank`      | Policy-based stream ranking with explanations        |
 
 pub mod config;
 pub mod playback;
+pub mod policy_io;
+pub mod rank;
 pub mod registry;
 pub mod resolve;
 pub mod search;

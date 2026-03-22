@@ -30,21 +30,23 @@ mod sandbox;
 mod scraper;
 mod stremio;
 mod streamer;
-mod theme_watcher;
 mod pipeline;
 mod plugin_rpc;
 mod registry;
 mod skipper;
+mod watchhistory;
+mod mediacache;
+mod ipc_batcher;
+pub mod storage;
 
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::UnixListener;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{debug, info, warn};
 
 use catalog::Catalog;
 use discovery::{Discovery, PluginToast};
@@ -53,12 +55,9 @@ use config::ConfigManager;
 use events::EventBus;
 use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
 use mpd_bridge::MpdBridge;
+use providers::{HealthRegistry, StreamBenchmarker};
 use skipper::{Skipper, SkipperStore};
-use providers::{HealthRegistry, metadata::{ImdbProvider, OmdbProvider, TmdbProvider}, Provider};
-#[cfg(feature = "anime")]
-use providers::metadata::{AniListProvider, JikanProvider};
-#[cfg(feature = "music")]
-use providers::metadata::{LastFmProvider, MusicBrainzProvider};
+use storage::aria2_translator::Aria2Translator;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Configuration is now loaded via config::load() which reads
@@ -106,6 +105,28 @@ async fn main() -> Result<()> {
     // ── Engine ────────────────────────────────────────────────────────────
     let engine = Arc::new(Engine::new(cfg.cache_dir.clone(), cfg.data_dir.clone()));
 
+    // ── Watch history ──────────────────────────────────────────────────────
+    let watch_history = Arc::new(watchhistory::WatchHistoryStore::new(
+        watchhistory::default_history_path(),
+    ));
+    info!(path = %watchhistory::default_history_path().display(), "watch history loaded");
+
+    // ── Media cache ─────────────────────────────────────────────────────────
+    let media_cache = Arc::new(mediacache::MediaCacheStore::new(
+        mediacache::default_cache_path(),
+    ));
+    info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
+
+    // ── Media storage ──────────────────────────────────────────────────────
+    let storage = Arc::new(storage::MediaStorage::new(
+        cfg.storage.movies.clone(),
+        cfg.storage.series.clone(),
+        cfg.storage.anime.clone(),
+        cfg.storage.music.clone(),
+        cfg.storage.podcasts.clone(),
+    ));
+    info!("media storage initialized: movies={}", cfg.storage.movies.display());
+
     // ── Discovery: scan + hot-reload watcher ──────────────────────────────
     let (toast_tx, _) = broadcast::channel::<PluginToast>(32);
     let discovery = Arc::new(Discovery::new(
@@ -118,90 +139,38 @@ async fn main() -> Result<()> {
     Arc::clone(&discovery).start_watcher();
     let mut toast_rx = toast_tx.subscribe();
 
-    // ── Built-in catalog providers ────────────────────────────────────────
-    let mut built_in: Vec<Arc<dyn Provider>> = vec![];
-
-    // Always-on metadata providers (no API key needed)
-    if cfg.providers.enable_imdb {
-        built_in.push(Arc::new(ImdbProvider::new()));
-        info!("IMDB provider enabled");
-    }
-
-    #[cfg(feature = "anime")]
-    {
-        if cfg.providers.enable_anilist {
-            built_in.push(Arc::new(AniListProvider::new()));
-            info!("AniList provider enabled");
-        }
-        if cfg.providers.enable_jikan {
-            built_in.push(Arc::new(JikanProvider::new()));
-            info!("Jikan (MyAnimeList) provider enabled");
-        }
-    }
-
-    #[cfg(feature = "music")]
-    {
-        if cfg.providers.enable_musicbrainz {
-            built_in.push(Arc::new(MusicBrainzProvider::new()));
-            info!("MusicBrainz provider enabled");
-        }
-        // Last.fm — enabled whenever an API key is available
-        if let Some(p) = LastFmProvider::from_config(&cfg.api_keys) {
-            info!("Last.fm provider enabled");
-            built_in.push(Arc::new(p));
-        } else {
-            info!("Last.fm provider not active (no API key — configure via plugin settings)");
-        }
-    }
-
-    // API-key-gated providers
-    if cfg.providers.enable_omdb {
-        if let Some(p) = OmdbProvider::from_config(&cfg.api_keys) {
-            info!("OMDB provider enabled");
-            built_in.push(Arc::new(p));
-        } else {
-            warn!("OMDB enabled in config but no API key — set via plugin settings or OMDB_API_KEY");
-        }
-    }
-    if cfg.providers.enable_tmdb {
-        if let Some(p) = TmdbProvider::from_config(&cfg.api_keys) {
-            info!("TMDB provider enabled");
-            built_in.push(Arc::new(p));
-        } else {
-            warn!("TMDB enabled in config but no API key — set via plugin settings or TMDB_API_KEY");
-        }
-    }
-
-    // radio: no built-in provider yet — external plugins handle it.
-    #[cfg(not(feature = "radio"))]
-    let _ = &cfg.providers; // suppress unused warning if only radio was configured
-
     // ── Stremio addon bridge ───────────────────────────────────────────────
     // Set STUI_STREMIO_ADDONS to a comma-separated list of manifest URLs:
     //   export STUI_STREMIO_ADDONS="https://torrentio.strem.fun/manifest.json"
-    let stremio_addons = stremio::adapter::StremioAddon::from_env().await;
-    if stremio_addons.is_empty() {
-        info!("no Stremio addons configured (set STUI_STREMIO_ADDONS to enable)");
-    }
-    for addon in stremio_addons {
-        info!("stremio: registered addon '{}'", addon.name());
-        built_in.push(Arc::new(addon));
+    // NOTE: Stremio addons are loaded as WASM plugins via Discovery above.
+    // This section kept for legacy Stremio adapter if needed.
+    let _stremio_addons = stremio::adapter::StremioAddon::from_env().await;
+    if _stremio_addons.is_empty() {
+        debug!("no Stremio addons configured");
     }
 
-    let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), built_in));
-    let mut grid_rx = catalog.subscribe();
+    // ── Catalog uses Engine for WASM plugin-based providers ─────────────────
+    // Built-in providers (tmdb, imdb, omdb, anilist, etc.) are now loaded as
+    // WASM plugins via Discovery above and accessed through Engine's search().
+    let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), Arc::clone(&engine)));
 
     // ── Shared health registry + config manager ───────────────────────────
     let bus     = Arc::new(EventBus::new());
     let health  = Arc::new(HealthRegistry::new());
     let config  = Arc::new(ConfigManager::new(cfg.clone(), Arc::clone(&bus)));
+    let bench   = StreamBenchmarker::new();
     { let c = Arc::clone(&catalog); tokio::spawn(async move { c.start().await }); }
 
     // ── Shared event channel (aria2 + mpv/player → Go) ──────────────────
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(128);
 
     // ── aria2c bridge ─────────────────────────────────────────────────────
-    let aria2 = aria2_bridge::Aria2Bridge::try_connect().await;
+    // Initialize the aria2 translator for path organization
+    let translator = Aria2Translator::new(
+        cfg.data_dir.join("aria2-translations.json"),
+    );
+    translator.init().await?;
+    let aria2 = aria2_bridge::Aria2Bridge::try_connect(translator).await;
     if let Some(ref bridge) = aria2 {
         bridge.spawn_monitors(event_tx.clone());
         info!("aria2: bridge active");
@@ -230,15 +199,12 @@ async fn main() -> Result<()> {
         Arc::clone(&engine),
         aria2.clone(),
         mpd_bridge.clone(),
+        Arc::clone(&storage),
+        Arc::clone(&watch_history),
         event_tx.clone(),
         cfg.data_dir.to_string_lossy().into_owned(),
         cfg.playback.clone(),
     );
-
-    // ── matugen theme watcher ─────────────────────────────────────────────
-    let colors_path = theme_watcher::resolve_colors_path();
-    let theme_mode  = cfg.theme_mode.clone();
-    let mut theme_rx = theme_watcher::start_watcher(colors_path, theme_mode);
 
     // ── IPC loop — two modes ──────────────────────────────────────────────
     if daemon_mode {
@@ -274,11 +240,12 @@ async fn main() -> Result<()> {
                 &health,
                 &config,
                 &skipper,
+                &watch_history,
+                &media_cache,
+                &bench,
                 &mut event_rx,
                 event_tx.clone(),
-                &mut grid_rx,
                 &mut toast_rx,
-                &mut theme_rx,
             ).await?;
             info!("daemon: client disconnected");
         }
@@ -301,11 +268,12 @@ async fn main() -> Result<()> {
             &health,
             &config,
             &skipper,
+            &watch_history,
+            &media_cache,
+            &bench,
             &mut event_rx,
             event_tx.clone(),
-            &mut grid_rx,
             &mut toast_rx,
-            &mut theme_rx,
         ).await?;
     }
 
@@ -322,18 +290,21 @@ async fn run_ipc_loop<R, W>(
     health:    &Arc<HealthRegistry>,
     config:    &Arc<ConfigManager>,
     skipper:   &Arc<Skipper>,
+    watch_history: &Arc<watchhistory::WatchHistoryStore>,
+    media_cache: &Arc<mediacache::MediaCacheStore>,
+    bench:     &StreamBenchmarker,
     // Receiver for async events pushed by background tasks (player, aria2, registry, …).
     event_rx:  &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
     event_tx:  tokio::sync::mpsc::Sender<String>,
-    grid_rx:   &mut tokio::sync::broadcast::Receiver<catalog::GridUpdate>,
     toast_rx:  &mut tokio::sync::broadcast::Receiver<PluginToast>,
-    theme_rx:  &mut tokio::sync::broadcast::Receiver<theme_watcher::ThemeColors>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
+    let grid_rx = catalog.subscribe();
+    let mut batcher = ipc_batcher::IpcBatcher::new(grid_rx);
     loop {
         tokio::select! {
             // Incoming request from Go TUI
@@ -357,7 +328,7 @@ where
                                 let config_c = Arc::clone(config);
                                 let tx = event_tx.clone();
                                 tokio::spawn(async move {
-                                    let mut resp = pipeline::registry::run_browse_registry(&config_c).await;
+                                    let resp = pipeline::registry::run_browse_registry(&config_c).await;
                                     // Inject the correlation id so Go can route the response.
                                     if !req_id.is_empty() {
                                         if let Ok(mut v) = serde_json::to_value(&resp) {
@@ -408,6 +379,9 @@ where
                                     "podcasts" => Some(ipc::MediaTab::Podcasts),
                                     _          => None,
                                 });
+                                let media_type = val["media_type"].as_str()
+                                    .and_then(|s| serde_json::from_str::<ipc::MediaType>(s).ok());
+                                let year = val["year"].as_u64().map(|y| y as u32);
                                 pipeline::playback::run_play(
                                     player.clone(),
                                     Arc::clone(&skipper),
@@ -416,6 +390,8 @@ where
                                     val["provider"].as_str().unwrap_or("").to_string(),
                                     val["imdb_id"].as_str().unwrap_or("").to_string(),
                                     tab,
+                                    media_type,
+                                    year,
                                 );
                                 continue;
                             }
@@ -435,8 +411,11 @@ where
                                 let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let url   = val["url"].as_str().unwrap_or("").to_string();
                                 let title = val["title"].as_str().unwrap_or("").to_string();
+                                let media_type = val["media_type"].as_str()
+                                    .and_then(|s| serde_json::from_str::<ipc::MediaType>(s).ok());
+                                let year = val["year"].as_u64().map(|y| y as u32);
                                 let p = player.clone();
-                                tokio::spawn(async move { p.download_only(&url, &title).await });
+                                tokio::spawn(async move { p.download_only(&url, &title, media_type, year).await });
                                 continue;
                             }
                             "download_cancel" => {
@@ -464,22 +443,22 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, watch_history, media_cache, &bench, &line).await;
                         send_wire(&mut writer, &resp.to_wire()?).await?;
                     }
                 }
             }
 
-            // Grid update from catalog
-            update = grid_rx.recv() => {
-                match update {
-                    Ok(u) => {
+            // Grid updates from catalog (batched for efficiency)
+            updates = batcher.recv() => {
+                if let Some(batch) = updates {
+                    for u in batch {
                         info!(tab=%u.tab, source=?u.source, count=u.entries.len(), "grid update");
                         let source = match u.source {
                             catalog::GridUpdateSource::Cache => "cache".to_string(),
                             catalog::GridUpdateSource::Live  => "live".to_string(),
                         };
-                        let entries: Vec<ipc::MediaEntry> = u.entries.into_iter().map(|e| {
+                        let entries: Vec<ipc::MediaEntry> = u.entries.iter().map(|e| {
                             let tab = match e.tab.as_str() {
                                 "movies"   => ipc::MediaTab::Movies,
                                 "series"   => ipc::MediaTab::Series,
@@ -490,20 +469,29 @@ where
                                 _          => ipc::MediaTab::Library,
                             };
                             ipc::MediaEntry {
-                                id: e.id, title: e.title, year: e.year, genre: e.genre,
-                                rating: e.rating, ratings: e.ratings,
-                                description: e.description,
-                                poster_url: e.poster_url, provider: e.provider,
-                                tab, media_type: e.media_type,
+                                id: e.id.clone(), title: e.title.clone(), year: e.year.clone(), genre: e.genre.clone(),
+                                rating: e.rating.clone(), ratings: e.ratings.clone(),
+                                description: e.description.clone(),
+                                poster_url: e.poster_url.clone(), provider: e.provider.clone(),
+                                tab, media_type: e.media_type.clone(),
                             }
                         }).collect();
+
+                        // Cache live updates in media cache
+                        if u.source == catalog::GridUpdateSource::Live {
+                            let mc = media_cache.clone();
+                            let tab_name = u.tab.clone();
+                            let entries_to_cache = entries.clone();
+                            tokio::spawn(async move {
+                                mc.save_tab(tab_name, entries_to_cache).await;
+                            });
+                        }
+
                         let msg = GridUpdateMsg { tab: u.tab, entries, source };
                         send_wire(&mut writer, &msg.to_wire()?).await?;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("grid channel lagged {n}");
-                    }
-                    Err(_) => {}
+                } else {
+                    info!("grid update channel closed");
                 }
             }
 
@@ -516,25 +504,6 @@ where
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!("toast channel lagged {n}");
-                    }
-                    Err(_) => {}
-                }
-            }
-
-            // matugen theme update
-            theme = theme_rx.recv() => {
-                match theme {
-                    Ok(tc) => {
-                        info!(colors=%tc.colors.len(), mode=%tc.mode, "theme update from matugen");
-                        let mut buf = Vec::new();
-                        if theme_watcher::emit_theme_update(&mut buf, &tc).is_ok() {
-                            if let Ok(s) = String::from_utf8(buf) {
-                                send_wire(&mut writer, &s).await?;
-                            }
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("theme channel lagged {n}");
                     }
                     Err(_) => {}
                 }
@@ -589,7 +558,18 @@ fn plugin_toast_wire(t: &PluginToast) -> Result<String> {
 
 // ── Request dispatch ──────────────────────────────────────────────────────────
 
-async fn handle_line(engine: &Arc<Engine>, catalog: &Arc<Catalog>, health: &Arc<HealthRegistry>, config: &Arc<ConfigManager>, player: &player::PlayerBridge, mpd: Option<&MpdBridge>, line: &str) -> Response {
+async fn handle_line(
+    engine: &Arc<Engine>,
+    catalog: &Arc<Catalog>,
+    health: &Arc<HealthRegistry>,
+    config: &Arc<ConfigManager>,
+    player: &player::PlayerBridge,
+    mpd: Option<&MpdBridge>,
+    watch_history: &Arc<watchhistory::WatchHistoryStore>,
+    media_cache: &Arc<mediacache::MediaCacheStore>,
+    bench: &StreamBenchmarker,
+    line: &str,
+) -> Response {
     let request: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => return Response::error(None, ErrorCode::InvalidRequest, e.to_string()),
@@ -637,7 +617,7 @@ async fn handle_line(engine: &Arc<Engine>, catalog: &Arc<Catalog>, health: &Arc<
 
         Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 
-        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, r).await,
+        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, r).await,
 
         Request::Metadata(r) => Response::error(
             Some(r.id), ErrorCode::MetadataFailed,
@@ -649,11 +629,136 @@ async fn handle_line(engine: &Arc<Engine>, catalog: &Arc<Catalog>, health: &Arc<
         Request::Cmd(cmd) => pipeline::playback::run_player_cmd(player, mpd, cmd).await,
 
         Request::SetConfig(r)         => pipeline::config::run_set_config(config, r).await,
-        Request::GetProviderSettings  => pipeline::config::run_get_provider_settings(catalog).await,
+        Request::GetProviderSettings  => pipeline::config::run_get_provider_settings(engine, config).await,
         Request::GetPluginRepos       => pipeline::config::run_get_plugin_repos(config).await,
         Request::SetPluginRepos(r)    => pipeline::config::run_set_plugin_repos(config, r).await,
         Request::BrowseRegistry       => pipeline::registry::run_browse_registry(config).await,
         Request::InstallPlugin(r)     => pipeline::registry::run_install_plugin(config, r).await,
+        Request::RankStreams(r)       => pipeline::rank::run_rank_streams(r).await,
+
+        // Watch history requests
+        Request::GetWatchHistoryEntry(r) => {
+            let entry: Option<watchhistory::WatchHistoryEntry> = watch_history.get(&r.id).await;
+            Response::WatchHistoryEntry(ipc::WatchHistoryEntryResponse {
+                entry: entry.map(ipc::WatchHistoryEntryWire::from),
+            })
+        }
+        Request::GetWatchHistoryInProgress(r) => {
+            let entries: Vec<watchhistory::WatchHistoryEntry> = watch_history.in_progress_for_tab(&r.tab).await;
+            Response::WatchHistoryInProgress(ipc::WatchHistoryInProgressResponse {
+                entries: entries.into_iter().map(ipc::WatchHistoryEntryWire::from).collect(),
+            })
+        }
+        Request::UpsertWatchHistoryEntry(r) => {
+            let entry: watchhistory::WatchHistoryEntry = r.entry.into();
+            watch_history.upsert(entry).await;
+            Response::WatchHistoryUpsert(ipc::WatchHistoryUpsertResponse { success: true })
+        }
+        Request::UpdateWatchHistoryPosition(r) => {
+            let success = watch_history.update_position(&r.id, r.position, r.duration).await;
+            Response::WatchHistoryPositionUpdate(ipc::WatchHistoryPositionUpdateResponse { success })
+        }
+        Request::MarkWatchHistoryCompleted(r) => {
+            watch_history.mark_completed(&r.id).await;
+            Response::WatchHistoryCompleted(ipc::WatchHistoryUpsertResponse { success: true })
+        }
+        Request::RemoveWatchHistoryEntry(r) => {
+            watch_history.remove(&r.id).await;
+            Response::WatchHistoryRemoved(ipc::WatchHistoryRemoveResponse { success: true })
+        }
+
+        // Media cache requests
+        Request::GetMediaCacheTab(r) => {
+            let entries = media_cache.entries_for_tab(&r.tab).await;
+            let updated_at = media_cache.tab_updated_at(&r.tab).await;
+            Response::MediaCacheTab(ipc::MediaCacheTabResponse {
+                tab: r.tab,
+                entries,
+                updated_at,
+            })
+        }
+        Request::GetMediaCacheAll(_) => {
+            let entries = media_cache.all_entries().await;
+            Response::MediaCacheAll(ipc::MediaCacheAllResponse { entries })
+        }
+        Request::GetMediaCacheStats(_) => {
+            let total_count = media_cache.total_count().await;
+            let last_updated = media_cache.last_updated().await;
+            Response::MediaCacheStats(ipc::MediaCacheStatsResponse {
+                total_count,
+                last_updated,
+            })
+        }
+        Request::ClearMediaCache(_) => {
+            media_cache.clear().await;
+            Response::MediaCacheCleared(ipc::MediaCacheClearResponse { success: true })
+            // Note: clear() logs errors internally, so we return success=true 
+            // if no panic occurred. The TUI can verify by checking cache stats.
+        }
+
+        // ── Storage paths ─────────────────────────────────────────────────────
+        Request::GetStoragePaths => {
+            let cfg = config.snapshot().await;
+            Response::StoragePaths(ipc::StoragePathsResponse {
+                movies: cfg.storage.movies.display().to_string(),
+                series: cfg.storage.series.display().to_string(),
+                music: cfg.storage.music.display().to_string(),
+                anime: cfg.storage.anime.display().to_string(),
+                podcasts: cfg.storage.podcasts.display().to_string(),
+            })
+        }
+        Request::SetStoragePaths(r) => {
+            let cfg = config.clone();
+            let mut errors = Vec::new();
+            use serde_json::Value;
+            
+            if let Some(ref path) = r.movies {
+                if let Err(e) = cfg.set("storage.movies", Value::String(path.clone())).await {
+                    errors.push(format!("movies: {}", e));
+                }
+            }
+            if let Some(ref path) = r.series {
+                if let Err(e) = cfg.set("storage.series", Value::String(path.clone())).await {
+                    errors.push(format!("series: {}", e));
+                }
+            }
+            if let Some(ref path) = r.music {
+                if let Err(e) = cfg.set("storage.music", Value::String(path.clone())).await {
+                    errors.push(format!("music: {}", e));
+                }
+            }
+            if let Some(ref path) = r.anime {
+                if let Err(e) = cfg.set("storage.anime", Value::String(path.clone())).await {
+                    errors.push(format!("anime: {}", e));
+                }
+            }
+            if let Some(ref path) = r.podcasts {
+                if let Err(e) = cfg.set("storage.podcasts", Value::String(path.clone())).await {
+                    errors.push(format!("podcasts: {}", e));
+                }
+            }
+            
+            if errors.is_empty() {
+                Response::StoragePathsUpdated { success: true }
+            } else {
+                Response::error(None, ErrorCode::InvalidRequest, errors.join("; "))
+            }
+        }
+
+        // ── Stream policy ─────────────────────────────────────────────────────
+        Request::GetStreamPolicy => {
+            let prefs = pipeline::policy_io::load_stream_policy();
+            Response::StreamPolicy(ipc::StreamPolicyResponse {
+                policy: prefs.into(),
+            })
+        }
+        Request::SetStreamPolicy(req) => {
+            let prefs: crate::quality::StreamPreferences = req.policy.into();
+            if let Err(e) = pipeline::policy_io::save_stream_policy(&prefs) {
+                warn!("save_stream_policy failed: {e}");
+            }
+            Response::StreamPolicyUpdated
+        }
 
         // Play and PlayerStop are handled earlier in the IPC loop before
         // reaching handle_line — these arms are unreachable in practice.
