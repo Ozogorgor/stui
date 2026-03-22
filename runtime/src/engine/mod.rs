@@ -307,23 +307,31 @@ impl Engine {
                         let tab_str  = format!("{:?}", t).to_lowercase();
                         let provider = plugin_clone.manifest.plugin.name.clone();
                         let tab_out  = t.clone();
+                        let pname = provider.clone();
                         set.spawn(async move {
-                            let req = SearchRequest { query: q, tab: tab_str, page: 0, limit: 50 };
-                            sup.search(&req).await
-                                .map(|r| r.items.into_iter().map(|e| MediaEntry {
-                                    id:          e.id,
-                                    title:       e.title,
-                                    year:        e.year,
-                                    genre:       e.genre,
-                                    rating:      e.rating,
-                                    description: e.description,
-                                    poster_url:  e.poster_url,
-                                    provider:    provider.clone(),
-                                    tab:         tab_out.clone(),
-                                    media_type:  crate::ipc::MediaType::default(),
-                                    ratings:     std::collections::HashMap::new(),
-                                }).collect::<Vec<_>>())
-                                .map_err(|e| anyhow::anyhow!("{e}"))
+                            use futures::FutureExt as _;
+                            let result = std::panic::AssertUnwindSafe(async move {
+                                let req = SearchRequest { query: q, tab: tab_str, page: 0, limit: 50 };
+                                sup.search(&req).await
+                                    .map(|r| r.items.into_iter().map(|e| MediaEntry {
+                                        id:          e.id,
+                                        title:       e.title,
+                                        year:        e.year,
+                                        genre:       e.genre,
+                                        rating:      e.rating,
+                                        description: e.description,
+                                        poster_url:  e.poster_url,
+                                        provider:    provider.clone(),
+                                        tab:         tab_out.clone(),
+                                        media_type:  crate::ipc::MediaType::default(),
+                                        ratings:     std::collections::HashMap::new(),
+                                    }).collect::<Vec<_>>())
+                                    .map_err(|e| anyhow::anyhow!("{e}"))
+                            })
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
+                            (pname, result)
                         });
                     } else {
                         warn!(plugin = %plugin_clone.manifest.plugin.name, "no WASM supervisor — skipping");
@@ -332,8 +340,16 @@ impl Engine {
                 _ => {
                     let sandbox = reg.sandbox_for(&plugin_clone.id).cloned();
                     if let Some(ctx) = sandbox {
+                        let pname = plugin_clone.manifest.plugin.name.clone();
                         set.spawn(async move {
-                            scraper::search(&ctx, &plugin_clone, &q, &t).await
+                            use futures::FutureExt as _;
+                            let result = std::panic::AssertUnwindSafe(
+                                scraper::search(&ctx, &plugin_clone, &q, &t)
+                            )
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
+                            (pname, result)
                         });
                     }
                 }
@@ -345,9 +361,9 @@ impl Engine {
         let mut all_items: Vec<crate::ipc::MediaEntry> = vec![];
         while let Some(result) = set.join_next().await {
             match result {
-                Ok(Ok(mut items)) => all_items.append(&mut items),
-                Ok(Err(e)) => warn!("provider search error: {e}"),
-                Err(e)     => warn!("provider task panicked: {e}"),
+                Ok((_, Ok(mut items))) => all_items.append(&mut items),
+                Ok((provider, Err(e))) => warn!(provider = %provider, "provider search error: {e}"),
+                Err(e) => warn!("search task aborted: {e}"),
             }
         }
 
@@ -573,7 +589,11 @@ impl Engine {
             let p = std::sync::Arc::clone(provider);
             let id = entry_id.to_string();
             set.spawn(async move {
-                let result = p.streams(&id).await;
+                use futures::FutureExt as _;
+                let result = std::panic::AssertUnwindSafe(p.streams(&id))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
                 (provider_name, result)
             });
         }
@@ -599,7 +619,8 @@ impl Engine {
                     }
                 }
                 Err(e) => {
-                    warn!("stream task panicked: {e}");
+                    // Task was aborted (panics are caught inside the task and converted to Err).
+                    warn!("stream task aborted: {e}");
                 }
             }
         }
@@ -672,16 +693,24 @@ impl Engine {
         // Fan out to all stream-capable providers concurrently.
         let mut set = tokio::task::JoinSet::new();
         for provider in built_in.iter().filter(|p| p.has_streams()) {
-            let p  = std::sync::Arc::clone(provider);
-            let id = entry_id.to_string();
-            set.spawn(async move { p.streams(&id).await });
+            let p             = std::sync::Arc::clone(provider);
+            let id            = entry_id.to_string();
+            let provider_name = provider.name().to_string();
+            set.spawn(async move {
+                use futures::FutureExt as _;
+                let result = std::panic::AssertUnwindSafe(p.streams(&id))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
+                (provider_name, result)
+            });
         }
         let mut all_streams = vec![];
         while let Some(result) = set.join_next().await {
             match result {
-                Ok(Ok(mut s)) => all_streams.append(&mut s),
-                Ok(Err(e))    => warn!("stream provider error: {e}"),
-                Err(e)        => warn!("stream task panicked: {e}"),
+                Ok((_, Ok(mut s)))         => all_streams.append(&mut s),
+                Ok((provider, Err(e)))     => warn!(provider = %provider, "stream provider error: {e}"),
+                Err(e)                     => warn!("stream task aborted: {e}"),
             }
         }
         self.cache.streams.insert(entry_id, all_streams.clone()).await;
