@@ -105,6 +105,7 @@ mod inner_impl {
     use wasmtime_wasi::preview1::WasiP1Ctx;
 
     use super::*;
+    use crate::auth;
     use crate::sandbox::SandboxCtx;
     use tracing::warn;
 
@@ -160,6 +161,9 @@ mod inner_impl {
         kv: std::collections::HashMap<String, String>,
         /// Memory limiter — enforces the max_memory_mb cap from SupervisorConfig.
         limiter: MemoryLimiter,
+        /// Holds the auth callback receiver between stui_auth_allocate_port
+        /// and stui_auth_open_and_wait calls. Taken (not cloned) before .await.
+        pub auth_receiver: Option<crate::auth::OAuthReceiver>,
     }
 
     impl WasmInner {
@@ -200,6 +204,7 @@ mod inner_impl {
                 limiter: MemoryLimiter {
                     limit_bytes: (max_memory_mb as usize) * 1024 * 1024,
                 },
+                auth_receiver: None,
             };
 
             let mut store = Store::new(&engine, host_state);
@@ -351,6 +356,75 @@ mod inner_impl {
                 }
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
+            // ── stui_auth_allocate_port() -> i32 ──────────────────────────────────────
+            // Starts the callback server. Returns port. Replaces any existing receiver.
+            linker.func_wrap_async("stui", "stui_auth_allocate_port",
+                |mut caller: Caller<HostState>, (): ()| {
+                    Box::new(async move {
+                        match auth::allocate_port().await {
+                            Ok((port, rx)) => {
+                                caller.data_mut().auth_receiver = Some(rx);
+                                Ok::<i32, wasmtime::Error>(port as i32)
+                            }
+                            Err(e) => {
+                                tracing::warn!(plugin=%caller.data().ctx.plugin_name, err=%e, "auth_allocate_port failed");
+                                Ok(-1i32)
+                            }
+                        }
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
+            // ── stui_auth_open_and_wait(url_ptr, url_len, timeout_ms) -> i64 ──────────
+            // Opens browser and suspends until callback or timeout.
+            // Returns packed (ptr<<32)|len → JSON in plugin memory.
+            // Receiver is taken BEFORE .await so no Store borrow crosses the await.
+            linker.func_wrap_async("stui", "stui_auth_open_and_wait",
+                |mut caller: Caller<HostState>, (url_ptr, url_len, timeout_ms_raw): (i32, i32, i32)| {
+                    Box::new(async move {
+                        // Take receiver and URL before any await (no store borrow across await)
+                        let receiver = caller.data_mut().auth_receiver.take();
+                        let url_result = read_str_from_memory(&mut caller, url_ptr, url_len);
+
+                        let url = match url_result {
+                            Ok(u) => u,
+                            Err(e) => {
+                                let json = format!(r#"{{"error":"browser_open_failed","message":"bad url: {e}"}}"#);
+                                return write_bytes_to_memory(&mut caller, json.as_bytes()).await;
+                            }
+                        };
+
+                        let receiver = match receiver {
+                            Some(r) => r,
+                            None => {
+                                let json = r#"{"error":"no_port_allocated"}"#;
+                                return write_bytes_to_memory(&mut caller, json.as_bytes()).await;
+                            }
+                        };
+
+                        // Clamp timeout to [1000, 300000] ms
+                        let timeout_ms = (timeout_ms_raw as u64).clamp(1_000, 300_000);
+                        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+                        // No store borrows held across this await
+                        let result = auth::open_and_wait(&url, receiver, timeout).await;
+
+                        let result_json: String = match result {
+                            Ok(cb) => serde_json::json!({"code": cb.code, "state": cb.state}).to_string(),
+                            Err(auth::AuthError::TimedOut) => r#"{"error":"timed_out"}"#.to_string(),
+                            Err(auth::AuthError::Denied { message }) =>
+                                serde_json::json!({"error":"denied","message":message}).to_string(),
+                            Err(auth::AuthError::BrowserOpenFailed(m)) =>
+                                serde_json::json!({"error":"browser_open_failed","message":m}).to_string(),
+                            Err(auth::AuthError::ReceiverDropped) =>
+                                r#"{"error":"timed_out"}"#.to_string(),
+                        };
+
+                        write_bytes_to_memory(&mut caller, result_json.as_bytes()).await
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
             let instance = linker.instantiate_async(&mut store, &module).await
                 .map_err(|e| AbiError::Execution(format!("instantiate: {e}")))?;
 
@@ -477,6 +551,43 @@ mod inner_impl {
         let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
         // Strip port
         host_port.split(':').next().unwrap_or(host_port).to_string()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        // Run with: cargo test --features wasm-host abi::host::inner_impl::tests
+
+        use super::*;
+
+        fn make_test_sandbox_ctx() -> crate::sandbox::SandboxCtx {
+            crate::sandbox::SandboxCtx {
+                plugin_id: "test".to_string(),
+                plugin_name: "test-plugin".to_string(),
+                permissions: crate::plugin::Permissions::default(),
+                mode: crate::plugin::ExecutionMode::Wasm,
+                cache_dir: std::path::PathBuf::from("/tmp"),
+                data_dir: std::path::PathBuf::from("/tmp"),
+                env_defaults: std::collections::HashMap::new(),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_auth_receiver_stored_in_host_state() {
+            let (port, rx) = crate::auth::allocate_port().await.unwrap();
+            let mut state = HostState {
+                wasi: wasmtime_wasi::WasiCtxBuilder::new().build_p1(),
+                ctx: make_test_sandbox_ctx(),
+                http_buf: vec![],
+                kv: std::collections::HashMap::new(),
+                limiter: MemoryLimiter { limit_bytes: 128 * 1024 * 1024 },
+                auth_receiver: Some(rx),
+            };
+            assert!(state.auth_receiver.is_some());
+            let taken = state.auth_receiver.take();
+            assert!(taken.is_some());
+            assert!(state.auth_receiver.is_none(), "take() must leave None");
+            let _ = (port, taken);
+        }
     }
 }
 

@@ -38,6 +38,7 @@ mod watchhistory;
 mod mediacache;
 mod ipc_batcher;
 pub mod storage;
+mod auth;
 
 
 use std::path::PathBuf;
