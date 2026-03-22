@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -52,9 +53,9 @@ func (p *mockProgram) ClearMessages() {
 	p.messages = p.messages[:0]
 }
 
-func (p *mockProgram) HasMessageOfType(_ string) bool {
+func (p *mockProgram) HasMessageOfType(typeName string) bool {
 	for _, msg := range p.Messages() {
-		if rm, ok := msg.(RuntimeReadyMsg); ok && rm.RuntimeVersion != "" {
+		if reflect.TypeOf(msg).Name() == typeName {
 			return true
 		}
 	}

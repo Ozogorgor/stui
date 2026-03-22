@@ -21,9 +21,9 @@ fn quality_rank(quality: &str) -> i32 {
         6
     } else if lower.starts_with("1080p") || lower.starts_with("fhd") {
         5
-    } else if lower.starts_with("720p") || lower == "hd" {
+    } else if lower.starts_with("720p") || lower.starts_with("hd") {
         4
-    } else if lower.contains("576p") {
+    } else if lower.starts_with("576p") {
         3
     } else if lower.starts_with("480p") || lower.starts_with("sd") {
         2

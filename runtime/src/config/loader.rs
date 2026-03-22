@@ -54,13 +54,13 @@ fn apply_secrets(cfg: &mut RuntimeConfig) {
     let secrets = Secrets::load();
 
     if let Some(key) = secrets.tmdb_api_key() {
-        cfg.api_keys.tmdb.get_or_insert(key);
+        cfg.api_keys.tmdb = Some(key);
     }
     if let Some(key) = secrets.omdb_api_key() {
-        cfg.api_keys.omdb.get_or_insert(key);
+        cfg.api_keys.omdb = Some(key);
     }
     if let Some(pwd) = secrets.mpd_password() {
-        cfg.mpd.password.get_or_insert(pwd);
+        cfg.mpd.password = Some(pwd);
     }
 
     debug!(
