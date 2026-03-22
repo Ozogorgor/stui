@@ -73,7 +73,7 @@ impl BenchHealthBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::ProviderStats;
+    use crate::providers::ProviderStats;
 
     fn make_stream(provider: &str, speed_mbps: Option<f64>, latency_ms: Option<u32>) -> Stream {
         Stream {
