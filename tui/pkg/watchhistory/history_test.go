@@ -38,6 +38,33 @@ func TestEntrySeasonEpisodeJSONOmitempty(t *testing.T) {
 	}
 }
 
+// TestStoreUpdatePositionCompletionThreshold verifies that the local Store
+// applies the 0.90 completion threshold (needed for offline/no-daemon use).
+// Regression guard: IPCStore must NOT duplicate this logic — that belongs to Rust.
+// See tui/pkg/watchhistory/ipc.go UpdatePosition — must not contain any
+// fraction comparison against completedThreshold.
+func TestStoreUpdatePositionCompletionThreshold(t *testing.T) {
+	s := &watchhistory.Store{}
+	s.Upsert(watchhistory.Entry{ID: "x", Title: "Movie", Duration: 100})
+
+	// 89% → should NOT complete
+	updated := s.UpdatePosition("x", 89.0, 100.0)
+	if !updated {
+		t.Fatal("UpdatePosition returned false for known entry")
+	}
+	e := s.Get("x")
+	if e.Completed {
+		t.Error("Store.UpdatePosition: should not complete at 89%")
+	}
+
+	// 91% → should complete (local Store authoritatively applies the rule)
+	s.UpdatePosition("x", 91.0, 100.0)
+	e = s.Get("x")
+	if !e.Completed {
+		t.Error("Store.UpdatePosition: should complete at 91%")
+	}
+}
+
 func TestParseEpisodeInfo(t *testing.T) {
 	cases := []struct {
 		title   string
