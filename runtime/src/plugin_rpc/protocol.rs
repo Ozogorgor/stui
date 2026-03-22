@@ -257,3 +257,91 @@ pub struct RpcSubtitleTrack {
     pub url: String,
     pub format: String,
 }
+
+// ── Inbound: plugin → runtime (action messages) ───────────────────────────
+
+/// A plugin-initiated action request (plugin → runtime).
+///
+/// Distinguished from `RpcResponse` by the presence of the `"action"` field.
+/// Parse `ActionRequest` FIRST in the read loop — `RpcResponse` would also
+/// accept `ActionRequest` lines (both have "id") if tried first.
+///
+/// IMPORTANT: `action` must NOT have `#[serde(default)]`. The demultiplexing
+/// invariant depends on `ActionRequest` deserialization failing for
+/// `RpcResponse` lines (which have "id" but no "action" field).
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Clone)]
+pub struct ActionRequest {
+    pub action: String,
+    pub id: String,
+    pub params: Option<Value>,
+}
+
+/// The runtime's reply to a plugin `ActionRequest`.
+///
+/// Distinguished from `RpcResponse` by `action_id` (not `id`).
+/// `error` is a flat string (not structured RpcError) to keep the schema simple.
+#[allow(dead_code)]
+#[derive(Debug, Serialize)]
+pub struct ActionResponse {
+    pub action_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ActionResponse {
+    pub fn ok(id: impl Into<String>, result: Value) -> Self {
+        ActionResponse { action_id: id.into(), result: Some(result), error: None }
+    }
+
+    pub fn err(id: impl Into<String>, message: impl Into<String>) -> Self {
+        ActionResponse { action_id: id.into(), result: None, error: Some(message.into()) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_action_request_parses_action_field() {
+        let line = r#"{"action":"auth_allocate_port","id":"a1"}"#;
+        let req: ActionRequest = serde_json::from_str(line).unwrap();
+        assert_eq!(req.action, "auth_allocate_port");
+        assert_eq!(req.id, "a1");
+        assert!(req.params.is_none());
+    }
+
+    #[test]
+    fn test_action_request_not_confused_with_rpc_response() {
+        // An RpcResponse line (has "id" but no "action") must NOT parse as ActionRequest
+        let rpc_resp_line = r#"{"id":"r1","result":{"items":[]}}"#;
+        let result = serde_json::from_str::<ActionRequest>(rpc_resp_line);
+        assert!(result.is_err(), "RpcResponse must not parse as ActionRequest");
+    }
+
+    #[test]
+    fn test_action_request_parses_params() {
+        let line = r#"{"action":"auth_open_and_wait","id":"a2","params":{"url":"https://example.com","timeout_ms":120000}}"#;
+        let req: ActionRequest = serde_json::from_str(line).unwrap();
+        assert_eq!(req.action, "auth_open_and_wait");
+        let params = req.params.unwrap();
+        assert_eq!(params["url"].as_str().unwrap(), "https://example.com");
+        assert_eq!(params["timeout_ms"].as_u64().unwrap(), 120000);
+    }
+
+    #[test]
+    fn test_action_response_serializes_correctly() {
+        let resp = ActionResponse {
+            action_id: "a1".into(),
+            result: Some(serde_json::json!({"port": 52314})),
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"action_id\""));
+        assert!(json.contains("52314"));
+        assert!(!json.contains("\"error\"")); // skip_serializing_if = None
+    }
+}
