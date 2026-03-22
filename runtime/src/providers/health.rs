@@ -80,6 +80,11 @@ impl ProviderStats {
         good as f64 / self.request_count as f64
     }
 
+    /// Raw sum of all recorded latencies in milliseconds.
+    pub fn latency_sum_ms(&self) -> u64 {
+        self.latency_sum_ms
+    }
+
     /// Average response latency in milliseconds.
     pub fn avg_latency_ms(&self) -> f64 {
         if self.success_count == 0 {

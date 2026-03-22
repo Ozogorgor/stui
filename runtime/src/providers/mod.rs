@@ -31,6 +31,8 @@ pub mod capabilities;
 pub mod throttle;
 /// Circuit breaker — prevents cascading failures by disabling failing providers.
 pub mod circuit_breaker;
+/// Bridge between stream benchmark results and provider health scoring.
+pub mod bench_health_bridge;
 
 #[allow(unused_imports)]
 pub use health::{HealthRegistry, ProviderStats, FailureKind, blend_score};
