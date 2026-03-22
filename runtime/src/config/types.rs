@@ -1,10 +1,78 @@
 //! Configuration type definitions.
 //!
+#![allow(dead_code)]
 //! These structs mirror the sections of `~/.stui/config/stui.toml`.
 //! Every field has a `#[serde(default)]` so partial config files are fine.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::path::PathBuf;
+
+/// A string value that should be redacted from logs and config exports.
+/// Used for API keys, passwords, and other sensitive data.
+#[derive(Clone, Default)]
+pub struct SecretString(Option<String>);
+
+impl SecretString {
+    pub fn new(value: Option<String>) -> Self {
+        SecretString(value)
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
+    pub fn is_some(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.as_ref().map_or(true, |s| s.is_empty())
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_some() {
+            write!(f, "SecretString(<redacted>)")
+        } else {
+            write!(f, "SecretString(None)")
+        }
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref s) = self.0 {
+            let visible_chars = 4.min(s.chars().count() / 4);
+            let masked_chars = s.chars().count() - visible_chars;
+            let visible: String = s.chars().take(visible_chars).collect();
+            let masked = "*".repeat(masked_chars);
+            write!(f, "{}{}", visible, masked)
+        } else {
+            write!(f, "(not set)")
+        }
+    }
+}
+
+impl Serialize for SecretString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let opt = Option::<String>::deserialize(deserializer)?;
+        Ok(SecretString(opt))
+    }
+}
 
 /// Top-level runtime configuration, passed to `Engine::new()` and friends.
 ///
@@ -13,6 +81,7 @@ use serde::{Deserialize, Serialize};
 ///   2. `~/.stui/config/stui.toml` (if present)
 ///   3. Environment variable overrides (`STUI_*`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RuntimeConfig {
     /// Directory where plugins are discovered (`~/.stui/plugins`).
     #[serde(default = "defaults::plugin_dir")]
@@ -71,6 +140,51 @@ pub struct RuntimeConfig {
     /// Users can append community repos; they are merged at plugin-discovery time.
     #[serde(default = "defaults::plugin_repos")]
     pub plugin_repos: Vec<String>,
+
+    /// Plugin-specific configuration values (API keys, settings).
+    /// Stored as: plugins.{plugin_name}.{field_key} = value
+    #[serde(default)]
+    pub plugins: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+
+    /// Storage directories for different media types.
+    #[serde(default)]
+    pub storage: StorageConfig,
+}
+
+/// Storage directory configuration for different media types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Directory for movie files.
+    #[serde(default = "defaults::movies_dir")]
+    pub movies: PathBuf,
+
+    /// Directory for TV series files.
+    #[serde(default = "defaults::series_dir")]
+    pub series: PathBuf,
+
+    /// Directory for music/audio files.
+    #[serde(default = "defaults::music_dir")]
+    pub music: PathBuf,
+
+    /// Directory for anime files.
+    #[serde(default = "defaults::anime_dir")]
+    pub anime: PathBuf,
+
+    /// Directory for podcast files.
+    #[serde(default = "defaults::podcasts_dir")]
+    pub podcasts: PathBuf,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        StorageConfig {
+            movies: defaults::movies_dir(),
+            series: defaults::series_dir(),
+            music: defaults::music_dir(),
+            anime: defaults::anime_dir(),
+            podcasts: defaults::podcasts_dir(),
+        }
+    }
 }
 
 /// Logging configuration section.
@@ -89,7 +203,7 @@ pub struct LoggingConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         LoggingConfig {
-            level:    defaults::log_level(),
+            level: defaults::log_level(),
             log_file: None,
         }
     }
@@ -142,15 +256,15 @@ pub struct PlaybackConfig {
 impl Default for PlaybackConfig {
     fn default() -> Self {
         PlaybackConfig {
-            mpv_bin:          None,
-            mpv_extra_flags:  vec![],
+            mpv_bin: None,
+            mpv_extra_flags: vec![],
             min_preroll_secs: None,
-            default_volume:   defaults::volume(),
-            hwdec:            defaults::hwdec(),
-            cache_secs:       defaults::cache_secs(),
-            demuxer_max_mb:   defaults::demuxer_max_mb(),
-            keep_open:        false,
-            terminal_vo:      String::new(),
+            default_volume: defaults::volume(),
+            hwdec: defaults::hwdec(),
+            cache_secs: defaults::cache_secs(),
+            demuxer_max_mb: defaults::demuxer_max_mb(),
+            keep_open: false,
+            terminal_vo: String::new(),
         }
     }
 }
@@ -182,10 +296,10 @@ pub struct StreamingConfig {
 impl Default for StreamingConfig {
     fn default() -> Self {
         StreamingConfig {
-            prefer_http:       defaults::prefer_http(),
-            prefer_torrent:    false,
-            max_candidates:    defaults::max_candidates(),
-            auto_fallback:     defaults::auto_fallback(),
+            prefer_http: defaults::prefer_http(),
+            prefer_torrent: false,
+            max_candidates: defaults::max_candidates(),
+            auto_fallback: defaults::auto_fallback(),
             benchmark_streams: false,
         }
     }
@@ -214,10 +328,10 @@ pub struct SubtitlesConfig {
 impl Default for SubtitlesConfig {
     fn default() -> Self {
         SubtitlesConfig {
-            auto_download:      false,
+            auto_download: false,
             preferred_language: defaults::sub_language(),
-            download_dir:       None,
-            default_delay:      0.0,
+            download_dir: None,
+            default_delay: 0.0,
         }
     }
 }
@@ -232,10 +346,6 @@ pub struct ApiKeysConfig {
     /// OMDB API key (omdbapi.com).
     #[serde(default)]
     pub omdb: Option<String>,
-
-    /// Last.fm API key (last.fm).
-    #[serde(default)]
-    pub lastfm: Option<String>,
 }
 
 /// Provider enable/disable flags (`[providers]` section).
@@ -281,14 +391,14 @@ pub struct ProvidersConfig {
 impl Default for ProvidersConfig {
     fn default() -> Self {
         ProvidersConfig {
-            enable_tmdb:          defaults::yes(),
-            enable_omdb:          false,
-            enable_imdb:          defaults::yes(),
-            enable_anilist:       defaults::yes(),
-            enable_jikan:         defaults::yes(),
-            enable_musicbrainz:   defaults::yes(),
-            enable_torrentio:     defaults::yes(),
-            enable_prowlarr:      false,
+            enable_tmdb: defaults::yes(),
+            enable_omdb: false,
+            enable_imdb: defaults::yes(),
+            enable_anilist: defaults::yes(),
+            enable_jikan: defaults::yes(),
+            enable_musicbrainz: defaults::yes(),
+            enable_torrentio: defaults::yes(),
+            enable_prowlarr: false,
             enable_opensubtitles: false,
         }
     }
@@ -326,14 +436,14 @@ pub struct MpdConfig {
 impl Default for MpdConfig {
     fn default() -> Self {
         MpdConfig {
-            host:           defaults::mpd_host(),
-            port:           defaults::mpd_port(),
-            password:       None,
-            replay_gain:    defaults::mpd_replay_gain(),
+            host: defaults::mpd_host(),
+            port: defaults::mpd_port(),
+            password: None,
+            replay_gain: defaults::mpd_replay_gain(),
             crossfade_secs: 0,
-            mixramp_db:     None,
-            consume:        false,
-            music_dir:      None,
+            mixramp_db: None,
+            consume: false,
+            music_dir: None,
         }
     }
 }
@@ -379,17 +489,17 @@ pub struct SkipperConfig {
 impl Default for SkipperConfig {
     fn default() -> Self {
         SkipperConfig {
-            enabled:              true,
-            auto_skip_intro:      false,
-            auto_skip_credits:    false,
-            intro_scan_secs:      300,
-            credits_scan_secs:    300,
-            min_intro_secs:       20.0,
-            max_intro_secs:       120.0,
-            min_credits_secs:     20.0,
-            max_credits_secs:     300.0,
+            enabled: true,
+            auto_skip_intro: false,
+            auto_skip_credits: false,
+            intro_scan_secs: 300,
+            credits_scan_secs: 300,
+            min_intro_secs: 20.0,
+            max_intro_secs: 120.0,
+            min_credits_secs: 20.0,
+            max_credits_secs: 300.0,
             similarity_threshold: 0.85,
-            min_episodes:         2,
+            min_episodes: 2,
         }
     }
 }
@@ -397,20 +507,22 @@ impl Default for SkipperConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         RuntimeConfig {
-            plugin_dir:     defaults::plugin_dir(),
-            cache_dir:      defaults::cache_dir(),
-            data_dir:       defaults::data_dir(),
-            theme_mode:     defaults::theme_mode(),
-            logging:        LoggingConfig::default(),
+            plugin_dir: defaults::plugin_dir(),
+            cache_dir: defaults::cache_dir(),
+            data_dir: defaults::data_dir(),
+            theme_mode: defaults::theme_mode(),
+            logging: LoggingConfig::default(),
             stremio_addons: vec![],
-            playback:       PlaybackConfig::default(),
-            streaming:      StreamingConfig::default(),
-            subtitles:      SubtitlesConfig::default(),
-            providers:      ProvidersConfig::default(),
-            api_keys:       ApiKeysConfig::default(),
-            mpd:            MpdConfig::default(),
-            skipper:        SkipperConfig::default(),
-            plugin_repos:   defaults::plugin_repos(),
+            playback: PlaybackConfig::default(),
+            streaming: StreamingConfig::default(),
+            subtitles: SubtitlesConfig::default(),
+            providers: ProvidersConfig::default(),
+            api_keys: ApiKeysConfig::default(),
+            mpd: MpdConfig::default(),
+            skipper: SkipperConfig::default(),
+            plugin_repos: defaults::plugin_repos(),
+            plugins: std::collections::HashMap::new(),
+            storage: StorageConfig::default(),
         }
     }
 }
@@ -418,30 +530,62 @@ impl Default for RuntimeConfig {
 mod defaults {
     use std::path::PathBuf;
 
-    pub fn plugin_dir() -> PathBuf { base().join("plugins") }
-    pub fn cache_dir()  -> PathBuf { base().join("cache") }
-    pub fn data_dir()   -> PathBuf { base().join("data") }
-    pub fn theme_mode() -> String  { "dark".to_string() }
-    pub fn log_level()  -> String  { "info".to_string() }
+    pub fn plugin_dir() -> PathBuf {
+        base().join("plugins")
+    }
+    pub fn cache_dir() -> PathBuf {
+        base().join("cache")
+    }
+    pub fn data_dir() -> PathBuf {
+        base().join("data")
+    }
+    pub fn theme_mode() -> String {
+        "dark".to_string()
+    }
+    pub fn log_level() -> String {
+        "info".to_string()
+    }
 
     // PlaybackConfig defaults
-    pub fn volume()         -> f64    { 100.0 }
-    pub fn hwdec()          -> String { "auto".to_string() }
-    pub fn cache_secs()     -> u32    { 20 }
-    pub fn demuxer_max_mb() -> u32    { 50 }
+    pub fn volume() -> f64 {
+        100.0
+    }
+    pub fn hwdec() -> String {
+        "auto".to_string()
+    }
+    pub fn cache_secs() -> u32 {
+        20
+    }
+    pub fn demuxer_max_mb() -> u32 {
+        50
+    }
 
     // StreamingConfig defaults
-    pub fn prefer_http()    -> bool   { true }
-    pub fn max_candidates() -> usize  { 10 }
-    pub fn auto_fallback()  -> bool   { true }
+    pub fn prefer_http() -> bool {
+        true
+    }
+    pub fn max_candidates() -> usize {
+        10
+    }
+    pub fn auto_fallback() -> bool {
+        true
+    }
 
     // SubtitlesConfig defaults
-    pub fn sub_language()   -> String { "eng".to_string() }
+    pub fn sub_language() -> String {
+        "eng".to_string()
+    }
 
     // MpdConfig defaults
-    pub fn mpd_host()        -> String { "127.0.0.1".to_string() }
-    pub fn mpd_port()        -> u16    { 6600 }
-    pub fn mpd_replay_gain() -> String { "auto".to_string() }
+    pub fn mpd_host() -> String {
+        "127.0.0.1".to_string()
+    }
+    pub fn mpd_port() -> u16 {
+        6600
+    }
+    pub fn mpd_replay_gain() -> String {
+        "auto".to_string()
+    }
 
     // Plugin repos default
     pub fn plugin_repos() -> Vec<String> {
@@ -449,20 +593,67 @@ mod defaults {
     }
 
     // SkipperConfig defaults
-    pub fn skip_scan_secs()        -> u32   { 300 }
-    pub fn min_intro_secs()        -> f64   { 20.0 }
-    pub fn max_intro_secs()        -> f64   { 120.0 }
-    pub fn min_credits_secs()      -> f64   { 20.0 }
-    pub fn max_credits_secs()      -> f64   { 300.0 }
-    pub fn similarity_threshold()  -> f64   { 0.85 }
-    pub fn min_episodes()          -> usize { 2 }
+    pub fn skip_scan_secs() -> u32 {
+        300
+    }
+    pub fn min_intro_secs() -> f64 {
+        20.0
+    }
+    pub fn max_intro_secs() -> f64 {
+        120.0
+    }
+    pub fn min_credits_secs() -> f64 {
+        20.0
+    }
+    pub fn max_credits_secs() -> f64 {
+        300.0
+    }
+    pub fn similarity_threshold() -> f64 {
+        0.85
+    }
+    pub fn min_episodes() -> usize {
+        2
+    }
 
     // Shared bool defaults
-    pub fn yes() -> bool { true }
+    pub fn yes() -> bool {
+        true
+    }
 
     fn base() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".stui")
+    }
+
+    // Storage directory defaults (base paths, files organized into subfolders)
+    pub fn movies_dir() -> PathBuf {
+        dirs::video_dir()
+            .or_else(|| Some(home().join("Videos")))
+            .unwrap_or_else(|| PathBuf::from("Videos"))
+    }
+    pub fn series_dir() -> PathBuf {
+        dirs::video_dir()
+            .or_else(|| Some(home().join("Videos")))
+            .unwrap_or_else(|| PathBuf::from("Videos"))
+    }
+    pub fn anime_dir() -> PathBuf {
+        dirs::video_dir()
+            .or_else(|| Some(home().join("Videos")))
+            .unwrap_or_else(|| PathBuf::from("Videos"))
+    }
+    pub fn music_dir() -> PathBuf {
+        dirs::audio_dir()
+            .or_else(|| Some(home().join("Music")))
+            .unwrap_or_else(|| PathBuf::from("Music"))
+    }
+    pub fn podcasts_dir() -> PathBuf {
+        dirs::audio_dir()
+            .or_else(|| Some(home().join("Music")))
+            .unwrap_or_else(|| PathBuf::from("Music"))
+    }
+
+    fn home() -> PathBuf {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
     }
 }
