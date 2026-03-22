@@ -50,7 +50,7 @@ use tracing::{debug, info, warn};
 
 use catalog::Catalog;
 use discovery::{Discovery, PluginToast};
-use engine::Engine;
+use engine::{Engine, TraceEmitter};
 use config::ConfigManager;
 use events::EventBus;
 use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
@@ -159,6 +159,13 @@ async fn main() -> Result<()> {
     let health  = Arc::new(HealthRegistry::new());
     let config  = Arc::new(ConfigManager::new(cfg.clone(), Arc::clone(&bus)));
     let bench   = StreamBenchmarker::new();
+    let trace = {
+        let t = Arc::new(TraceEmitter::new());
+        if std::env::var("STUI_TRACE").is_ok() {
+            t.enable();
+        }
+        t
+    };
     { let c = Arc::clone(&catalog); tokio::spawn(async move { c.start().await }); }
 
     // ── Shared event channel (aria2 + mpv/player → Go) ──────────────────
@@ -243,6 +250,7 @@ async fn main() -> Result<()> {
                 &watch_history,
                 &media_cache,
                 &bench,
+                &trace,
                 &mut event_rx,
                 event_tx.clone(),
                 &mut toast_rx,
@@ -271,6 +279,7 @@ async fn main() -> Result<()> {
             &watch_history,
             &media_cache,
             &bench,
+            &trace,
             &mut event_rx,
             event_tx.clone(),
             &mut toast_rx,
@@ -293,6 +302,7 @@ async fn run_ipc_loop<R, W>(
     watch_history: &Arc<watchhistory::WatchHistoryStore>,
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench:     &StreamBenchmarker,
+    trace:     &Arc<TraceEmitter>,
     // Receiver for async events pushed by background tasks (player, aria2, registry, …).
     event_rx:  &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
@@ -443,7 +453,7 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, watch_history, media_cache, &bench, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, watch_history, media_cache, &bench, &trace, &line).await;
                         send_wire(&mut writer, &resp.to_wire()?).await?;
                     }
                 }
@@ -569,6 +579,7 @@ async fn handle_line(
     watch_history: &Arc<watchhistory::WatchHistoryStore>,
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
+    trace: &Arc<TraceEmitter>,
     line: &str,
 ) -> Response {
     let request: Request = match serde_json::from_str(line) {
@@ -759,6 +770,13 @@ async fn handle_line(
                 warn!("save_stream_policy failed: {e}");
             }
             Response::StreamPolicyUpdated
+        }
+
+        Request::SetTrace { enabled } => {
+            if enabled {
+                trace.enable();
+            }
+            Response::Ok
         }
 
         // Play and PlayerStop are handled earlier in the IPC loop before

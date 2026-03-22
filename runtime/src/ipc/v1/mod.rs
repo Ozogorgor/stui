@@ -107,6 +107,12 @@ pub enum Request {
     GetStreamPolicy,
     /// Persist the stream selection policy.
     SetStreamPolicy(SetStreamPolicyRequest),
+
+    /// Enable or disable the pipeline trace (stderr output for debugging).
+    /// Sent by the TUI when `-v` / `--debug` is passed.
+    SetTrace {
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
