@@ -191,7 +191,8 @@ mod tests {
     #[tokio::test]
     async fn test_batcher_respects_max_batch_size() {
         let (tx, rx) = broadcast::channel(64);
-        let batcher = IpcBatcher::with_interval(rx, Duration::from_secs(60));
+        // Duration::MAX: prevent time-based flush from interfering; only MAX_BATCH_SIZE should trigger.
+        let batcher = IpcBatcher::with_interval(rx, Duration::MAX);
         let mut batcher = batcher;
 
         for i in 0..12 {

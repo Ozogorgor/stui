@@ -126,7 +126,7 @@ impl PluginSupervisor {
         // Apply CPU limit if configured; failure is non-fatal (plugin still starts).
         if config.cpu_nice_value > 0 {
             if let Some(pid) = proc.pid {
-                let _ = apply_cpu_limit(pid, config.cpu_nice_value);
+                let _ = apply_nice_priority(pid, config.cpu_nice_value);
             }
         }
 
@@ -324,7 +324,7 @@ impl PluginSupervisor {
                         // Re-apply CPU limit after restart
                         if config.cpu_nice_value > 0 {
                             if let Some(pid) = proc.pid {
-                                let _ = apply_cpu_limit(pid, config.cpu_nice_value);
+                                let _ = apply_nice_priority(pid, config.cpu_nice_value);
                             }
                         }
                         info!(plugin = %proc.info.name, version = %proc.info.version, "plugin restarted");
@@ -415,11 +415,13 @@ fn nix_kill(pid: u32) -> std::io::Result<()> {
     if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
-// ── CPU limiting ───────────────────────────────────────────────────────────────
+// ── Scheduling priority ────────────────────────────────────────────────────────
+// Adjusts the OS scheduling nice value — lowers priority so the plugin yields
+// CPU time to other processes. Does NOT enforce a hard CPU cap.
 
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
-fn apply_cpu_limit(pid: u32, cpu_nice_value: u32) -> Result<()> {
+fn apply_nice_priority(pid: u32, cpu_nice_value: u32) -> Result<()> {
     use std::process::Command;
     
     if cpu_nice_value == 0 || cpu_nice_value > 100 {
@@ -460,6 +462,6 @@ fn apply_cpu_limit(pid: u32, cpu_nice_value: u32) -> Result<()> {
 
 #[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
-fn apply_cpu_limit(_pid: u32, _cpu_nice_value: u32) -> Result<()> {
+fn apply_nice_priority(_pid: u32, _cpu_nice_value: u32) -> Result<()> {
     Ok(())
 }
