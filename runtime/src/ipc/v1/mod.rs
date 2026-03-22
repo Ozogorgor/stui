@@ -724,8 +724,6 @@ pub struct StreamInfoWire {
     pub quality: String,
     pub provider: String,
     pub score: u32,
-    /// Human-readable badge, e.g. "1080p HEVC WEB-DL ★ 847"
-    pub badge: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

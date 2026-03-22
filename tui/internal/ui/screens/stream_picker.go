@@ -95,6 +95,15 @@ func qualityScore(q string) int {
 	return 0
 }
 
+// streamBadge builds the quality+score display label for a stream row.
+// Example: "1080p ★ 87"
+func streamBadge(s ipc.StreamInfo) string {
+	if s.Quality == "" {
+		return fmt.Sprintf("★ %d", s.Score)
+	}
+	return fmt.Sprintf("%s ★ %d", s.Quality, s.Score)
+}
+
 // BestStreamForTier returns the stream with the highest Score
 // (ipc.StreamInfo.Score, the provider-reported integer) whose quality label
 // resolves to the given qualityRank value, or nil if none match.
@@ -534,13 +543,7 @@ func (s StreamPickerScreen) viewManualMode() string {
 			rowStyle = accent
 		}
 
-		label := st.Badge
-		if label == "" {
-			label = st.Quality
-			if label == "" {
-				label = "?"
-			}
-		}
+		label := streamBadge(st)
 		qualCol := rowStyle.Render(fmt.Sprintf("%-*s", colW, label))
 		provCol := dim.Render(fmt.Sprintf("%-16s", "["+st.Provider+"]"))
 		sizeCol := dim.Render(fmt.Sprintf("%-9s", formatBytes(st.SizeBytes)))
@@ -621,10 +624,7 @@ func (s StreamPickerScreen) viewStreamInfo(st ipc.StreamInfo) string {
 		}
 	}
 
-	qual := st.Quality
-	if st.Badge != "" {
-		qual = st.Badge
-	}
+	qual := streamBadge(st)
 	add("Resolution", qual)
 	add("Codec", st.Codec)
 	add("Source", st.Source)
@@ -723,10 +723,7 @@ func (s StreamPickerScreen) viewAutoMode() string {
 		dim.Render(fmt.Sprintf("  (ranked %d streams)", len(ranked))) + "\n\n")
 
 	// Stream headline
-	label := best.Stream.Badge
-	if label == "" {
-		label = best.Stream.Quality
-	}
+	label := streamBadge(best.Stream)
 	hdrTag := ""
 	if best.Stream.HDR {
 		hdrTag = "  " + gold.Render("HDR")
@@ -771,10 +768,7 @@ func (s StreamPickerScreen) viewAutoMode() string {
 		} else {
 			numStyle = dim
 		}
-		lbl := r.Stream.Badge
-		if lbl == "" {
-			lbl = r.Stream.Quality
-		}
+		lbl := streamBadge(r.Stream)
 		seederStr := ""
 		if r.Stream.Seeders > 0 {
 			seedStyle := dim

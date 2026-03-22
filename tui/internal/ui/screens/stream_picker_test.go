@@ -6,6 +6,23 @@ import (
 	"github.com/stui/stui/internal/ipc"
 )
 
+func TestStreamBadge(t *testing.T) {
+	cases := []struct {
+		in   ipc.StreamInfo
+		want string
+	}{
+		{ipc.StreamInfo{Quality: "1080p", Score: 87}, "1080p ★ 87"},
+		{ipc.StreamInfo{Quality: "4K", Score: 100}, "4K ★ 100"},
+		{ipc.StreamInfo{Quality: "", Score: 50}, "★ 50"},
+	}
+	for _, tc := range cases {
+		got := streamBadge(tc.in)
+		if got != tc.want {
+			t.Errorf("streamBadge(%+v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestBestStreamForTierExactMatch(t *testing.T) {
 	streams := []ipc.StreamInfo{
 		{Quality: "1080p", Score: 80},

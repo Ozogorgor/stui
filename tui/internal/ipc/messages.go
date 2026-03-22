@@ -141,7 +141,6 @@ type StreamInfo struct {
 	Score     int     `json:"score"`
 	Provider  string  `json:"provider"`
 	SizeBytes int64   `json:"size_bytes,omitempty"`
-	Badge     string  `json:"badge"`
 	Codec     string  `json:"codec,omitempty"`
 	Source    string  `json:"source,omitempty"`
 	HDR       bool    `json:"hdr,omitempty"`
