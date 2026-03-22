@@ -43,6 +43,8 @@ pub use throttle::ProviderThrottle;
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats};
 #[allow(unused_imports)]
 pub use benchmark::StreamBenchmarker;
+#[allow(unused_imports)]
+pub use bench_health_bridge::BenchHealthBridge;
 
 use anyhow::Result;
 use async_trait::async_trait;

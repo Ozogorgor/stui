@@ -35,7 +35,7 @@ use crate::ipc::MediaTab;
 use crate::player::PlayerBridge;
 use crate::events::{EventBus, RuntimeEvent};
 use crate::config::ConfigManager;
-use crate::providers::{HealthRegistry, ProviderThrottle, CircuitBreaker, StreamBenchmarker};
+use crate::providers::{HealthRegistry, ProviderThrottle, CircuitBreaker, StreamBenchmarker, BenchHealthBridge};
 use crate::plugin_rpc::PluginRpcManager;
 use crate::quality::{RankingPolicy, StreamCandidate};
 
@@ -72,6 +72,9 @@ pub struct Pipeline {
 
     /// Stream benchmarker — measures HTTP throughput and latency.
     pub bench: StreamBenchmarker,
+
+    /// Bench health bridge — feeds probe_all results into provider health scoring.
+    pub bridge: BenchHealthBridge,
 }
 
 impl Pipeline {
@@ -98,10 +101,11 @@ impl Pipeline {
         let circuit_breaker = CircuitBreaker::new();
         let config   = ConfigManager::new(cfg.clone(), bus.clone());
         let bench    = StreamBenchmarker::new();
+        let bridge = BenchHealthBridge::new(health.clone());
 
         Pipeline { engine, catalog, cache, policy, player,
                    rpc: Arc::new(PluginRpcManager::new()),
-                   bus, health, throttle, circuit_breaker, config, bench }
+                   bus, health, throttle, circuit_breaker, config, bench, bridge }
     }
 
     // ── Stage 1: catalog / search ─────────────────────────────────────────
@@ -195,7 +199,11 @@ impl Pipeline {
 
         let streams: Vec<_> = candidates.iter().map(|c| c.stream.clone()).collect();
         let probed_streams = self.bench.probe_all(&streams).await;
-        
+
+        for stream in &probed_streams {
+            self.bridge.record(stream);
+        }
+
         let mut speed_map: HashMap<String, f64> = HashMap::new();
         for stream in &probed_streams {
             if let Some(speed) = stream.speed_mbps {
