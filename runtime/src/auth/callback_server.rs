@@ -51,6 +51,19 @@ pub async fn allocate_port() -> anyhow::Result<(u16, OAuthReceiver)> {
                         .and_then(|(_, rest)| rest.split_once(' ').map(|(qs, _)| qs))
                         .unwrap_or("");
                     let cb = parse_query(qs);
+                    // Only handle requests to /callback that carry an OAuth response
+                    let path = request_line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("")
+                        .split('?')
+                        .next()
+                        .unwrap_or("");
+                    if !path.contains("callback") || (!cb.code.is_some() && !cb.error.is_some()) {
+                        let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        let _ = stream.write_all(resp).await;
+                        continue; // keep listening
+                    }
                     // Write a minimal HTTP 200 response
                     let body = b"You may close this tab.";
                     let resp = format!(
@@ -95,29 +108,29 @@ fn parse_query(qs: &str) -> OAuthCallback {
 
 /// Minimal percent-decoder: '+' → ' ', %XX → byte.
 fn percent_decode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'+' {
-            out.push(' ');
+            out.push(b' ');
             i += 1;
         } else if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let Ok(hex) = std::str::from_utf8(&bytes[i+1..i+3]) {
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
+                    out.push(byte);
                     i += 3;
                     continue;
                 }
             }
-            out.push('%');
+            out.push(b'%');
             i += 1;
         } else {
-            out.push(bytes[i] as char);
+            out.push(bytes[i]);
             i += 1;
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
