@@ -99,7 +99,7 @@ impl WasmHost {
 
 #[cfg(feature = "wasm-host")]
 mod inner_impl {
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
     use wasmtime::*;
     use wasmtime_wasi::WasiCtxBuilder;
     use wasmtime_wasi::preview1::WasiP1Ctx;
@@ -362,44 +362,44 @@ mod inner_impl {
         }
 
         pub fn abi_version(&self) -> i32 {
-            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
-            self.instance
-                .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
-                .ok()
-                .and_then(|f| f.call(&mut *store, ()).ok())
-                .unwrap_or(-1)
+            // try_lock() is callable from sync context (returns TryLockResult, not a Future).
+            // If the store is held by a long-running auth wait, fall back to 0.
+            match self.store.try_lock() {
+                Ok(mut store) => self.instance
+                    .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
+                    .ok()
+                    .and_then(|f| f.call(&mut *store, ()).ok())
+                    .unwrap_or(-1),
+                Err(_) => 0,
+            }
         }
 
         pub async fn call_export(&self, fn_name: &str, json_input: &str) -> Result<String, AbiError> {
             let input_bytes = json_input.as_bytes();
             let input_len = input_bytes.len() as i32;
-            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let mut store = self.store.lock().await;          // async lock
 
-            // Allocate input buffer in plugin memory
             let alloc = self.instance
                 .get_typed_func::<i32, i32>(&mut *store, "stui_alloc")
                 .map_err(|_| AbiError::MissingExport("stui_alloc".into()))?;
-            let input_ptr = alloc.call(&mut *store, input_len)
+            let input_ptr = alloc.call_async(&mut *store, input_len).await
                 .map_err(|e| AbiError::Execution(e.to_string()))?;
 
-            // Write JSON into plugin memory
             let memory = self.instance
                 .get_memory(&mut *store, "memory")
                 .ok_or_else(|| AbiError::MissingExport("memory".into()))?;
             memory.write(&mut *store, input_ptr as usize, input_bytes)
                 .map_err(|e| AbiError::Memory(e.to_string()))?;
 
-            // Call the exported function — returns packed (ptr << 32) | len
             let func = self.instance
                 .get_typed_func::<(i32, i32), i64>(&mut *store, fn_name)
                 .map_err(|_| AbiError::MissingExport(fn_name.to_string()))?;
-            let packed = func.call(&mut *store, (input_ptr, input_len))
+            let packed = func.call_async(&mut *store, (input_ptr, input_len)).await
                 .map_err(|e| AbiError::Execution(e.to_string()))?;
 
             let out_ptr = ((packed >> 32) & 0xFFFFFFFF) as usize;
             let out_len = (packed & 0xFFFFFFFF) as usize;
 
-            // Read result JSON from plugin memory
             let data = memory.data(&*store);
             let slice = data.get(out_ptr..out_ptr + out_len)
                 .ok_or_else(|| AbiError::Memory("result ptr out of bounds".into()))?;
@@ -407,11 +407,10 @@ mod inner_impl {
                 .map_err(|e| AbiError::Memory(e.to_string()))?
                 .to_string();
 
-            // Free the input buffer
             let free = self.instance
                 .get_typed_func::<(i32, i32), ()>(&mut *store, "stui_free")
                 .map_err(|_| AbiError::MissingExport("stui_free".into()))?;
-            let _ = free.call(&mut *store, (input_ptr, input_len));
+            let _ = free.call_async(&mut *store, (input_ptr, input_len)).await;
 
             Ok(result)
         }
