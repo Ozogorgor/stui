@@ -10,31 +10,21 @@ package screens
 //   score breakdown and a top-5 ranking.  Enter confirms, Esc returns to
 //   the manual list.
 //
-// Policy file: ~/.config/stui/stream_policy.json
-//   {
-//     "prefer_protocol": "torrent",
-//     "max_resolution":  "1080p",
-//     "max_size_mb":     3000,
-//     "min_seeders":     5,
-//     "avoid_labels":    ["cam","telesync"," ts "],
-//     "prefer_hdr":      false,
-//     "prefer_codecs":   ["h265","hevc","av1"]
-//   }
+// Policy: stream selection preferences are fetched from Rust via get_stream_policy
+// on screen open and saved via set_stream_policy. See runtime/src/pipeline/policy_io.rs.
 
 import (
-	"encoding/json"
 	"fmt"
-	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/actions"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/streambench"
 	"github.com/stui/stui/pkg/theme"
@@ -125,157 +115,10 @@ func BestStreamForTier(streams []ipc.StreamInfo, rank int) *ipc.StreamInfo {
 	return best
 }
 
-// ── Stream policy ─────────────────────────────────────────────────────────────
-
-// StreamPolicy is the user-configurable smart auto-selection policy.
-// It is loaded from ~/.config/stui/stream_policy.json; missing fields fall
-// back to the built-in defaults.
-type StreamPolicy struct {
-	PreferProtocol string   `json:"prefer_protocol"` // "torrent"|"http"|"" = no pref
-	MaxResolution  string   `json:"max_resolution"`  // "4k"|"1080p"|"720p"|"" = no cap
-	MaxSizeMB      int64    `json:"max_size_mb"`     // 0 = no limit
-	MinSeeders     int      `json:"min_seeders"`     // 0 = no minimum
-	AvoidLabels    []string `json:"avoid_labels"`    // case-insensitive substrings
-	PreferHDR      bool     `json:"prefer_hdr"`
-	PreferCodecs   []string `json:"prefer_codecs"` // e.g. ["h265","hevc","av1"]
-}
-
-func defaultStreamPolicy() StreamPolicy {
-	return StreamPolicy{
-		AvoidLabels: []string{"cam", "telesync", " ts "},
-	}
-}
-
-func streamPolicyPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "stui", "stream_policy.json")
-}
-
-func loadStreamPolicy() StreamPolicy {
-	p := defaultStreamPolicy()
-	data, err := os.ReadFile(streamPolicyPath())
-	if err != nil {
-		return p
-	}
-	_ = json.Unmarshal(data, &p)
-	return p
-}
-
-// SaveStreamPolicy writes the policy to disk atomically.
-func SaveStreamPolicy(p StreamPolicy) error {
-	path := streamPolicyPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
 // ── Policy scoring ────────────────────────────────────────────────────────────
-
-// scoredStream pairs a StreamInfo with its policy-derived score.
-type scoredStream struct {
-	stream  ipc.StreamInfo
-	score   int
-	reasons []string // human-readable contribution lines
-}
-
-// scoreStream applies the policy to a single stream and returns its score.
-func scoreStream(p StreamPolicy, s ipc.StreamInfo) (int, []string) {
-	total := 0
-	var reasons []string
-
-	add := func(pts int, msg string) {
-		total += pts
-		reasons = append(reasons, msg)
-	}
-
-	// Quality contribution: rank × 15 pts
-	qr := qualityScore(s.Quality)
-	if qr > 0 {
-		pts := qr * 15
-		add(pts, fmt.Sprintf("quality %s  +%d", s.Quality, pts))
-	}
-
-	// Max resolution cap
-	if p.MaxResolution != "" {
-		cap := qualityScore(p.MaxResolution)
-		if cap > 0 && qr > cap {
-			add(-40, fmt.Sprintf("exceeds max %s  \u221240", p.MaxResolution))
-		}
-	}
-
-	// Protocol preference
-	if p.PreferProtocol != "" && strings.EqualFold(s.Protocol, p.PreferProtocol) {
-		add(25, fmt.Sprintf("preferred protocol %s  +25", s.Protocol))
-	}
-
-	// Seeders bonus — capped at +20
-	if s.Seeders > 0 {
-		bonus := int(math.Min(float64(s.Seeders)/10.0, 20))
-		add(bonus, fmt.Sprintf("%d seeders  +%d", s.Seeders, bonus))
-	}
-	if p.MinSeeders > 0 && s.Seeders > 0 && s.Seeders < p.MinSeeders {
-		add(-30, fmt.Sprintf("below min seeders (%d)  \u221230", p.MinSeeders))
-	}
-
-	// Size limit
-	if p.MaxSizeMB > 0 && s.SizeBytes > p.MaxSizeMB*1024*1024 {
-		add(-50, "file too large  \u221250")
-	}
-
-	// Avoided labels
-	haystack := strings.ToLower(s.Label + " " + s.Badge + " " + s.Quality)
-	for _, avoid := range p.AvoidLabels {
-		if strings.Contains(haystack, strings.ToLower(avoid)) {
-			add(-100, fmt.Sprintf("avoided %q  \u2212100", avoid))
-			break
-		}
-	}
-
-	// HDR preference
-	if p.PreferHDR && s.HDR {
-		add(15, "HDR  +15")
-	}
-
-	// Codec preference
-	for _, codec := range p.PreferCodecs {
-		if strings.Contains(strings.ToLower(s.Codec), strings.ToLower(codec)) {
-			add(10, fmt.Sprintf("codec %s  +10", codec))
-			break
-		}
-	}
-
-	// Runtime provider score (normalised to avoid dominating)
-	if s.Score > 0 {
-		pts := s.Score / 10
-		if pts > 0 {
-			add(pts, fmt.Sprintf("provider score  +%d", pts))
-		}
-	}
-
-	return total, reasons
-}
-
-// rankStreams scores all streams and returns them sorted best-first.
-func rankStreams(p StreamPolicy, streams []ipc.StreamInfo) []scoredStream {
-	out := make([]scoredStream, len(streams))
-	for i, s := range streams {
-		sc, reasons := scoreStream(p, s)
-		out[i] = scoredStream{stream: s, score: sc, reasons: reasons}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].score > out[j].score
-	})
-	return out
-}
+// NOTE: Scoring logic lives in the Rust runtime (pipeline/rank.rs).
+// Policy is fetched from Rust via get_stream_policy IPC on screen open.
+// Go uses ipc.StreamPreferences directly; no local file I/O.
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -326,16 +169,20 @@ type StreamPickerScreen struct {
 	sortDesc bool // true = descending (default for quality/seeders/size/score)
 
 	// Smart auto-pick
-	policy     StreamPolicy
-	autoRanked []scoredStream // non-nil = auto-pick mode active
+	policy     ipc.StreamPreferences
+	autoRanked []ipc.RankedStream // non-nil = auto-pick mode active
 
 	// Benchmark mode
 	benchEnabled bool
 	benchResults map[string]*benchState // keyed by URL
 	benchPending int                    // probes still running
+	benchTotal   int                    // total streams to probe
+
+	spinner components.Spinner
 }
 
 func NewStreamPickerScreen(client *ipc.Client, title, entryID string, benchEnabled bool) StreamPickerScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return StreamPickerScreen{
 		client:       client,
 		title:        title,
@@ -343,21 +190,35 @@ func NewStreamPickerScreen(client *ipc.Client, title, entryID string, benchEnabl
 		loading:      true,
 		sortCol:      sortByQuality,
 		sortDesc:     true,
-		policy:       loadStreamPolicy(),
 		benchEnabled: benchEnabled,
 		benchResults: make(map[string]*benchState),
+		spinner:      *components.NewSpinner("resolving streams…", dimStyle),
 	}
 }
 
 func (s StreamPickerScreen) Init() tea.Cmd {
-	if s.client != nil && s.entryID != "" {
-		s.client.Resolve(s.entryID, "")
+	s.spinner.Start()
+	if s.client != nil {
+		if s.entryID != "" {
+			s.client.Resolve(s.entryID, "")
+		}
+		s.client.GetStreamPolicy()
 	}
 	return nil
 }
 
 func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
+
+	case ipc.StreamPolicyLoadedMsg:
+		if m.Err == nil {
+			s.policy = m.Policy
+		}
+		return s, nil
+
+	case spinner.TickMsg:
+		s.spinner.Update(m)
+		return s, nil
 
 	case tea.WindowSizeMsg:
 		s.width = m.Width
@@ -366,15 +227,43 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if m.EntryID == s.entryID {
 			s.streams = sortStreams(m.Streams, s.sortCol, s.sortDesc)
 			s.loading = false
+			s.spinner.Stop()
 			s.cursor = 0
-			if s.benchEnabled && len(s.streams) > 0 {
-				s.benchPending = len(s.streams)
-				return s, s.makeBenchCmds(s.streams)
+
+			// Pre-populate benchmark results from Rust if available
+			if s.benchEnabled {
+				for _, st := range s.streams {
+					if st.SpeedMbps > 0 || st.LatencyMs > 0 {
+						// Rust already provided benchmark data
+						s.benchResults[st.URL] = &benchState{
+							speedMbps: st.SpeedMbps,
+							latencyMs: st.LatencyMs,
+							estimated: isTorrentStream(st),
+							done:      true,
+						}
+					}
+				}
+				// Count streams that still need probing
+				pending := 0
+				for _, st := range s.streams {
+					if _, exists := s.benchResults[st.URL]; !exists {
+						pending++
+					}
+				}
+				if pending > 0 {
+					s.benchPending = pending
+					s.benchTotal = pending
+					return s, s.makeBenchCmds(s.streams)
+				}
 			}
 		}
 
 	case ipc.StreamBenchmarkResultMsg:
 		if m.EntryID != s.entryID {
+			break
+		}
+		// Don't overwrite pre-populated results from Rust
+		if _, exists := s.benchResults[m.URL]; exists {
 			break
 		}
 		isTorrent := false
@@ -401,6 +290,15 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.streams = s.sortBySpeedSlice(s.streams)
 		}
 
+	case ipc.StreamsRankedMsg:
+		// Ranking result from Rust runtime
+		if m.Err != nil {
+			return s, func() tea.Msg {
+				return ipc.StatusMsg{Text: "Ranking failed: " + m.Err.Error()}
+			}
+		}
+		s.autoRanked = m.Ranked
+
 	case tea.KeyMsg:
 		key := m.String()
 
@@ -409,7 +307,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			switch key {
 			case "enter":
 				if len(s.autoRanked) > 0 && s.client != nil {
-					s.client.SwitchStream(s.autoRanked[0].stream.URL)
+					s.client.SwitchStream(s.autoRanked[0].Stream.URL)
 					return s, func() tea.Msg { return screen.PopMsg{} }
 				}
 			case "esc", "q":
@@ -418,10 +316,14 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			return s, nil
 		}
 
-		// ── 'A' triggers smart auto-pick ──────────────────────────────────
+		// ── 'A' triggers smart auto-pick (calls Rust via IPC) ───────────
 		if key == "A" && !s.loading && len(s.streams) > 0 {
-			s.autoRanked = rankStreams(s.policy, s.streams)
-			return s, nil
+			if s.client != nil {
+				s.client.RankStreams(s.streams, s.policy)
+				return s, func() tea.Msg {
+					return ipc.StatusMsg{Text: "Ranking streams..."}
+				}
+			}
 		}
 
 		// ── Manual mode ───────────────────────────────────────────────────
@@ -457,6 +359,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.benchEnabled = true
 			s.benchResults = make(map[string]*benchState)
 			s.benchPending = len(s.streams)
+			s.benchTotal = len(s.streams)
 			return s, s.makeBenchCmds(s.streams)
 		}
 
@@ -468,7 +371,6 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				return s, func() tea.Msg { return screen.PopMsg{} }
 			}
 		}
-
 
 		// Quality quick keys: 1=480p, 2=720p, 3=1080p, 4=4K
 		// Checked before actions.FromKey to override any global key bindings.
@@ -555,26 +457,26 @@ func isTorrentStream(s ipc.StreamInfo) bool {
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (s StreamPickerScreen) View() string {
+func (s StreamPickerScreen) View() tea.View {
 	if s.autoRanked != nil {
-		return s.viewAutoMode()
+		return tea.NewView(s.viewAutoMode())
 	}
-	return s.viewManualMode()
+	return tea.NewView(s.viewManualMode())
 }
 
 func (s StreamPickerScreen) viewManualMode() string {
 	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
-	warn   := lipgloss.NewStyle().Foreground(theme.T.Warn())
-	gold   := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
-	green  := lipgloss.NewStyle().Foreground(theme.T.Success())
+	warn := lipgloss.NewStyle().Foreground(theme.T.Warn())
+	gold := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	green := lipgloss.NewStyle().Foreground(theme.T.Success())
 
 	var sb strings.Builder
 	sb.WriteString("\n  " + accent.Render("⚡ Streams") + "  " + dim.Render(s.title) + "\n\n")
 
 	if s.loading {
-		sb.WriteString(dim.Render("  Resolving streams\u2026") + "\n")
+		sb.WriteString("  " + s.spinner.View() + "\n")
 		return sb.String()
 	}
 	if len(s.streams) == 0 {
@@ -601,8 +503,22 @@ func (s StreamPickerScreen) viewManualMode() string {
 		header = fmt.Sprintf("  %-*s  %-16s  %-9s  %s", colW, "Quality", "Provider", "Size", "Seeders")
 	}
 	benchStatus := ""
-	if benchActive && s.benchPending > 0 {
-		benchStatus = dim.Render(fmt.Sprintf("  probing %d stream(s)…", s.benchPending))
+	if benchActive {
+		if s.benchPending > 0 {
+			completed := s.benchTotal - s.benchPending
+			pb := components.NewProgressBar(float64(completed), float64(s.benchTotal),
+				components.WithWidth(24),
+				components.WithShowValue(false),
+			)
+			benchStatus = dim.Render(fmt.Sprintf("  probing %d/%d ", completed, s.benchTotal)) + pb.View()
+		} else if s.benchTotal > 0 {
+			pb := components.NewProgressBar(1, 1,
+				components.WithWidth(24),
+				components.WithShowValue(false),
+			)
+			doneStyle := lipgloss.NewStyle().Foreground(theme.T.Success())
+			benchStatus = "  " + doneStyle.Render("✓") + dim.Render(" benchmark complete ") + pb.View()
+		}
 	}
 	sortIndicator := fmt.Sprintf("  sorted by %s %s", s.sortCol.label(), arrow)
 	sb.WriteString(dim.Render(header) + "\n")
@@ -611,10 +527,10 @@ func (s StreamPickerScreen) viewManualMode() string {
 	// ── Stream rows ───────────────────────────────────────────────────────
 	for i, st := range s.streams {
 		isSelected := i == s.cursor
-		prefix   := "  "
+		prefix := "  "
 		rowStyle := normal
 		if isSelected {
-			prefix   = "\u25b6 "
+			prefix = "\u25b6 "
 			rowStyle = accent
 		}
 
@@ -690,8 +606,8 @@ func (s StreamPickerScreen) viewManualMode() string {
 
 // viewStreamInfo renders a compact metadata panel for the given stream.
 func (s StreamPickerScreen) viewStreamInfo(st ipc.StreamInfo) string {
-	dim  := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	acc  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
 	gold := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
 	green := lipgloss.NewStyle().Foreground(theme.T.Success())
@@ -710,11 +626,11 @@ func (s StreamPickerScreen) viewStreamInfo(st ipc.StreamInfo) string {
 		qual = st.Badge
 	}
 	add("Resolution", qual)
-	add("Codec",      st.Codec)
-	add("Source",     st.Source)
-	add("Protocol",   st.Protocol)
-	add("Size",       formatBytes(st.SizeBytes))
-	add("Provider",   st.Provider)
+	add("Codec", st.Codec)
+	add("Source", st.Source)
+	add("Protocol", st.Protocol)
+	add("Size", formatBytes(st.SizeBytes))
+	add("Provider", st.Provider)
 	if st.Seeders > 0 {
 		add("Seeders", fmt.Sprintf("%d", st.Seeders))
 	}
@@ -784,11 +700,11 @@ func (s StreamPickerScreen) viewStreamInfo(st ipc.StreamInfo) string {
 
 func (s StreamPickerScreen) viewAutoMode() string {
 	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	neon   := lipgloss.NewStyle().Foreground(theme.T.Neon())
-	green  := lipgloss.NewStyle().Foreground(theme.T.Success())
-	warn   := lipgloss.NewStyle().Foreground(theme.T.Warn())
-	gold   := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	neon := lipgloss.NewStyle().Foreground(theme.T.Neon())
+	green := lipgloss.NewStyle().Foreground(theme.T.Success())
+	warn := lipgloss.NewStyle().Foreground(theme.T.Warn())
+	gold := lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b"))
 
 	ranked := s.autoRanked
 	var sb strings.Builder
@@ -807,32 +723,32 @@ func (s StreamPickerScreen) viewAutoMode() string {
 		dim.Render(fmt.Sprintf("  (ranked %d streams)", len(ranked))) + "\n\n")
 
 	// Stream headline
-	label := best.stream.Badge
+	label := best.Stream.Badge
 	if label == "" {
-		label = best.stream.Quality
+		label = best.Stream.Quality
 	}
 	hdrTag := ""
-	if best.stream.HDR {
+	if best.Stream.HDR {
 		hdrTag = "  " + gold.Render("HDR")
 	}
 	seedTag := ""
-	if best.stream.Seeders > 0 {
-		seedTag = fmt.Sprintf("  \U0001f465 %d", best.stream.Seeders)
+	if best.Stream.Seeders > 0 {
+		seedTag = fmt.Sprintf("  \U0001f465 %d", best.Stream.Seeders)
 	}
 	sizeTag := ""
-	if best.stream.SizeBytes > 0 {
-		sizeTag = "  " + formatBytes(best.stream.SizeBytes)
+	if best.Stream.SizeBytes > 0 {
+		sizeTag = "  " + formatBytes(best.Stream.SizeBytes)
 	}
 	headline := green.Render("  ▶  ") + accent.Render(label) +
-		"  " + dim.Render(best.stream.Protocol) +
+		"  " + dim.Render(best.Stream.Protocol) +
 		dim.Render(sizeTag+seedTag) + hdrTag
 	sb.WriteString(headline + "\n")
-	sb.WriteString("     " + dim.Render(fmt.Sprintf("Score: %d pts", best.score)) + "\n")
+	sb.WriteString("     " + dim.Render(fmt.Sprintf("Score: %d pts", best.Score)) + "\n")
 
 	// Score breakdown (indented tree)
-	for i, r := range best.reasons {
+	for i, r := range best.Reasons {
 		prefix := "     ├ "
-		if i == len(best.reasons)-1 {
+		if i == len(best.Reasons)-1 {
 			prefix = "     └ "
 		}
 		sb.WriteString(dim.Render(prefix) + dim.Render(r) + "\n")
@@ -850,31 +766,31 @@ func (s StreamPickerScreen) viewAutoMode() string {
 		marker := "  "
 		var numStyle lipgloss.Style
 		if i == 0 {
-			marker    = green.Render("✓ ")
-			numStyle  = green
+			marker = green.Render("✓ ")
+			numStyle = green
 		} else {
 			numStyle = dim
 		}
-		lbl := r.stream.Badge
+		lbl := r.Stream.Badge
 		if lbl == "" {
-			lbl = r.stream.Quality
+			lbl = r.Stream.Quality
 		}
 		seederStr := ""
-		if r.stream.Seeders > 0 {
+		if r.Stream.Seeders > 0 {
 			seedStyle := dim
-			if r.stream.Seeders >= 50 {
+			if r.Stream.Seeders >= 50 {
 				seedStyle = green
-			} else if r.stream.Seeders < 10 {
+			} else if r.Stream.Seeders < 10 {
 				seedStyle = warn
 			}
-			seederStr = "  " + seedStyle.Render(fmt.Sprintf("\U0001f465 %d", r.stream.Seeders))
+			seederStr = "  " + seedStyle.Render(fmt.Sprintf("\U0001f465 %d", r.Stream.Seeders))
 		}
 		sb.WriteString(fmt.Sprintf("  %s%s  %-10s  %-10s  %s pts%s\n",
 			marker,
 			numStyle.Render(fmt.Sprintf("%d.", i+1)),
 			accent.Render(fmt.Sprintf("%-8s", lbl)),
-			dim.Render(fmt.Sprintf("%-10s", r.stream.Protocol)),
-			dim.Render(fmt.Sprintf("%3d", r.score)),
+			dim.Render(fmt.Sprintf("%-10s", r.Stream.Protocol)),
+			dim.Render(fmt.Sprintf("%3d", r.Score)),
 			seederStr,
 		))
 	}
@@ -890,7 +806,7 @@ func (s StreamPickerScreen) viewAutoMode() string {
 	} else {
 		sb.WriteString(dim.Render(strings.Join(parts, "  •  ")))
 	}
-	sb.WriteString("\n  " + dim.Render("Edit: "+streamPolicyPath()) + "\n")
+	sb.WriteString("\n  " + dim.Render("Policy managed by runtime (get_stream_policy / set_stream_policy)") + "\n")
 
 	sb.WriteString("\n" + accent.Render("  [Enter]") + dim.Render(" play this stream") +
 		"   " + dim.Render("[Esc] back to list") + "\n")
