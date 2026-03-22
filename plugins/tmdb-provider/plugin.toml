@@ -1,0 +1,29 @@
+# tmdb-provider — plugin manifest
+# Install at: ~/.stui/plugins/tmdb-provider/
+
+[plugin]
+name        = "tmdb-provider"
+version     = "0.1.0"
+description = "The Movie Database — movies & TV metadata, posters, ratings"
+author      = "stui"
+abi_version = 1
+type        = "metadata"  # provides catalog/metadata, not streams
+tags        = ["movies", "tv", "metadata"]
+
+[env]
+TMDB_API_KEY = ""                         # Free at themoviedb.org/settings/api
+
+[config]
+[[config]]
+key       = "api_key"
+label     = "TMDB API Key"
+hint      = "Get free at themoviedb.org/settings/api"
+masked    = true
+required  = true
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true

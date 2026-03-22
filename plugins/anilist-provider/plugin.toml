@@ -1,0 +1,19 @@
+# anilist-provider — plugin manifest
+# Install at: ~/.stui/plugins/anilist-provider/
+
+[plugin]
+name        = "anilist"
+version     = "0.1.0"
+description = "AniList — anime metadata, trending, search"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["anime", "tv", "metadata"]
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true
+anime = true

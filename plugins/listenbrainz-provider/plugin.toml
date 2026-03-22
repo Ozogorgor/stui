@@ -1,0 +1,30 @@
+# listenbrainz-provider — plugin manifest
+# Install at: ~/.stui/plugins/listenbrainz-provider/
+
+[plugin]
+name        = "listenbrainz"
+version     = "0.1.0"
+description = "Music metadata via ListenBrainz — charts, recommendations, artist info"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["music", "metadata"]
+
+[config]
+[[config]]
+key       = "user_token"
+label     = "ListenBrainz User Token (optional)"
+hint      = "Get from https://musicbrainz.org/account/home#oauth-details"
+masked    = true
+required  = false
+
+[permissions]
+network = [
+  "listenbrainz.org",
+  "coverartarchive.org",
+]
+
+[capabilities]
+catalog = true
+metadata = true
+music = true

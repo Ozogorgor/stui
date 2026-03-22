@@ -1,0 +1,29 @@
+# omdb-provider — plugin manifest
+# Install at: ~/.stui/plugins/omdb-provider/
+
+[plugin]
+name        = "omdb"
+version     = "0.1.0"
+description = "Open Movie Database — movie/TV info, ratings, posters"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["movies", "tv", "metadata"]
+
+[env]
+OMDB_API_KEY = ""                         # Free at www.omdbapi.com/apikey.aspx
+
+[config]
+[[config]]
+key       = "api_key"
+label     = "OMDB API Key"
+hint      = "Get free at www.omdbapi.com/apikey.aspx"
+masked    = true
+required  = true
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true

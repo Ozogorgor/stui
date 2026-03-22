@@ -1,0 +1,14 @@
+# Clippy configuration for stui-runtime
+#
+# This file enables stricter clippy lints and allows common patterns
+# that are acceptable in this codebase.
+#
+# Command-line equivalents:
+#   cargo clippy -- -A clippy::module_name_repetitions -A clippy::missing_errors_doc ...
+
+# Allowed lints - too noisy for this codebase
+type-complexity-threshold = 100
+cognitive-complexity-threshold = 30
+
+# MSRV for this project
+msrv = "1.75"

@@ -1,0 +1,18 @@
+# imdb-provider — plugin manifest
+# Install at: ~/.stui/plugins/imdb-provider/
+
+[plugin]
+name        = "imdb"
+version     = "0.1.0"
+description = "IMDB chart scraper — trending movies & TV, no API key needed"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["movies", "tv", "trending", "metadata"]
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true

@@ -1,0 +1,34 @@
+# discogs-provider — plugin manifest
+# Install at: ~/.stui/plugins/discogs-provider/
+
+[plugin]
+name        = "discogs"
+version     = "0.1.0"
+description = "Music & vinyl metadata via Discogs — releases, artists, labels"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["music", "metadata", "vinyl"]
+
+[env]
+DISCOGS_API_KEY = ""                     # Required — https://www.discogs.com/settings/developers
+
+[config]
+[[config]]
+key       = "api_key"
+label     = "Discogs Personal Access Token"
+hint      = "Get free at https://www.discogs.com/settings/developers"
+masked    = true
+required  = true
+
+[permissions]
+network = [
+  "api.discogs.com",
+  "img.discogs.com",
+  "s.discogs.com",
+]
+
+[capabilities]
+catalog = true
+metadata = true
+music = true

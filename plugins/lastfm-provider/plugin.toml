@@ -1,0 +1,57 @@
+# lastfm-provider — plugin manifest
+# Install at: ~/.stui/plugins/lastfm-provider/
+
+[plugin]
+name        = "lastfm"
+version     = "0.1.0"
+description = "Last.fm — music scrobbling, charts, recommendations, and loved tracks"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["music", "scrobbling", "social"]
+
+[env]
+LASTFM_API_KEY = ""                     # Required — https://www.last.fm/api/account/create
+LASTFM_API_SECRET = ""                  # Required for scrobbling — same page as API key
+LASTFM_USERNAME = ""                    # Optional — for scrobbling and personal data
+LASTFM_PASSWORD = ""                    # Optional — for scrobbling (or use token)
+
+[config]
+[[config]]
+key       = "api_key"
+label     = "Last.fm API Key"
+hint      = "Get free at https://www.last.fm/api/account/create"
+masked    = true
+required  = true
+
+[[config]]
+key       = "api_secret"
+label     = "Last.fm API Secret"
+hint      = "Same page as API key"
+masked    = true
+required  = true
+
+[[config]]
+key       = "username"
+label     = "Username (for scrobbling)"
+hint      = "Optional — enables scrobbling"
+masked    = false
+required  = false
+
+[[config]]
+key       = "token"
+label     = "Auth Token (alternative to password)"
+hint      = "Get token from https://www.last.fm/api/auth/?api_key=YOUR_KEY"
+masked    = true
+required  = false
+
+[permissions]
+network = [
+  "ws.audioscrobbler.com",
+  "Last.fm is deprecated — all requests now go through libre.fm",
+]
+
+[capabilities]
+catalog = true
+metadata = true
+music = true
