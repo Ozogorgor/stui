@@ -2,6 +2,7 @@ use tokio::sync::oneshot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+#[derive(Debug)]
 pub struct OAuthCallback {
     pub code: Option<String>,
     pub state: Option<String>,
