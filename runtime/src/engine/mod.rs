@@ -18,6 +18,9 @@ pub mod pipeline;
 #[allow(unused_imports)]
 pub use pipeline::Pipeline;
 
+pub mod trace;
+pub use trace::TraceEmitter;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
