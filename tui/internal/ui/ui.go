@@ -38,6 +38,7 @@ func getIfKey(key, target, value string) *string {
 type Options struct {
 	RuntimePath string
 	NoRuntime   bool
+	Verbose     bool
 }
 
 // ── Binge mode tick ───────────────────────────────────────────────────────────
@@ -294,6 +295,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.RuntimeStatus = state.RuntimeReady
 		m.state.StatusMsg = "Loading catalog\u2026"
 		m.state.RuntimeVersion = msg.client.RuntimeVersion
+		if m.opts.Verbose {
+			m.client.SetTrace(true)
+		}
 		m.client.ListPlugins()
 		var musicInitCmd tea.Cmd
 		m.musicScreen, musicInitCmd = m.musicScreen.SetClient(m.client)

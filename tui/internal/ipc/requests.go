@@ -874,6 +874,19 @@ type SetStoragePathsRequest struct {
 	Podcasts *string
 }
 
+// SetTrace enables or disables the runtime's pipeline trace output (stderr).
+// Call immediately after the handshake when -v is passed.
+func (c *Client) SetTrace(enabled bool) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":    "set_trace",
+			"enabled": enabled,
+		})
+		<-ch // wait for Ok response; ignore it
+	}()
+}
+
 // SetStoragePaths updates storage directory paths.
 func (c *Client) SetStoragePaths(req SetStoragePathsRequest) <-chan bool {
 	ch := make(chan bool, 1)
