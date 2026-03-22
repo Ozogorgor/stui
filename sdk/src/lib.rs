@@ -165,6 +165,8 @@ extern "C" {
         key_ptr: *const u8, key_len: i32,
         val_ptr: *const u8, val_len: i32,
     );
+    pub fn stui_auth_allocate_port() -> i32;
+    pub fn stui_auth_open_and_wait(url_ptr: *const u8, url_len: i32, timeout_ms: i32) -> i64;
 }
 
 /// Log a message at the given level through the host logger.
@@ -292,6 +294,112 @@ pub fn cache_set(key: &str, value: &str) {
     }
 }
 
+// ── OAuth helpers ──────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct OAuthCallback {
+    pub code: String,
+    pub state: Option<String>,
+}
+
+/// Parse the JSON blob returned by `stui_auth_open_and_wait`.
+///
+/// `code: Some` → `Ok(OAuthCallback)`.
+/// `error: Some("timed_out")` → `Err("timed_out")`.
+/// `error: Some("denied")` → `Err("denied: <message>")`.
+/// `error: Some(other)` → `Err("denied: <other>")`.
+/// Both absent (malformed) → `Err("timed_out")` as safe fallback.
+pub fn parse_auth_json(json: &str) -> Result<OAuthCallback, String> {
+    let val: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| format!("timed_out (parse error: {e})"))?;
+    if let Some(code) = val["code"].as_str().filter(|s| !s.is_empty()) {
+        return Ok(OAuthCallback {
+            code: code.to_string(),
+            state: val["state"].as_str().map(|s| s.to_string()),
+        });
+    }
+    match val["error"].as_str() {
+        Some("timed_out")  => Err("timed_out".into()),
+        Some("denied") => {
+            let msg = val["message"].as_str().unwrap_or("unknown");
+            Err(format!("denied: {msg}"))
+        }
+        Some(e) => Err(format!("denied: {e}")),
+        None    => Err("timed_out".into()),
+    }
+}
+
+pub fn auth_allocate_port() -> Result<u16, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let port = unsafe { stui_auth_allocate_port() };
+        if port < 0 {
+            return Err("port_allocation_failed".into());
+        }
+        Ok(port as u16)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err("auth_allocate_port only available in WASM context".into())
+    }
+}
+
+pub fn auth_open_and_wait(url: &str, timeout_ms: u32) -> Result<OAuthCallback, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let t_ms = timeout_ms.min(i32::MAX as u32) as i32;
+        let packed = unsafe {
+            stui_auth_open_and_wait(url.as_ptr(), url.len() as i32, t_ms)
+        };
+        if packed == 0 {
+            return Err("timed_out".into());
+        }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        // Memory is NOT freed — matches established sdk pattern (http_get, cache_get)
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| format!("timed_out (utf8 error: {e})"))?;
+        parse_auth_json(json)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (url, timeout_ms);
+        Err("auth_open_and_wait only available in WASM context".into())
+    }
+}
+
+pub fn http_post_form(url: &str, body: &str) -> Result<String, String> {
+    let payload = format!(
+        "{{\"url\":{url_json},\"body\":{body_json},\"__stui_headers\":{{\"Content-Type\":\"application/x-www-form-urlencoded\"}}}}",
+        url_json  = serde_json::to_string(url).unwrap_or_default(),
+        body_json = serde_json::to_string(body).unwrap_or_default(),
+    );
+    #[cfg(target_arch = "wasm32")]
+    {
+        extern "C" {
+            fn stui_http_post(ptr: *const u8, len: i32) -> i64;
+        }
+        let packed = unsafe { stui_http_post(payload.as_ptr(), payload.len() as i32) };
+        if packed == 0 { return Err("http_post_form returned null".into()); }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| e.to_string())?;
+        let resp: HttpResponse = serde_json::from_str(json)
+            .map_err(|e| e.to_string())?;
+        if resp.status >= 200 && resp.status < 300 {
+            Ok(resp.body)
+        } else {
+            Err(format!("HTTP {}: {}", resp.status, resp.body))
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = payload;
+        Err(format!("http_post_form only available in WASM context (url: {url})"))
+    }
+}
+
 // ── ABI glue macro ────────────────────────────────────────────────────────────
 
 /// Registers your plugin and generates all required WASM ABI exports.
@@ -400,4 +508,67 @@ pub mod prelude {
     pub use crate::cache_get;
     pub use crate::cache_set;
     pub use crate::stui_export_plugin;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These tests run outside WASM (on the host), so the extern "C" functions
+    // won't be called. We test the pure Rust mapping/parsing logic.
+
+    fn make_auth_json(code: Option<&str>, state: Option<&str>, error: Option<&str>) -> String {
+        let mut map = serde_json::Map::new();
+        if let Some(c) = code  { map.insert("code".into(),  serde_json::json!(c)); }
+        if let Some(s) = state { map.insert("state".into(), serde_json::json!(s)); }
+        if let Some(e) = error { map.insert("error".into(), serde_json::json!(e)); }
+        serde_json::to_string(&serde_json::Value::Object(map)).unwrap()
+    }
+
+    #[test]
+    fn test_parse_auth_json_success() {
+        let json = make_auth_json(Some("mycode"), Some("csrf"), None);
+        let result = parse_auth_json(&json);
+        assert!(result.is_ok());
+        let cb = result.unwrap();
+        assert_eq!(cb.code, "mycode");
+        assert_eq!(cb.state, Some("csrf".to_string()));
+    }
+
+    #[test]
+    fn test_parse_auth_json_denied() {
+        let json = make_auth_json(None, None, Some("access_denied"));
+        let result = parse_auth_json(&json);
+        assert_eq!(result.unwrap_err(), "denied: access_denied");
+    }
+
+    #[test]
+    fn test_parse_auth_json_timed_out() {
+        let json = make_auth_json(None, None, Some("timed_out"));
+        let result = parse_auth_json(&json);
+        assert_eq!(result.unwrap_err(), "timed_out");
+    }
+
+    #[test]
+    fn test_parse_auth_json_malformed_fallback() {
+        // Both code and error absent → safe fallback to timed_out
+        let json = r#"{"state":"xyz"}"#;
+        let result = parse_auth_json(json);
+        assert_eq!(result.unwrap_err(), "timed_out");
+    }
+
+    #[test]
+    fn test_http_post_form_payload_format() {
+        let url  = "https://api.example.com/token";
+        let body = "grant_type=authorization_code&code=abc";
+        let payload = format!(
+            "{{\"url\":{url_json},\"body\":{body_json},\"__stui_headers\":{{\"Content-Type\":\"application/x-www-form-urlencoded\"}}}}",
+            url_json  = serde_json::to_string(url).unwrap(),
+            body_json = serde_json::to_string(body).unwrap(),
+        );
+        let val: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(val["url"].as_str().unwrap(), url);
+        assert_eq!(val["__stui_headers"]["Content-Type"].as_str().unwrap(),
+                   "application/x-www-form-urlencoded");
+    }
 }
