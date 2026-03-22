@@ -15,43 +15,44 @@ package theme
 //
 // Usage:
 //   theme.T.TabActive().Render(" Movies ")
-//   theme.T.Accent()              // raw lipgloss.Color
+//   theme.T.Accent()              // raw color.Color
 //   theme.T.Apply(newPalette)     // called from IPC handler on theme_update
 
 import (
 	"fmt"
+	"image/color"
 	"sync/atomic"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 
 // Palette is all semantic colors for one theme. Immutable after creation.
 type Palette struct {
-	Bg        lipgloss.Color
-	Surface   lipgloss.Color
-	Border    lipgloss.Color
-	BorderFoc lipgloss.Color
+	Bg        color.Color
+	Surface   color.Color
+	Border    color.Color
+	BorderFoc color.Color
 
-	Text      lipgloss.Color
-	TextDim   lipgloss.Color
-	TextMuted lipgloss.Color
+	Text      color.Color
+	TextDim   color.Color
+	TextMuted color.Color
 
-	Accent    lipgloss.Color // primary action color
-	AccentAlt lipgloss.Color // secondary accent (cyan/teal)
-	Neon      lipgloss.Color // bright highlight
-	Green     lipgloss.Color
-	Red       lipgloss.Color
-	Yellow    lipgloss.Color
+	Accent    color.Color // primary action color
+	AccentAlt color.Color // secondary accent (cyan/teal)
+	Neon      color.Color // bright highlight
+	Green     color.Color
+	Red       color.Color
+	Yellow    color.Color
 
-	Warn    lipgloss.Color // amber — warning indicators
-	Success lipgloss.Color // green — success indicators
+	Warn    color.Color // amber — warning indicators
+	Success color.Color // green — success indicators
 
-	TabActive   lipgloss.Color
-	TabInactive lipgloss.Color
-	TabText     lipgloss.Color
-	TabTextDim  lipgloss.Color
+	TabActive   color.Color
+	TabInactive color.Color
+	TabText     color.Color
+	TabTextDim  color.Color
 }
 
 // Default is the built-in violet/neon-on-black palette used when no
@@ -106,54 +107,114 @@ func Default() Palette {
 func FromMatugen(dark map[string]string) Palette {
 	p := Default() // start from defaults so missing keys don't break anything
 
-	get := func(key string) lipgloss.Color {
+	get := func(key string) (color.Color, bool) {
 		if v, ok := dark[key]; ok && len(v) > 0 {
-			return lipgloss.Color(v)
+			return lipgloss.Color(v), true
 		}
-		return ""
+		return nil, false
 	}
 
-	if c := get("background"); c != "" {
+	if c, ok := get("background"); ok {
 		p.Bg = c
 	}
-	if c := get("surface"); c != "" {
+	if c, ok := get("surface"); ok {
 		p.Surface = c
-	} else if c := get("background"); c != "" {
+	} else if c, ok := get("background"); ok {
 		p.Surface = c
 	}
-	if c := get("outline_variant"); c != "" {
+	if c, ok := get("outline_variant"); ok {
 		p.Border = c
 	}
-	if c := get("surface_variant"); c != "" {
+	if c, ok := get("surface_variant"); ok {
 		p.BorderFoc = c
 		p.TabInactive = c
 	}
-	if c := get("primary"); c != "" {
+	if c, ok := get("primary"); ok {
 		p.Accent = c
 		p.TabActive = c
 	}
-	if c := get("secondary"); c != "" {
+	if c, ok := get("secondary"); ok {
 		p.AccentAlt = c
 	}
-	if c := get("tertiary"); c != "" {
+	if c, ok := get("tertiary"); ok {
 		p.Neon = c
 	}
-	if c := get("on_surface"); c != "" {
+	if c, ok := get("on_surface"); ok {
 		p.Text = c
 		p.TabText = c
 	}
-	if c := get("on_surface_variant"); c != "" {
+	if c, ok := get("on_surface_variant"); ok {
 		p.TextMuted = c
 		p.TabTextDim = c
 	}
-	if c := get("outline"); c != "" {
+	if c, ok := get("outline"); ok {
 		p.TextDim = c
 	}
-	if c := get("error"); c != "" {
+	if c, ok := get("error"); ok {
 		p.Red = c
 	}
 
 	return p
+}
+
+// HighContrast returns a high-contrast palette with pure black/white and
+// saturated accent colors, suitable for accessibility or bright environments.
+func HighContrast() Palette {
+	return Palette{
+		Bg:        lipgloss.Color("#000000"),
+		Surface:   lipgloss.Color("#0d0d0d"),
+		Border:    lipgloss.Color("#ffffff"),
+		BorderFoc: lipgloss.Color("#ffff00"),
+
+		Text:      lipgloss.Color("#ffffff"),
+		TextDim:   lipgloss.Color("#aaaaaa"),
+		TextMuted: lipgloss.Color("#cccccc"),
+
+		Accent:    lipgloss.Color("#ffff00"),
+		AccentAlt: lipgloss.Color("#00ffff"),
+		Neon:      lipgloss.Color("#ff00ff"),
+		Green:     lipgloss.Color("#00ff00"),
+		Red:       lipgloss.Color("#ff0000"),
+		Yellow:    lipgloss.Color("#ffff00"),
+
+		Warn:    lipgloss.Color("#ff8800"),
+		Success: lipgloss.Color("#00ff00"),
+
+		TabActive:   lipgloss.Color("#ffff00"),
+		TabInactive: lipgloss.Color("#1a1a1a"),
+		TabText:     lipgloss.Color("#000000"),
+		TabTextDim:  lipgloss.Color("#888888"),
+	}
+}
+
+// Monochrome returns a grayscale palette with no saturated colors,
+// suitable for terminals with limited color support or minimal aesthetics.
+func Monochrome() Palette {
+	return Palette{
+		Bg:        lipgloss.Color("#0a0a0a"),
+		Surface:   lipgloss.Color("#111111"),
+		Border:    lipgloss.Color("#333333"),
+		BorderFoc: lipgloss.Color("#888888"),
+
+		Text:      lipgloss.Color("#dddddd"),
+		TextDim:   lipgloss.Color("#555555"),
+		TextMuted: lipgloss.Color("#777777"),
+
+		Accent:    lipgloss.Color("#bbbbbb"),
+		AccentAlt: lipgloss.Color("#999999"),
+		Neon:      lipgloss.Color("#eeeeee"),
+		Green:     lipgloss.Color("#aaaaaa"),
+		Red:       lipgloss.Color("#888888"),
+		Yellow:    lipgloss.Color("#cccccc"),
+
+		Warn:    lipgloss.Color("#aaaaaa"),
+		Success: lipgloss.Color("#bbbbbb"),
+
+		TabActive:   lipgloss.Color("#cccccc"),
+		TabInactive: lipgloss.Color("#1a1a1a"),
+		TabText:     lipgloss.Color("#000000"),
+		TabTextDim:  lipgloss.Color("#666666"),
+	}
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -181,20 +242,20 @@ func (t *Theme) Apply(p Palette) { t.p.Store(&p) }
 
 // ── Raw color accessors ───────────────────────────────────────────────────────
 
-func (t *Theme) Accent() lipgloss.Color    { return t.P().Accent }
-func (t *Theme) AccentAlt() lipgloss.Color { return t.P().AccentAlt }
-func (t *Theme) Neon() lipgloss.Color      { return t.P().Neon }
-func (t *Theme) Red() lipgloss.Color       { return t.P().Red }
-func (t *Theme) Green() lipgloss.Color     { return t.P().Green }
-func (t *Theme) Yellow() lipgloss.Color    { return t.P().Yellow }
-func (t *Theme) Warn() lipgloss.Color      { return t.P().Warn }
-func (t *Theme) Success() lipgloss.Color   { return t.P().Success }
-func (t *Theme) Bg() lipgloss.Color        { return t.P().Bg }
-func (t *Theme) Surface() lipgloss.Color   { return t.P().Surface }
-func (t *Theme) Border() lipgloss.Color    { return t.P().Border }
-func (t *Theme) Text() lipgloss.Color      { return t.P().Text }
-func (t *Theme) TextDim() lipgloss.Color   { return t.P().TextDim }
-func (t *Theme) TextMuted() lipgloss.Color { return t.P().TextMuted }
+func (t *Theme) Accent() color.Color    { return t.P().Accent }
+func (t *Theme) AccentAlt() color.Color { return t.P().AccentAlt }
+func (t *Theme) Neon() color.Color      { return t.P().Neon }
+func (t *Theme) Red() color.Color       { return t.P().Red }
+func (t *Theme) Green() color.Color     { return t.P().Green }
+func (t *Theme) Yellow() color.Color    { return t.P().Yellow }
+func (t *Theme) Warn() color.Color      { return t.P().Warn }
+func (t *Theme) Success() color.Color   { return t.P().Success }
+func (t *Theme) Bg() color.Color        { return t.P().Bg }
+func (t *Theme) Surface() color.Color   { return t.P().Surface }
+func (t *Theme) Border() color.Color    { return t.P().Border }
+func (t *Theme) Text() color.Color      { return t.P().Text }
+func (t *Theme) TextDim() color.Color   { return t.P().TextDim }
+func (t *Theme) TextMuted() color.Color { return t.P().TextMuted }
 
 // ── Chrome styles ─────────────────────────────────────────────────────────────
 
@@ -403,41 +464,75 @@ func (t *Theme) ToastErrorStyle() lipgloss.Style {
 		BorderBackground(p.Red)
 }
 
+// ── Composite helpers ─────────────────────────────────────────────────────────
+
+// EmptyStateStyle renders a full empty-state message: icon, title, and hint line.
+func (t *Theme) EmptyStateStyle(icon, title, hint string) string {
+	p := t.P()
+	iconStr := lipgloss.NewStyle().Foreground(p.AccentAlt).Render(icon)
+	titleStr := lipgloss.NewStyle().Foreground(p.Text).Bold(true).Render(title)
+	hintStr := lipgloss.NewStyle().Foreground(p.TextDim).Render(hint)
+	return fmt.Sprintf("%s  %s\n    %s", iconStr, titleStr, hintStr)
+}
+
+// KeyHint renders a keyboard shortcut hint, e.g. "↑↓ navigate".
+func (t *Theme) KeyHint(key, label string) string {
+	p := t.P()
+	keyStr := lipgloss.NewStyle().Foreground(p.AccentAlt).Bold(true).Render(key)
+	labelStr := lipgloss.NewStyle().Foreground(p.TextDim).Render(label)
+	return keyStr + " " + labelStr
+}
+
+// WarnPill renders text as a warning badge (amber background).
+func (t *Theme) WarnPill(text string) string {
+	p := t.P()
+	return lipgloss.NewStyle().
+		Background(p.Warn).Foreground(p.Bg).
+		PaddingLeft(1).PaddingRight(1).Bold(true).
+		Render(text)
+}
+
+// SuccessPill renders text as a success badge (green background).
+func (t *Theme) SuccessPill(text string) string {
+	p := t.P()
+	return lipgloss.NewStyle().
+		Background(p.Success).Foreground(p.Bg).
+		PaddingLeft(1).PaddingRight(1).Bold(true).
+		Render(text)
+}
+
 // ── Color math ────────────────────────────────────────────────────────────────
 
 // darken returns color c darkened by factor (0.0 = unchanged, 1.0 = black).
-func darken(c lipgloss.Color, factor float64) lipgloss.Color {
-	r, g, b := hexToRGB(string(c))
+func darken(c color.Color, factor float64) color.Color {
+	r32, g32, b32, _ := c.RGBA()
 	f := 1.0 - factor
-	return rgbToColor(int(float64(r)*f), int(float64(g)*f), int(float64(b)*f))
+	return color.RGBA{
+		R: clampU8(int(float64(r32>>8) * f)),
+		G: clampU8(int(float64(g32>>8) * f)),
+		B: clampU8(int(float64(b32>>8) * f)),
+		A: 255,
+	}
 }
 
 // lighten returns color c lightened by factor (0.0 = unchanged, 1.0 = full bright).
-func lighten(c lipgloss.Color, factor float64) lipgloss.Color {
-	r, g, b := hexToRGB(string(c))
+func lighten(c color.Color, factor float64) color.Color {
+	r32, g32, b32, _ := c.RGBA()
 	f := 1.0 + factor
-	return rgbToColor(int(float64(r)*f), int(float64(g)*f), int(float64(b)*f))
-}
-
-func hexToRGB(hex string) (int, int, int) {
-	if len(hex) < 7 {
-		return 0, 0, 0
+	return color.RGBA{
+		R: clampU8(int(float64(r32>>8) * f)),
+		G: clampU8(int(float64(g32>>8) * f)),
+		B: clampU8(int(float64(b32>>8) * f)),
+		A: 255,
 	}
-	var r, g, b int
-	fmt.Sscanf(hex[1:], "%02x%02x%02x", &r, &g, &b)
-	return r, g, b
 }
 
-func rgbToColor(r, g, b int) lipgloss.Color {
-	clamp := func(v int) int {
-		if v < 0 {
-			return 0
-		}
-		if v > 255 {
-			return 255
-		}
-		return v
+func clampU8(v int) uint8 {
+	if v < 0 {
+		return 0
 	}
-	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", clamp(r), clamp(g), clamp(b)))
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
 }
-
