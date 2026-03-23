@@ -288,5 +288,19 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.program.Send(msg)
 		}
+	case "dsp_status":
+		var msg DspStatusMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse dsp_status", "error", err)
+		} else {
+			c.program.Send(msg)
+		}
+	case "dsp_bound_to_mpd":
+		var msg DspBoundToMpdMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse dsp_bound_to_mpd", "error", err)
+		} else {
+			c.program.Send(msg)
+		}
 	}
 }

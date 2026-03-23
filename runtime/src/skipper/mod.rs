@@ -28,4 +28,5 @@ pub mod store;
 pub use detector::Skipper;
 #[allow(unused_imports)]
 pub use analyzer::Segment;
+pub use fingerprint::Fingerprint;
 pub use store::SkipperStore;

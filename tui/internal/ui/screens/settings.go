@@ -84,6 +84,7 @@ const (
 	settingInfo                      // read-only informational row
 	settingAction                    // press Enter → emits a message (no value change)
 	settingPath                      // editable filesystem path; Enter opens inline textinput
+	settingString                    // freeform text string
 )
 
 // settingItem represents one configurable value in a category.
@@ -626,6 +627,32 @@ func defaultCategories() []settingCategory {
 					maxVal:      30,
 					description: "Seconds to wait before auto-playing the next episode (3–30)",
 				},
+				{
+					label:       "Pre-roll buffer",
+					key:         "player.min_preroll_secs",
+					kind:        settingInt,
+					intVal:      3,
+					minVal:      0,
+					maxVal:      10,
+					description: "Minimum pre-roll before playback (0–10 secs, 0=auto)",
+				},
+				{
+					label:       "Demux buffer (MB)",
+					key:         "player.demuxer_max_mb",
+					kind:        settingInt,
+					intVal:      200,
+					minVal:      50,
+					maxVal:      1000,
+					description: "Maximum demuxer buffer size (50–1000 MB)",
+				},
+				{
+					label:       "Terminal video",
+					key:         "player.terminal_vo",
+					kind:        settingChoice,
+					choiceVals:  []string{"", "kitty", "sixel", "tct", "chafa"},
+					choiceIdx:   0,
+					description: "Inline video rendering (empty=default window)",
+				},
 			},
 		},
 		{
@@ -924,15 +951,30 @@ func defaultCategories() []settingCategory {
 				{
 					label:       "Host",
 					key:         "mpd.host",
-					kind:        settingInfo,
-					description: "MPD server host (default: 127.0.0.1 — edit stui.toml to change)",
+					kind:        settingString,
+					strVal:      "127.0.0.1",
+					description: "MPD server hostname or IP address",
 				},
 				{
 					label:       "Port",
 					key:         "mpd.port",
 					kind:        settingInt,
 					intVal:      6600,
-					description: "MPD TCP port (default: 6600)",
+					minVal:      1,
+					maxVal:      65535,
+					description: "MPD TCP port (1–65535)",
+				},
+				{
+					label:       "Password",
+					key:         "mpd.password",
+					kind:        settingInfo,
+					description: "MPD password (edit stui.toml to set — sensitive)",
+				},
+				{
+					label:       "Music directory",
+					key:         "mpd.music_dir",
+					kind:        settingInfo,
+					description: "MPD music root (edit stui.toml to enable library browse)",
 				},
 				{
 					label:       "ReplayGain",
@@ -947,7 +989,9 @@ func defaultCategories() []settingCategory {
 					key:         "mpd.crossfade_secs",
 					kind:        settingInt,
 					intVal:      0,
-					description: "Crossfade duration between tracks (0 = gapless/off)",
+					minVal:      0,
+					maxVal:      30,
+					description: "Crossfade duration between tracks (0 = gapless/off, max 30)",
 				},
 				{
 					label:       "MixRamp dB",
@@ -962,6 +1006,18 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     false,
 					description: "Remove tracks from queue after playing",
+				},
+				{
+					label:       "Outputs",
+					key:         "mpd.outputs",
+					kind:        settingInfo,
+					description: "MPD outputs list (view in Now Playing screen)",
+				},
+				{
+					label:       "Status",
+					key:         "mpd.status",
+					kind:        settingInfo,
+					description: "MPD connection status (connected/disconnected)",
 				},
 				// ── Visualizer ───────────────────────────────────────────────
 				{
@@ -1022,6 +1078,85 @@ func defaultCategories() []settingCategory {
 					choiceVals:  []string{"pulse", "pipewire", "alsa"},
 					choiceIdx:   0,
 					description: "Audio input method for cava: pulse, pipewire, or alsa",
+				},
+			},
+		},
+		{
+			name: "DSP Audio",
+			icon: "\U0001f3a7", // 🎧
+			items: []*settingItem{
+				{
+					label:       "Enable DSP",
+					key:         "dsp.enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Enable high-quality audio processing (upsampling, DSD→PCM, convolution)",
+				},
+				{
+					label:       "Output sample rate",
+					key:         "dsp.output_sample_rate",
+					kind:        settingInt,
+					intVal:      192000,
+					description: "Target output sample rate (44100–384000)",
+				},
+				{
+					label:       "Upsample ratio",
+					key:         "dsp.upsample_ratio",
+					kind:        settingChoice,
+					choiceVals:  []string{"1", "2", "4", "8"},
+					choiceIdx:   2,
+					description: "Upsampling multiplier: 1× (off), 2×, 4×, 8×",
+				},
+				{
+					label:       "Filter type",
+					key:         "dsp.filter_type",
+					kind:        settingChoice,
+					choiceVals:  []string{"fast", "slow", "synchronous"},
+					choiceIdx:   2,
+					description: "Resampling filter: fast (low latency), slow (higher quality), synchronous (default)",
+				},
+				{
+					label:       "Output mode",
+					key:         "dsp.output_mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
+					choiceIdx:   0,
+					description: "Output format: PCM, DSD (native), or DSD→PCM",
+				},
+				{
+					label:       "Output target",
+					key:         "dsp.output_target",
+					kind:        settingChoice,
+					choiceVals:  []string{"pipewire", "roon_raat", "mpd"},
+					choiceIdx:   0,
+					description: "Audio output: PipeWire, Roon RAAT, or MPD",
+				},
+				{
+					label:       "DSD→PCM",
+					key:         "dsp.dsd_to_pcm_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Convert DSD audio to PCM (required for most DACs)",
+				},
+				{
+					label:       "Convolution",
+					key:         "dsp.convolution_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Apply room correction filter (requires filter file path)",
+				},
+				{
+					label:       "Filter path",
+					key:         "dsp.convolution_filter_path",
+					kind:        settingPath,
+					description: "Path to convolution filter WAV file (room correction)",
+				},
+				{
+					label:       "Conv bypass",
+					key:         "dsp.convolution_bypass",
+					kind:        settingBool,
+					boolVal:     true,
+					description: "Bypass convolution filter (keep enabled for quick toggle)",
 				},
 			},
 		},
@@ -1152,6 +1287,26 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     false,
 					description: "Optimize output for screen readers (plain text, no colors)",
+				},
+			},
+		},
+		{
+			name: "Developer",
+			icon: "🔧",
+			items: []*settingItem{
+				{
+					label:       "Debug mode",
+					key:         "app.debug_mode",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Enable verbose IPC tracing and debug-level runtime logs (takes full effect on restart)",
+				},
+				{
+					label:       "Enable tests",
+					key:         "app.tests_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Run built-in self-tests at runtime startup to verify subsystem health",
 				},
 			},
 		},

@@ -16,7 +16,7 @@ pub struct Fingerprint {
 impl Fingerprint {
     /// Approximate frames-per-second for this fingerprint.
     pub fn fps(&self) -> f64 {
-        if self.scan_secs > 0.0 {
+        if self.scan_secs > 0.0 && !self.values.is_empty() {
             self.values.len() as f64 / self.scan_secs
         } else {
             3.0
@@ -87,4 +87,62 @@ async fn run_ffmpeg(url: &str, from_end: Option<f64>, scan_secs: f64) -> Result<
         .collect();
 
     Ok(Fingerprint { values, scan_secs })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test Fingerprint fps calculation with normal values.
+    #[test]
+    fn test_fps_normal() {
+        let fp = Fingerprint {
+            values: vec![0u32; 30],
+            scan_secs: 10.0,
+        };
+        assert!((fp.fps() - 3.0).abs() < 0.001);
+    }
+
+    /// Test Fingerprint fps with zero scan_secs defaults to 3.0.
+    #[test]
+    fn test_fps_zero_scan() {
+        let fp = Fingerprint {
+            values: vec![0u32; 30],
+            scan_secs: 0.0,
+        };
+        assert!((fp.fps() - 3.0).abs() < 0.001);
+    }
+
+    /// Test Fingerprint fps with negative scan (shouldn't happen but defensive).
+    #[test]
+    fn test_fps_negative_scan() {
+        let fp = Fingerprint {
+            values: vec![0u32; 30],
+            scan_secs: -5.0,
+        };
+        assert!((fp.fps() - 3.0).abs() < 0.001);
+    }
+
+    /// Test Fingerprint fps with empty values.
+    #[test]
+    fn test_fps_empty_values() {
+        let fp = Fingerprint {
+            values: vec![],
+            scan_secs: 10.0,
+        };
+        assert!((fp.fps() - 3.0).abs() < 0.001);
+    }
+
+    /// Test Fingerprint values round-trip serialization.
+    #[test]
+    fn test_serialization() {
+        let fp = Fingerprint {
+            values: vec![1, 2, 3, 4],
+            scan_secs: 5.0,
+        };
+        let json = serde_json::to_string(&fp).unwrap();
+        let fp2: Fingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(fp.values, fp2.values);
+        assert!((fp.scan_secs - fp2.scan_secs).abs() < 0.001);
+    }
 }

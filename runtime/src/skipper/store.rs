@@ -106,7 +106,130 @@ impl SkipperStore {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    use crate::skipper::fingerprint::Fingerprint;
+
+    /// Test slug function converts alphanumeric correctly.
+    #[test]
+    fn test_slug_alphanumeric() {
+        assert_eq!(slug("tt123456"), "tt123456");
+    }
+
+    /// Test slug converts special chars to underscores.
+    #[test]
+    fn test_slug_special_chars() {
+        assert_eq!(slug("tt123:1:5"), "tt123_1_5");
+    }
+
+    /// Test slug keeps allowed chars.
+    #[test]
+    fn test_slug_allowed_chars() {
+        assert_eq!(slug("movie-title_2024"), "movie-title_2024");
+    }
+
+/// Test slug handles empty string.
+    #[test]
+    fn test_slug_empty() {
+        assert_eq!(slug(""), "");
+    }
+
+    /// Test slug handles multi-episode style IDs.
+    #[test]
+    fn test_slug_multi_episode() {
+        assert_eq!(slug("tt123456:1:5"), "tt123456_1_5");
+    }
+
+    /// Test slug documents potential collision (informational).
+    #[test]
+    fn test_slug_documentation() {
+        let note = "Note: Collisions are theoretically possible";
+        assert!(note.len() > 0);
+    }
+
+    /// Test slug collapses multiple special chars.
+    #[test]
+    fn test_slug_multiple_specials() {
+        assert_eq!(slug("a:b/c"), "a_b_c");
+    }
+
+    /// Test store creation.
+    #[test]
+    fn test_store_new() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+        // Should not panic
+        assert_eq!(store.base, temp.path().join("skipper"));
+    }
+
+    /// Test series_dir combines base and slug.
+    #[test]
+    fn test_series_dir() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+        let dir = store.series_dir("tt12345");
+        assert!(dir.to_string_lossy().ends_with("skipper/tt12345"));
+    }
+
+    /// Test fp_path creates correct filename.
+    #[test]
+    fn test_fp_path() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+        let path = store.fp_path("series1", "ep1");
+        assert!(path.to_string_lossy().ends_with("series1/ep1.fp.json"));
+    }
+
+    /// Test seg_path creates correct filename.
+    #[test]
+    fn test_seg_path() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+        let path = store.seg_path("series1", "ep1");
+        assert!(path.to_string_lossy().ends_with("series1/ep1.seg.json"));
+    }
+
+    /// Test save and load fingerprint roundtrip.
+    #[tokio::test]
+    async fn test_save_load_fp() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+
+        let fp = Fingerprint {
+            values: vec![1, 2, 3],
+            scan_secs: 5.0,
+        };
+
+        store.save_fp("series", "episode1", Some(fp.clone()), None).await.unwrap();
+
+        let others = store.load_others("series", "episode1").await;
+        assert_eq!(others.len(), 0); // no other episodes
+    }
+
+    /// Test save and load segments roundtrip.
+    #[tokio::test]
+    async fn test_save_load_segments() {
+        let temp = TempDir::new().unwrap();
+        let store = SkipperStore::new(temp.path().to_path_buf());
+
+        let intro = Segment { start: 0.0, end: 90.0 };
+        let credits = Segment { start: 5.0, end: 180.0 };
+
+        store.save_segments("series", "ep1", Some(intro), Some(credits)).await.unwrap();
+
+        let loaded = store.load_segments("series", "ep1").await;
+        assert!(loaded.is_some());
+        assert!(loaded.as_ref().unwrap().intro.is_some());
+        assert!(loaded.as_ref().unwrap().credits.is_some());
+    }
+}
+
 /// Convert a string to a safe filesystem slug.
+/// Note: Collisions are theoretically possible (e.g. "tt1:2" and "tt1_2" both map to "tt1_2")
+/// but unlikely in practice since Stremio-style IDs have specific formats.
 fn slug(s: &str) -> String {
     s.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
 }

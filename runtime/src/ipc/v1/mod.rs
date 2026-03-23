@@ -110,9 +110,17 @@ pub enum Request {
 
     /// Enable or disable the pipeline trace (stderr output for debugging).
     /// Sent by the TUI when `-v` / `--debug` is passed.
-    SetTrace {
-        enabled: bool,
-    },
+    SetTrace { enabled: bool },
+
+    // ── DSP requests ───────────────────────────────────────────────────────────
+    /// Get current DSP pipeline status.
+    GetDspStatus,
+    /// Update DSP configuration at runtime.
+    SetDspConfig(SetDspConfigRequest),
+    /// Load a convolution filter from file.
+    LoadConvolutionFilter(LoadConvolutionFilterRequest),
+    /// Bind DSP to MPD audio output.
+    BindDspToMpd,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -375,6 +383,23 @@ pub enum Response {
     /// Response to `SetStoragePaths`.
     StoragePathsUpdated {
         success: bool,
+    },
+
+    // ── DSP responses ─────────────────────────────────────────────────────────
+    /// Response to `GetDspStatus`.
+    DspStatus(DspStatusResponse),
+    /// Response to `SetDspConfig`.
+    DspConfigUpdated {
+        success: bool,
+    },
+    /// Response to `LoadConvolutionFilter`.
+    ConvolutionFilterLoaded {
+        success: bool,
+    },
+    /// Response to `BindDspToMpd`.
+    DspBoundToMpd {
+        success: bool,
+        config: String,
     },
 }
 
@@ -1022,6 +1047,38 @@ pub struct StoragePathsResponse {
     pub music: String,
     pub anime: String,
     pub podcasts: String,
+}
+
+// ── DSP types ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetDspConfigRequest {
+    pub enabled: Option<bool>,
+    pub output_sample_rate: Option<u32>,
+    pub upsample_ratio: Option<u32>,
+    pub filter_type: Option<String>,
+    pub resample_enabled: Option<bool>,
+    pub dsd_to_pcm_enabled: Option<bool>,
+    pub output_mode: Option<String>,
+    pub convolution_enabled: Option<bool>,
+    pub convolution_bypass: Option<bool>,
+    pub buffer_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoadConvolutionFilterRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DspStatusResponse {
+    pub enabled: bool,
+    pub output_sample_rate: u32,
+    pub resample_enabled: bool,
+    pub dsd_to_pcm_enabled: bool,
+    pub convolution_enabled: bool,
+    pub convolution_bypass: bool,
+    pub active: bool,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

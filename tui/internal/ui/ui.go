@@ -106,6 +106,9 @@ type Model struct {
 	// MpdNowPlaying — non-nil while MPD is playing audio
 	mpdNowPlaying *components.MpdNowPlayingState
 
+	// DspState — non-nil while DSP is enabled
+	dspState *components.DspState
+
 	// Skip detection overlays
 	skipIntro   *ipc.SkipSegmentMsg
 	skipCredits *ipc.SkipSegmentMsg
@@ -308,6 +311,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for tab := range m.grids {
 			m.mediaCache.SaveTab(tab, m.grids[tab])
 		}
+		m.client.GetDspStatus()
 		return m, musicInitCmd
 
 	case ipc.RuntimeReadyMsg:
@@ -726,6 +730,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Outputs are displayed in a future MPD outputs overlay screen.
 
+	// ── DSP events ────────────────────────────────────────────────────────
+
+	case ipc.DspStatusMsg:
+		if m.dspState == nil {
+			m.dspState = &components.DspState{}
+		}
+		m.dspState.Update(msg)
+
+	case ipc.DspBoundToMpdMsg:
+		if msg.Success {
+			m.state.StatusMsg = "DSP bound to MPD"
+		} else {
+			m.state.StatusMsg = "DSP bind failed"
+		}
+
 	case ipc.SimilarReadyMsg:
 		if m.detail != nil && msg.ForID == m.detail.Entry.ID {
 			if msg.Err == nil {
@@ -868,6 +887,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "downloads.music_dir":
 			if v, ok := msg.Value.(string); ok {
 				m.state.Settings.MusicDownloadDir = v
+			}
+		case "app.debug_mode":
+			if v, ok := msg.Value.(bool); ok && m.client != nil {
+				m.client.SetTrace(v)
 			}
 		}
 
@@ -1063,6 +1086,12 @@ func (m Model) overlayRowCount() int {
 			if m.visualizer.IsRunning() {
 				n += m.visualizer.Config().Height
 			}
+		}
+	}
+	if m.dspState != nil && m.dspState.Enabled {
+		dspHud := components.RenderDspStatus(m.dspState, m.state.Width)
+		if dspHud != "" {
+			n += strings.Count(dspHud, "\n")
 		}
 	}
 	return n
@@ -1393,6 +1422,39 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "q":
 			m.client.MpdCmd("mpd_clear", nil)
 			m.mpdNowPlaying = nil
+			return m, nil
+		}
+	}
+
+	// ── DSP controls — active whenever DSP is enabled ────────────────────────
+	if m.dspState != nil && m.client != nil {
+		switch key {
+		case "d":
+			// Toggle DSP enabled/disabled
+			enabled := !m.dspState.Enabled
+			m.client.SetDspConfig(&enabled, nil, nil, nil, nil, nil, nil, nil, nil)
+			return m, nil
+		case "c":
+			// Toggle convolution
+			if m.dspState.Enabled {
+				convEnabled := !m.dspState.ConvolutionEnabled
+				m.client.SetDspConfig(nil, nil, nil, nil, nil, nil, nil, &convEnabled, nil)
+			}
+			return m, nil
+		case "b":
+			// Toggle convolution bypass
+			if m.dspState.Enabled && m.dspState.ConvolutionEnabled {
+				bypass := !m.dspState.ConvolutionBypass
+				m.client.SetDspConfig(nil, nil, nil, nil, nil, nil, nil, nil, &bypass)
+			}
+			return m, nil
+		case "r":
+			// Refresh DSP status from runtime (re-sync UI state)
+			m.client.GetDspStatus()
+			return m, nil
+		case "D":
+			// Bind DSP to MPD output
+			m.client.BindDspToMpd()
 			return m, nil
 		}
 	}
@@ -2169,6 +2231,13 @@ func (m Model) applyToast(base string) string {
 				}
 			}
 			base = hud + base
+		}
+	}
+	// Prepend DSP status panel when DSP is enabled
+	if m.dspState != nil && m.dspState.Enabled {
+		dspHud := components.RenderDspStatus(m.dspState, m.state.Width)
+		if dspHud != "" {
+			base = dspHud + base
 		}
 	}
 	// Subtitle / audio sync overlay

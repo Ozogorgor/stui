@@ -70,6 +70,7 @@ wasmtime-wasi = { version = "22", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
 
 [profile.release]
 opt-level     = 3

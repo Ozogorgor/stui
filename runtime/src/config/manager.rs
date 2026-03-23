@@ -43,6 +43,8 @@
 //! | `providers.enable_tmdb`          | `bool`   | Toggles TMDB               |
 //! | `providers.enable_torrentio`     | `bool`   | Toggles Torrentio          |
 //! | `app.theme_mode`                 | `String` | Changes theme              |
+//! | `app.debug_mode`                 | `bool`   | Enables IPC tracing/debug  |
+//! | `app.tests_enabled`              | `bool`   | Enables startup self-tests |
 
 #![allow(dead_code)]
 
@@ -224,6 +226,12 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
         "player.keep_open" => {
             cfg.playback.keep_open = as_bool(key, value)?;
         }
+        "player.min_preroll_secs" => {
+            cfg.playback.min_preroll_secs = as_opt_f64(key, value)?;
+        }
+        "player.terminal_vo" => {
+            cfg.playback.terminal_vo = as_string(key, value)?;
+        }
 
         // ── [streaming] ───────────────────────────────────────────────────
         "streaming.prefer_http" => {
@@ -291,6 +299,12 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
             // the tracing subscriber, which is not supported here.
             warn!("app.log_level change takes effect on next restart");
         }
+        "app.debug_mode" => {
+            cfg.debug_mode = as_bool(key, value)?;
+        }
+        "app.tests_enabled" => {
+            cfg.tests_enabled = as_bool(key, value)?;
+        }
 
         // ── [skipper] ─────────────────────────────────────────────────────
         "skipper.enabled" => {
@@ -341,6 +355,16 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
             apply_plugin_key(cfg, other, value)?;
         }
 
+        // ── [dsp.*] ─────────────────────────────────────────────────────────
+        other if other.starts_with("dsp.") => {
+            apply_dsp_key(cfg, other, value)?;
+        }
+
+        // ── [mpd.*] ─────────────────────────────────────────────────────────
+        other if other.starts_with("mpd.") => {
+            apply_mpd_key(cfg, other, value)?;
+        }
+
         other => {
             return Err(StuidError::config(format!("unknown config key: {other}")));
         }
@@ -368,6 +392,104 @@ fn apply_plugin_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result
         .entry(plugin_name.to_string())
         .or_default()
         .insert(field_key.to_string(), string_value);
+
+    Ok(())
+}
+
+fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
+    let parts: Vec<&str> = key.splitn(3, '.').collect();
+    if parts.len() != 3 {
+        return Err(StuidError::config(format!(
+            "invalid dsp config key: {key} (expected dsp.{{field}})"
+        )));
+    }
+
+    let field = parts[1];
+    match field {
+        "enabled" => cfg.dsp.enabled = as_bool(key, value)?,
+        "output_sample_rate" => cfg.dsp.output_sample_rate = as_u32(key, value)?,
+        "input_sample_rate" => cfg.dsp.input_sample_rate = as_u32(key, value)?,
+        "upsample_ratio" => cfg.dsp.upsample_ratio = as_u32(key, value)?,
+        "filter_type" => {
+            let s = as_string(key, value)?;
+            cfg.dsp.filter_type = match s.as_str() {
+                "fast" => crate::dsp::FilterType::Fast,
+                "slow" => crate::dsp::FilterType::Slow,
+                "synchronous" => crate::dsp::FilterType::Synchronous,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: invalid filter_type {s} (expected fast|slow|synchronous)"
+                ))),
+            };
+        }
+        "resample_enabled" => cfg.dsp.resample_enabled = as_bool(key, value)?,
+        "dsd_to_pcm_enabled" => cfg.dsp.dsd_to_pcm_enabled = as_bool(key, value)?,
+        "dsd_output_rate" => cfg.dsp.dsd_output_rate = as_u32(key, value)?,
+        "output_mode" => {
+            let s = as_string(key, value)?;
+            cfg.dsp.output_mode = match s.as_str() {
+                "pcm" => crate::dsp::OutputMode::Pcm,
+                "dsd" => crate::dsp::OutputMode::Dsd,
+                "dsd_to_pcm" => crate::dsp::OutputMode::DsdToPcm,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: invalid output_mode {s} (expected pcm|dsd|dsd_to_pcm)"
+                ))),
+            };
+        }
+        "output_target" => {
+            let s = as_string(key, value)?;
+            cfg.dsp.output_target = match s.as_str() {
+                "pipewire" => crate::dsp::OutputTarget::PipeWire,
+                "roon_raat" => crate::dsp::OutputTarget::RoonRaat,
+                "mpd" => crate::dsp::OutputTarget::Mpd,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: invalid output_target {s} (expected pipewire|roon_raat|mpd)"
+                ))),
+            };
+        }
+        "convolution_filter_path" => cfg.dsp.convolution_filter_path = as_opt_string(key, value)?,
+        "convolution_enabled" => cfg.dsp.convolution_enabled = as_bool(key, value)?,
+        "convolution_bypass" => cfg.dsp.convolution_bypass = as_bool(key, value)?,
+        "buffer_size" => cfg.dsp.buffer_size = as_usize(key, value)?,
+        _ => {
+            return Err(StuidError::config(format!("unknown dsp config key: {field}")));
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_mpd_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
+    let parts: Vec<&str> = key.splitn(3, '.').collect();
+    if parts.len() != 3 {
+        return Err(StuidError::config(format!(
+            "invalid mpd config key: {key} (expected mpd.{{field}})"
+        )));
+    }
+
+    let field = parts[1];
+    match field {
+        "host" => cfg.mpd.host = as_string(key, value)?,
+        "port" => cfg.mpd.port = as_u32(key, value)?.try_into().map_err(|_| {
+            StuidError::config(format!("{key}: port must be 1-65535"))
+        })?,
+        "password" => cfg.mpd.password = as_opt_string(key, value)?,
+        "replay_gain" => {
+            let s = as_string(key, value)?;
+            cfg.mpd.replay_gain = match s.as_str() {
+                "auto" | "track" | "album" | "off" => s,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: invalid replay_gain {s} (expected auto|track|album|off)"
+                ))),
+            };
+        }
+        "crossfade_secs" => cfg.mpd.crossfade_secs = as_u32(key, value)?,
+        "mixramp_db" => cfg.mpd.mixramp_db = as_opt_f64(key, value)?,
+        "consume" => cfg.mpd.consume = as_bool(key, value)?,
+        "music_dir" => cfg.mpd.music_dir = as_opt_pathbuf(key, value)?,
+        _ => {
+            return Err(StuidError::config(format!("unknown mpd config key: {field}")));
+        }
+    }
 
     Ok(())
 }
@@ -432,6 +554,39 @@ fn as_pathbuf(key: &str, v: &Value) -> Result<std::path::PathBuf> {
         .ok_or_else(|| {
             StuidError::config(format!("{key}: expected path string, got {v}"))
         })
+}
+
+fn as_opt_string(key: &str, v: &Value) -> Result<Option<String>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    v.as_str()
+        .map(|s| Some(s.to_string()))
+        .ok_or_else(|| {
+            StuidError::config(format!("{key}: expected string or null, got {v}"))
+        })
+}
+
+fn as_opt_f64(key: &str, v: &Value) -> Result<Option<f64>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let num = v.as_f64()
+        .ok_or_else(|| {
+            StuidError::config(format!("{key}: expected number or null, got {v}"))
+        })?;
+    Ok(Some(num))
+}
+
+fn as_opt_pathbuf(key: &str, v: &Value) -> Result<Option<std::path::PathBuf>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let s = v.as_str()
+        .ok_or_else(|| {
+            StuidError::config(format!("{key}: expected path string or null, got {v}"))
+        })?;
+    Ok(Some(std::path::PathBuf::from(s)))
 }
 
 #[cfg(test)]

@@ -166,8 +166,51 @@ impl Skipper {
             from_end,
         };
         if let Ok(json) = serde_json::to_string(&wire) {
-            let _ = self.ipc_tx.send(json).await;
+            if let Err(e) = self.ipc_tx.send(json).await {
+                warn!(segment_type=seg_type, error=%e, "failed to send skip segment to TUI");
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test derive_series_id with plain imdb_id.
+    #[test]
+    fn test_derive_series_id_imdb() {
+        assert_eq!(derive_series_id("movie123", "tt12345"), "tt12345");
+    }
+
+    /// Test derive_series_id prefers non-episode imdb_id.
+    #[test]
+    fn test_derive_series_id_imdb_no_colon() {
+        assert_eq!(derive_series_id("foo:bar", "tt12345"), "tt12345");
+    }
+
+    /// Test derive_series_id falls back to entry_id with colon.
+    #[test]
+    fn test_derive_series_id_stremio_style() {
+        assert_eq!(derive_series_id("tt123456:1:5", ""), "tt123456");
+    }
+
+    /// Test derive_series_id with slash.
+    #[test]
+    fn test_derive_series_id_slash() {
+        assert_eq!(derive_series_id("tt123/season1/episode5", ""), "tt123");
+    }
+
+    /// Test derive_series_id with empty imdb and entry_id with colon.
+    #[test]
+    fn test_derive_series_id_fallback() {
+        assert_eq!(derive_series_id("tt123:1:1", ""), "tt123");
+    }
+
+    /// Test derive_series_id uses entry_id when no separators.
+    #[test]
+    fn test_derive_series_id_plain() {
+        assert_eq!(derive_series_id("abc123", ""), "abc123");
     }
 }
 

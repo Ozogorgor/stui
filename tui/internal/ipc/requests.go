@@ -927,3 +927,141 @@ func (c *Client) SetStoragePaths(req SetStoragePathsRequest) <-chan bool {
 	}()
 	return ch
 }
+
+// ── DSP requests ─────────────────────────────────────────────────────────────
+
+// DspStatusMsg is dispatched when GetDspStatus completes.
+type DspStatusMsg struct {
+	Enabled            bool   `json:"enabled"`
+	OutputSampleRate   uint32 `json:"output_sample_rate"`
+	ResampleEnabled    bool   `json:"resample_enabled"`
+	DsdToPcmEnabled    bool   `json:"dsd_to_pcm_enabled"`
+	ConvolutionEnabled bool   `json:"convolution_enabled"`
+	ConvolutionBypass  bool   `json:"convolution_bypass"`
+	Active             bool   `json:"active"`
+	Err                error
+}
+
+// GetDspStatus requests the current DSP pipeline status.
+func (c *Client) GetDspStatus() {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{"type": "get_dsp_status", "id": id})
+		raw := <-ch
+		var msg DspStatusMsg
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+				msg.Err = err
+			}
+		}
+		c.program.Send(msg)
+	}()
+}
+
+// SetDspConfig updates DSP configuration.
+func (c *Client) SetDspConfig(enabled *bool, outputSampleRate *uint32, upsampleRatio *uint32, filterType *string, resampleEnabled *bool, dsdToPcmEnabled *bool, outputMode *string, convolutionEnabled *bool, convolutionBypass *bool) {
+	go func() {
+		id := c.nextID()
+		payload := map[string]any{"type": "set_dsp_config", "id": id}
+		if enabled != nil {
+			payload["enabled"] = *enabled
+		}
+		if outputSampleRate != nil {
+			payload["output_sample_rate"] = *outputSampleRate
+		}
+		if upsampleRatio != nil {
+			payload["upsample_ratio"] = *upsampleRatio
+		}
+		if filterType != nil {
+			payload["filter_type"] = *filterType
+		}
+		if resampleEnabled != nil {
+			payload["resample_enabled"] = *resampleEnabled
+		}
+		if dsdToPcmEnabled != nil {
+			payload["dsd_to_pcm_enabled"] = *dsdToPcmEnabled
+		}
+		if outputMode != nil {
+			payload["output_mode"] = *outputMode
+		}
+		if convolutionEnabled != nil {
+			payload["convolution_enabled"] = *convolutionEnabled
+		}
+		if convolutionBypass != nil {
+			payload["convolution_bypass"] = *convolutionBypass
+		}
+		ch := c.sendWithID(id, payload)
+		raw := <-ch
+		if raw.Err != nil {
+			c.program.Send(StatusMsg{Text: "DSP config failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.program.Send(StatusMsg{Text: fmt.Sprintf("DSP config failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			c.program.Send(StatusMsg{Text: "DSP config updated"})
+		}
+	}()
+}
+
+// LoadConvolutionFilter loads a convolution filter from file.
+func (c *Client) LoadConvolutionFilter(path string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "load_convolution_filter",
+			"id":   id,
+			"path": path,
+		})
+		raw := <-ch
+		if raw.Err != nil {
+			c.program.Send(StatusMsg{Text: "Load filter failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.program.Send(StatusMsg{Text: fmt.Sprintf("Load filter failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			c.program.Send(StatusMsg{Text: "Convolution filter loaded"})
+		}
+	}()
+}
+
+// BindDspToMpd binds DSP to MPD audio output.
+func (c *Client) BindDspToMpd() {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{"type": "bind_dsp_to_mpd", "id": id})
+		raw := <-ch
+		if raw.Err != nil {
+			c.program.Send(StatusMsg{Text: "Bind DSP to MPD failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.program.Send(StatusMsg{Text: fmt.Sprintf("Bind DSP to MPD failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			var resp struct {
+				Success bool   `json:"success"`
+				Config  string `json:"config"`
+			}
+			if err := json.Unmarshal(raw.Raw, &resp); err != nil {
+				c.program.Send(StatusMsg{Text: "Bind DSP to MPD: parse error"})
+			} else if resp.Success {
+				c.program.Send(StatusMsg{Text: "DSP bound to MPD successfully"})
+			} else {
+				c.program.Send(StatusMsg{Text: "DSP bind to MPD failed"})
+			}
+		}
+	}()
+}
+
+// DspBoundToMpdMsg is dispatched when BindDspToMpd completes.
+type DspBoundToMpdMsg struct {
+	Success bool
+	Config  string
+}

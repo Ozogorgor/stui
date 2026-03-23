@@ -37,6 +37,7 @@ mod skipper;
 mod watchhistory;
 mod mediacache;
 mod ipc_batcher;
+mod dsp;
 pub mod storage;
 mod auth;
 
@@ -46,7 +47,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, info, warn};
 
 use catalog::Catalog;
@@ -56,6 +57,8 @@ use config::ConfigManager;
 use events::EventBus;
 use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
 use mpd_bridge::MpdBridge;
+use dsp::{DspPipeline, OutputTarget};
+use dsp::pipewire::PipeWireProcessor;
 use providers::{HealthRegistry, StreamBenchmarker};
 use skipper::{Skipper, SkipperStore};
 use storage::aria2_translator::Aria2Translator;
@@ -195,6 +198,16 @@ async fn main() -> Result<()> {
         None
     };
 
+    // ── DSP pipeline ──────────────────────────────────────────────────────────
+    let dsp_pipeline: Option<Arc<RwLock<DspPipeline>>> = if cfg.dsp.enabled {
+        let pipeline = dsp::DspPipeline::new(cfg.dsp.clone());
+        info!(sample_rate = pipeline.output_sample_rate(), "DSP pipeline initialized");
+        Some(Arc::new(RwLock::new(pipeline)))
+    } else {
+        info!("DSP disabled (set dsp.enabled to enable)");
+        None
+    };
+
     // ── Skip detection ────────────────────────────────────────────────────
     let skipper = Skipper::new(
         cfg.skipper.clone(),
@@ -245,6 +258,7 @@ async fn main() -> Result<()> {
                 &catalog,
                 &player,
                 mpd_bridge.as_ref(),
+                dsp_pipeline.as_ref(),
                 &health,
                 &config,
                 &skipper,
@@ -274,6 +288,7 @@ async fn main() -> Result<()> {
             &catalog,
             &player,
             mpd_bridge.as_ref(),
+            dsp_pipeline.as_ref(),
             &health,
             &config,
             &skipper,
@@ -297,6 +312,7 @@ async fn run_ipc_loop<R, W>(
     catalog:   &Arc<Catalog>,
     player:    &player::PlayerBridge,
     mpd:       Option<&MpdBridge>,
+    dsp:       Option<&Arc<RwLock<DspPipeline>>>,
     health:    &Arc<HealthRegistry>,
     config:    &Arc<ConfigManager>,
     skipper:   &Arc<Skipper>,
@@ -454,7 +470,7 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, watch_history, media_cache, &bench, &trace, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &line).await;
                         send_wire(&mut writer, &resp.to_wire()?).await?;
                     }
                 }
@@ -577,6 +593,7 @@ async fn handle_line(
     config: &Arc<ConfigManager>,
     player: &player::PlayerBridge,
     mpd: Option<&MpdBridge>,
+    dsp: Option<&Arc<RwLock<DspPipeline>>>,
     watch_history: &Arc<watchhistory::WatchHistoryStore>,
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
@@ -786,6 +803,92 @@ async fn handle_line(
 
         // GetMpdOutputs is handled earlier in the IPC loop (needs async mpd.outputs()).
         Request::GetMpdOutputs => Response::error(None, ErrorCode::InvalidRequest, "use get_mpd_outputs message type".to_string()),
+
+        // ── DSP requests ─────────────────────────────────────────────────────────
+        Request::GetDspStatus => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let pipeline = d.read().await;
+            let cfg = pipeline.config().await;
+            Response::DspStatus(ipc::DspStatusResponse {
+                enabled: cfg.enabled,
+                output_sample_rate: cfg.output_sample_rate,
+                resample_enabled: cfg.resample_enabled,
+                dsd_to_pcm_enabled: cfg.dsd_to_pcm_enabled,
+                convolution_enabled: cfg.convolution_enabled,
+                convolution_bypass: cfg.convolution_bypass,
+                active: pipeline.is_active(),
+            })
+        }
+        Request::SetDspConfig(r) => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let mut pipeline = d.write().await;
+            let mut cfg = pipeline.config().await;
+            if let Some(v) = r.enabled { cfg.enabled = v; }
+            if let Some(v) = r.output_sample_rate { cfg.output_sample_rate = v; }
+            if let Some(v) = r.upsample_ratio { cfg.upsample_ratio = v; }
+            if let Some(v) = r.filter_type {
+                cfg.filter_type = match v.as_str() {
+                    "fast" => dsp::FilterType::Fast,
+                    "slow" => dsp::FilterType::Slow,
+                    _ => dsp::FilterType::Synchronous,
+                };
+            }
+            if let Some(v) = r.resample_enabled { cfg.resample_enabled = v; }
+            if let Some(v) = r.dsd_to_pcm_enabled { cfg.dsd_to_pcm_enabled = v; }
+            if let Some(v) = r.output_mode {
+                cfg.output_mode = match v.as_str() {
+                    "dsd" => dsp::OutputMode::Dsd,
+                    "dsd_to_pcm" => dsp::OutputMode::DsdToPcm,
+                    _ => dsp::OutputMode::Pcm,
+                };
+            }
+            if let Some(v) = r.convolution_enabled { cfg.convolution_enabled = v; }
+            if let Some(v) = r.convolution_bypass { cfg.convolution_bypass = v; }
+            if let Some(v) = r.buffer_size {
+                if v == 0 {
+                    return Response::error(None, ErrorCode::InvalidRequest, "buffer_size must be non-zero".to_string());
+                }
+                cfg.buffer_size = v;
+            }
+            pipeline.update_config(cfg).await;
+            Response::DspConfigUpdated { success: true }
+        }
+        Request::LoadConvolutionFilter(r) => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let mut pipeline = d.write().await;
+            match pipeline.load_convolution_filter(&r.path) {
+                Ok(()) => Response::ConvolutionFilterLoaded { success: true },
+                Err(e) => Response::error(None, ErrorCode::Internal, e),
+            }
+        }
+        Request::BindDspToMpd => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let cfg = d.read().await.config().await;
+            if cfg.output_target != OutputTarget::Mpd {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP output_target is not set to 'mpd'".to_string());
+            }
+            // Generate MPD config for PipeWire output
+            let pw_config = dsp::pipewire::PipeWireConfig::default();
+            let processor = match PipeWireProcessor::new(
+                Arc::new(RwLock::new(cfg.clone())),
+                pw_config,
+            ) {
+                Ok(p) => p,
+                Err(e) => return Response::error(None, ErrorCode::Internal, e),
+            };
+            match processor.bind_mpd("") {
+                Ok(config) => Response::DspBoundToMpd { success: true, config },
+                Err(e) => Response::error(None, ErrorCode::Internal, e),
+            }
+        }
     }
 }
 

@@ -144,3 +144,104 @@ pub fn detect_segment(
         end: ends[mid],
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skipper::fingerprint::Fingerprint;
+
+    /// Test that Segment duration is computed correctly.
+    #[test]
+    fn test_segment_duration() {
+        let seg = Segment {
+            start: 10.0,
+            end: 30.0,
+        };
+        assert!((seg.duration() - 20.0).abs() < 0.001);
+    }
+
+    /// Test Segment with zero duration.
+    #[test]
+    fn test_segment_zero_duration() {
+        let seg = Segment {
+            start: 5.0,
+            end: 5.0,
+        };
+        assert!((seg.duration() - 0.0).abs() < 0.001);
+    }
+
+    /// Test a perfect match between two identical fingerprints.
+    #[test]
+    fn test_find_common_identical() {
+        let a = Fingerprint {
+            values: vec![0, 0, 0, 0, 0, 0, 0, 0],
+            scan_secs: 8.0,
+        };
+        let b = a.clone();
+
+        let result = find_common(&a, &b, 0.0, 0.0, 1.0, 10.0, 0.85);
+        assert!(result.is_some());
+
+        let (seg_a, seg_b) = result.unwrap();
+        assert!(seg_a.start < seg_a.end);
+        assert!(seg_b.start < seg_b.end);
+    }
+
+    /// Test no match for completely different fingerprints.
+    #[test]
+    fn test_find_common_no_match() {
+        let a = Fingerprint {
+            values: vec![0u32; 10],
+            scan_secs: 10.0,
+        };
+        let b = Fingerprint {
+            values: vec![u32::MAX; 10],
+            scan_secs: 10.0,
+        };
+
+        let result = find_common(&a, &b, 0.0, 0.0, 1.0, 10.0, 0.85);
+        assert!(result.is_none());
+    }
+
+    /// Test that extremely short fingerprints are rejected.
+    #[test]
+    fn test_find_common_too_short() {
+        let a = Fingerprint {
+            values: vec![0, 1, 2],
+            scan_secs: 3.0,
+        };
+        let b = a.clone();
+
+        let result = find_common(&a, &b, 0.0, 0.0, 1.0, 10.0, 0.85);
+        assert!(result.is_none());
+    }
+
+    /// Test detect_segment with single other episode.
+    #[test]
+    fn test_detect_segment_single_other() {
+        let current = Fingerprint {
+            values: vec![0u32; 10],
+            scan_secs: 10.0,
+        };
+        let other = current.clone();
+
+        let result = detect_segment(&current, 0.0, &[(other, 0.0)], 1.0, 10.0, 0.85);
+        assert!(result.is_some());
+    }
+
+    /// Test detect_segment returns None when no matches.
+    #[test]
+    fn test_detect_segment_no_matches() {
+        let current = Fingerprint {
+            values: vec![0u32; 10],
+            scan_secs: 10.0,
+        };
+        let other = Fingerprint {
+            values: vec![u32::MAX; 10],
+            scan_secs: 10.0,
+        };
+
+        let result = detect_segment(&current, 0.0, &[(other, 0.0)], 1.0, 10.0, 0.85);
+        assert!(result.is_none());
+    }
+}

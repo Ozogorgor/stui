@@ -78,20 +78,20 @@ func NewNowPlaying(msg ipc.PlayerStartedMsg) *NowPlayingState {
 func (n *NowPlayingState) Update(msg ipc.PlayerProgressMsg) {
 	n.Position = msg.Position
 	if msg.Duration > 0 {
-		n.Duration    = msg.Duration
+		n.Duration = msg.Duration
 		n.HasDuration = true
 	}
-	n.Paused       = msg.Paused
+	n.Paused = msg.Paused
 	n.CachePercent = msg.CachePercent
-	n.Buffering    = false
+	n.Buffering = false
 
 	// Extended fields (populated when runtime sends them)
 	if msg.Volume > 0 {
 		n.Volume = msg.Volume
 	}
-	n.Muted          = msg.Muted
-	n.SubtitleDelay  = msg.SubtitleDelay
-	n.AudioDelay     = msg.AudioDelay
+	n.Muted = msg.Muted
+	n.SubtitleDelay = msg.SubtitleDelay
+	n.AudioDelay = msg.AudioDelay
 	if msg.AudioLabel != "" {
 		n.AudioLabel = msg.AudioLabel
 	}
@@ -105,7 +105,7 @@ func (n *NowPlayingState) Update(msg ipc.PlayerProgressMsg) {
 		n.Protocol = msg.Protocol
 	}
 	n.ActiveCandidate = msg.ActiveCandidate
-	n.CandidateCount  = msg.CandidateCount
+	n.CandidateCount = msg.CandidateCount
 }
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
@@ -244,7 +244,7 @@ func renderBuffering(np *NowPlayingState, w int) string {
 		Width(w - 2)
 
 	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b"))
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
 	reason := "Pre-roll buffer"
 	if np.BufferReason == "stall_guard" {
@@ -252,7 +252,7 @@ func renderBuffering(np *NowPlayingState, w int) string {
 	}
 
 	speedStr := fmt.Sprintf("%.1f MB/s", np.BufferSpeedMbps)
-	etaStr   := ""
+	etaStr := ""
 	if np.BufferEta > 0 {
 		etaStr = fmt.Sprintf("  ETA %ds", int(np.BufferEta))
 	}
@@ -266,10 +266,10 @@ func renderBuffering(np *NowPlayingState, w int) string {
 	if barW < 4 {
 		barW = 4
 	}
-	bar    := renderProgressBar(np.BufferFill/100.0, barW)
-	pct    := fmt.Sprintf("%3.0f%%", np.BufferFill)
+	bar := renderProgressBar(np.BufferFill/100.0, barW)
+	pct := fmt.Sprintf("%3.0f%%", np.BufferFill)
 	target := fmt.Sprintf("target %ds video", int(np.BufferPreRoll))
-	row2   := bar + " " + accentStyle.Render(pct) + "  " + dimStyle.Render(target)
+	row2 := bar + " " + accentStyle.Render(pct) + "  " + dimStyle.Render(target)
 
 	return boxStyle.Render(row1+"\n"+row2) + "\n"
 }
@@ -284,7 +284,7 @@ func renderProgressBar(fraction float64, width int) string {
 	if filled > width {
 		filled = width
 	}
-	fill  := strings.Repeat("█", filled)
+	fill := strings.Repeat("█", filled)
 	empty := strings.Repeat("░", width-filled)
 	return lipgloss.NewStyle().Foreground(theme.T.Accent()).Render(fill) +
 		lipgloss.NewStyle().Foreground(theme.T.Border()).Render(empty)
@@ -317,36 +317,58 @@ func padBetween(left, right string, width int) string {
 // MpdNowPlayingState tracks live audio playback state from MPD.
 // Populated from ipc.MpdStatusMsg push events.
 type MpdNowPlayingState struct {
-	State       string  // "play" | "pause" | "stop"
+	State       string // "play" | "pause" | "stop"
 	Title       string
 	Artist      string
 	Album       string
 	Elapsed     float64
 	Duration    float64
 	Volume      uint32
-	Bitrate     uint32  // kbps
-	AudioFormat string  // raw MPD format "192000:24:2"
-	ReplayGain  string  // off|track|album|auto
+	Bitrate     uint32 // kbps
+	AudioFormat string // raw MPD format "192000:24:2"
+	ReplayGain  string // off|track|album|auto
 	Crossfade   uint32
 	Consume     bool
 	Random      bool
 	QueueLength uint32
 }
 
+// DspState tracks live DSP pipeline state.
+// Populated from ipc.DspStatusMsg responses.
+type DspState struct {
+	Enabled            bool
+	OutputSampleRate   uint32
+	ResampleEnabled    bool
+	DsdToPcmEnabled    bool
+	ConvolutionEnabled bool
+	ConvolutionBypass  bool
+	Active             bool
+}
+
+func (d *DspState) Update(msg ipc.DspStatusMsg) {
+	d.Enabled = msg.Enabled
+	d.OutputSampleRate = msg.OutputSampleRate
+	d.ResampleEnabled = msg.ResampleEnabled
+	d.DsdToPcmEnabled = msg.DsdToPcmEnabled
+	d.ConvolutionEnabled = msg.ConvolutionEnabled
+	d.ConvolutionBypass = msg.ConvolutionBypass
+	d.Active = msg.Active
+}
+
 func (m *MpdNowPlayingState) Update(msg ipc.MpdStatusMsg) {
-	m.State       = msg.State
-	m.Title       = msg.SongTitle
-	m.Artist      = msg.SongArtist
-	m.Album       = msg.SongAlbum
-	m.Elapsed     = msg.Elapsed
-	m.Duration    = msg.Duration
-	m.Volume      = msg.Volume
-	m.Bitrate     = msg.Bitrate
+	m.State = msg.State
+	m.Title = msg.SongTitle
+	m.Artist = msg.SongArtist
+	m.Album = msg.SongAlbum
+	m.Elapsed = msg.Elapsed
+	m.Duration = msg.Duration
+	m.Volume = msg.Volume
+	m.Bitrate = msg.Bitrate
 	m.AudioFormat = msg.AudioFormat
-	m.ReplayGain  = msg.ReplayGain
-	m.Crossfade   = msg.Crossfade
-	m.Consume     = msg.Consume
-	m.Random      = msg.Random
+	m.ReplayGain = msg.ReplayGain
+	m.Crossfade = msg.Crossfade
+	m.Consume = msg.Consume
+	m.Random = msg.Random
 	m.QueueLength = msg.QueueLength
 }
 
@@ -422,11 +444,11 @@ func RenderMpdNowPlaying(m *MpdNowPlayingState, w int) string {
 		BorderForeground(theme.T.Accent()).
 		Width(w - 2)
 
-	titleStyle  := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
+	titleStyle := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
 	artistStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	warnStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b"))
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b"))
 
 	// ── Row 1: state icon + title + elapsed ──────────────────────────────
 	icon := "▶"
@@ -477,14 +499,14 @@ func RenderMpdNowPlaying(m *MpdNowPlayingState, w int) string {
 	if barW < 4 {
 		barW = 4
 	}
-	bar  := renderProgressBar(fraction, barW)
-	pct  := fmt.Sprintf("%3.0f%%", fraction*100)
+	bar := renderProgressBar(fraction, barW)
+	pct := fmt.Sprintf("%3.0f%%", fraction*100)
 	row3 := bar + " " + accentStyle.Render(pct) + "  " + accentStyle.Render(audioFmt)
 
 	// ── Row 4: playback settings ──────────────────────────────────────────
 	volStr := fmt.Sprintf("Vol: %d%%", m.Volume)
-	rgStr  := "RG: " + m.ReplayGain
-	xfStr  := ""
+	rgStr := "RG: " + m.ReplayGain
+	xfStr := ""
 	if m.Crossfade > 0 {
 		xfStr = fmt.Sprintf("  XFade: %ds", m.Crossfade)
 	}
@@ -521,6 +543,86 @@ func RenderMpdNowPlaying(m *MpdNowPlayingState, w int) string {
 	return boxStyle.Render(strings.Join(rows, "\n")) + "\n"
 }
 
+// RenderDspStatus renders the DSP pipeline status panel.
+//
+//	╭─────────────────────────────────────────────────────────────────────╮
+//	│  🎛 DSP Pipeline                                    [ON]          │
+//	│     Out: 192kHz  ↑4×  DSD→PCM: on  Convolution: on  Bypass: off  │
+//	│     d toggle  c convolve  b bypass  r reset                         │
+//	╰─────────────────────────────────────────────────────────────────────╯
+func RenderDspStatus(d *DspState, w int) string {
+	if d == nil || w < 30 {
+		return ""
+	}
+
+	inner := w - 4
+	if inner < 20 {
+		inner = 20
+	}
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Accent()).
+		Width(w - 2)
+
+	titleStyle := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
+	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	onStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#98c379"))
+	offStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
+
+	// ── Row 1: title + status ───────────────────────────────────────────
+	icon := "🎛"
+	statusStr := "OFF"
+	statusRendered := offStyle.Render(statusStr)
+	if d.Enabled {
+		statusStr = "ON"
+		statusRendered = onStyle.Render(statusStr)
+	}
+	row1 := padBetween(
+		icon+"  DSP Pipeline",
+		statusRendered,
+		inner,
+	)
+
+	// ── Row 2: details ───────────────────────────────────────────────────
+	rateStr := fmt.Sprintf("%dkHz", d.OutputSampleRate/1000)
+	upStr := "↑off"
+	if d.ResampleEnabled {
+		upStr = "↑4×"
+	}
+	dsdStr := "DSD→PCM: off"
+	if d.DsdToPcmEnabled {
+		dsdStr = onStyle.Render("DSD→PCM: on")
+	} else {
+		dsdStr = dimStyle.Render("DSD→PCM: off")
+	}
+	convStr := "Conv: off"
+	if d.ConvolutionEnabled {
+		convStr = onStyle.Render("Conv: on")
+	} else {
+		convStr = dimStyle.Render("Conv: off")
+	}
+	bpStr := "Bypass: off"
+	if d.ConvolutionBypass {
+		bpStr = offStyle.Render("Bypass: on")
+	} else {
+		bpStr = dimStyle.Render("Bypass: off")
+	}
+	row2 := titleStyle.Render("  " + rateStr + "  " + upStr + "  " + dsdStr + "  " + convStr + "  " + bpStr)
+
+	// ── Row 3: keybind hints ──────────────────────────────────────────────
+	hints := []string{
+		"d toggle DSP",
+		"c convolve",
+		"b bypass",
+		"r reset",
+	}
+	row3 := dimStyle.Render(strings.Join(hints, "  "))
+
+	return boxStyle.Render(row1+"\n"+row2+"\n"+row3) + "\n"
+}
+
 // RenderSyncOverlay renders a right-aligned pill showing the current
 // subtitle or audio delay after the user adjusts it.
 //
@@ -544,8 +646,8 @@ func RenderSyncOverlay(isAudio bool, delaySecs float64, w int) string {
 		delayStr = fmt.Sprintf("%dms", delayMs)
 	}
 
-	bg   := lipgloss.NewStyle().Foreground(theme.T.Bg()).Background(theme.T.Accent()).Bold(true)
-	dim  := lipgloss.NewStyle().Foreground(theme.T.Bg()).Background(theme.T.Accent())
+	bg := lipgloss.NewStyle().Foreground(theme.T.Bg()).Background(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.Bg()).Background(theme.T.Accent())
 	pill := bg.Render(" "+label+"  "+delayStr) + dim.Render(hints+" ")
 
 	return lipgloss.NewStyle().Width(w).Align(lipgloss.Right).Render(pill)

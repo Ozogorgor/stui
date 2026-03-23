@@ -47,6 +47,7 @@ pub use v1::{
     ClearMediaCacheRequest,
     DetailEntry,
 
+    DspStatusResponse,
     ErrorCode,
 
     ErrorResponse,
@@ -65,6 +66,7 @@ pub use v1::{
     GridUpdateMsg,
     // Registry types
     InstallPluginRequest,
+    LoadConvolutionFilterRequest,
     LoadPluginRequest,
     MarkWatchHistoryCompletedRequest,
     MediaCacheAllResponse,
@@ -108,9 +110,6 @@ pub use v1::{
     RankStreamsRequest,
     RankStreamsResponse,
     RankedStreamWire,
-    // Stream policy types
-    SetStreamPolicyRequest,
-    StreamPolicyResponse,
     RegistryEntryWire,
     RegistryIndexResponse,
     RemoveWatchHistoryEntryRequest,
@@ -124,12 +123,17 @@ pub use v1::{
     SearchResponse,
     SetConfigRequest,
 
+    // DSP types
+    SetDspConfigRequest,
     // Plugin repo types
     SetPluginReposRequest,
     // Storage paths types
     SetStoragePathsRequest,
+    // Stream policy types
+    SetStreamPolicyRequest,
     StoragePathsResponse,
     StreamInfoWire,
+    StreamPolicyResponse,
     StreamPreferencesWire,
     StreamsResponse,
     SubtitleTrack,

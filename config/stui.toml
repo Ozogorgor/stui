@@ -63,6 +63,21 @@ max_candidates    = 10
 auto_fallback     = true
 benchmark_streams = false
 
+# ── DSP / Audio Processing ───────────────────────────────────────────────────
+
+[dsp]
+enabled           = false          # Enable DSP pipeline
+output_sample_rate = 192000        # Target sample rate (96000, 192000, 384000, 768000)
+upsample_ratio    = 4              # Upsampling ratio (1, 2, 4, 8, 16)
+filter_type       = "synchronous"  # fast | slow | synchronous
+resample_enabled  = true           # Enable resampling
+dsd_to_pcm_enabled = false          # Convert DSD to PCM
+dsd_output_rate   = 352800         # DSD→PCM output rate
+output_mode       = "pcm"           # pcm | dsd | dsd_to_pcm
+output_target     = "pipewire"     # pipewire | roon | mpd
+buffer_size       = 4096            # Processing buffer size
+# convolution_filter_path = "~/.stui/filters/room-correction.wav"
+
 # ── Subtitles ─────────────────────────────────────────────────────────────────
 
 [subtitles]

@@ -42,6 +42,7 @@ pub mod streamer;
 pub mod storage;
 pub mod watchhistory;
 pub mod mediacache;
+pub mod dsp;
 
 // `pipeline` ties the stages together into a single orchestrated flow.
 pub mod pipeline;

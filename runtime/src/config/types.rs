@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+#[allow(unused_imports)]
+use crate::dsp::DspConfig;
+
 /// A string value that should be redacted from logs and config exports.
 /// Used for API keys, passwords, and other sensitive data.
 #[derive(Clone, Default)]
@@ -149,6 +152,20 @@ pub struct RuntimeConfig {
     /// Storage directories for different media types.
     #[serde(default)]
     pub storage: StorageConfig,
+
+    /// DSP audio processing configuration.
+    #[serde(default)]
+    pub dsp: DspConfig,
+
+    /// Enable debug mode: verbose IPC tracing and debug-level logs.
+    /// Changing this at runtime enables IPC tracing immediately;
+    /// full log-level change takes effect on restart.
+    #[serde(default)]
+    pub debug_mode: bool,
+
+    /// Run built-in self-tests at startup to verify subsystem health.
+    #[serde(default)]
+    pub tests_enabled: bool,
 }
 
 /// Storage directory configuration for different media types.
@@ -523,6 +540,9 @@ impl Default for RuntimeConfig {
             plugin_repos: defaults::plugin_repos(),
             plugins: std::collections::HashMap::new(),
             storage: StorageConfig::default(),
+            dsp: DspConfig::default(),
+            debug_mode: false,
+            tests_enabled: false,
         }
     }
 }
