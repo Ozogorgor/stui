@@ -139,7 +139,7 @@ impl ConvolutionEngine {
     /// calls produce seamless audio (no clicks or discontinuities at block
     /// boundaries).
     pub fn process(&mut self, samples: &[f32]) -> Vec<f32> {
-        if !self.is_enabled() || self.filter_fft.is_empty() {
+        if !self.is_enabled() {
             return samples.to_vec();
         }
         self.ola_process(samples)
@@ -244,6 +244,9 @@ impl ConvolutionEngine {
 }
 
 /// Load a 32-bit float WAV file. Returns raw f32 samples.
+///
+/// Scans all RIFF chunks to locate `fmt ` and `data`. Validates that the file
+/// uses IEEE float format (AudioFormat = 3) and 32-bit samples before reading.
 fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
     let mut file = File::open(path)
         .map_err(|e| format!("failed to open filter file: {e}"))?;
@@ -257,31 +260,61 @@ fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
         ));
     }
 
-    let mut header = [0u8; 44];
-    file.read_exact(&mut header)
+    // Read the 12-byte RIFF/WAVE header
+    let mut riff = [0u8; 12];
+    file.read_exact(&mut riff)
         .map_err(|e| format!("failed to read WAV header: {e}"))?;
-
-    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+    if &riff[0..4] != b"RIFF" || &riff[8..12] != b"WAVE" {
         return Err("not a valid WAV file".into());
     }
 
-    let mut data_size = 0usize;
+    // Scan chunks to find fmt and data
+    let mut audio_format: Option<u16> = None;
+    let mut bits_per_sample: Option<u16> = None;
+    let mut data_size: Option<usize> = None;
+
     loop {
         let mut ch = [0u8; 8];
-        if file.read(&mut ch).map_err(|e| format!("chunk read: {e}"))? == 0 {
-            break;
+        match file.read(&mut ch).map_err(|e| format!("chunk read: {e}"))? {
+            0 => break,
+            n if n < 8 => return Err("truncated chunk header".into()),
+            _ => {}
         }
         let csz = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as usize;
-        if &ch[0..4] == b"data" {
-            data_size = csz;
-            break;
+
+        if &ch[0..4] == b"fmt " {
+            // Read fmt chunk (at least 16 bytes for PCM/float)
+            if csz < 16 {
+                return Err("fmt chunk too small".into());
+            }
+            let mut fmt = vec![0u8; csz];
+            file.read_exact(&mut fmt)
+                .map_err(|e| format!("failed to read fmt chunk: {e}"))?;
+            audio_format    = Some(u16::from_le_bytes([fmt[0], fmt[1]]));
+            bits_per_sample = Some(u16::from_le_bytes([fmt[14], fmt[15]]));
+        } else if &ch[0..4] == b"data" {
+            data_size = Some(csz);
+            break; // data chunk follows immediately
+        } else {
+            // Skip unknown/unneeded chunks (pad to even size per RIFF spec)
+            let skip = csz + (csz & 1);
+            file.seek_relative(skip as i64).map_err(|e| e.to_string())?;
         }
-        file.seek_relative(csz as i64).map_err(|e| e.to_string())?;
     }
 
-    if data_size == 0 {
-        return Err("no audio data found in WAV file".into());
+    match audio_format {
+        Some(3) => {} // IEEE_FLOAT — correct
+        Some(1) => return Err("WAV file is PCM integer format; a 32-bit float WAV is required".into()),
+        Some(f) => return Err(format!("unsupported WAV AudioFormat {f}; 32-bit float (3) required")),
+        None    => return Err("WAV file has no fmt chunk".into()),
     }
+    if bits_per_sample != Some(32) {
+        return Err(format!(
+            "WAV file has {} bits per sample; 32-bit float required",
+            bits_per_sample.unwrap_or(0)
+        ));
+    }
+    let data_size = data_size.ok_or("no audio data found in WAV file")?;
 
     let mut bytes = vec![0u8; data_size];
     file.read_exact(&mut bytes)
