@@ -566,7 +566,6 @@ func RenderDspStatus(d *DspState, w int) string {
 		Width(w - 2)
 
 	titleStyle := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
-	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
 	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	onStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#98c379"))
 	offStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06c75"))
