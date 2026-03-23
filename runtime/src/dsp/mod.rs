@@ -26,8 +26,10 @@ pub mod dsd;
 pub mod convolution;
 pub mod pipewire;
 pub mod raat;
+pub mod output;
 
 pub use config::{DspConfig, DspStage, FilterType, OutputMode, OutputTarget};
+pub use output::{AudioOutput, OutputError, open_output};
 pub use pipeline::DspPipeline;
 
 mod pipeline {
