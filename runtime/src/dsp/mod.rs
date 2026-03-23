@@ -24,7 +24,6 @@ pub mod config;
 pub mod resample;
 pub mod dsd;
 pub mod convolution;
-pub mod pipewire;
 pub mod raat;
 pub mod output;
 

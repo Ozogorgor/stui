@@ -58,7 +58,6 @@ use events::EventBus;
 use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
 use mpd_bridge::MpdBridge;
 use dsp::{DspPipeline, OutputTarget};
-use dsp::pipewire::PipeWireProcessor;
 use providers::{HealthRegistry, StreamBenchmarker};
 use skipper::{Skipper, SkipperStore};
 use storage::aria2_translator::Aria2Translator;
@@ -876,18 +875,8 @@ async fn handle_line(
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP output_target is not set to 'mpd'".to_string());
             }
             // Generate MPD config for PipeWire output
-            let pw_config = dsp::pipewire::PipeWireConfig::default();
-            let processor = match PipeWireProcessor::new(
-                Arc::new(RwLock::new(cfg.clone())),
-                pw_config,
-            ) {
-                Ok(p) => p,
-                Err(e) => return Response::error(None, ErrorCode::Internal, e),
-            };
-            match processor.bind_mpd("") {
-                Ok(config) => Response::DspBoundToMpd { success: true, config },
-                Err(e) => Response::error(None, ErrorCode::Internal, e),
-            }
+            let mpd_config = "audio_output {\n    type \"pipewire\"\n    name \"STUI DSP\"\n}\n".to_string();
+            Response::DspBoundToMpd { success: true, config: mpd_config }
         }
     }
 }
