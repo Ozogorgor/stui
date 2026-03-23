@@ -441,10 +441,21 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 "pipewire" => crate::dsp::OutputTarget::PipeWire,
                 "roon_raat" => crate::dsp::OutputTarget::RoonRaat,
                 "mpd" => crate::dsp::OutputTarget::Mpd,
+                "alsa" => crate::dsp::OutputTarget::Alsa,
                 _ => return Err(StuidError::config(format!(
-                    "{key}: invalid output_target {s} (expected pipewire|roon_raat|mpd)"
+                    "{key}: invalid output_target {s} (expected pipewire|roon_raat|mpd|alsa)"
                 ))),
             };
+        }
+        "alsa_device" => cfg.dsp.alsa_device = as_opt_string(key, value)?,
+        "pipewire_role" => {
+            let s = as_string(key, value)?;
+            match s.as_str() {
+                "Music" | "Production" => cfg.dsp.pipewire_role = s,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: invalid pipewire_role {s} (expected Music|Production)"
+                ))),
+            }
         }
         "convolution_filter_path" => cfg.dsp.convolution_filter_path = as_opt_string(key, value)?,
         "convolution_enabled" => cfg.dsp.convolution_enabled = as_bool(key, value)?,

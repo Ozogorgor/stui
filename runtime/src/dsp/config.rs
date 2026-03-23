@@ -76,12 +76,14 @@ impl Default for OutputMode {
 }
 
 /// DSP output targets.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputTarget {
     PipeWire,
     RoonRaat,
     Mpd,
+    /// Direct ALSA hardware output (hw: device, no OS mixer).
+    Alsa,
 }
 
 impl Default for OutputTarget {
@@ -121,6 +123,10 @@ pub struct DspConfig {
     pub convolution_bypass: bool,
     /// Processing buffer size (samples).
     pub buffer_size: usize,
+    /// ALSA hardware device string (e.g. "hw:0,0"). None → "hw:0,0".
+    pub alsa_device: Option<String>,
+    /// PipeWire stream role ("Music" | "Production"). Production requests bypass OS resampler.
+    pub pipewire_role: String,
 }
 
 impl Default for DspConfig {
@@ -140,6 +146,8 @@ impl Default for DspConfig {
             convolution_enabled: false,
             convolution_bypass: true,
             buffer_size: 4096,
+            alsa_device: None,
+            pipewire_role: "Music".to_string(),
         }
     }
 }
