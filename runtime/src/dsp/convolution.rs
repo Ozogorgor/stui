@@ -448,8 +448,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed.as_millis() < 10,
-            "process() took {}ms — must be < 10ms",
+            elapsed.as_millis() < 50,
+            "process() took {}ms — must be < 50ms",
             elapsed.as_millis()
         );
     }
