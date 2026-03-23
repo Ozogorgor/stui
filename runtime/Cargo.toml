@@ -69,6 +69,7 @@ rustfft           = "6"
 alsa              = "0.11"
 pipewire          = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs", tag = "v0.9.2" }
 crossbeam-channel = "0.5"
+nix               = "0.29"
 
 # WASM host — only compiled in with --features wasm-host
 wasmtime      = { version = "22", optional = true, features = ["async", "cranelift"] }
