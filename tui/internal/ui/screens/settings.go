@@ -1134,7 +1134,7 @@ func defaultCategories() []settingCategory {
 				{
 					label:       "ALSA device",
 					key:         "dsp.alsa_device",
-					kind:        settingPath,
+					kind:        settingString,
 					description: "ALSA hardware device for bit-perfect output (e.g. hw:0,0). Leave empty to use default.",
 				},
 				{

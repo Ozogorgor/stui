@@ -44,13 +44,6 @@ mod pipeline {
         resample::Resampler,
     };
 
-    /// Processing stages in the DSP pipeline.
-    pub enum DspStageEnum {
-        Resample(Resampler),
-        DsdToPcm(DsdConverter),
-        Convolution(ConvolutionEngine),
-    }
-
     /// Main DSP processing pipeline.
     pub struct DspPipeline {
         config:        Arc<RwLock<DspConfig>>,

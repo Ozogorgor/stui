@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use rubato::{
-    Async, FixedAsync, FixedSync, Fft, PolynomialDegree, Resampler as RubatoResampler,
+    Async, FixedAsync, FixedSync, Fft, PolynomialDegree, Resampler as _,
     SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
@@ -24,17 +24,6 @@ fn sinc_params_high() -> SincInterpolationParameters {
         f_cutoff: 0.95,
         interpolation: SincInterpolationType::Linear,
         oversampling_factor: 256,
-        window: WindowFunction::BlackmanHarris2,
-    }
-}
-
-// Sinc parameters for the Synchronous engine with fewer points (still sinc-based).
-fn sinc_params_low() -> SincInterpolationParameters {
-    SincInterpolationParameters {
-        sinc_len: 64,
-        f_cutoff: 0.95,
-        interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 128,
         window: WindowFunction::BlackmanHarris2,
     }
 }

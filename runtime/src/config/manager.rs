@@ -398,7 +398,7 @@ fn apply_plugin_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result
 
 fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
     let parts: Vec<&str> = key.splitn(3, '.').collect();
-    if parts.len() != 3 {
+    if parts.len() != 2 {
         return Err(StuidError::config(format!(
             "invalid dsp config key: {key} (expected dsp.{{field}})"
         )));
