@@ -41,10 +41,10 @@ This spec covers replacing all three with production-quality implementations usi
 ## New Dependencies
 
 ```toml
-rubato    = "0.15"
-rustfft   = "6"
-alsa      = "0.9"
-pipewire  = "0.8"
+rubato            = "1"     # 1.0.1 — unified Async/Fft types (post-1.0 API)
+rustfft           = "6"
+alsa              = "0.11"  # 0.11.0 — current stable; 0.9.x has yanked releases
+pipewire          = "0.9"   # 0.9.2 — breaking API changes from 0.8
 crossbeam-channel = "0.5"
 ```
 
@@ -68,31 +68,35 @@ runtime/src/dsp/
     mod.rs        ← AudioOutput trait + open_output() factory
     alsa.rs       ← AlsaOutput
     pipewire.rs   ← PipeWireOutput (replaces current stub)
-  resample.rs     ← rewritten with rubato
+  resample.rs     ← rewritten with rubato 1.x
   convolution.rs  ← rewritten with rustfft OLA
   mod.rs          ← pipeline wiring (adds output field)
-  config.rs       ← two new fields: alsa_device, pipewire_role
+  config.rs       ← new fields: alsa_device, pipewire_role, OutputTarget::Alsa
 ```
 
 ---
 
 ## Section 1: Rubato Resampler
 
+Uses **rubato 1.x API** (`Async` and `Fft` unified types with `FixedAsync`/`FixedSync` mode enums).
+
 ### FilterType Mapping
 
-| `FilterType` | Rubato engine     | Characteristics                                      |
-|--------------|-------------------|------------------------------------------------------|
-| `Fast`       | `SincFixedOut`    | Lower sinc quality, ~4ms latency, minimal CPU        |
-| `Slow`       | `FftFixedIn`      | FFT-based, flat passband to Nyquist, ~10ms latency   |
-| `Synchronous`| `SincFixedIn`     | Highest quality sinc, variable output length         |
+| `FilterType` | Rubato 1.x type | Mode | Characteristics |
+|---|---|---|---|
+| `Fast` | `Async<f32>` | `FixedAsync::Output` | Lower sinc quality, ~4ms latency, minimal CPU |
+| `Slow` | `Fft<f32>` | `FixedSync::Input` | FFT-based, flat passband to Nyquist, ~10ms latency |
+| `Synchronous` | `Async<f32>` | `FixedAsync::Input` | Highest quality sinc, variable output length |
 
 ### Internal Design
 
 ```rust
+use rubato::{Async, Fft, FixedAsync, FixedSync, Resampler as RubatoResampler};
+
 enum ResamplerKind {
-    Fft(FftFixedIn<f32>),
-    SincOut(SincFixedOut<f32>),
-    SincIn(SincFixedIn<f32>),
+    AsyncOut(Async<f32>),   // Fast — FixedAsync::Output
+    FftIn(Fft<f32>),        // Slow — FixedSync::Input
+    AsyncIn(Async<f32>),    // Synchronous — FixedAsync::Input
 }
 
 pub struct Resampler {
@@ -119,39 +123,43 @@ pub struct Resampler {
 
 ### Partition Strategy (automatic, based on filter length at load time)
 
-| Filter length       | Strategy                  | Partition size                         |
-|---------------------|---------------------------|----------------------------------------|
-| ≤ 4,096 taps        | Single-block OLA          | `next_power_of_two(filter_len × 2)`    |
-| 4,097 – 65,536 taps | Uniformly partitioned OLA | 4,096 samples per partition            |
-| > 65,536 taps       | Non-uniform partitioned OLA | First 512, doubling up to 65,536      |
+| Filter length | Strategy | Partition size |
+|---|---|---|
+| ≤ 4,096 taps | Single-block OLA | `next_power_of_two(filter_len × 2)` |
+| 4,097 – 65,536 taps | Uniformly partitioned OLA | 4,096 samples per partition |
+| > 65,536 taps | Non-uniform partitioned OLA | Tiers: 512, 1024, 2048, 4096, … up to 65,536 |
 
 Non-uniform partitioning keeps first-partition latency low (~512 samples / ~10ms at 48kHz) while amortising the cost of the long filter tail across larger, less frequent FFTs.
 
 ### Internal Design
 
+Non-uniform OLA requires one tail (overlap) buffer per partition tier, because each tier's output contributes a tail of `(partition_size - 1)` samples that overlaps future blocks at different offsets.
+
 ```rust
 enum ConvStrategy { SingleBlock, Uniform, NonUniform }
 
 pub struct ConvolutionEngine {
-    config:         Arc<RwLock<DspConfig>>,
-    filter_fft:     Vec<Vec<Complex32>>,   // pre-computed per-partition filter FFTs
-    overlap:        Vec<f32>,              // OLA accumulator
-    partition_size: usize,
-    strategy:       ConvStrategy,
-    enabled:        bool,
-    bypass:         bool,
+    config:          Arc<RwLock<DspConfig>>,
+    filter_fft:      Vec<Vec<Complex32>>,   // pre-computed per-partition filter FFTs
+    overlap:         Vec<Vec<f32>>,         // one tail buffer per partition tier
+    partition_sizes: Vec<usize>,            // tier sizes (length 1 for Single/Uniform)
+    strategy:        ConvStrategy,
+    enabled:         bool,
+    bypass:          bool,
 }
 ```
 
 **At `load_filter()` time:**
 1. Load WAV (existing path, with 64MB cap)
-2. Determine strategy from filter length
-3. Partition into chunks, zero-pad to `2 × partition_size`, compute FFT, store as `Vec<Complex32>`
+2. Determine strategy and partition tier sizes from filter length
+3. For each tier: partition filter into chunks, zero-pad to `2 × partition_size`, compute FFT via `rustfft`, store as `Vec<Complex32>`
+4. Allocate one `overlap` tail buffer per tier, zero-initialised
 
 **At `process()` time:**
-1. FFT input partitions
+1. FFT each input partition for the current tier
 2. Pointwise multiply against stored filter FFTs
-3. IFFT, OLA accumulate, trim to input length
+3. IFFT, add to the corresponding tier's `overlap` tail, emit completed samples
+4. Advance each tier independently per its partition size
 
 The filter's FFTs are pre-computed at load time — `process()` pays only input FFT + multiply + IFFT per block.
 
@@ -165,6 +173,21 @@ Public API (`process`, `load_filter`, `set_bypass`, `is_enabled`) is unchanged.
 ---
 
 ## Section 3: AudioOutput Trait + ALSA + PipeWire
+
+### OutputTarget Enum Extension
+
+`OutputTarget::Alsa` is added to the existing enum in `config.rs`:
+
+```rust
+pub enum OutputTarget {
+    PipeWire,   // existing
+    RoonRaat,   // existing
+    Mpd,        // existing
+    Alsa,       // new — direct hw: device, no OS mixer
+}
+```
+
+`apply_dsp_key` in `manager.rs` gains `"alsa"` as a valid `output_target` string.
 
 ### Trait Definition (`output/mod.rs`)
 
@@ -189,24 +212,29 @@ pub fn open_output(
 ) -> Result<Box<dyn AudioOutput>, OutputError>
 ```
 
-`open_output` is the single construction point. It tries PipeWire first when `target == OutputTarget::PipeWire`; if the PipeWire socket is unavailable, it automatically falls back to ALSA and logs a warning.
+`open_output` behaviour:
+- `OutputTarget::PipeWire` — tries PipeWire; falls back to ALSA with `warn!` on: socket not found, connection refused, daemon timeout. Does not fall back on permission denied or format negotiation failure (those return `ConfigError`). No retry — fallback is attempted once and ALSA is used for the session.
+- `OutputTarget::Alsa` — opens ALSA directly, no fallback
+- `OutputTarget::RoonRaat` / `OutputTarget::Mpd` — return `ConfigError` (not implemented in this feature)
 
 ### ALSA Backend (`output/alsa.rs`)
 
 - Opens `hw:{alsa_device}` (from `DspConfig.alsa_device`, defaulting to `"hw:0,0"`)
 - Hardware params: `output_sample_rate`, S32LE format (fallback F32LE), 2 channels, period = `buffer_size`
-- `write()`: converts `&[f32]` → interleaved S32LE bytes, calls `snd_pcm_writei`
-- On `EPIPE` (underrun): calls `snd_pcm_prepare`, retries once, then returns `WriteError`
-- `close()`: `snd_pcm_drain` → `snd_pcm_close`
+- `write()`: converts `&[f32]` → interleaved S32LE bytes, calls `pcm.io_i32()?.writei()` (the `alsa` crate's safe typed wrapper; falls back to `pcm.io_f32()?.writei()` when S32LE is unsupported)
+- On underrun (`EPIPE`): calls `pcm.prepare()`, retries once, then returns `WriteError`
+- `close()`: `pcm.drain()` → drop
 - No OS mixer in the signal path — bit-perfect by construction
 
 ### PipeWire Backend (`output/pipewire.rs`)
 
-- Creates a `pw::stream::Stream` with `MediaRole::Music` (default) or `MediaRole::ProAudio` (exclusive, controlled by `DspConfig.pipewire_role`)
+- Creates a `pw::stream::Stream` with stream properties set via the `Properties` bag:
+  - Default role: `media.role = "Music"`
+  - Exclusive/bypass role: `media.role = "Production"` — this is the WirePlumber policy key that signals the session manager to skip resampling. Note: bypass behaviour depends on WirePlumber version and policy configuration; it is not guaranteed by the PipeWire API itself.
 - Negotiates F32LE at `output_sample_rate`, 2 channels
 - PipeWire's realtime callback thread is decoupled from the tokio runtime via a bounded `crossbeam_channel` (capacity = 4 periods)
-- `write()` enqueues to the channel; the PipeWire callback drains it
-- Pro Audio role bypasses the PipeWire session manager's resampler, enabling bit-perfect output at the negotiated rate
+- `write()` uses `try_send` — non-blocking. If the channel is full (RT thread falling behind), the frame is dropped and a `warn!` is emitted. `write()` returns `Ok(())` in this case to avoid blocking the pipeline; persistent drops surface as a status message via the IPC layer.
+- The PipeWire callback drains the channel and writes to the stream buffer
 
 ### Pipeline Wiring (`mod.rs`)
 
@@ -216,20 +244,20 @@ pub struct DspPipeline {
     resampler:   Option<Resampler>,
     dsd:         Option<DsdConverter>,
     convolution: Option<ConvolutionEngine>,
-    output:      Option<Box<dyn AudioOutput>>,  // new
+    output:      Option<Box<dyn AudioOutput>>,   // new
 }
 ```
 
 `process()` ends with `out.write(&processed_samples)`.
 
-`update_config()` checks if `output_target`, `alsa_device`, or `pipewire_role` changed — if so, closes the current output and opens a new one via `open_output`.
+`update_config()` checks if `output_target`, `alsa_device`, or `pipewire_role` changed — if so, closes the current output and calls `open_output` to open the new one.
 
 ### New Config Fields
 
 ```rust
 // DspConfig additions
-pub alsa_device:    Option<String>,  // None → "hw:0,0"
-pub pipewire_role:  String,          // "Music" | "Pro Audio"
+pub alsa_device:   Option<String>,  // None → "hw:0,0"
+pub pipewire_role: String,          // "Music" | "Production"
 ```
 
 ### New Settings Entries (DSP Audio category in settings.go)
@@ -237,7 +265,7 @@ pub pipewire_role:  String,          // "Music" | "Pro Audio"
 | Label | Key | Kind | Default |
 |---|---|---|---|
 | ALSA device | `dsp.alsa_device` | `settingPath` | `""` (hw:0,0) |
-| PipeWire role | `dsp.pipewire_role` | `settingChoice` (Music / Pro Audio) | `Music` |
+| PipeWire role | `dsp.pipewire_role` | `settingChoice` (Music / Production) | `Music` |
 
 ### Validation
 
@@ -251,8 +279,9 @@ pub pipewire_role:  String,          // "Music" | "Pro Audio"
 | Scenario | Behaviour |
 |---|---|
 | PipeWire socket missing | `open_output` falls back to ALSA, logs `warn!` |
-| ALSA device not found | Returns `OutputError::DeviceNotFound`, DSP pipeline disables output and sets status msg |
-| ALSA underrun | Retry once after `snd_pcm_prepare`; on second failure returns `WriteError` |
+| ALSA device not found | Returns `OutputError::DeviceNotFound`, DSP pipeline disables output and emits status msg |
+| ALSA underrun | `pcm.prepare()` + retry once; second failure returns `WriteError` |
+| PipeWire channel full | Frame dropped, `warn!` emitted; `write()` returns `Ok(())` to avoid blocking |
 | Convolution filter load fails | `ConvolutionEngine` sets `enabled = false`, surfaces error via existing IPC error response |
 | Rubato chunk size mismatch | Handled internally by padding/draining; never propagates to caller |
 
@@ -261,16 +290,16 @@ pub pipewire_role:  String,          // "Music" | "Pro Audio"
 ## Implementation Order
 
 1. Add new Cargo dependencies
-2. Rewrite `resample.rs` with rubato — all existing tests pass + new proptest
+2. Rewrite `resample.rs` with rubato 1.x — all existing tests pass + new proptest
 3. Rewrite `convolution.rs` with rustfft OLA — all existing tests pass + new perf test
 4. Add `output/mod.rs` trait + `output/alsa.rs`
 5. Replace `output/pipewire.rs` stub with real implementation
 6. Wire `output` field into `DspPipeline` in `mod.rs`
-7. Add new `DspConfig` fields + `apply_dsp_key` cases in `manager.rs`
+7. Add `OutputTarget::Alsa` to enum; add `alsa_device` / `pipewire_role` to `DspConfig`; wire in `apply_dsp_key` in `manager.rs`
 8. Add new settings entries in `settings.go`
 
 ---
 
 ## Open Questions
 
-None — all design decisions resolved during brainstorming.
+None — all design decisions resolved during brainstorming and spec review.
