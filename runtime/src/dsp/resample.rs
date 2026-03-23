@@ -1,157 +1,257 @@
-//! High-quality audio resampler using rubato library.
+//! High-quality audio resampler using the rubato library (1.x).
+//!
+//! FilterType dispatches to different rubato engines:
+//!   Fast        → Async<f32> FixedAsync::Output  (polynomial, lower quality, low CPU)
+//!   Slow        → Fft<f32>   FixedSync::Input     (FFT-based, flat passband)
+//!   Synchronous → Async<f32> FixedAsync::Input    (sinc, highest quality)
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use audioadapter_buffers::direct::SequentialSliceOfVecs;
+use rubato::{
+    Async, FixedAsync, FixedSync, Fft, PolynomialDegree, Resampler as RubatoResampler,
+    SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
+
 use super::config::{DspConfig, FilterType};
 
-/// Resampler using high-quality FFT-based algorithm.
+// Sinc parameters for the Synchronous (highest quality) engine.
+fn sinc_params_high() -> SincInterpolationParameters {
+    SincInterpolationParameters {
+        sinc_len: 256,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 256,
+        window: WindowFunction::BlackmanHarris2,
+    }
+}
+
+// Sinc parameters for the Synchronous engine with fewer points (still sinc-based).
+fn sinc_params_low() -> SincInterpolationParameters {
+    SincInterpolationParameters {
+        sinc_len: 64,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 128,
+        window: WindowFunction::BlackmanHarris2,
+    }
+}
+
+enum ResamplerKind {
+    /// Fast — polynomial interpolation, FixedAsync::Output
+    PolyOut(Async<f32>),
+    /// Slow — FFT-based, FixedSync::Input
+    FftIn(Fft<f32>),
+    /// Synchronous — sinc interpolation, FixedAsync::Input
+    SincIn(Async<f32>),
+}
+
+/// High-quality audio resampler. Stereo interleaved f32 input and output.
 pub struct Resampler {
     config: Arc<RwLock<DspConfig>>,
     input_rate: u32,
     output_rate: u32,
     chunk_size: usize,
+    kind: ResamplerKind,
 }
 
 impl Resampler {
-    /// Create a new resampler with the given configuration.
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let cfg = config.blocking_read();
+        let input_rate = cfg.input_sample_rate;
         let output_rate = cfg.output_sample_rate;
         let chunk_size = cfg.buffer_size;
-        let input_rate = cfg.input_sample_rate;
+        let filter_type = cfg.filter_type;
+        drop(cfg);
 
         Self::validate_rates(input_rate, output_rate)?;
+        let kind = Self::build_kind(filter_type, input_rate, output_rate, chunk_size)?;
 
-        info!(
-            input = input_rate,
-            output = output_rate,
-            "resampler initialized"
-        );
-
+        info!(input = input_rate, output = output_rate, "resampler initialized");
         Ok(Self {
             config: Arc::clone(&config),
             input_rate,
             output_rate,
             chunk_size,
+            kind,
         })
     }
 
     fn validate_rates(input: u32, output: u32) -> Result<(), String> {
         if input == 0 || output == 0 {
-            return Err("Sample rates must be non-zero".to_string());
+            return Err("sample rates must be non-zero".into());
         }
-        if output % input != 0 && input % output != 0 {
-            warn!(input, output, "non-integer ratio, may have artifacts");
-        }
-        if output > 768000 {
-            return Err("Output rate exceeds 768kHz".to_string());
+        if output > 768_000 {
+            return Err("output rate exceeds 768kHz".into());
         }
         Ok(())
     }
 
-    /// Process audio through the resampler.
+    fn build_kind(
+        filter_type: FilterType,
+        input_rate: u32,
+        output_rate: u32,
+        chunk_size: usize,
+    ) -> Result<ResamplerKind, String> {
+        let ratio = output_rate as f64 / input_rate as f64;
+        // rubato works on per-channel data; we have 2 channels (stereo)
+        const CHANNELS: usize = 2;
+        // max relative ratio variation: we don't dynamically change rates so keep tight at 1.1
+        const MAX_RELATIVE: f64 = 1.1;
+
+        match filter_type {
+            FilterType::Fast => {
+                let r = Async::<f32>::new_poly(
+                    ratio,
+                    MAX_RELATIVE,
+                    PolynomialDegree::Linear,
+                    chunk_size,
+                    CHANNELS,
+                    FixedAsync::Output,
+                )
+                .map_err(|e| format!("rubato Fast init: {e}"))?;
+                Ok(ResamplerKind::PolyOut(r))
+            }
+            FilterType::Slow => {
+                let r = Fft::<f32>::new(
+                    input_rate as usize,
+                    output_rate as usize,
+                    chunk_size,
+                    1,
+                    CHANNELS,
+                    FixedSync::Input,
+                )
+                .map_err(|e| format!("rubato Slow init: {e}"))?;
+                Ok(ResamplerKind::FftIn(r))
+            }
+            FilterType::Synchronous => {
+                let params = sinc_params_high();
+                let r = Async::<f32>::new_sinc(
+                    ratio,
+                    MAX_RELATIVE,
+                    &params,
+                    chunk_size,
+                    CHANNELS,
+                    FixedAsync::Input,
+                )
+                .map_err(|e| format!("rubato Synchronous init: {e}"))?;
+                Ok(ResamplerKind::SincIn(r))
+            }
+        }
+    }
+
+    /// Process interleaved stereo samples through the resampler.
+    /// Returns interleaved stereo output.
     pub fn process(&mut self, samples: &[f32], input_rate: u32) -> Vec<f32> {
         if input_rate == self.output_rate {
             return samples.to_vec();
         }
-
-        let cfg = self.config.blocking_read();
-        let ratio = self.output_rate as f64 / input_rate as f64;
-        let output_len = (samples.len() as f64 * ratio).ceil() as usize;
-        let mut output = Vec::with_capacity(output_len);
-
-        // Simple linear interpolation for initial implementation
-        // TODO: Replace with rubato FFT resampling for production
-        if cfg.filter_type == FilterType::Fast {
-            self.fast_resample(samples, &mut output);
-        } else {
-            self.quality_resample(samples, &mut output, &cfg.filter_type);
+        if samples.is_empty() {
+            return Vec::new();
         }
 
-        debug!(
-            input_len = samples.len(),
-            output_len = output.len(),
-            "resampled"
-        );
+        // Deinterleave: [L0,R0,L1,R1,...] → [[L0,L1,...],[R0,R1,...]]
+        let n_frames = samples.len() / 2;
+        let mut ch_left = Vec::with_capacity(n_frames);
+        let mut ch_right = Vec::with_capacity(n_frames);
+        for chunk in samples.chunks_exact(2) {
+            ch_left.push(chunk[0]);
+            ch_right.push(chunk[1]);
+        }
+        let input_channels: Vec<Vec<f32>> = vec![ch_left, ch_right];
 
+        let out_channels = self.run_rubato(&input_channels, n_frames);
+
+        // Reinterleave: [[L0,L1,...],[R0,R1,...]] → [L0,R0,L1,R1,...]
+        let out_len = out_channels[0].len();
+        let mut output = Vec::with_capacity(out_len * 2);
+        for i in 0..out_len {
+            output.push(out_channels[0][i]);
+            output.push(out_channels[1][i]);
+        }
+
+        debug!(input = samples.len(), output = output.len(), "resampled");
         output
     }
 
-    fn fast_resample(&self, input: &[f32], output: &mut Vec<f32>) {
-        let ratio = self.output_rate as f64 / self.input_rate as f64;
-        for i in 0.. {
-            let src_idx = i as f64 / ratio;
-            if src_idx >= input.len() as f64 {
-                break;
+    fn run_rubato(&mut self, input_channels: &[Vec<f32>], n_frames: usize) -> Vec<Vec<f32>> {
+        // Build input adapter: SequentialSliceOfVecs wraps &[Vec<f32>]
+        let input_adapter = match SequentialSliceOfVecs::new(
+            input_channels,
+            2,
+            n_frames,
+        ) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("rubato input adapter error: {e:?}");
+                return vec![Vec::new(), Vec::new()];
             }
-            let lo = src_idx.floor() as usize;
-            let hi = (lo + 1).min(input.len() - 1);
-            let frac = (src_idx - src_idx.floor()) as f32;
-            let sample = input[lo] * (1.0 - frac) + input[hi] * frac;
-            output.push(sample);
+        };
+
+        // Allocate output buffer with enough capacity (delay + output frames)
+        let output_capacity = match &mut self.kind {
+            ResamplerKind::PolyOut(r) => r.process_all_needed_output_len(n_frames),
+            ResamplerKind::FftIn(r) => r.process_all_needed_output_len(n_frames),
+            ResamplerKind::SincIn(r) => r.process_all_needed_output_len(n_frames),
+        };
+
+        // We use a mutable Vec<Vec<f32>> as the output and wrap it with SequentialSliceOfVecs
+        let mut out_left = vec![0.0f32; output_capacity];
+        let mut out_right = vec![0.0f32; output_capacity];
+        let mut output_channels: Vec<Vec<f32>> = vec![out_left, out_right];
+
+        let mut output_adapter = match SequentialSliceOfVecs::new_mut(
+            output_channels.as_mut_slice(),
+            2,
+            output_capacity,
+        ) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("rubato output adapter error: {e:?}");
+                return vec![Vec::new(), Vec::new()];
+            }
+        };
+
+        // Process all input using chunked loop.
+        // process_all_into_buffer handles arbitrary lengths and returns actual output frame count.
+        let result = match &mut self.kind {
+            ResamplerKind::PolyOut(r) => {
+                r.process_all_into_buffer(&input_adapter, &mut output_adapter, n_frames, None)
+            }
+            ResamplerKind::FftIn(r) => {
+                r.process_all_into_buffer(&input_adapter, &mut output_adapter, n_frames, None)
+            }
+            ResamplerKind::SincIn(r) => {
+                r.process_all_into_buffer(&input_adapter, &mut output_adapter, n_frames, None)
+            }
+        };
+
+        match result {
+            Ok((_in_frames, out_frames)) => {
+                // Truncate each channel to actual output length
+                output_channels[0].truncate(out_frames);
+                output_channels[1].truncate(out_frames);
+                output_channels
+            }
+            Err(e) => {
+                warn!("rubato process error: {e}");
+                vec![Vec::new(), Vec::new()]
+            }
         }
     }
 
-    fn quality_resample(&self, input: &[f32], output: &mut Vec<f32>, _filter: &FilterType) {
-        // High-quality resampling with anti-aliasing
-        // Uses windowed sinc interpolation
-        let ratio = self.output_rate as f64 / self.input_rate as f64;
-        let filter_size = 64;
-
-        for i in 0.. {
-            let src_idx = i as f64 / ratio;
-            if src_idx >= input.len() as f64 {
-                break;
-            }
-
-            let mut sample = 0.0f32;
-            let mut weight_sum = 0.0f32;
-
-            for j in -(filter_size as i32 / 2)..(filter_size as i32 / 2) {
-                let idx = src_idx.floor() as i32 + j;
-                if idx < 0 || idx >= input.len() as i32 {
-                    continue;
-                }
-
-                let frac = src_idx - src_idx.floor() - j as f64;
-                let weight = self.sinc_kernel(frac, filter_size as f64);
-                sample += input[idx as usize] * weight;
-                weight_sum += weight;
-            }
-
-            if weight_sum > 0.0 {
-                sample /= weight_sum;
-            }
-            output.push(sample);
-        }
-    }
-
-    fn sinc_kernel(&self, x: f64, filter_size: f64) -> f32 {
-        // Windowed sinc kernel with Blackman window
-        let alpha = 0.16;
-        let pi = std::f64::consts::PI;
-
-        if x.abs() < 0.0001 {
-            return 1.0;
-        }
-
-        let sinc = (pi * x).sin() / (pi * x);
-        let window = alpha - 0.5 * (2.0 * pi * x / filter_size).cos()
-            + 0.5 * (4.0 * pi * x / filter_size).cos();
-
-        (sinc * window) as f32
-    }
-
-    /// Get the output sample rate.
     pub fn output_rate(&self) -> u32 {
         self.output_rate
     }
 
-    /// Set a new output rate.
     pub fn set_output_rate(&mut self, rate: u32) -> Result<(), String> {
         Self::validate_rates(self.input_rate, rate)?;
+        let cfg = self.config.blocking_read();
+        let filter_type = cfg.filter_type;
+        drop(cfg);
+        self.kind = Self::build_kind(filter_type, self.input_rate, rate, self.chunk_size)?;
         self.output_rate = rate;
         Ok(())
     }
@@ -176,27 +276,25 @@ mod tests {
 
     #[test]
     fn test_resampler_creation() {
-        let config = make_test_config();
-        let resampler = Resampler::new(config);
-        assert!(resampler.is_ok());
+        assert!(Resampler::new(make_test_config()).is_ok());
     }
 
     #[test]
     fn test_resampler_output_rate() {
-        let config = make_test_config();
-        let resampler = Resampler::new(config).unwrap();
-        assert_eq!(resampler.output_rate(), 96000);
+        let r = Resampler::new(make_test_config()).unwrap();
+        assert_eq!(r.output_rate(), 96000);
     }
 
     #[test]
     fn test_process_passthrough() {
-        let config = make_test_config();
-        let mut resampler = Resampler::new(config).unwrap();
-
-        let input: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4];
-        let output = resampler.process(&input, 96000);
-
-        // Same rate, should pass through
+        let config = Arc::new(RwLock::new(DspConfig {
+            output_sample_rate: 96000,
+            input_sample_rate: 96000,
+            ..Default::default()
+        }));
+        let mut r = Resampler::new(config).unwrap();
+        let input = vec![0.1f32, 0.2, 0.3, 0.4];
+        let output = r.process(&input, 96000);
         assert_eq!(output.len(), input.len());
     }
 
@@ -207,15 +305,12 @@ mod tests {
             input_sample_rate: 44100,
             ..Default::default()
         }));
-
-        let result = Resampler::new(config);
-        assert!(result.is_err());
+        assert!(Resampler::new(config).is_err());
     }
 
     proptest! {
         #[test]
         fn output_length_matches_ratio(
-            // input_len is stereo *frames*; actual sample count = input_len * 2
             input_len in 64usize..=8192usize,
             filter_idx in 0usize..3usize,
         ) {
@@ -233,18 +328,15 @@ mod tests {
                 ..Default::default()
             }));
             let mut resampler = Resampler::new(config).unwrap();
-            // Stereo interleaved: input_len frames = input_len * 2 samples
+            // Stereo interleaved input: input_len frames = input_len*2 samples
             let input = vec![0.0f32; input_len * 2];
             let output = resampler.process(&input, 44100);
             let ratio = 96000.0f64 / 44100.0f64;
-            let expected_frames  = (input_len as f64 * ratio).ceil() as usize;
+            let expected_frames = (input_len as f64 * ratio).ceil() as usize;
             let expected_samples = expected_frames * 2;
-            // ±4 tolerance: up to ±2 frames of rubato jitter × 2 channels
-            // NOTE: This test should fail with the current stub implementation.
-            // The stub does not properly implement the stereo resampling contract.
             prop_assert!(
                 output.len().abs_diff(expected_samples) <= 4,
-                "output {} samples, expected {} ± 4 (filter_idx={}, input_frames={})",
+                "got {} samples, expected {} ± 4 (filter={}, input_frames={})",
                 output.len(), expected_samples, filter_idx, input_len
             );
         }
