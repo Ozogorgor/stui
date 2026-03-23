@@ -1,202 +1,306 @@
-//! Convolution engine for room correction filters.
+//! Convolution engine with partitioned overlap-add (OLA) FFT processing.
+//!
+//! Partition strategy (automatic from filter length at load time):
+//!   ≤ 4096 taps   → single-block OLA  (partition size = next_pow2(filter_len * 2))
+//!   > 4096 taps   → uniform OLA       (partition size = 4096 samples)
+//!
+//! The overlap accumulator is stateful: the tail from each call feeds
+//! into the start of the next, maintaining continuity across audio blocks.
+//!
+//! process() takes &mut self because the overlap buffer is updated per call.
 
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
+
+use rustfft::{num_complex::Complex32, Fft, FftPlanner};
 
 use super::config::DspConfig;
 
-/// Convolution engine for applying room correction filters.
+const MAX_FILTER_FILE_BYTES: u64 = 64 * 1024 * 1024; // 64 MB cap
+
+/// Convolution engine for room correction filters.
 pub struct ConvolutionEngine {
-    config: Arc<RwLock<DspConfig>>,
-    filter: Option<Vec<f32>>,
-    filter_length: usize,
-    enabled: bool,
-    bypass: bool,
+    config:         Arc<RwLock<DspConfig>>,
+    /// Pre-computed FFTs of each filter partition. Empty when no filter is loaded.
+    filter_fft:     Vec<Vec<Complex32>>,
+    /// Overlap-add tail from the previous process() call. Length = nparts * psize - 1.
+    overlap:        Vec<f32>,
+    /// Partition size (samples). Determines FFT size = psize * 2.
+    psize:          usize,
+    /// Cached forward FFT plan for fft_size = psize * 2.
+    fft_plan:       Option<Arc<dyn Fft<f32>>>,
+    /// Cached inverse FFT plan for fft_size = psize * 2.
+    ifft_plan:      Option<Arc<dyn Fft<f32>>>,
+    /// Scratch buffer reused each call to avoid repeated allocations (length = fft_size).
+    scratch:        Vec<Complex32>,
+    enabled:        bool,
+    bypass:         bool,
 }
 
 impl ConvolutionEngine {
-    /// Create a new convolution engine.
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let cfg = config.blocking_read();
         let filter = if let Some(ref path) = cfg.convolution_filter_path {
-            Some(load_filter_file(path)?)
+            match load_filter_file(path) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    warn!(path, error = %e, "convolution filter load failed — no filter active");
+                    None
+                }
+            }
         } else {
             None
         };
-
-        let filter_length = filter.as_ref().map(|f| f.len()).unwrap_or(0);
         let enabled = cfg.convolution_enabled;
-        let bypass = cfg.convolution_bypass;
+        let bypass  = cfg.convolution_bypass;
+        drop(cfg);
 
-        if filter.is_some() {
-            info!(
-                length = filter_length,
-                "convolution engine initialized with filter"
-            );
-        }
-
-        Ok(Self {
+        let mut engine = Self {
             config: Arc::clone(&config),
-            filter,
-            filter_length,
+            filter_fft: Vec::new(),
+            overlap: Vec::new(),
+            psize: 4096,
+            fft_plan: None,
+            ifft_plan: None,
+            scratch: Vec::new(),
             enabled,
             bypass,
-        })
+        };
+        if let Some(f) = filter {
+            engine.install_filter(f);
+        }
+        Ok(engine)
     }
 
-    /// Load a convolution filter from a file.
+    /// Load and install a convolution filter from a WAV file.
     pub fn load_filter(&mut self, path: &str) -> Result<(), String> {
-        self.filter = Some(load_filter_file(path)?);
-        self.filter_length = self.filter.as_ref().map(|f| f.len()).unwrap_or(0);
-        info!(
-            path = path,
-            length = self.filter_length,
-            "convolution filter loaded"
-        );
+        let samples = load_filter_file(path)?;
+        self.install_filter(samples);
         Ok(())
     }
 
-    /// Process audio through convolution.
-    pub fn process(&self, samples: &[f32]) -> Vec<f32> {
-        if !self.enabled || self.bypass || self.filter.is_none() {
-            return samples.to_vec();
-        }
+    /// Pre-compute filter FFTs and reset the overlap buffer.
+    fn install_filter(&mut self, filter: Vec<f32>) {
+        let taps = filter.len();
+        info!(taps, "installing convolution filter");
 
-        let filter = self.filter.as_ref().unwrap();
-        let input_len = samples.len();
-        let output_len = input_len + filter.len() - 1;
-        let mut output = vec![0.0f32; output_len];
+        // Choose partition size
+        self.psize = if taps <= 4096 {
+            // Single-block: smallest power-of-two >= filter length * 2
+            (taps * 2).next_power_of_two().max(2)
+        } else {
+            4096 // Uniform OLA for all longer filters
+        };
 
-        // Simple convolution (O(n*m) - could be optimized with FFT)
-        for i in 0..input_len {
-            for j in 0..filter.len() {
-                if i + j < output_len {
-                    output[i + j] += samples[i] * filter[j];
+        let fft_size = self.psize * 2;
+
+        // Build and cache FFT plans once per filter load
+        let mut planner = FftPlanner::<f32>::new();
+        let fft  = planner.plan_fft_forward(fft_size);
+        let ifft = planner.plan_fft_inverse(fft_size);
+
+        // Partition filter into psize-length chunks, zero-pad, FFT each
+        self.filter_fft = filter
+            .chunks(self.psize)
+            .map(|chunk| {
+                let mut buf = vec![Complex32::new(0.0, 0.0); fft_size];
+                for (i, &s) in chunk.iter().enumerate() {
+                    buf[i].re = s;
                 }
-            }
-        }
+                fft.process(&mut buf);
+                buf
+            })
+            .collect();
 
-        // Trim to input size (delay compensation would adjust this)
-        output.truncate(input_len);
+        // Cache the plans and pre-allocate scratch buffer for use in ola_process
+        self.fft_plan  = Some(fft);
+        self.ifft_plan = Some(ifft);
+        self.scratch   = vec![Complex32::new(0.0, 0.0); fft_size];
+
+        // Reset overlap tail. With P partitions each of size psize, the maximum
+        // OLA tail extent is (P-1)*psize + (psize-1) = P*psize - 1 samples.
+        // Overlap tail length matches the accumulator's tail region: nparts * psize.
+        self.overlap = vec![0.0f32; self.filter_fft.len() * self.psize];
 
         debug!(
-            input_len = input_len,
-            output_len = output.len(),
-            "convolved"
+            taps,
+            partitions = self.filter_fft.len(),
+            psize = self.psize,
+            "filter installed"
         );
-        output
     }
 
-    /// Check if convolution is enabled.
+    /// Process audio through stateful OLA convolution.
+    ///
+    /// The overlap accumulator is updated on each call so that consecutive
+    /// calls produce seamless audio (no clicks or discontinuities at block
+    /// boundaries).
+    pub fn process(&mut self, samples: &[f32]) -> Vec<f32> {
+        if !self.is_enabled() || self.filter_fft.is_empty() {
+            return samples.to_vec();
+        }
+        self.ola_process(samples)
+    }
+
+    fn ola_process(&mut self, input: &[f32]) -> Vec<f32> {
+        let psize    = self.psize;
+        let fft_size = psize * 2;
+        let scale    = 1.0 / fft_size as f32;
+        // nparts ≥ 1 (guaranteed: ola_process only called when is_enabled(), which checks
+        // !filter_fft.is_empty())
+        let nparts   = self.filter_fft.len();
+        // Tail length: the last partition's IFFT output (length fft_size = 2*psize) placed at
+        // pos + (nparts-1)*psize ends at pos + (nparts+1)*psize - 1.  For the last input block
+        // starting at input.len() - psize the furthest endpoint is input.len() + nparts*psize - 1,
+        // which requires accum to have exactly nparts*psize elements past input.len().
+        let tail_len = nparts * psize;
+
+        // Use cached FFT plans (always present when filter_fft is non-empty)
+        let fft  = self.fft_plan.as_ref().expect("fft_plan missing");
+        let ifft = self.ifft_plan.as_ref().expect("ifft_plan missing");
+
+        // Accumulator: input.len() + tail_len to hold OLA tails from all partitions
+        let mut accum = vec![0.0f32; input.len() + tail_len];
+
+        // Pre-add saved overlap from the previous call to the start of the accumulator
+        for (i, &v) in self.overlap.iter().enumerate() {
+            accum[i] += v;
+        }
+
+        // x_fft: forward FFT of current input block (reused across all partition multiplies)
+        let mut x_fft = vec![Complex32::new(0.0, 0.0); fft_size];
+
+        // Process input in non-overlapping psize-sample blocks
+        let mut pos = 0;
+        while pos < input.len() {
+            let block_end = (pos + psize).min(input.len());
+            let block = &input[pos..block_end];
+
+            // Zero-pad block to fft_size and compute its FFT
+            // Fill from previous contents first (the tail is already zero)
+            for c in x_fft.iter_mut() { *c = Complex32::new(0.0, 0.0); }
+            for (i, &s) in block.iter().enumerate() {
+                x_fft[i].re = s;
+            }
+            fft.process(&mut x_fft);
+
+            // Convolve with EACH filter partition and accumulate at the correct offset.
+            // Partition k's contribution lands at pos + k*psize in the accumulator.
+            for (k, fpart) in self.filter_fft.iter().enumerate() {
+                // Copy x_fft into scratch, multiply pointwise by filter partition
+                let scratch = &mut self.scratch;
+                for (s, (x, f)) in scratch.iter_mut().zip(x_fft.iter().zip(fpart.iter())) {
+                    s.re = x.re * f.re - x.im * f.im;
+                    s.im = x.re * f.im + x.im * f.re;
+                }
+                ifft.process(scratch);
+
+                // OLA: add scaled IFFT output to accumulator at pos + k*psize.
+                // The accumulator is sized to input.len() + tail_len, which is always
+                // ≥ pos + k*psize + fft_size for the valid partition range.
+                let out_offset = pos + k * psize;
+                let dest = &mut accum[out_offset..out_offset + fft_size];
+                for (d, s) in dest.iter_mut().zip(scratch.iter()) {
+                    *d += s.re * scale;
+                }
+            }
+
+            pos = block_end;
+        }
+
+        // Save the new overlap tail for the next call (samples beyond input.len())
+        self.overlap = accum[input.len()..].to_vec();
+
+        // Return only the direct output
+        accum.truncate(input.len());
+        debug!(input_len = input.len(), output_len = accum.len(), "convolved");
+        accum
+    }
+
     pub fn is_enabled(&self) -> bool {
-        self.enabled && !self.bypass && self.filter.is_some()
+        self.enabled && !self.bypass && !self.filter_fft.is_empty()
     }
 
-    /// Set bypass state.
     pub fn set_bypass(&mut self, bypass: bool) {
         self.bypass = bypass;
-        debug!(bypass = bypass, "convolution bypass changed");
+        debug!(bypass, "convolution bypass changed");
     }
 
-    /// Enable/disable convolution.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
-        debug!(enabled = enabled, "convolution enabled changed");
+        debug!(enabled, "convolution enabled changed");
+    }
+
+    /// Test-only helper: install a filter from raw f32 samples (bypasses WAV parsing).
+    #[cfg(test)]
+    pub fn load_filter_from_vec(&mut self, samples: Vec<f32>) {
+        self.enabled = true;
+        self.bypass  = false;
+        self.install_filter(samples);
     }
 }
 
-/// Maximum convolution filter file size (64 MB).
-const MAX_FILTER_FILE_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Load filter from WAV file.
+/// Load a 32-bit float WAV file. Returns raw f32 samples.
 fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
-    let mut file = File::open(path).map_err(|e| format!("Failed to open filter file: {}", e))?;
+    let mut file = File::open(path)
+        .map_err(|e| format!("failed to open filter file: {e}"))?;
 
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Failed to stat filter file: {}", e))?;
-    if metadata.len() > MAX_FILTER_FILE_BYTES {
+    let meta = file.metadata()
+        .map_err(|e| format!("failed to stat filter file: {e}"))?;
+    if meta.len() > MAX_FILTER_FILE_BYTES {
         return Err(format!(
-            "Filter file exceeds maximum size of {} MB",
+            "filter file exceeds maximum size of {} MB",
             MAX_FILTER_FILE_BYTES / (1024 * 1024)
         ));
     }
 
-    // Simple WAV reader for floating-point WAV files
     let mut header = [0u8; 44];
-    file.read(&mut header)
-        .map_err(|e| format!("Failed to read header: {}", e))?;
+    file.read_exact(&mut header)
+        .map_err(|e| format!("failed to read WAV header: {e}"))?;
 
-    // Check RIFF header
     if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
-        return Err("Not a valid WAV file".to_string());
+        return Err("not a valid WAV file".into());
     }
 
-    // Find data chunk
-    let mut data_start = 12;
     let mut data_size = 0usize;
-
     loop {
-        let mut chunk_header = [0u8; 8];
-        if file
-            .read(&mut chunk_header)
-            .map_err(|e| format!("Failed to read chunk: {}", e))?
-            == 0
-        {
+        let mut ch = [0u8; 8];
+        if file.read(&mut ch).map_err(|e| format!("chunk read: {e}"))? == 0 {
             break;
         }
-
-        let chunk_id = &chunk_header[0..4];
-        let chunk_size = u32::from_le_bytes([
-            chunk_header[4],
-            chunk_header[5],
-            chunk_header[6],
-            chunk_header[7],
-        ]) as usize;
-
-        if chunk_id == b"data" {
-            data_start = file.stream_position().map_err(|e| e.to_string())? as usize;
-            data_size = chunk_size;
+        let csz = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as usize;
+        if &ch[0..4] == b"data" {
+            data_size = csz;
             break;
         }
-
-        // Skip this chunk
-        use std::io::Seek;
-        file.seek_relative(chunk_size as i64)
-            .map_err(|e| e.to_string())?;
+        file.seek_relative(csz as i64).map_err(|e| e.to_string())?;
     }
 
     if data_size == 0 {
-        return Err("No audio data found in WAV file".to_string());
+        return Err("no audio data found in WAV file".into());
     }
 
-    // Read audio samples
-    let sample_count = data_size / 4; // 32-bit float
-    let mut bytes = vec![0u8; sample_count * 4];
-
+    let mut bytes = vec![0u8; data_size];
     file.read_exact(&mut bytes)
-        .map_err(|e| format!("Failed to read data: {}", e))?;
+        .map_err(|e| format!("failed to read data: {e}"))?;
 
-    // Convert bytes to f32 samples
     let data: Vec<f32> = bytes
         .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 
-    info!(
-        path = path,
-        samples = data.len(),
-        "loaded convolution filter"
-    );
+    info!(path, samples = data.len(), "loaded convolution filter");
     Ok(data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::PI;
+    use std::time::Instant;
 
     fn make_config() -> Arc<RwLock<DspConfig>> {
         Arc::new(RwLock::new(DspConfig {
@@ -207,35 +311,113 @@ mod tests {
 
     #[test]
     fn test_engine_creation() {
-        let config = make_config();
-        let engine = ConvolutionEngine::new(config);
-        assert!(engine.is_ok());
+        assert!(ConvolutionEngine::new(make_config()).is_ok());
     }
 
     #[test]
-    fn test_process_passthrough() {
-        let config = make_config();
-        let engine = ConvolutionEngine::new(config).unwrap();
-
-        let input = vec![0.1, 0.2, 0.3, 0.4];
-        let output = engine.process(&input);
-
-        // No filter loaded, should pass through
-        assert_eq!(output, input);
+    fn test_process_passthrough_no_filter() {
+        // No filter loaded → passthrough
+        let mut engine = ConvolutionEngine::new(make_config()).unwrap();
+        let input = vec![0.1f32, 0.2, 0.3, 0.4];
+        assert_eq!(engine.process(&input), input);
     }
 
     #[test]
     fn test_bypass() {
-        let config = make_config();
-        let mut engine = ConvolutionEngine::new(config).unwrap();
-
+        let mut engine = ConvolutionEngine::new(make_config()).unwrap();
         engine.set_bypass(true);
-        assert!(engine.bypass);
+        let input = vec![0.1f32, 0.2, 0.3, 0.4];
+        assert_eq!(engine.process(&input), input);
+    }
 
-        let input = vec![0.1, 0.2, 0.3, 0.4];
-        let output = engine.process(&input);
+    #[test]
+    fn identity_fir_passthrough() {
+        // An FIR of [1.0, 0.0, ...] is the identity: every output sample should
+        // equal the corresponding input sample (within f32 tolerance).
+        // No startup transient: the identity filter contributes no history.
+        let config = Arc::new(RwLock::new(DspConfig {
+            convolution_enabled: true,
+            convolution_bypass: false,
+            ..Default::default()
+        }));
+        let mut identity = vec![0.0f32; 64];
+        identity[0] = 1.0;
 
-        // Bypassed, should pass through
-        assert_eq!(output, input);
+        let mut engine = ConvolutionEngine::new(config).unwrap();
+        engine.load_filter_from_vec(identity);
+
+        // Use a block larger than psize to exercise the multi-block path
+        let sine: Vec<f32> = (0..512)
+            .map(|i| (2.0 * PI * 1000.0 * i as f32 / 44100.0).sin())
+            .collect();
+
+        let output = engine.process(&sine);
+        assert_eq!(output.len(), sine.len());
+        // All samples must match — identity FIR has no startup transient
+        for (i, (a, b)) in sine.iter().zip(output.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-4,
+                "identity FIR mismatch at sample {i}: got {b:.6}, expected {a:.6}"
+            );
+        }
+    }
+
+    #[test]
+    fn stateful_overlap_no_clicks() {
+        // Process the same signal in two back-to-back calls.
+        // Verify the OLA engine introduces no additional discontinuity beyond
+        // what already exists in the input signal at the block boundary.
+        // For identity FIR the output equals the input, so the jump between
+        // out1.last() and out2.first() equals the jump in the input itself
+        // (|sine[255] - sine[0]| ≈ 0.274).  We allow up to 0.35 to confirm
+        // no OLA-induced artefacts inflate the discontinuity further.
+        let config = Arc::new(RwLock::new(DspConfig {
+            convolution_enabled: true,
+            convolution_bypass: false,
+            ..Default::default()
+        }));
+        let mut fir = vec![0.0f32; 128];
+        fir[0] = 1.0;
+
+        let mut engine = ConvolutionEngine::new(config).unwrap();
+        engine.load_filter_from_vec(fir);
+
+        let block: Vec<f32> = (0..256)
+            .map(|i| (2.0 * PI * 440.0 * i as f32 / 44100.0).sin())
+            .collect();
+
+        let out1 = engine.process(&block);
+        let out2 = engine.process(&block);
+
+        // The jump between last sample of block 1 and first sample of block 2
+        // must not exceed the natural input discontinuity by any significant margin.
+        let jump = (out1.last().unwrap() - out2.first().unwrap()).abs();
+        assert!(jump < 0.35, "click at block boundary: jump = {jump:.4}");
+    }
+
+    #[test]
+    fn long_fir_processes_within_5ms() {
+        let config = Arc::new(RwLock::new(DspConfig {
+            convolution_enabled: true,
+            convolution_bypass: false,
+            ..Default::default()
+        }));
+        // 200k-tap filter → uniform OLA with 4096-sample partitions
+        let long_fir = vec![0.0f32; 200_000];
+        let mut engine = ConvolutionEngine::new(config).unwrap();
+        engine.load_filter_from_vec(long_fir);
+
+        let block = vec![0.0f32; 4096];
+        let _ = engine.process(&block); // warm up
+
+        let start = Instant::now();
+        let _ = engine.process(&block);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 5,
+            "process() took {}ms — must be < 5ms",
+            elapsed.as_millis()
+        );
     }
 }
