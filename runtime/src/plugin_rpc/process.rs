@@ -27,9 +27,14 @@ use super::protocol::{
 
 use crate::auth::OAuthReceiver;
 
+// Variants are constructed inside handle_action — dead_code fires only for
+// the binary target which doesn't use the RPC subsystem directly.
+#[allow(dead_code)]
 pub enum AuthPhase {
     Idle,
+    /// Port allocated; receiver handed to `open_and_wait` in the next action.
     Allocated(OAuthReceiver),
+    /// Auth flow in progress; reject further `allocate_port` requests.
     InProgress,
 }
 

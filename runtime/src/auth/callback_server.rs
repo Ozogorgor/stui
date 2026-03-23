@@ -60,7 +60,7 @@ pub async fn allocate_port() -> anyhow::Result<(u16, OAuthReceiver)> {
                         .split('?')
                         .next()
                         .unwrap_or("");
-                    if !path.contains("callback") || (!cb.code.is_some() && !cb.error.is_some()) {
+                    if path != "/callback" || (cb.code.is_none() && cb.error.is_none()) {
                         let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                         let _ = stream.write_all(resp).await;
                         continue; // keep listening

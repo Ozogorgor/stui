@@ -69,6 +69,16 @@ mod tests {
     }
 
     #[test]
+    fn test_urlencoded_multibyte() {
+        // é (U+00E9) encodes as UTF-8 bytes 0xC3 0xA9 → %C3%A9
+        assert_eq!(super::urlencoded("café"), "caf%C3%A9");
+        // spaces become +
+        assert_eq!(super::urlencoded("hello world"), "hello+world");
+        // unreserved chars pass through unchanged
+        assert_eq!(super::urlencoded("abc-_.~123"), "abc-_.~123");
+    }
+
+    #[test]
     fn test_exchange_body_format() {
         let body = build_exchange_body("mycode", "http://localhost:12345/callback");
         assert!(body.contains("grant_type=authorization_code"));
@@ -180,13 +190,22 @@ impl StuiPlugin for SoundCloud {
 }
 
 fn urlencoded(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            ' '  => '+'.to_string(),
-            c if c.is_alphanumeric() || "-_.~".contains(c) => c.to_string(),
-            c    => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            ' ' => out.push('+'),
+            c if c.is_ascii_alphanumeric() || "-_.~".contains(c) => out.push(c),
+            // Encode each UTF-8 byte individually (RFC 3986 §2.1)
+            c => {
+                let mut buf = [0u8; 4];
+                let encoded = c.encode_utf8(&mut buf);
+                for byte in encoded.as_bytes() {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn parse_search_results(body: &str, _token: &str) -> Vec<PluginEntry> {
