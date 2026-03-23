@@ -36,7 +36,13 @@ mod pipeline {
     use tokio::sync::RwLock;
     use tracing::{debug, info, warn};
 
-    use super::{config::DspConfig, convolution::ConvolutionEngine, dsd::DsdConverter, resample::Resampler};
+    use super::{
+        config::DspConfig,
+        convolution::ConvolutionEngine,
+        dsd::DsdConverter,
+        output::{open_output, AudioOutput},
+        resample::Resampler,
+    };
 
     /// Processing stages in the DSP pipeline.
     pub enum DspStageEnum {
@@ -47,25 +53,41 @@ mod pipeline {
 
     /// Main DSP processing pipeline.
     pub struct DspPipeline {
-        config: Arc<RwLock<DspConfig>>,
-        resampler: Option<Resampler>,
+        config:        Arc<RwLock<DspConfig>>,
+        resampler:     Option<Resampler>,
         dsd_converter: Option<DsdConverter>,
-        convolution: Option<ConvolutionEngine>,
+        convolution:   Option<ConvolutionEngine>,
+        output:        Option<Box<dyn AudioOutput>>,
     }
 
     impl DspPipeline {
         /// Create a new DSP pipeline with the given configuration.
         pub fn new(config: DspConfig) -> Self {
+            // Take a snapshot before moving config into the Arc so all sub-components see the same state.
+            let config_snap = config.clone();
             let config = Arc::new(RwLock::new(config));
 
-            let resampler = Resampler::new(config.clone()).ok();
+            let resampler     = Resampler::new(config.clone()).ok();
             let dsd_converter = DsdConverter::new(config.clone()).ok();
-            let convolution = ConvolutionEngine::new(config.clone()).ok();
+            let convolution   = ConvolutionEngine::new(config.clone()).ok();
+
+            let output = if config_snap.enabled {
+                match open_output(config_snap.output_target, &config_snap) {
+                    Ok(out) => Some(out),
+                    Err(e)  => {
+                        warn!(error = %e, "failed to open audio output — DSP will process but not deliver");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             info!(
-                resampler = resampler.is_some(),
-                dsd = dsd_converter.is_some(),
+                resampler   = resampler.is_some(),
+                dsd         = dsd_converter.is_some(),
                 convolution = convolution.is_some(),
+                output      = output.is_some(),
                 "DSP pipeline initialized"
             );
 
@@ -74,6 +96,7 @@ mod pipeline {
                 resampler,
                 dsd_converter,
                 convolution,
+                output,
             }
         }
 
@@ -114,6 +137,12 @@ mod pipeline {
                 }
             }
 
+            if let Some(ref mut out) = self.output {
+                if let Err(e) = out.write(&input) {
+                    warn!(error = %e, "audio output write failed");
+                }
+            }
+
             (input, output_rate)
         }
 
@@ -130,8 +159,25 @@ mod pipeline {
         }
 
         /// Update configuration at runtime.
-        pub async fn update_config(&self, config: DspConfig) {
-            *self.config.write().await = config;
+        pub async fn update_config(&mut self, new_cfg: DspConfig) {
+            let old = self.config.read().await.clone();
+            *self.config.write().await = new_cfg.clone();
+
+            let output_changed = old.output_target  != new_cfg.output_target
+                || old.alsa_device   != new_cfg.alsa_device
+                || old.pipewire_role != new_cfg.pipewire_role;
+
+            if output_changed {
+                if let Some(old_out) = self.output.take() {
+                    old_out.close();
+                }
+                if new_cfg.enabled {
+                    match open_output(new_cfg.output_target, &new_cfg) {
+                        Ok(out) => { self.output = Some(out); }
+                        Err(e)  => { warn!(error = %e, "failed to re-open audio output"); }
+                    }
+                }
+            }
         }
 
         /// Get current configuration.
