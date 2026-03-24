@@ -21,6 +21,7 @@ use crate::skipper::Skipper;
 /// Both tasks run in the background — this returns immediately.
 /// `tab` is `Some(Music|Radio|Podcasts)` for audio (→ MPD),
 /// `None` for video (→ mpv).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn run_play(
     player:     PlayerBridge,
     skipper:    Arc<Skipper>,

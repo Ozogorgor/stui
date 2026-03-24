@@ -3,9 +3,12 @@ package ipc
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/stui/stui/pkg/log"
 )
+
+const defaultRequestTimeout = 30 * time.Second
 
 // ping sends a versioned handshake ping and validates the response.
 func (c *Client) ping() (bool, error) {
@@ -42,6 +45,7 @@ func (c *Client) nextID() string {
 
 // sendWithID registers a pending channel keyed by id and sends the payload.
 // The id is automatically added to the payload so the runtime can echo it back.
+// Returns a channel that will receive the response.
 func (c *Client) sendWithID(id string, payload map[string]any) <-chan RawResponse {
 	ch := make(chan RawResponse, 1)
 	c.mu.Lock()
@@ -58,6 +62,7 @@ func (c *Client) sendWithID(id string, payload map[string]any) <-chan RawRespons
 		ch <- RawResponse{Err: err}
 		close(ch)
 	}
+
 	return ch
 }
 

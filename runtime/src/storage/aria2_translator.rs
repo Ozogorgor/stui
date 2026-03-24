@@ -35,6 +35,7 @@ use tracing::{debug, error, info, warn};
 
 /// Manages translation between aria2 paths and user-organized paths.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct Aria2Translator {
     /// Maps aria2 GID (download ID) → DownloadSession
     pub sessions: Arc<RwLock<HashMap<String, DownloadSession>>>,
@@ -143,8 +144,8 @@ impl Aria2Translator {
         
         if let Some(session) = sessions.remove(gid) {
             // Optionally delete the aria2 working directory
-            if session.cleanup_on_remove {
-                if session.aria2_dir.exists() {
+            if session.cleanup_on_remove
+                && session.aria2_dir.exists() {
                     debug!(gid = %gid, path = %session.aria2_dir.display(), "cleaning up aria2 directory");
                     // Don't delete if files are still being organized
                     if session.status == SessionStatus::OrganizeFailed {
@@ -153,7 +154,6 @@ impl Aria2Translator {
                         fs::remove_dir_all(&session.aria2_dir).ok();
                     }
                 }
-            }
         }
         
         drop(sessions);
@@ -251,10 +251,7 @@ impl Aria2Translator {
         
         // Add remaining parts from target
         for part in target_parts.iter().skip(common) {
-            match part {
-                Component::Normal(s) => result.push(s),
-                _ => {}
-            }
+            if let Component::Normal(s) = part { result.push(s) }
         }
         
         result

@@ -95,6 +95,12 @@ struct MpvInner {
     event_tx:   broadcast::Sender<MpvEvent>,
 }
 
+impl Default for MpvPlayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MpvPlayer {
     pub fn new() -> Self {
         let (event_tx, _) = broadcast::channel(64);
@@ -524,8 +530,8 @@ impl MpvPlayer {
             }
 
             // ── file-loaded — send started if duration wasn't seen yet ────
-            if val.get("event").and_then(|e| e.as_str()) == Some("file-loaded") {
-                if !started_sent {
+            if val.get("event").and_then(|e| e.as_str()) == Some("file-loaded")
+                && !started_sent {
                     started_sent = true;
                     let _ = self.inner.event_tx.send(MpvEvent::Started(
                         PlayerStartedEvent {
@@ -535,7 +541,6 @@ impl MpvPlayer {
                         }
                     ));
                 }
-            }
         }
 
         // Clean up process entry

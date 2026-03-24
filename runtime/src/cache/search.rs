@@ -51,6 +51,7 @@ fn normalise(q: &str) -> String {
 
 /// Thread-safe search result cache.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct SearchCache {
     inner: Arc<RwLock<HashMap<SearchKey, Ttl<Vec<CatalogEntry>>>>>,
 }

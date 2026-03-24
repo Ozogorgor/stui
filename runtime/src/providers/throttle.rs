@@ -117,6 +117,7 @@ impl LimiterState {
 ///
 /// Cheap to clone — all clones share the underlying `Arc`.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct ProviderThrottle {
     inner: Arc<Mutex<HashMap<String, LimiterState>>>,
     /// Default capacity for new providers (requests per second).

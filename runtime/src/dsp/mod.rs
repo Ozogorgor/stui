@@ -26,6 +26,9 @@ pub mod dsd;
 pub mod convolution;
 pub mod crossfeed;
 pub mod dither;
+pub mod mid_side;
+pub mod dc_offset;
+pub mod lufs;
 pub mod raat;
 pub mod output;
 
@@ -44,7 +47,10 @@ mod pipeline {
         convolution::ConvolutionEngine,
         crossfeed::{CrossfeedFilter, probe_headphones},
         dither::DitherFilter,
+        dc_offset::DcOffsetFilter,
         dsd::DsdConverter,
+        lufs::LufsNormalizer,
+        mid_side::MidSideProcessor,
         output::{open_output, AudioOutput},
         resample::Resampler,
     };
@@ -57,6 +63,9 @@ mod pipeline {
         convolution:   Option<ConvolutionEngine>,
         crossfeed:     Option<CrossfeedFilter>,
         dither:        Option<DitherFilter>,
+        dc_offset:     Option<DcOffsetFilter>,
+        lufs:          Option<LufsNormalizer>,
+        mid_side:      MidSideProcessor,
         output:        Option<Box<dyn AudioOutput>>,
     }
 
@@ -117,15 +126,38 @@ mod pipeline {
 
             let dither = build_dither(&config_snap);
 
+            let dc_offset = if config_snap.dc_offset_enabled {
+                Some(DcOffsetFilter::new(config_snap.dc_offset_cutoff_hz))
+            } else {
+                None
+            };
+
+            let lufs = if config_snap.lufs_enabled {
+                let mut l = LufsNormalizer::new(config_snap.input_sample_rate);
+                l.set_target_lufs(config_snap.lufs_target);
+                l.set_max_gain(config_snap.lufs_max_gain_db);
+                Some(l)
+            } else {
+                None
+            };
+
             info!(
                 resampler   = resampler.is_some(),
                 dsd         = dsd_converter.is_some(),
                 convolution = convolution.is_some(),
                 crossfeed   = crossfeed.is_some(),
                 dither      = dither.is_some(),
+                dc_offset   = dc_offset.is_some(),
+                lufs        = lufs.is_some(),
                 output      = output.is_some(),
                 "DSP pipeline initialized"
             );
+
+            let mut mid_side = MidSideProcessor::new();
+            mid_side.set_enabled(config_snap.ms_enabled);
+            mid_side.set_width(config_snap.ms_width);
+            mid_side.set_mid_gain(config_snap.ms_mid_gain);
+            mid_side.set_side_gain(config_snap.ms_side_gain);
 
             Self {
                 config,
@@ -134,6 +166,9 @@ mod pipeline {
                 convolution,
                 crossfeed,
                 dither,
+                dc_offset,
+                lufs,
+                mid_side,
                 output,
             }
         }
@@ -147,6 +182,12 @@ mod pipeline {
             // Snapshot config once so all stages see a consistent view even if
             // update_config() is called concurrently from another task.
             let config = self.config.blocking_read();
+
+            // DC offset filter - apply early to remove DC before other processing
+            if let Some(ref mut dc) = self.dc_offset {
+                input = dc.process(&input, output_rate);
+                debug!(cutoff_hz = dc.cutoff(), "DC offset filtered");
+            }
 
             if let Some(ref mut resampler) = self.resampler {
                 if config.resample_enabled {
@@ -180,6 +221,19 @@ mod pipeline {
                 debug!("crossfeed applied");
             }
 
+            // LUFS loudness normalization
+            if let Some(ref mut lufs) = self.lufs {
+                input = lufs.process(&mut input).to_vec();
+                debug!(gain_db = lufs.current_gain_db(), "LUFS normalized");
+            }
+
+            // M/S processing - apply stereo width and mid/side gains
+            if config.ms_enabled {
+                input = self.mid_side.process(&input);
+                debug!(width = self.mid_side.width(), mid_gain = self.mid_side.mid_gain(), side_gain = self.mid_side.side_gain(), "M/S applied");
+            }
+
+            // Dither is the final stage before output
             if let Some(ref mut dither) = self.dither {
                 input = dither.process(&input, output_rate);
                 debug!("dither applied");
@@ -269,6 +323,55 @@ mod pipeline {
 
             if dither_changed {
                 self.dither = build_dither(&new_cfg);
+            }
+
+            // Update M/S processor settings
+            if old.ms_enabled != new_cfg.ms_enabled
+                || old.ms_width != new_cfg.ms_width
+                || old.ms_mid_gain != new_cfg.ms_mid_gain
+                || old.ms_side_gain != new_cfg.ms_side_gain
+            {
+                self.mid_side.set_enabled(new_cfg.ms_enabled);
+                self.mid_side.set_width(new_cfg.ms_width);
+                self.mid_side.set_mid_gain(new_cfg.ms_mid_gain);
+                self.mid_side.set_side_gain(new_cfg.ms_side_gain);
+            }
+
+            // Update DC offset filter
+            let dc_offset_recreate = old.dc_offset_enabled != new_cfg.dc_offset_enabled;
+            let dc_offset_params_changed = old.dc_offset_cutoff_hz != new_cfg.dc_offset_cutoff_hz;
+
+            if dc_offset_recreate {
+                self.dc_offset = if new_cfg.dc_offset_enabled {
+                    Some(DcOffsetFilter::new(new_cfg.dc_offset_cutoff_hz))
+                } else {
+                    None
+                };
+            } else if dc_offset_params_changed {
+                if let Some(ref mut dc) = self.dc_offset {
+                    dc.set_cutoff(new_cfg.dc_offset_cutoff_hz);
+                }
+            }
+
+            // Update LUFS normalizer
+            let lufs_recreate = old.lufs_enabled != new_cfg.lufs_enabled;
+            let lufs_params_changed = old.lufs_target != new_cfg.lufs_target
+                || old.lufs_max_gain_db != new_cfg.lufs_max_gain_db;
+
+            if lufs_recreate {
+                self.lufs = if new_cfg.lufs_enabled {
+                    let mut l = LufsNormalizer::new(new_cfg.input_sample_rate);
+                    l.set_target_lufs(new_cfg.lufs_target);
+                    l.set_max_gain(new_cfg.lufs_max_gain_db);
+                    Some(l)
+                } else {
+                    None
+                };
+            } else if lufs_params_changed {
+                if let Some(ref mut l) = self.lufs {
+                    l.set_target_lufs(new_cfg.lufs_target);
+                    l.set_max_gain(new_cfg.lufs_max_gain_db);
+                }
             }
         }
 

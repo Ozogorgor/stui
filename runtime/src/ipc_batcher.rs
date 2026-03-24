@@ -23,7 +23,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, Instant};
 
-use crate::catalog::{GridUpdate, GridUpdateSource};
+use crate::catalog::GridUpdate;
 
 const MAX_BATCH_SIZE: usize = 10;
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 200;

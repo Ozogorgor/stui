@@ -72,6 +72,7 @@ struct PlayerEndedWire {
 // ── PlayerBridge ──────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct PlayerBridge {
     mpv:          MpvPlayer,
     aria2:        Option<Aria2Bridge>,
@@ -350,12 +351,10 @@ impl PlayerBridge {
                 let msg = e.to_string();
                 self.push_ended("error", &msg).await;
             }
-        } else {
-            if let Err(e) = mpd.queue_and_play(url).await {
-                error!("player_bridge: mpd play failed: {e}");
-                let msg = e.to_string();
-                self.push_ended("error", &msg).await;
-            }
+        } else if let Err(e) = mpd.queue_and_play(url).await {
+            error!("player_bridge: mpd play failed: {e}");
+            let msg = e.to_string();
+            self.push_ended("error", &msg).await;
         }
     }
 

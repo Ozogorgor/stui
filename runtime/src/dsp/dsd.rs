@@ -70,7 +70,7 @@ impl DsdConverter {
         output
     }
 
-    fn infer_dsd_rate(&self, sample_count: usize) -> u32 {
+    fn infer_dsd_rate(&self, _sample_count: usize) -> u32 {
         // Try to infer DSD rate from sample count
         // DSD64 = 2.8MHz, DSD128 = 5.6MHz, DSD256 = 11.2MHz
         // This is a simplified heuristic

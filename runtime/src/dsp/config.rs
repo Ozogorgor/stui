@@ -3,18 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 /// Supported output sample rates.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum OutputSampleRate {
     Hz96000 = 96000,
+    #[default]
     Hz192000 = 192000,
     Hz384000 = 384000,
     Hz768000 = 768000,
-}
-
-impl Default for OutputSampleRate {
-    fn default() -> Self {
-        Self::Hz192000
-    }
 }
 
 impl OutputSampleRate {
@@ -24,19 +19,14 @@ impl OutputSampleRate {
 }
 
 /// Upsampling ratios.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum UpsampleRatio {
     Ratio1x = 1,
     Ratio2x = 2,
+    #[default]
     Ratio4x = 4,
     Ratio8x = 8,
     Ratio16x = 16,
-}
-
-impl Default for UpsampleRatio {
-    fn default() -> Self {
-        Self::Ratio4x
-    }
 }
 
 impl UpsampleRatio {
@@ -48,48 +38,36 @@ impl UpsampleRatio {
 /// Filter types for resampling.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FilterType {
     Fast,
     Slow,
+    #[default]
     Synchronous,
-}
-
-impl Default for FilterType {
-    fn default() -> Self {
-        Self::Synchronous
-    }
 }
 
 /// Output mode for DSP processing.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OutputMode {
+    #[default]
     Pcm,
     Dsd,
     DsdToPcm,
 }
 
-impl Default for OutputMode {
-    fn default() -> Self {
-        Self::Pcm
-    }
-}
-
 /// DSP output targets.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OutputTarget {
+    #[default]
     PipeWire,
     RoonRaat,
     Mpd,
     /// Direct ALSA hardware output (hw: device, no OS mixer).
     Alsa,
-}
-
-impl Default for OutputTarget {
-    fn default() -> Self {
-        Self::PipeWire
-    }
 }
 
 /// Main DSP configuration.
@@ -144,6 +122,24 @@ pub struct DspConfig {
     /// Noise shaping algorithm. One of: "none"|"lipshitz"|"fweighted"|"modified_e_weighted"|
     /// "improved_e_weighted"|"shibata"|"low_shibata"|"high_shibata"|"gesemann".
     pub dither_noise_shaping: String,
+    /// Enable Mid/Side processing.
+    pub ms_enabled: bool,
+    /// M/S stereo width. 1.0 = normal, 0.0 = mono, >1.0 = wider.
+    pub ms_width: f32,
+    /// M/S mid (center) gain. 1.0 = unity.
+    pub ms_mid_gain: f32,
+    /// M/S side gain. 1.0 = unity.
+    pub ms_side_gain: f32,
+    /// Enable DC offset (high-pass) filter.
+    pub dc_offset_enabled: bool,
+    /// DC offset filter cutoff frequency in Hz. Typical: 5-20 Hz.
+    pub dc_offset_cutoff_hz: f32,
+    /// Enable LUFS loudness normalization.
+    pub lufs_enabled: bool,
+    /// Target LUFS value for normalization. Typical: -14 to -24 LUFS.
+    pub lufs_target: f32,
+    /// Maximum gain limit in dB for LUFS normalization.
+    pub lufs_max_gain_db: f32,
 }
 
 impl Default for DspConfig {
@@ -173,6 +169,15 @@ impl Default for DspConfig {
             dither_auto: false,
             dither_bit_depth: 16,
             dither_noise_shaping: "none".to_string(),
+            ms_enabled: false,
+            ms_width: 1.0,
+            ms_mid_gain: 1.0,
+            ms_side_gain: 1.0,
+            dc_offset_enabled: false,
+            dc_offset_cutoff_hz: 10.0,
+            lufs_enabled: false,
+            lufs_target: -14.0,
+            lufs_max_gain_db: 12.0,
         }
     }
 }
@@ -207,5 +212,29 @@ mod tests {
         assert!(!cfg.dither_auto);
         assert_eq!(cfg.dither_bit_depth, 16);
         assert_eq!(cfg.dither_noise_shaping, "none");
+    }
+
+    #[test]
+    fn ms_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.ms_enabled);
+        assert!((cfg.ms_width - 1.0_f32).abs() < f32::EPSILON);
+        assert!((cfg.ms_mid_gain - 1.0_f32).abs() < f32::EPSILON);
+        assert!((cfg.ms_side_gain - 1.0_f32).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn dc_offset_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.dc_offset_enabled);
+        assert!((cfg.dc_offset_cutoff_hz - 10.0_f32).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn lufs_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.lufs_enabled);
+        assert!((cfg.lufs_target - (-14.0_f32)).abs() < f32::EPSILON);
+        assert!((cfg.lufs_max_gain_db - 12.0_f32).abs() < f32::EPSILON);
     }
 }

@@ -21,19 +21,19 @@ use crate::dsp::config::DspConfig;
 const CHANNEL_CAPACITY: usize = 4;
 
 pub struct PipeWireOutput {
-    sender:      CbSender<Vec<f32>>,
+    sender: CbSender<Vec<f32>>,
     sample_rate: u32,
-    quit_tx:     pw::channel::Sender<()>,
-    thread:      Option<std::thread::JoinHandle<()>>,
+    quit_tx: pw::channel::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl PipeWireOutput {
     pub fn new(config: &DspConfig) -> Result<Self, OutputError> {
         let sample_rate = config.output_sample_rate;
-        let role        = config.pipewire_role.clone();
+        let role = config.pipewire_role.clone();
 
         let (audio_tx, audio_rx) = bounded::<Vec<f32>>(CHANNEL_CAPACITY);
-        let (quit_tx,  quit_rx)  = pw::channel::channel::<()>();
+        let (quit_tx, quit_rx) = pw::channel::channel::<()>();
 
         // Signal successful init or first error back to the caller.
         let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -68,8 +68,12 @@ impl PipeWireOutput {
 }
 
 impl AudioOutput for PipeWireOutput {
-    fn sample_rate(&self) -> u32 { self.sample_rate }
-    fn channels(&self) -> u16   { 2 }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    fn channels(&self) -> u16 {
+        2
+    }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), OutputError> {
         match self.sender.try_send(samples.to_vec()) {
@@ -103,10 +107,10 @@ impl AudioOutput for PipeWireOutput {
 /// Creates all PipeWire objects, connects the stream, then runs the main loop.
 fn run_pipewire_thread(
     sample_rate: u32,
-    role:        String,
-    audio_rx:    CbReceiver<Vec<f32>>,
-    quit_rx:     pw::channel::Receiver<()>,
-    init_tx:     std::sync::mpsc::Sender<Result<(), String>>,
+    role: String,
+    audio_rx: CbReceiver<Vec<f32>>,
+    quit_rx: pw::channel::Receiver<()>,
+    init_tx: std::sync::mpsc::Sender<Result<(), String>>,
 ) {
     pw::init();
 
@@ -123,8 +127,8 @@ fn run_pipewire_thread(
     }
 
     let mainloop = try_init!(pw::main_loop::MainLoopRc::new(None), "MainLoop");
-    let context  = try_init!(pw::context::ContextRc::new(&mainloop, None), "Context");
-    let core     = try_init!(context.connect_rc(None), "PipeWire connect");
+    let context = try_init!(pw::context::ContextRc::new(&mainloop, None), "Context");
+    let core = try_init!(context.connect_rc(None), "PipeWire connect");
 
     let props = properties! {
         *pw::keys::MEDIA_TYPE     => "Audio",
@@ -147,10 +151,16 @@ fn run_pipewire_thread(
     let _listener = stream
         .add_local_listener_with_user_data(audio_rx)
         .process(|stream_ref, rx| {
-            let Some(mut buf) = stream_ref.dequeue_buffer() else { return };
+            let Some(mut buf) = stream_ref.dequeue_buffer() else {
+                return;
+            };
             let datas = buf.datas_mut();
-            let Some(data) = datas.first_mut() else { return };
-            let Some(bytes): Option<&mut [u8]> = data.data() else { return };
+            let Some(data) = datas.first_mut() else {
+                return;
+            };
+            let Some(bytes): Option<&mut [u8]> = data.data() else {
+                return;
+            };
 
             // Safe cast: PipeWire allocated this buffer as F32LE; bytemuck checks alignment.
             let floats: &mut [f32] = match bytemuck::try_cast_slice_mut(bytes) {
@@ -191,7 +201,7 @@ fn run_pipewire_thread(
 
     let obj = pw::spa::pod::Object {
         type_: pw::spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
-        id:    pw::spa::param::ParamType::EnumFormat.as_raw(),
+        id: pw::spa::param::ParamType::EnumFormat.as_raw(),
         properties: audio_info.into(),
     };
     let values = pw::spa::pod::serialize::PodSerializer::serialize(

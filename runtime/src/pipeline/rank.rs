@@ -19,6 +19,7 @@ impl From<StreamPreferencesWire> for StreamPreferences {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub async fn run_rank_streams(req: RankStreamsRequest) -> Response {
     let mut policy = RankingPolicy::default();
     policy.preferences = req.preferences.into();

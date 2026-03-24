@@ -24,6 +24,7 @@ const TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Thread-safe metadata / detail cache.
 #[allow(dead_code)]
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct MetadataCache {
     inner: Arc<RwLock<HashMap<String, Ttl<DetailEntry>>>>,
 }

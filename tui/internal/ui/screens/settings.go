@@ -392,12 +392,6 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							})
 							dialog.SetSize(m.width, m.height)
 							return m, screen.TransitionCmd(dialog, true)
-						case "dsp.dither_enabled":
-							dialog := NewDitherDialogModel(func(key string, val interface{}) tea.Cmd {
-								return func() tea.Msg { return SettingsChangedMsg{Key: key, Value: val} }
-							})
-							dialog.SetSize(m.width, m.height)
-							return m, screen.TransitionCmd(dialog, true)
 						default:
 							return m, func() tea.Msg { return OpenPluginSettingsMsg{} }
 						}
@@ -1190,13 +1184,7 @@ func defaultCategories() []settingCategory {
 					kind:        settingAction,
 					description: "BS2B headphone crossfeed — blend L/R for natural stereo image",
 				},
-				{
-					label:       "Dither",
-					key:         "dsp.dither_enabled",
-					kind:        settingAction,
-					description: "TPDF dither + noise shaping — reduce quantization artifacts at output",
 				},
-			},
 		},
 		{
 			name: "Plugins",

@@ -44,6 +44,7 @@ type SharedAuthPhase = Arc<tokio::sync::Mutex<AuthPhase>>;
 ///
 /// All public methods are `async` and safe to call concurrently — in-flight
 /// requests are multiplexed over the single stdin/stdout channel.
+#[allow(clippy::type_complexity)]
 pub struct PluginProcess {
     /// Resolved plugin ID (UUID assigned at load time).
     pub id:        String,

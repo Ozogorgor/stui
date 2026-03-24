@@ -38,31 +38,26 @@ pub trait AudioOutput: Send {
 ///
 /// PipeWire falls back to ALSA on socket/connection errors.
 /// Permission denied or format errors are returned as `ConfigError`.
+#[allow(clippy::type_complexity)]
 pub fn open_output(
     target: OutputTarget,
     config: &DspConfig,
 ) -> Result<Box<dyn AudioOutput>, OutputError> {
     match target {
-        OutputTarget::PipeWire => {
-            match PipeWireOutput::new(config) {
-                Ok(out) => Ok(Box::new(out)),
-                Err(e) if is_connection_error(&e) => {
-                    warn!(error = %e, "PipeWire unavailable, falling back to ALSA");
-                    let out = AlsaOutput::new(config)?;
-                    Ok(Box::new(out))
-                }
-                Err(e) => Err(e),
+        OutputTarget::PipeWire => match PipeWireOutput::new(config) {
+            Ok(out) => Ok(Box::new(out)),
+            Err(e) if is_connection_error(&e) => {
+                warn!(error = %e, "PipeWire unavailable, falling back to ALSA");
+                let out = AlsaOutput::new(config)?;
+                Ok(Box::new(out))
             }
-        }
-        OutputTarget::Alsa => {
-            Ok(Box::new(AlsaOutput::new(config)?))
-        }
-        OutputTarget::RoonRaat | OutputTarget::Mpd => {
-            Err(OutputError::ConfigError(format!(
-                "output target {:?} is not implemented in the DSP output path",
-                target
-            )))
-        }
+            Err(e) => Err(e),
+        },
+        OutputTarget::Alsa => Ok(Box::new(AlsaOutput::new(config)?)),
+        OutputTarget::RoonRaat | OutputTarget::Mpd => Err(OutputError::ConfigError(format!(
+            "output target {:?} is not implemented in the DSP output path",
+            target
+        ))),
     }
 }
 

@@ -38,10 +38,13 @@ use crate::catalog::CatalogEntry;
 use crate::ipc::{MediaTab, SubtitleTrack};
 use crate::providers::Stream;
 
+/// Type alias for plugin supervisor list
+type PluginSupervisorList = Arc<RwLock<Vec<Arc<PluginSupervisor>>>>;
+
 /// Manages all external plugin processes for the runtime.
 #[allow(dead_code)]
 pub struct PluginRpcManager {
-    plugins: Arc<RwLock<Vec<Arc<PluginSupervisor>>>>,
+    plugins: PluginSupervisorList,
     config:  SupervisorConfig,
 }
 
@@ -244,6 +247,11 @@ impl PluginRpcManager {
     /// Number of currently loaded external plugins.
     pub async fn len(&self) -> usize {
         self.plugins.read().await.len()
+    }
+
+    /// Returns true if no plugins are loaded.
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

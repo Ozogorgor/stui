@@ -22,22 +22,23 @@ use super::config::DspConfig;
 const MAX_FILTER_FILE_BYTES: u64 = 64 * 1024 * 1024; // 64 MB cap
 
 /// Convolution engine for room correction filters.
+#[allow(clippy::type_complexity)]
 pub struct ConvolutionEngine {
-    config:         Arc<RwLock<DspConfig>>,
+    config: Arc<RwLock<DspConfig>>,
     /// Pre-computed FFTs of each filter partition. Empty when no filter is loaded.
-    filter_fft:     Vec<Vec<Complex32>>,
+    filter_fft: Vec<Vec<Complex32>>,
     /// Overlap-add tail from the previous process() call. Length = (nparts+1) * psize.
-    overlap:        Vec<f32>,
+    overlap: Vec<f32>,
     /// Partition size (samples). Determines FFT size = psize * 2.
-    psize:          usize,
+    psize: usize,
     /// Cached forward FFT plan for fft_size = psize * 2.
-    fft_plan:       Option<Arc<dyn Fft<f32>>>,
+    fft_plan: Option<Arc<dyn Fft<f32>>>,
     /// Cached inverse FFT plan for fft_size = psize * 2.
-    ifft_plan:      Option<Arc<dyn Fft<f32>>>,
+    ifft_plan: Option<Arc<dyn Fft<f32>>>,
     /// Scratch buffer reused each call to avoid repeated allocations (length = fft_size).
-    scratch:        Vec<Complex32>,
-    enabled:        bool,
-    bypass:         bool,
+    scratch: Vec<Complex32>,
+    enabled: bool,
+    bypass: bool,
 }
 
 impl ConvolutionEngine {
@@ -55,7 +56,7 @@ impl ConvolutionEngine {
             None
         };
         let enabled = cfg.convolution_enabled;
-        let bypass  = cfg.convolution_bypass;
+        let bypass = cfg.convolution_bypass;
         drop(cfg);
 
         let mut engine = Self {
@@ -99,7 +100,7 @@ impl ConvolutionEngine {
 
         // Build and cache FFT plans once per filter load
         let mut planner = FftPlanner::<f32>::new();
-        let fft  = planner.plan_fft_forward(fft_size);
+        let fft = planner.plan_fft_forward(fft_size);
         let ifft = planner.plan_fft_inverse(fft_size);
 
         // Partition filter into psize-length chunks, zero-pad, FFT each
@@ -116,9 +117,9 @@ impl ConvolutionEngine {
             .collect();
 
         // Cache the plans and pre-allocate scratch buffer for use in ola_process
-        self.fft_plan  = Some(fft);
+        self.fft_plan = Some(fft);
         self.ifft_plan = Some(ifft);
-        self.scratch   = vec![Complex32::new(0.0, 0.0); fft_size];
+        self.scratch = vec![Complex32::new(0.0, 0.0); fft_size];
 
         // Reset overlap tail. The accumulator tail is (nparts+1)*psize to cover partial
         // trailing input blocks (see tail_len comment in ola_process).
@@ -145,12 +146,12 @@ impl ConvolutionEngine {
     }
 
     fn ola_process(&mut self, input: &[f32]) -> Vec<f32> {
-        let psize    = self.psize;
+        let psize = self.psize;
         let fft_size = psize * 2;
-        let scale    = 1.0 / fft_size as f32;
+        let scale = 1.0 / fft_size as f32;
         // nparts ≥ 1 (guaranteed: ola_process only called when is_enabled(), which checks
         // !filter_fft.is_empty())
-        let nparts   = self.filter_fft.len();
+        let nparts = self.filter_fft.len();
         // Tail length: for a partial trailing block starting at pos = input.len()-1 (worst case),
         // partition k = nparts-1 writes to pos + (nparts-1)*psize + fft_size - 1
         //   = (input.len()-1) + (nparts+1)*psize - 1 = input.len() + (nparts+1)*psize - 2.
@@ -159,7 +160,7 @@ impl ConvolutionEngine {
         let tail_len = (nparts + 1) * psize;
 
         // Use cached FFT plans (always present when filter_fft is non-empty)
-        let fft  = self.fft_plan.as_ref().expect("fft_plan missing");
+        let fft = self.fft_plan.as_ref().expect("fft_plan missing");
         let ifft = self.ifft_plan.as_ref().expect("ifft_plan missing");
 
         // Accumulator: input.len() + tail_len to hold OLA tails from all partitions
@@ -181,7 +182,9 @@ impl ConvolutionEngine {
 
             // Zero-pad block to fft_size and compute its FFT
             // Fill from previous contents first (the tail is already zero)
-            for c in x_fft.iter_mut() { *c = Complex32::new(0.0, 0.0); }
+            for c in x_fft.iter_mut() {
+                *c = Complex32::new(0.0, 0.0);
+            }
             for (i, &s) in block.iter().enumerate() {
                 x_fft[i].re = s;
             }
@@ -216,7 +219,11 @@ impl ConvolutionEngine {
 
         // Return only the direct output
         accum.truncate(input.len());
-        debug!(input_len = input.len(), output_len = accum.len(), "convolved");
+        debug!(
+            input_len = input.len(),
+            output_len = accum.len(),
+            "convolved"
+        );
         accum
     }
 
@@ -238,7 +245,7 @@ impl ConvolutionEngine {
     #[cfg(test)]
     pub fn load_filter_from_vec(&mut self, samples: Vec<f32>) {
         self.enabled = true;
-        self.bypass  = false;
+        self.bypass = false;
         self.install_filter(samples);
     }
 }
@@ -248,10 +255,10 @@ impl ConvolutionEngine {
 /// Scans all RIFF chunks to locate `fmt ` and `data`. Validates that the file
 /// uses IEEE float format (AudioFormat = 3) and 32-bit samples before reading.
 fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
-    let mut file = File::open(path)
-        .map_err(|e| format!("failed to open filter file: {e}"))?;
+    let mut file = File::open(path).map_err(|e| format!("failed to open filter file: {e}"))?;
 
-    let meta = file.metadata()
+    let meta = file
+        .metadata()
         .map_err(|e| format!("failed to stat filter file: {e}"))?;
     if meta.len() > MAX_FILTER_FILE_BYTES {
         return Err(format!(
@@ -290,7 +297,7 @@ fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
             let mut fmt = vec![0u8; csz];
             file.read_exact(&mut fmt)
                 .map_err(|e| format!("failed to read fmt chunk: {e}"))?;
-            audio_format    = Some(u16::from_le_bytes([fmt[0], fmt[1]]));
+            audio_format = Some(u16::from_le_bytes([fmt[0], fmt[1]]));
             bits_per_sample = Some(u16::from_le_bytes([fmt[14], fmt[15]]));
         } else if &ch[0..4] == b"data" {
             data_size = Some(csz);
@@ -304,9 +311,15 @@ fn load_filter_file(path: &str) -> Result<Vec<f32>, String> {
 
     match audio_format {
         Some(3) => {} // IEEE_FLOAT — correct
-        Some(1) => return Err("WAV file is PCM integer format; a 32-bit float WAV is required".into()),
-        Some(f) => return Err(format!("unsupported WAV AudioFormat {f}; 32-bit float (3) required")),
-        None    => return Err("WAV file has no fmt chunk".into()),
+        Some(1) => {
+            return Err("WAV file is PCM integer format; a 32-bit float WAV is required".into())
+        }
+        Some(f) => {
+            return Err(format!(
+                "unsupported WAV AudioFormat {f}; 32-bit float (3) required"
+            ))
+        }
+        None => return Err("WAV file has no fmt chunk".into()),
     }
     if bits_per_sample != Some(32) {
         return Err(format!(

@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use rubato::{
-    Async, FixedAsync, FixedSync, Fft, PolynomialDegree, Resampler as _,
+    Async, Fft, FixedAsync, FixedSync, PolynomialDegree, Resampler as _,
     SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
@@ -38,6 +38,7 @@ enum ResamplerKind {
 }
 
 /// High-quality audio resampler. Stereo interleaved f32 input and output.
+#[allow(clippy::type_complexity)]
 pub struct Resampler {
     config: Arc<RwLock<DspConfig>>,
     input_rate: u32,
@@ -58,7 +59,11 @@ impl Resampler {
         Self::validate_rates(input_rate, output_rate)?;
         let kind = Self::build_kind(filter_type, input_rate, output_rate, chunk_size)?;
 
-        info!(input = input_rate, output = output_rate, "resampler initialized");
+        info!(
+            input = input_rate,
+            output = output_rate,
+            "resampler initialized"
+        );
         Ok(Self {
             config: Arc::clone(&config),
             input_rate,
@@ -167,11 +172,7 @@ impl Resampler {
 
     fn run_rubato(&mut self, input_channels: &[Vec<f32>], n_frames: usize) -> Vec<Vec<f32>> {
         // Build input adapter: SequentialSliceOfVecs wraps &[Vec<f32>]
-        let input_adapter = match SequentialSliceOfVecs::new(
-            input_channels,
-            2,
-            n_frames,
-        ) {
+        let input_adapter = match SequentialSliceOfVecs::new(input_channels, 2, n_frames) {
             Ok(a) => a,
             Err(e) => {
                 warn!("rubato input adapter error: {e:?}");
@@ -187,8 +188,8 @@ impl Resampler {
         };
 
         // We use a mutable Vec<Vec<f32>> as the output and wrap it with SequentialSliceOfVecs
-        let mut out_left = vec![0.0f32; output_capacity];
-        let mut out_right = vec![0.0f32; output_capacity];
+        let out_left = vec![0.0f32; output_capacity];
+        let out_right = vec![0.0f32; output_capacity];
         let mut output_channels: Vec<Vec<f32>> = vec![out_left, out_right];
 
         let mut output_adapter = match SequentialSliceOfVecs::new_mut(

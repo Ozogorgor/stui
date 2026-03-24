@@ -132,6 +132,7 @@ impl CatalogEntry {
 pub struct Catalog {
     cache_dir: PathBuf,
     engine: Arc<Engine>,
+    #[allow(clippy::type_complexity)]
     grids: Arc<RwLock<HashMap<String, Vec<CatalogEntry>>>>,
     tx: broadcast::Sender<GridUpdate>,
 }

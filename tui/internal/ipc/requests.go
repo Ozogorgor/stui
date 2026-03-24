@@ -3,7 +3,19 @@ package ipc
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
+
+// receiveWithTimeout waits for a response from the channel with a timeout.
+// Returns the response or a timeout error.
+func receiveWithTimeout(ch <-chan RawResponse) RawResponse {
+	select {
+	case resp := <-ch:
+		return resp
+	case <-time.After(defaultRequestTimeout):
+		return RawResponse{Err: fmt.Errorf("ipc: request timed out after %v", defaultRequestTimeout)}
+	}
+}
 
 // Public request methods for the IPC client
 
@@ -19,7 +31,7 @@ func (c *Client) Search(reqID, query string, tab MediaTab, limit, offset int) {
 			"limit":  limit,
 			"offset": offset,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		msg := decodeSearchResult(reqID, raw)
 		c.program.Send(msg)
 	}()
@@ -33,7 +45,7 @@ func (c *Client) UnloadPlugin(pluginID string) {
 			"type":      "unload_plugin",
 			"plugin_id": pluginID,
 		})
-		<-ch
+		receiveWithTimeout(ch)
 		c.ListPlugins()
 	}()
 }
@@ -46,7 +58,7 @@ func (c *Client) LoadPlugin(path string) {
 			"type": "load_plugin",
 			"path": path,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg PluginLoadedMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -72,7 +84,7 @@ func (c *Client) ListPlugins() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "list_plugins"})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg PluginListMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -159,7 +171,7 @@ func (c *Client) Resolve(entryID, provider string) {
 			"provider": provider,
 		}
 		ch := c.sendWithID(id, payload)
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.program.Send(StatusMsg{Text: "stream resolve failed: " + raw.Err.Error()})
 			return
@@ -230,7 +242,7 @@ func (c *Client) LoadEpisodes(seriesID string, season int) {
 			"season":   season,
 		}
 		ch := c.sendWithID(id, payload)
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.program.Send(StatusMsg{Text: "episodes load failed: " + raw.Err.Error()})
 			return
@@ -255,7 +267,7 @@ func (c *Client) GetProviderSettings() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "get_provider_settings"})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg ProviderSettingsResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -282,7 +294,7 @@ func (c *Client) GetPluginRepos() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "get_plugin_repos"})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg PluginReposResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -319,7 +331,7 @@ func (c *Client) BrowseRegistry() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "browse_registry", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg RegistryBrowseResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -355,7 +367,7 @@ func (c *Client) InstallPlugin(name, version, binaryURL, checksum string) {
 			"binary_url": binaryURL,
 			"checksum":   checksum,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg PluginInstallResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -502,7 +514,7 @@ func (c *Client) RankStreams(streams []StreamInfo, prefs StreamPreferences) {
 			"streams":     streams,
 			"preferences": prefs,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg StreamsRankedMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -530,7 +542,7 @@ func (c *Client) GetStreamPolicy() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "get_stream_policy", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg StreamPolicyLoadedMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -561,7 +573,7 @@ func (c *Client) SetStreamPolicy(prefs StreamPreferences) {
 			"id":     id,
 			"policy": prefs,
 		})
-		<-ch // wait for ack, ignore response content
+		receiveWithTimeout(ch) // wait for ack, ignore response content
 	}()
 }
 
@@ -883,7 +895,7 @@ func (c *Client) SetTrace(enabled bool) {
 			"type":    "set_trace",
 			"enabled": enabled,
 		})
-		<-ch // wait for Ok response; ignore it
+		receiveWithTimeout(ch) // wait for Ok response; ignore it
 	}()
 }
 
@@ -947,7 +959,7 @@ func (c *Client) GetDspStatus() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "get_dsp_status", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg DspStatusMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -997,7 +1009,7 @@ func (c *Client) SetDspConfig(enabled *bool, outputSampleRate *uint32, upsampleR
 			payload["convolution_bypass"] = *convolutionBypass
 		}
 		ch := c.sendWithID(id, payload)
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.program.Send(StatusMsg{Text: "DSP config failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {
@@ -1019,7 +1031,7 @@ func (c *Client) LoadConvolutionFilter(path string) {
 			"id":   id,
 			"path": path,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.program.Send(StatusMsg{Text: "Load filter failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {
@@ -1037,7 +1049,7 @@ func (c *Client) BindDspToMpd() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "bind_dsp_to_mpd", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.program.Send(StatusMsg{Text: "Bind DSP to MPD failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {

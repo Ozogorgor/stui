@@ -77,7 +77,26 @@ impl SandboxCtx {
             }
             Capability::FilesystemRead(path) | Capability::FilesystemWrite(path) => {
                 let allowed = self.allowed_fs_roots();
-                let permitted = allowed.iter().any(|root| path.starts_with(root));
+                let permitted = allowed.iter().any(|root| {
+                    let path_exists = path.exists();
+                    let resolved_path = if path_exists {
+                        path.canonicalize().ok()
+                    } else {
+                        // For non-existent paths (e.g., new file writes),
+                        // canonicalize the parent and append the filename
+                        path.parent()
+                            .and_then(|p| p.canonicalize().ok())
+                            .map(|parent| {
+                                parent.join(path.file_name().unwrap_or_default())
+                            })
+                    };
+                    let resolved_root = root.canonicalize().ok();
+                    
+                    match (resolved_path, resolved_root) {
+                        (Some(resolved), Some(base)) => resolved.starts_with(&base),
+                        _ => false,
+                    }
+                });
                 if !permitted {
                     warn!(
                         plugin = %self.plugin_name,

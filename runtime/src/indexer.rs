@@ -67,6 +67,7 @@ const DEFAULT_TTL_SECS: i64 = 300;   // 5 minutes
 
 #[allow(dead_code)]
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct Indexer {
     cache: Arc<Mutex<LruCache<CacheKey, CacheEntry>>>,
     ttl_secs: i64,
@@ -124,6 +125,11 @@ impl Indexer {
     /// Return the number of entries currently in the cache.
     pub async fn len(&self) -> usize {
         self.cache.lock().await.len()
+    }
+
+    /// Return true if the cache is empty.
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
     }
 }
 

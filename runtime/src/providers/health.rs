@@ -120,6 +120,7 @@ impl ProviderStats {
 ///
 /// Cheap to clone — wraps an `Arc<Mutex<…>>`.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct HealthRegistry {
     inner: Arc<Mutex<HashMap<String, ProviderStats>>>,
 }

@@ -11,28 +11,25 @@ use super::{AudioOutput, OutputError};
 use crate::dsp::config::DspConfig;
 
 pub struct AlsaOutput {
-    pcm:         PCM,
+    pcm: PCM,
     sample_rate: u32,
-    format:      AlsaFormat,
+    format: AlsaFormat,
 }
 
 #[derive(Clone, Copy)]
-enum AlsaFormat { S32, F32 }
+enum AlsaFormat {
+    S32,
+    F32,
+}
 
 impl AlsaOutput {
     pub fn new(config: &DspConfig) -> Result<Self, OutputError> {
-        let device = config
-            .alsa_device
-            .as_deref()
-            .unwrap_or("hw:0,0");
+        let device = config.alsa_device.as_deref().unwrap_or("hw:0,0");
 
         let pcm = PCM::new(device, Direction::Playback, false)
-            .map_err(|e| OutputError::DeviceNotFound(
-                format!("{device}: {e}")
-            ))?;
+            .map_err(|e| OutputError::DeviceNotFound(format!("{device}: {e}")))?;
 
-        let hwp = HwParams::any(&pcm)
-            .map_err(|e| OutputError::ConfigError(e.to_string()))?;
+        let hwp = HwParams::any(&pcm).map_err(|e| OutputError::ConfigError(e.to_string()))?;
 
         hwp.set_channels(2)
             .map_err(|e| OutputError::ConfigError(format!("channels: {e}")))?;
@@ -45,17 +42,17 @@ impl AlsaOutput {
         let format = if hwp.set_format(Format::s32()).is_ok() {
             AlsaFormat::S32
         } else {
-            hwp.set_format(Format::float())
-                .map_err(|e| OutputError::ConfigError(
-                    format!("neither S32LE nor F32LE supported: {e}")
-                ))?;
+            hwp.set_format(Format::float()).map_err(|e| {
+                OutputError::ConfigError(format!("neither S32LE nor F32LE supported: {e}"))
+            })?;
             AlsaFormat::F32
         };
 
         hwp.set_period_size(
             config.buffer_size as alsa::pcm::Frames,
             alsa::ValueOr::Nearest,
-        ).ok(); // advisory only — not fatal if unsupported
+        )
+        .ok(); // advisory only — not fatal if unsupported
 
         pcm.hw_params(&hwp)
             .map_err(|e| OutputError::ConfigError(format!("hw_params: {e}")))?;
@@ -63,7 +60,11 @@ impl AlsaOutput {
         // Drop hwp to release the borrow on pcm before moving pcm into Self
         drop(hwp);
 
-        info!(device, rate = config.output_sample_rate, "ALSA output opened");
+        info!(
+            device,
+            rate = config.output_sample_rate,
+            "ALSA output opened"
+        );
 
         Ok(Self {
             pcm,
@@ -87,7 +88,9 @@ impl AlsaOutput {
                     .collect();
                 // Sub-block: IO borrow ends here, before any further borrow of self.pcm
                 let result = {
-                    let io = self.pcm.io_i32()
+                    let io = self
+                        .pcm
+                        .io_i32()
                         .map_err(|e| OutputError::ConfigError(e.to_string()))?;
                     io.writei(&frames)
                 };
@@ -95,11 +98,15 @@ impl AlsaOutput {
                     Ok(_) => Ok(()),
                     Err(e) if e.errno() == nix::errno::Errno::EPIPE as i32 => {
                         warn!("ALSA underrun (EPIPE) — recovering");
-                        self.pcm.prepare()
+                        self.pcm
+                            .prepare()
                             .map_err(|e2| OutputError::WriteError(format!("prepare: {e2}")))?;
-                        let io = self.pcm.io_i32()
+                        let io = self
+                            .pcm
+                            .io_i32()
                             .map_err(|e| OutputError::ConfigError(e.to_string()))?;
-                        io.writei(&frames).map(|_| ())
+                        io.writei(&frames)
+                            .map(|_| ())
                             .map_err(|e| OutputError::WriteError(format!("retry: {e}")))
                     }
                     Err(e) => Err(OutputError::WriteError(e.to_string())),
@@ -107,7 +114,9 @@ impl AlsaOutput {
             }
             AlsaFormat::F32 => {
                 let result = {
-                    let io = self.pcm.io_f32()
+                    let io = self
+                        .pcm
+                        .io_f32()
                         .map_err(|e| OutputError::ConfigError(e.to_string()))?;
                     io.writei(samples)
                 };
@@ -115,11 +124,15 @@ impl AlsaOutput {
                     Ok(_) => Ok(()),
                     Err(e) if e.errno() == nix::errno::Errno::EPIPE as i32 => {
                         warn!("ALSA underrun (EPIPE) — recovering");
-                        self.pcm.prepare()
+                        self.pcm
+                            .prepare()
                             .map_err(|e2| OutputError::WriteError(format!("prepare: {e2}")))?;
-                        let io = self.pcm.io_f32()
+                        let io = self
+                            .pcm
+                            .io_f32()
                             .map_err(|e| OutputError::ConfigError(e.to_string()))?;
-                        io.writei(samples).map(|_| ())
+                        io.writei(samples)
+                            .map(|_| ())
                             .map_err(|e| OutputError::WriteError(format!("retry: {e}")))
                     }
                     Err(e) => Err(OutputError::WriteError(e.to_string())),
@@ -130,8 +143,12 @@ impl AlsaOutput {
 }
 
 impl AudioOutput for AlsaOutput {
-    fn sample_rate(&self) -> u32 { self.sample_rate }
-    fn channels(&self) -> u16 { 2 }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    fn channels(&self) -> u16 {
+        2
+    }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), OutputError> {
         debug!(frames = samples.len() / 2, "ALSA write");
@@ -160,8 +177,7 @@ mod tests {
             alsa_device: Some("plug:null".to_string()),
             ..Default::default()
         };
-        let mut output = AlsaOutput::new(&config)
-            .expect("plug:null should always open");
+        let mut output = AlsaOutput::new(&config).expect("plug:null should always open");
         let silence = vec![0.0f32; 2048]; // 1024 frames × 2 channels
         output.write(&silence).expect("write to null sink");
         Box::new(output).close();

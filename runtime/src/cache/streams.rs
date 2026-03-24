@@ -24,6 +24,7 @@ const TTL: Duration = Duration::from_secs(30 * 60);
 /// Thread-safe resolved-stream cache.
 #[allow(dead_code)]
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct StreamCache {
     inner: Arc<RwLock<HashMap<String, Ttl<Vec<Stream>>>>>,
 }

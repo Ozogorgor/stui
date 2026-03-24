@@ -150,6 +150,7 @@ impl Default for CircuitBreakerConfig {
 ///
 /// Cheap to clone — all clones share the underlying `Arc`.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct CircuitBreaker {
     inner: Arc<RwLock<HashMap<String, BreakerState>>>,
     config: CircuitBreakerConfig,

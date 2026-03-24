@@ -618,7 +618,6 @@ fn apply_weighted_rating(entry: &mut CatalogEntry) {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
         {
             entry.rating = Some(format!("{:.1}", rating));
-            return;
         }
     }
 

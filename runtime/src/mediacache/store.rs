@@ -18,18 +18,12 @@ pub struct CachedTab {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MediaCache {
     #[serde(rename = "tabs")]
     tabs: HashMap<String, CachedTab>,
 }
 
-impl Default for MediaCache {
-    fn default() -> Self {
-        Self {
-            tabs: HashMap::new(),
-        }
-    }
-}
 
 impl MediaCache {
     #[allow(dead_code)]

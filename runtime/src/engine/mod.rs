@@ -291,6 +291,7 @@ impl Engine {
         }
 
         let mut set = tokio::task::JoinSet::new();
+        let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent provider requests
         for plugin in &providers {
             if let Some(filter) = provider_filter {
                 if plugin.manifest.plugin.name != filter { continue; }
@@ -308,7 +309,9 @@ impl Engine {
                         let provider = plugin_clone.manifest.plugin.name.clone();
                         let tab_out  = t.clone();
                         let pname = provider.clone();
+                        let sem = Arc::clone(&sem);
                         set.spawn(async move {
+                            let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
                             let result = std::panic::AssertUnwindSafe(async move {
                                 let req = SearchRequest { query: q, tab: tab_str, page: 0, limit: 50 };
@@ -341,7 +344,9 @@ impl Engine {
                     let sandbox = reg.sandbox_for(&plugin_clone.id).cloned();
                     if let Some(ctx) = sandbox {
                         let pname = plugin_clone.manifest.plugin.name.clone();
+                        let sem = Arc::clone(&sem);
                         set.spawn(async move {
+                            let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
                             let result = std::panic::AssertUnwindSafe(
                                 scraper::search(&ctx, &plugin_clone, &q, &t)
@@ -569,8 +574,9 @@ impl Engine {
 
         // Fan out to all stream-capable built-in providers concurrently.
         let mut set = tokio::task::JoinSet::new();
+        let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent stream requests
         let mut skipped_providers = vec![];
-        let cb_clone = circuit_breaker.map(|cb| cb.clone());
+        let cb_clone = circuit_breaker.cloned();
 
         for provider in built_in.iter() {
             if !provider.has_streams() {
@@ -588,7 +594,9 @@ impl Engine {
 
             let p = std::sync::Arc::clone(provider);
             let id = entry_id.to_string();
+            let sem = Arc::clone(&sem);
             set.spawn(async move {
+                let _permit = sem.acquire_owned().await;
                 use futures::FutureExt as _;
                 let result = std::panic::AssertUnwindSafe(p.streams(&id))
                     .catch_unwind()
@@ -692,11 +700,14 @@ impl Engine {
 
         // Fan out to all stream-capable providers concurrently.
         let mut set = tokio::task::JoinSet::new();
+        let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent stream requests
         for provider in built_in.iter().filter(|p| p.has_streams()) {
             let p             = std::sync::Arc::clone(provider);
             let id            = entry_id.to_string();
             let provider_name = provider.name().to_string();
+            let sem = Arc::clone(&sem);
             set.spawn(async move {
+                let _permit = sem.acquire_owned().await;
                 use futures::FutureExt as _;
                 let result = std::panic::AssertUnwindSafe(p.streams(&id))
                     .catch_unwind()

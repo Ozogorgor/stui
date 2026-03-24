@@ -57,6 +57,7 @@ struct MpdStatusWire<'a> {
 // ── MpdBridge ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct MpdBridge {
     config: MpdConfig,
     conn:   Arc<Mutex<Option<MpdConnection>>>,

@@ -59,6 +59,7 @@ use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
 use mpd_bridge::MpdBridge;
 use dsp::{DspPipeline, OutputTarget};
 use providers::{HealthRegistry, StreamBenchmarker};
+
 use skipper::{Skipper, SkipperStore};
 use storage::aria2_translator::Aria2Translator;
 
@@ -131,7 +132,7 @@ async fn main() -> Result<()> {
     info!("media storage initialized: movies={}", cfg.storage.movies.display());
 
     // ── Discovery: scan + hot-reload watcher ──────────────────────────────
-    let (toast_tx, _) = broadcast::channel::<PluginToast>(32);
+    let (toast_tx, _) = broadcast::channel::<PluginToast>(256);
     let discovery = Arc::new(Discovery::new(
         cfg.plugin_dir.clone(),
         Arc::clone(&engine),
@@ -198,10 +199,10 @@ async fn main() -> Result<()> {
     };
 
     // ── DSP pipeline ──────────────────────────────────────────────────────────
-    let dsp_pipeline: Option<Arc<RwLock<DspPipeline>>> = if cfg.dsp.enabled {
+    let dsp_pipeline: Option<Arc<tokio::sync::Mutex<DspPipeline>>> = if cfg.dsp.enabled {
         let pipeline = dsp::DspPipeline::new(cfg.dsp.clone());
         info!(sample_rate = pipeline.output_sample_rate(), "DSP pipeline initialized");
-        Some(Arc::new(RwLock::new(pipeline)))
+        Some(Arc::new(tokio::sync::Mutex::new(pipeline)))
     } else {
         info!("DSP disabled (set dsp.enabled to enable)");
         None
@@ -304,6 +305,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_ipc_loop<R, W>(
     reader:    &mut tokio::io::Lines<tokio::io::BufReader<R>>,
     mut writer: &mut tokio::io::BufWriter<W>,
@@ -311,7 +313,7 @@ async fn run_ipc_loop<R, W>(
     catalog:   &Arc<Catalog>,
     player:    &player::PlayerBridge,
     mpd:       Option<&MpdBridge>,
-    dsp:       Option<&Arc<RwLock<DspPipeline>>>,
+    dsp:       Option<&Arc<tokio::sync::Mutex<DspPipeline>>>,
     health:    &Arc<HealthRegistry>,
     config:    &Arc<ConfigManager>,
     skipper:   &Arc<Skipper>,
@@ -340,6 +342,13 @@ where
                     Some(line) => {
                         let line = line.trim().to_string();
                         if line.is_empty() { continue; }
+                        // Limit IPC message size to prevent memory exhaustion
+                        const MAX_MSG_SIZE: usize = 1024 * 1024; // 1MB
+                        if line.len() > MAX_MSG_SIZE {
+                            warn!(size = line.len(), "IPC message exceeds size limit, rejecting");
+                            let _ = send_error(&mut writer, "payload_too_large", &format!("message size {} exceeds limit {}", line.len(), MAX_MSG_SIZE)).await;
+                            continue;
+                        }
                         // Play commands are fire-and-forget — don't send a Response
                         let msg_type = serde_json::from_str::<serde_json::Value>(&line)
                             .ok()
@@ -570,6 +579,21 @@ async fn send_wire<W: tokio::io::AsyncWrite + Unpin>(
     Ok(())
 }
 
+async fn send_error<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut tokio::io::BufWriter<W>,
+    code: &str,
+    message: &str,
+) -> Result<()> {
+    let wire = serde_json::to_string(&serde_json::json!({
+        "type": "error",
+        "code": code,
+        "message": message,
+    }))?;
+    let mut wire = wire;
+    wire.push('\n');
+    send_wire(writer, &wire).await
+}
+
 fn plugin_toast_wire(t: &PluginToast) -> Result<String> {
     let mut s = serde_json::to_string(&serde_json::json!({
         "type":        "plugin_toast",
@@ -592,7 +616,7 @@ async fn handle_line(
     config: &Arc<ConfigManager>,
     player: &player::PlayerBridge,
     mpd: Option<&MpdBridge>,
-    dsp: Option<&Arc<RwLock<DspPipeline>>>,
+    dsp: Option<&Arc<tokio::sync::Mutex<DspPipeline>>>,
     watch_history: &Arc<watchhistory::WatchHistoryStore>,
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
@@ -808,7 +832,7 @@ async fn handle_line(
             let Some(d) = dsp else {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
             };
-            let pipeline = d.read().await;
+            let pipeline = d.lock().await;
             let cfg = pipeline.config().await;
             Response::DspStatus(ipc::DspStatusResponse {
                 enabled: cfg.enabled,
@@ -824,7 +848,7 @@ async fn handle_line(
             let Some(d) = dsp else {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
             };
-            let mut pipeline = d.write().await;
+            let mut pipeline = d.lock().await;
             let mut cfg = pipeline.config().await;
             if let Some(v) = r.enabled { cfg.enabled = v; }
             if let Some(v) = r.output_sample_rate { cfg.output_sample_rate = v; }
@@ -860,7 +884,7 @@ async fn handle_line(
             let Some(d) = dsp else {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
             };
-            let mut pipeline = d.write().await;
+            let mut pipeline = d.lock().await;
             match pipeline.load_convolution_filter(&r.path) {
                 Ok(()) => Response::ConvolutionFilterLoaded { success: true },
                 Err(e) => Response::error(None, ErrorCode::Internal, e),
@@ -870,7 +894,7 @@ async fn handle_line(
             let Some(d) = dsp else {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
             };
-            let cfg = d.read().await.config().await;
+            let cfg = d.lock().await.config().await;
             if cfg.output_target != OutputTarget::Mpd {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP output_target is not set to 'mpd'".to_string());
             }

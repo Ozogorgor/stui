@@ -723,4 +723,87 @@ Stui demonstrates solid software engineering with well-separated concerns, good 
 
 ---
 
+## 13. Additional Findings (March 2026)
+
+### 13.1 High Priority Issues
+
+| # | Issue | Location | Description |
+|---|-------|----------|-------------|
+| 1 | Thread Safety Violation | `runtime/src/main.rs:204` | `Arc<RwLock<DspPipeline>>` not Send+Sync |
+| 2 | Path Traversal | `runtime/src/sandbox.rs:78-96` | Symlink attack possible in filesystem checks |
+| 3 | Unbounded Cache | `runtime/src/cache/mod.rs` | No max size limits |
+| 4 | Silent Error Drops | `runtime/src/main.rs:356-370` | Background tasks ignore errors |
+| 5 | Race in Throttle | `runtime/src/providers/throttle.rs:155-179` | Multiple await points cause race |
+| 6 | Blocking IPC Send | `tui/internal/ipc/internal.go:94` | program.Send can block reader |
+| 7 | No Request Timeout | `tui/internal/ipc/internal.go:45-62` | Go client can hang forever |
+| 8 | Unbounded JoinSet | `runtime/src/engine/mod.rs:293-357` | Resource exhaustion possible |
+| 9 | Toast Channel Overflow | `runtime/src/main.rs:134` | 32 capacity too small |
+| 10 | WASM Not Implemented | `runtime/src/sandbox.rs:152-164` | Stub causes runtime failures |
+| 11 | Config Lock Hold | `runtime/src/config/manager.rs:106` | File I/O while holding lock |
+| 12 | No Response Size Limit | `runtime/src/main.rs:344` | Memory exhaustion possible |
+
+### 13.2 Medium Priority Issues
+
+- Code quality: 17 arguments in `run_ipc_loop`, 12 in `handle_line` (limit: 7)
+- Complex types: `Option<&Arc<RwLock<DspPipeline>>>`
+- Clippy warnings: 125+ (47 duplicates) - mostly needless_borrow, redundant_closure
+- Missing connection pooling in HTTP client
+- Hardcoded 500ms sleep in discovery
+- No cancellation tokens for spawned tasks
+- Race condition in pending map drain
+- Missing input validation on IPC messages
+- No health monitoring for plugins
+- No request deduplication
+
+### 13.3 Low Priority Issues
+
+- Deprecated plugin type aliases (`Provider`, `Subtitle`, `Metadata`)
+- Inconsistent error types (mix of anyhow, thiserror, custom)
+- Missing documentation in player/scraper modules
+- Inefficient string allocation in hot path
+- Log injection possible with user strings
+- Test coverage gaps: no E2E tests for search→playback flow
+
+### 13.4 Security Findings
+
+| Issue | Severity | Status |
+|-------|----------|--------|
+| Path traversal in sandbox | HIGH | Vulnerable |
+| Log injection | MEDIUM | Possible |
+| Secrets in debug logs | LOW | Documented |
+| File permissions not enforced | LOW | Documented only |
+| WASM sandbox stub | HIGH | Documented |
+
+### 13.5 Clippy Summary
+
+```
+warning: this function has too_many_arguments (17/7)
+warning: very complex type used (Option<&Arc<RwLock<DspPipeline>>>)
+warning: arc_with_non_send_sync
+warning: redundant_closure
+warning: needless_borrow (12 instances)
+```
+
+### 13.6 Recommendations
+
+**Immediate:**
+1. Fix thread safety: use `Arc<tokio::sync::Mutex<DspPipeline>>`
+2. Add canonical path checks in sandbox
+3. Add response timeouts in Go IPC client
+4. Limit JoinSet size with semaphore
+
+**Short-term:**
+1. Implement WASM sandboxing properly
+2. Add E2E tests for critical paths
+3. Standardize error handling
+4. Add input validation
+
+**Long-term:**
+1. Add fuzzing tests
+2. Implement observability (tracing, metrics)
+3. Remove deprecated aliases
+4. Add plugin health monitoring
+
+---
+
 *End of Audit Report*

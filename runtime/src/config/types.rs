@@ -5,8 +5,12 @@
 //! Every field has a `#[serde(default)]` so partial config files are fine.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
+
+/// Plugin-specific config: plugin_name -> field_key -> value
+pub type PluginConfig = HashMap<String, HashMap<String, String>>;
 
 #[allow(unused_imports)]
 use crate::dsp::DspConfig;
@@ -147,7 +151,7 @@ pub struct RuntimeConfig {
     /// Plugin-specific configuration values (API keys, settings).
     /// Stored as: plugins.{plugin_name}.{field_key} = value
     #[serde(default)]
-    pub plugins: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    pub plugins: PluginConfig,
 
     /// Storage directories for different media types.
     #[serde(default)]

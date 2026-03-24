@@ -5,7 +5,7 @@ pub mod aria2_translator;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -13,6 +13,7 @@ use tracing::{debug, info};
 
 /// Media storage manager for organizing downloaded media files.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct MediaStorage {
     base_movies: PathBuf,
     base_series: PathBuf,
@@ -210,7 +211,7 @@ impl MediaStorage {
     // ── Subtitles ───────────────────────────────────────────────────────────
 
     /// Returns the subtitle file path in the same folder as the media.
-    pub fn subtitle_path(media_path: &PathBuf, language: Option<&str>, extension: &str) -> PathBuf {
+    pub fn subtitle_path(media_path: &Path, language: Option<&str>, extension: &str) -> PathBuf {
         let parent = media_path.parent().unwrap_or(media_path);
         let stem = media_path.file_stem().and_then(|s| s.to_str()).unwrap_or("subtitle");
         let ext = extension.trim_start_matches('.');

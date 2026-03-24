@@ -274,10 +274,17 @@ impl StreamerState {
     }
 }
 
+impl Default for StreamerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Streamer ──────────────────────────────────────────────────────────────────
 
 /// Main handle — created by player_bridge, drives the whole adaptive flow.
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 pub struct Streamer {
     state:   Arc<Mutex<StreamerState>>,
     ipc_tx:  mpsc::Sender<String>,

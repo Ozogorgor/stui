@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use super::config::DspConfig;
 
@@ -41,6 +41,7 @@ impl Default for RaatFormat {
 }
 
 /// RAAT processor for streaming audio to Roon endpoints.
+#[allow(clippy::type_complexity)]
 pub struct RaatProcessor {
     config: Arc<RwLock<DspConfig>>,
     endpoint: Option<RaatEndpoint>,
@@ -167,7 +168,9 @@ impl RaatEncoding {
 
 /// Roon/RAAT integration status.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum RaatStatus {
+    #[default]
     Disconnected,
     Discovering,
     Connecting,
@@ -176,11 +179,6 @@ pub enum RaatStatus {
     Error,
 }
 
-impl Default for RaatStatus {
-    fn default() -> Self {
-        Self::Disconnected
-    }
-}
 
 #[cfg(test)]
 mod tests {

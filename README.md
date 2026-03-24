@@ -6,7 +6,7 @@
 
 **stui** is a plugin-driven terminal streaming platform for Linux.
 
-A fast, keyboard-first TUI for discovering and playing movies, series, music, radio, and podcasts — powered by a Rust async runtime, intelligent stream selection, and a fully extensible plugin system.
+A fast, audiophile friendly, feature rich and keyboard-first TUI for discovering and playing movies, series, music, radio, and podcasts — powered by a Rust async runtime, intelligent stream selection, and a fully extensible plugin system.
 
 ```
 Search → Providers → Streams → Rank → Play
@@ -16,7 +16,7 @@ Search → Providers → Streams → Rank → Play
 
 ## Status
 
-stui is currently in **active development (v11)**.
+stui is currently in **active development, early alpha stage**.
 
 - Core streaming, playback, and plugin system are implemented
 - Most high-level features are functional
@@ -50,7 +50,7 @@ Think:
 - **Episode browser** — season/episode tree for series
 - **Collections & history** — resume playback and track progress
 - **Universal Provider Protocol (UPP)** — one interface for all media types
-- **Braille logo splash screen** on startup with animation
+- **Full DSP pipeline** — resampling, convolution, crossfeed, dither, LUFS normalization, M/S processing, and DC offset filtering for audio streams
 
 ### Playback
 
@@ -63,6 +63,25 @@ Think:
 - **Live stream switching** — change quality without restarting playback
 - **Autoplay / binge mode**
 - **Smart stream ranking** — quality × latency × provider reliability
+
+### Audio DSP
+
+The DSP pipeline runs inside the Rust runtime and processes audio before output. All settings are configurable live from the **Audio Settings** screen (accessible via the Settings screen).
+
+| Stage | Description |
+| ----- | ----------- |
+| **DC Offset Filter** | First-order IIR high-pass filter to remove DC bias and very low frequency drift |
+| **Resampling** | High-quality sample rate conversion with fast / slow / synchronous filter types |
+| **DSD→PCM** | Converts DSD bitstream to PCM at selectable output rate |
+| **Convolution** | Room correction and impulse response convolution (WAV filter file) |
+| **Crossfeed** | Headphone crossfeed with configurable feed level and lowpass cutoff |
+| **LUFS Normalization** | ITU-R BS.1770-4 integrated loudness normalization with attack/release smoothing |
+| **Mid/Side** | Stereo width control via M/S matrix with independent mid and side gain |
+| **Dither** | TPDF dither with 9 noise shaping algorithms (Lipshitz, F-weighted, Shibata, Gesemann, and more) |
+
+Output targets: PipeWire, ALSA (direct hw:), MPD, Roon RAAT.
+
+Auto-detect modes: crossfeed auto-enables when headphones are detected; dither auto-enables when output is ALSA at 16-bit.
 
 ### Audio (MPD)
 
@@ -112,7 +131,8 @@ Think:
 ### System
 
 - **Live config updates** (no restart required)
-- **Settings screen** (Playback / Streaming / Subtitles / Providers / Visualizer / Accessibility)
+- **Settings screen** (Playback / Streaming / Subtitles / Providers / Visualizer / Accessibility / Audio DSP)
+- **Audio Settings screen** — dedicated tabbed interface for all DSP pipeline settings (Output / DSP / DSD / Convolution / Crossfeed / Mid/Side / Dither)
 - **Daemon mode** for persistent cache and fast startup
 - **Typed IPC protocol (v1)**
 - **Event-driven runtime (Tokio + EventBus)**
@@ -123,6 +143,7 @@ Think:
 
 * Linux (Wayland or X11)
 * `mpv` (required)
+* `mpd` (required)
 * `aria2c` (required for torrent streaming)
 * `python3` (for some plugins)
 
@@ -316,6 +337,7 @@ Categories:
 - **Plugins** — directory, hot reload, manager
 - **Storage** — media library paths
 - **Visualizer** — backend, bars, height, mode, peak hold
+- **Audio DSP** — output target, sample rate, resampling, DSD, convolution, crossfeed, LUFS, M/S, dither
 - **Accessibility** — color scheme, reduced motion, screen reader
 
 ---
@@ -367,11 +389,3 @@ The core project only provides:
 - a playback interface
 
 ---
-
-## Logo
-
-The stui logo is rendered using braille patterns, celebrating the terminal-first nature of the project.
-
-The SVG version is available in `assets/stui_logo_braille_play.svg`.
-
-A durdraw-compatible animation is available in `assets/stui_durdraw_frames.txt` for creating boot animations.

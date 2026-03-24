@@ -268,6 +268,7 @@ pub trait Provider: Send + Sync {
     /// The engine uses this to skip providers that can't help for a given
     /// source type — no wasted round trips.  Returning `None` means the
     /// provider supports all source types (opt-in to everything).
+    fn supported_sources(&self) -> Option<&[crate::media::MediaSource]> { None }
 
     /// True if this provider can supply subtitles.
     fn has_subtitles(&self) -> bool { false }

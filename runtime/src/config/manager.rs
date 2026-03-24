@@ -582,7 +582,7 @@ fn as_string(key: &str, v: &Value) -> Result<String> {
 
 fn as_pathbuf(key: &str, v: &Value) -> Result<std::path::PathBuf> {
     v.as_str()
-        .map(|s| std::path::PathBuf::from(s))
+        .map(std::path::PathBuf::from)
         .ok_or_else(|| {
             StuidError::config(format!("{key}: expected path string, got {v}"))
         })
