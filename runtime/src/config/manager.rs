@@ -467,6 +467,21 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
             (as_f64(key, value)? as f32).clamp(0.0_f32, 0.9_f32),
         "crossfeed_cutoff_hz"  => cfg.dsp.crossfeed_cutoff_hz   =
             (as_f64(key, value)? as f32).clamp(300.0_f32, 700.0_f32),
+        "dither_enabled"       => cfg.dsp.dither_enabled       = as_bool(key, value)?,
+        "dither_auto"          => cfg.dsp.dither_auto           = as_bool(key, value)?,
+        "dither_bit_depth"     => cfg.dsp.dither_bit_depth      = as_u32(key, value)?.clamp(8, 32),
+        "dither_noise_shaping" => {
+            let s = as_string(key, value)?;
+            match s.as_str() {
+                "none" | "lipshitz" | "fweighted" | "modified_e_weighted" |
+                "improved_e_weighted" | "shibata" | "low_shibata" |
+                "high_shibata" | "gesemann"
+                    => cfg.dsp.dither_noise_shaping = s,
+                _ => return Err(StuidError::config(format!(
+                    "{key}: unknown dither_noise_shaping value: {s}"
+                ))),
+            }
+        },
         _ => {
             return Err(StuidError::config(format!("unknown dsp config key: {field}")));
         }
@@ -684,5 +699,45 @@ mod tests {
         apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
             &serde_json::Value::Number(serde_json::Number::from_f64(800.0).unwrap())).unwrap();
         assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 700.0_f32);
+    }
+
+    #[test]
+    fn dsp_dither_keys() {
+        use crate::config::RuntimeConfig;
+        let mut cfg = RuntimeConfig::default();
+
+        // bool keys
+        apply_dsp_key(&mut cfg, "dsp.dither_enabled",
+            &serde_json::Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.dither_enabled);
+
+        apply_dsp_key(&mut cfg, "dsp.dither_auto",
+            &serde_json::Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.dither_auto);
+
+        // bit_depth: valid
+        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(16u32))).unwrap();
+        assert_eq!(cfg.dsp.dither_bit_depth, 16);
+
+        // bit_depth: clamp low (4 → 8)
+        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(4u32))).unwrap();
+        assert_eq!(cfg.dsp.dither_bit_depth, 8);
+
+        // bit_depth: clamp high (64 → 32)
+        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(64u32))).unwrap();
+        assert_eq!(cfg.dsp.dither_bit_depth, 32);
+
+        // noise_shaping: valid
+        apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
+            &serde_json::Value::String("shibata".into())).unwrap();
+        assert_eq!(cfg.dsp.dither_noise_shaping, "shibata");
+
+        // noise_shaping: unknown value returns error
+        let result = apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
+            &serde_json::Value::String("bogus".into()));
+        assert!(result.is_err(), "unknown noise_shaping must error");
     }
 }
