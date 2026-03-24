@@ -386,6 +386,12 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							return m, func() tea.Msg { return OpenOfflineLibraryMsg{} }
 						case "stats.clear_cache":
 							return m, func() tea.Msg { return ClearMediaCacheMsg{} }
+						case "dsp.crossfeed_enabled":
+							dialog := NewCrossfeedDialogModel(func(key string, val interface{}) tea.Cmd {
+								return func() tea.Msg { return SettingsChangedMsg{Key: key, Value: val} }
+							})
+							dialog.SetSize(m.width, m.height)
+							return m, screen.TransitionCmd(dialog, true)
 						default:
 							return m, func() tea.Msg { return OpenPluginSettingsMsg{} }
 						}
@@ -1171,6 +1177,12 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     true,
 					description: "Bypass convolution filter (keep enabled for quick toggle)",
+				},
+				{
+					label:       "Crossfeed",
+					key:         "dsp.crossfeed_enabled",
+					kind:        settingAction,
+					description: "BS2B headphone crossfeed — blend L/R for natural stereo image",
 				},
 			},
 		},
