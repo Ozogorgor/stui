@@ -27,3 +27,8 @@ func TransitionCmd(next Screen, pushBack bool) tea.Cmd {
 		return TransitionMsg{Next: next, PushBack: pushBack}
 	}
 }
+
+// PopCmd returns a Cmd that sends a PopMsg, telling the root to pop the current screen.
+func PopCmd() tea.Cmd {
+	return func() tea.Msg { return PopMsg{} }
+}
