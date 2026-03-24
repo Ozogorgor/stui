@@ -21,20 +21,26 @@ defaults OFF when uncertain
 
 ### First-order IIR BS2B
 
-For each interleaved stereo frame `[in_L, in_R]`:
+For each interleaved stereo frame `[in_L, in_R]`, using state `z_l` / `z_r`
+(previous lowpass outputs, initialised to 0.0):
 
 ```
 alpha  = exp(-2π × cutoff_hz / sample_rate)
-lp_L   = (1 − alpha) × in_L + alpha × prev_lp_L   + 1e-25  // denormal guard
-lp_R   = (1 − alpha) × in_R + alpha × prev_lp_R   + 1e-25
-norm   = 1.0 / (1.0 + feed_level)                           // energy normalisation
-out_L  = norm × (in_L + feed_level × lp_R)
-out_R  = norm × (in_R + feed_level × lp_L)
+z_l    = (1 − alpha) × in_L + alpha × z_l   + 1e-25  // update state, denormal guard
+z_r    = (1 − alpha) × in_R + alpha × z_r   + 1e-25
+norm   = 1.0 / (1.0 + feed_level)                     // energy normalisation (exact at DC)
+out_L  = norm × (in_L + feed_level × z_r)
+out_R  = norm × (in_R + feed_level × z_l)
 ```
 
-State: two `f32` values `z_l`, `z_r` (previous lowpass outputs). Coefficients
-(`alpha`, `norm`) are recomputed whenever `cutoff_hz` or `sample_rate` changes.
-State is reset to zero on any parameter change to prevent transients.
+`norm = 1 / (1 + feed_level)` is an approximation: exact at DC, slightly
+under-normalises above the cutoff frequency where the lowpass attenuates the
+crossfeed term. This matches the canonical BS2B reference implementation and is
+the intended behaviour.
+
+State: `z_l`, `z_r` (f32). Coefficients (`alpha`, `norm`) are recomputed
+whenever `cutoff_hz` or `sample_rate` changes. State is reset to zero on any
+parameter change to prevent transients.
 
 ### Presets
 
@@ -54,7 +60,7 @@ State is reset to zero on any parameter change to prevent transients.
 pub struct CrossfeedFilter {
     feed_level:  f32,   // 0.0–0.9
     cutoff_hz:   f32,   // 300–700
-    sample_rate: u32,
+    sample_rate: u32,   // initialised to 0; first process() call triggers recompute
     alpha:       f32,   // cached: exp(-2π × cutoff / sr)
     norm:        f32,   // cached: 1 / (1 + feed_level)
     z_l:         f32,   // lowpass state, left channel
@@ -62,12 +68,19 @@ pub struct CrossfeedFilter {
 }
 ```
 
+`sample_rate` is initialised to `0` in `new()`. On the first `process()` call
+the `sample_rate != stored_rate` branch fires, recomputing coefficients from the
+actual pipeline sample rate before processing begins.
+
 Public API:
 - `CrossfeedFilter::new(feed_level: f32, cutoff_hz: f32) -> Self`
+  — `sample_rate = 0`, `z_l = z_r = 0.0`, compute initial `alpha`/`norm` at a
+  nominal 44100 Hz so the struct is always valid (will recompute on first call)
 - `fn process(&mut self, samples: &[f32], sample_rate: u32) -> Vec<f32>`
-  — recomputes coefficients if `sample_rate` changed; processes interleaved stereo
-- `fn set_params(&mut self, feed_level: f32, cutoff_hz: f32)` — recomputes + resets state
-- `fn is_enabled(&self) -> bool` — always true (caller holds the `Option`)
+  — recomputes coefficients and resets state if `sample_rate` changed;
+  processes interleaved stereo pairs
+- `fn set_params(&mut self, feed_level: f32, cutoff_hz: f32)` — updates params,
+  recomputes coefficients, resets `z_l`/`z_r` to zero
 
 ### `runtime/src/dsp/config.rs` (modified)
 
@@ -92,16 +105,21 @@ pub crossfeed_cutoff_hz:  f32,    // default: 700.0
 crossfeed: Option<CrossfeedFilter>,
 ```
 
-**Initialisation** (`new`): if `crossfeed_auto`, call `probe_headphones(&config)`
-and use its result to gate construction; otherwise gate on `crossfeed_enabled`.
+**Initialisation** (`new`): gate construction on:
+- `crossfeed_auto` → `probe_headphones(&config)` result
+- otherwise → `crossfeed_enabled`
 
 **Processing** (`process`): crossfeed is the **last stage** before `out.write()`,
 after EQ, convolution, and resampling. This ensures the cutoff frequency is
 accurate at the final output sample rate.
 
-**`update_config`**: if params changed, call `set_params()` on the existing
-filter (state reset is handled internally). Recreate if `crossfeed_auto`
-changed or headphone probe result changed.
+**`update_config`**:
+- If `crossfeed_feed_level` or `crossfeed_cutoff_hz` changed: call
+  `filter.set_params(...)` on the existing `CrossfeedFilter`.
+- Recreate (drop + construct) the filter when any of the following change:
+  `crossfeed_auto`, `crossfeed_enabled`, `output_target`, `alsa_device`,
+  `pipewire_role`. This covers all cases where `probe_headphones` might return
+  a different result.
 
 ### Auto-detection: `probe_headphones`
 
@@ -117,23 +135,23 @@ fn probe_headphones(config: &DspConfig) -> bool {
 }
 ```
 
-Returns `false` (default OFF) when the device name contains no recognisable
-headphone keyword.
+Returns `false` (default OFF) when no recognised keyword is found.
 
 ### `runtime/src/config/manager.rs` (modified)
 
-Four new arms in `apply_dsp_key`:
+Four new arms in `apply_dsp_key`. `as_f32` is implemented as
+`as_f64(key, value)? as f32` — cast after validation, clamp after cast:
 
 ```rust
 "crossfeed_enabled"    => cfg.dsp.crossfeed_enabled    = as_bool(key, value)?,
 "crossfeed_auto"       => cfg.dsp.crossfeed_auto        = as_bool(key, value)?,
 "crossfeed_feed_level" => cfg.dsp.crossfeed_feed_level  =
-    as_f32(key, value)?.clamp(0.0, 0.9),
+    (as_f64(key, value)? as f32).clamp(0.0_f32, 0.9_f32),
 "crossfeed_cutoff_hz"  => cfg.dsp.crossfeed_cutoff_hz   =
-    as_f32(key, value)?.clamp(300.0, 700.0),
+    (as_f64(key, value)? as f32).clamp(300.0_f32, 700.0_f32),
 ```
 
-(`as_f32` is a new type-coercion helper mirroring `as_f64`.)
+No new helper function needed — inline the `as f32` cast.
 
 ---
 
@@ -164,14 +182,20 @@ to appear as a floating dialog over a blank background.
 └─────────────────────────────────────────┘
 ```
 
-**Fields (tab order):** auto-detect toggle → enabled toggle → feed_level →
-cutoff_hz → preset selector
+**Fields (tab order, `field` int 0–3):**
+- 0: auto-detect toggle
+- 1: enabled toggle
+- 2: feed_level nudge
+- 3: cutoff_hz nudge
+
+Presets are not a tab-navigable field — they are cycled exclusively via the
+`p` key regardless of which field is active.
 
 **Key bindings:**
 
 | Key | Action |
 |-----|--------|
-| `tab` / `shift+tab` | Move between fields |
+| `tab` / `shift+tab` | Move between fields 0–3 |
 | `+` / `=` | Nudge field up (feed ±0.05, cutoff ±10 Hz, toggles flip) |
 | `-` / `_` | Nudge field down |
 | `p` | Cycle presets (Default → Cmoy → Jmeier → Default) |
@@ -189,17 +213,23 @@ No per-keystroke updates (same atomicity policy as EQ editor).
 
 ```go
 type CrossfeedDialogModel struct {
-    enabled    bool
-    auto       bool
-    feedLevel  float64   // 0.0–0.9
-    cutoffHz   float64   // 300–700
-    field      int       // 0=auto, 1=enabled, 2=feed, 3=cutoff
-    presetIdx  int       // cycles 0-2
-    sampleRate float64
+    enabled   bool
+    auto      bool
+    feedLevel float64   // 0.0–0.9
+    cutoffHz  float64   // 300–700
+    field     int       // 0=auto, 1=enabled, 2=feed, 3=cutoff
+    presetIdx int       // 0=Default, 1=Cmoy, 2=Jmeier; updated by 'p'
     width, height int
-    sendFn     func(key string, value interface{}) tea.Cmd
+    sendFn    func(key string, value interface{}) tea.Cmd
 }
 ```
+
+Note: no `sampleRate` field — the dialog performs no DSP computation and has no
+frequency response curve to render. The Rust pipeline applies the actual cutoff
+at the correct output sample rate.
+
+The `sendFn` pattern (nil-safe callback injected at construction) is established
+by the EQ editor and reviewed as the standard approach for settings dialogs.
 
 ### `tui/internal/ui/screens/settings.go` (modified)
 
@@ -214,13 +244,14 @@ Add to DSP Audio category (after Conv bypass):
 },
 ```
 
-Add to `settingAction` switch (before `default:`):
+Add to `settingAction` switch (before `default:`, following the EQ editor
+pattern of constructing the screen directly in `settings.go`):
 
 ```go
 case "dsp.crossfeed_enabled":
     dialog := NewCrossfeedDialogModel(func(key string, val interface{}) tea.Cmd {
         return func() tea.Msg { return SettingsChangedMsg{Key: key, Value: val} }
-    }, 44100.0)
+    })
     dialog.SetSize(m.width, m.height)
     return m, screen.TransitionCmd(dialog, true)
 ```
@@ -231,21 +262,43 @@ case "dsp.crossfeed_enabled":
 
 ### Rust (`crossfeed.rs`)
 
-- `flat_input_unity_gain` — stereo silence in, silence out
-- `feed_zero_is_passthrough` — feed_level=0.0 → output equals input (within f32 precision)
-- `feed_max_energy_preserved` — feed_level=0.9, assert RMS(out) ≈ RMS(in) (normalisation check)
-- `lowpass_attenuates_above_cutoff` — 1 kHz sine with cutoff=300 Hz, crossfeed path is attenuated
-- `sample_rate_change_recomputes` — change sample_rate mid-stream, verify no panic + state resets
-- `denormal_guard` — process 10 000 frames of near-zero input, verify no subnormal values in state
+- `silence_in_silence_out` — silence in (all zeros), assert output is all zeros
+- `feed_zero_is_passthrough` — feed_level=0.0 → output equals input exactly
+  (norm=1.0, crossfeed term multiplied by 0.0; the `+ 1e-25` on `z_l`/`z_r`
+  does not reach `out_L`/`out_R` when feed=0, so strict equality holds)
+- `feed_max_energy_preserved` — feed_level=0.9, 1 kHz sine, assert
+  `(RMS(out) / RMS(in) - 1.0).abs() < 0.05`; note: normalisation is exact at
+  DC but approximate above cutoff, so a 5% tolerance is correct
+- `lowpass_attenuates_above_cutoff` — 1 kHz sine, cutoff=300 Hz; measure
+  magnitude of crossfeed contribution at output, assert it is < magnitude of
+  direct path (crossfeed term must be attenuated)
+- `sample_rate_change_recomputes` — call `process()` at 44100 Hz then 96000 Hz
+  in sequence; assert no panic and state is reset (output first frame after
+  rate change is close to input × norm, not contaminated by old state)
+- `denormal_guard` — process 10 000 frames of input=1e-38 (near-zero), assert
+  `z_l.is_normal() && z_r.is_normal()` after processing
+- `probe_headphones_alsa_keywords` — test all three keywords
+  ("hw:Headphone", "hw:Headset,0", "hw:earphone"), verify `true`; test
+  "hw:Generic" → `false`; test case-insensitivity ("hw:HEADPHONE" → `true`)
+- `probe_headphones_non_alsa_returns_false` — PipeWire role "Music" → `false`;
+  RoonRaat → `false`
 
 ### Rust (`manager.rs`)
 
-- `dsp_crossfeed_keys` — verify all four keys parse and clamp correctly
+- `dsp_crossfeed_keys` — verify:
+  - `crossfeed_enabled = true` parses correctly
+  - `crossfeed_feed_level = 0.5` parses correctly
+  - `crossfeed_feed_level = -0.1` clamps to `0.0`
+  - `crossfeed_feed_level = 1.5` clamps to `0.9`
+  - `crossfeed_cutoff_hz = 250.0` clamps to `300.0`
+  - `crossfeed_cutoff_hz = 800.0` clamps to `700.0`
 
 ### Go (`crossfeed_dialog_test.go`)
 
-- `TestCrossfeedDialogView_ContainsFields` — view contains "Crossfeed", "Feed", "Cutoff"
-- `TestCrossfeedDialogView_Golden` — golden file at `testdata/crossfeed_dialog_golden.txt`
+- `TestCrossfeedDialogView_ContainsFields` — `View().Content` contains
+  "Crossfeed", "Feed", "Cutoff"
+- `TestCrossfeedDialogView_Golden` — golden file at
+  `testdata/crossfeed_dialog_golden.txt`
 - `TestSettingsHasCrossfeedEntry` — settings view contains "Crossfeed"
 
 ---
