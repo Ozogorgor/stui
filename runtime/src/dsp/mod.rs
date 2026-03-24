@@ -25,11 +25,13 @@ pub mod resample;
 pub mod dsd;
 pub mod convolution;
 pub mod crossfeed;
+pub mod dither;
 pub mod raat;
 pub mod output;
 
 pub use config::{DspConfig, DspStage, FilterType, OutputMode, OutputTarget};
 pub use output::{AudioOutput, OutputError, open_output};
+pub use dither::{DitherFilter, NoiseShaping};
 pub use pipeline::DspPipeline;
 
 mod pipeline {
