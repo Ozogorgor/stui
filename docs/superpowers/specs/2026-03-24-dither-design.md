@@ -329,7 +329,9 @@ coefficient selection.
 `dither_enabled`, `dither_auto`, `dither_bit_depth`, `dither_noise_shaping`,
 `output_target`. No partial update path — always recreate on any dither-related change
 (simpler than crossfeed's split set_params / recreate logic, since all fields affect
-the coefficient tables or state size).
+the coefficient tables or state size). Note: a change to `output_target` alone (with
+`dither_auto = true`) triggers recreate, which reevaluates the auto condition — dither
+may be enabled or disabled as a result.
 
 ### `runtime/src/config/manager.rs` (modified)
 
@@ -469,8 +471,9 @@ case "dsp.dither_enabled":
 - `gesemann_iir_no_nan` — process 1000 frames of sine; assert no NaN or Inf in output
 - `set_params_resets_state` — call `set_params` mid-stream with Gesemann shaping active;
   assert `error_buf`, `ff_buf`, and `fb_buf` are all zeroed after the call;
-  `rng_state` is re-seeded to the construction seed (not zeroed — a zero xorshift64
-  state is stuck; verify `rng_state != 0` after reset)
+  `rng_state` is re-seeded to the fixed construction seed (not zeroed — a zero
+  xorshift64 state is stuck); assert `rng_state == INITIAL_SEED` where `INITIAL_SEED`
+  is the constant used in `DitherFilter::new()`
 
 ### Rust (`manager.rs`)
 
