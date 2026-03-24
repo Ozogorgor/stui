@@ -43,6 +43,7 @@ mod pipeline {
         config::DspConfig,
         convolution::ConvolutionEngine,
         crossfeed::{CrossfeedFilter, probe_headphones},
+        dither::DitherFilter,
         dsd::DsdConverter,
         output::{open_output, AudioOutput},
         resample::Resampler,
@@ -55,7 +56,22 @@ mod pipeline {
         dsd_converter: Option<DsdConverter>,
         convolution:   Option<ConvolutionEngine>,
         crossfeed:     Option<CrossfeedFilter>,
+        dither:        Option<DitherFilter>,
         output:        Option<Box<dyn AudioOutput>>,
+    }
+
+    fn build_dither(cfg: &DspConfig) -> Option<DitherFilter> {
+        use super::dither::NoiseShaping;
+        use super::config::OutputTarget;
+        let enabled = if cfg.dither_auto {
+            cfg.output_target == OutputTarget::Alsa && cfg.dither_bit_depth == 16
+        } else {
+            cfg.dither_enabled
+        };
+        if !enabled { return None; }
+        let shaping = NoiseShaping::from_str(&cfg.dither_noise_shaping)
+            .unwrap_or(NoiseShaping::None);
+        Some(DitherFilter::new(cfg.dither_bit_depth, shaping))
     }
 
     impl DspPipeline {
@@ -99,11 +115,14 @@ mod pipeline {
                 None
             };
 
+            let dither = build_dither(&config_snap);
+
             info!(
                 resampler   = resampler.is_some(),
                 dsd         = dsd_converter.is_some(),
                 convolution = convolution.is_some(),
                 crossfeed   = crossfeed.is_some(),
+                dither      = dither.is_some(),
                 output      = output.is_some(),
                 "DSP pipeline initialized"
             );
@@ -114,6 +133,7 @@ mod pipeline {
                 dsd_converter,
                 convolution,
                 crossfeed,
+                dither,
                 output,
             }
         }
@@ -158,6 +178,11 @@ mod pipeline {
             if let Some(ref mut cf) = self.crossfeed {
                 input = cf.process(&input, output_rate);
                 debug!("crossfeed applied");
+            }
+
+            if let Some(ref mut dither) = self.dither {
+                input = dither.process(&input, output_rate);
+                debug!("dither applied");
             }
 
             if let Some(ref mut out) = self.output {
@@ -235,6 +260,16 @@ mod pipeline {
                     cf.set_params(new_cfg.crossfeed_feed_level, new_cfg.crossfeed_cutoff_hz);
                 }
             }
+
+            let dither_changed = old.dither_enabled       != new_cfg.dither_enabled
+                || old.dither_auto          != new_cfg.dither_auto
+                || old.dither_bit_depth     != new_cfg.dither_bit_depth
+                || old.dither_noise_shaping != new_cfg.dither_noise_shaping
+                || old.output_target        != new_cfg.output_target;
+
+            if dither_changed {
+                self.dither = build_dither(&new_cfg);
+            }
         }
 
         /// Get current configuration.
@@ -299,6 +334,43 @@ mod pipeline {
             // Right channel must remain 0.0 — no crossfeed applied
             let r_max = out.iter().skip(1).step_by(2).cloned().fold(0.0_f32, f32::max);
             assert_eq!(r_max, 0.0, "right channel must be untouched when crossfeed disabled");
+        }
+
+        #[test]
+        fn dither_applied_when_enabled() {
+            // 16-bit dither on a DC signal: output must be quantized (not exact float).
+            let cfg = DspConfig {
+                dither_enabled:       true,
+                dither_bit_depth:     16,
+                dither_noise_shaping: "none".to_string(),
+                ..Default::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            // DC at 0.3 — not a multiple of 1/32768, so dither must change it.
+            let mut input: Vec<f32> = vec![0.3_f32; 128];
+            let (out, _) = pipeline.process(&mut input, 44100);
+            let lsb = 1.0_f32 / 32768.0;
+            // At least one sample must have been quantized (differ from raw 0.3).
+            assert!(
+                out.iter().any(|&s| (s - 0.3_f32).abs() > lsb * 0.1),
+                "dither must quantize the signal"
+            );
+        }
+
+        #[test]
+        fn dither_bypassed_when_disabled() {
+            let cfg = DspConfig {
+                dither_enabled: false,
+                resample_enabled: false,
+                ..Default::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            let mut input: Vec<f32> = vec![0.3_f32; 128];
+            let (out, _) = pipeline.process(&mut input, 44100);
+            // Without dither, output must equal input exactly.
+            for (a, b) in input.iter().zip(out.iter()) {
+                assert_eq!(a, b, "no dither should not modify samples");
+            }
         }
     }
 }
