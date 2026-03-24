@@ -482,6 +482,21 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 ))),
             }
         },
+        "dc_offset_enabled"   => cfg.dsp.dc_offset_enabled   = as_bool(key, value)?,
+        "dc_offset_cutoff_hz" => cfg.dsp.dc_offset_cutoff_hz =
+            (as_f64(key, value)? as f32).clamp(1.0_f32, 100.0_f32),
+        "ms_enabled"          => cfg.dsp.ms_enabled          = as_bool(key, value)?,
+        "ms_width"            => cfg.dsp.ms_width            =
+            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
+        "ms_mid_gain"         => cfg.dsp.ms_mid_gain         =
+            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
+        "ms_side_gain"        => cfg.dsp.ms_side_gain        =
+            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
+        "lufs_enabled"        => cfg.dsp.lufs_enabled        = as_bool(key, value)?,
+        "lufs_target"         => cfg.dsp.lufs_target         =
+            (as_f64(key, value)? as f32).clamp(-70.0_f32, 0.0_f32),
+        "lufs_max_gain_db"    => cfg.dsp.lufs_max_gain_db    =
+            (as_f64(key, value)? as f32).clamp(0.0_f32, 24.0_f32),
         _ => {
             return Err(StuidError::config(format!("unknown dsp config key: {field}")));
         }

@@ -7,80 +7,54 @@
 //! This allows independent processing of center vs stereo width content.
 //! Common uses:
 //! - Stereo widening (increase Side)
-//! - Stereo narrowing (decrease Side)  
+//! - Stereo narrowing (decrease Side)
 //! - Independent EQ for center vs ambience
 //! - Bass management (route low Side to Mid)
 
 /// Process audio from L/R to Mid/Side representation.
+///
+/// Input must be interleaved stereo: [L0, R0, L1, R1, ...]
 pub fn encode(samples: &[f32]) -> Vec<f32> {
+    debug_assert!(samples.len() % 2 == 0, "encode: input must be interleaved stereo");
     let mut output = Vec::with_capacity(samples.len());
-
-    // Process as interleaved stereo: [L0, R0, L1, R1, ...]
-    let mut i = 0;
-    while i + 1 < samples.len() {
-        let left = samples[i];
-        let right = samples[i + 1];
-
-        // Mid = (L + R) / 2
-        let mid = (left + right) * 0.5;
-        // Side = (L - R) / 2
-        let side = (left - right) * 0.5;
-
-        output.push(mid);
-        output.push(side);
-
-        i += 2;
+    for frame in samples.chunks_exact(2) {
+        output.push((frame[0] + frame[1]) * 0.5); // Mid = (L + R) / 2
+        output.push((frame[0] - frame[1]) * 0.5); // Side = (L - R) / 2
     }
-
     output
 }
 
 /// Process audio from Mid/Side back to L/R representation.
+///
+/// Input must be interleaved M/S: [M0, S0, M1, S1, ...]
 pub fn decode(samples: &[f32]) -> Vec<f32> {
+    debug_assert!(samples.len() % 2 == 0, "decode: input must be interleaved M/S");
     let mut output = Vec::with_capacity(samples.len());
-
-    let mut i = 0;
-    while i + 1 < samples.len() {
-        let mid = samples[i];
-        let side = samples[i + 1];
-
-        // L = Mid + Side
-        let left = mid + side;
-        // R = Mid - Side
-        let right = mid - side;
-
-        output.push(left);
-        output.push(right);
-
-        i += 2;
+    for frame in samples.chunks_exact(2) {
+        output.push(frame[0] + frame[1]); // L = Mid + Side
+        output.push(frame[0] - frame[1]); // R = Mid - Side
     }
-
     output
 }
 
-/// Apply stereo width control.
-/// width = 1.0: normal stereo
-/// width > 1.0: wider stereo
-/// width < 1.0: narrower stereo (0 = mono)
+/// Apply stereo width control directly to L/R samples.
+///
+/// - `width = 1.0`: unchanged
+/// - `width > 1.0`: wider stereo image
+/// - `width < 1.0`: narrower (0.0 = mono)
 pub fn apply_width(samples: &[f32], width: f32) -> Vec<f32> {
-    let mid_side = encode(samples);
-    let mut output = Vec::with_capacity(mid_side.len());
-
-    let mut i = 0;
-    while i + 1 < mid_side.len() {
-        let mid = mid_side[i];
-        let side = mid_side[i + 1] * width;
-
-        output.push(mid);
-        output.push(side);
-
-        i += 2;
+    debug_assert!(samples.len() % 2 == 0, "apply_width: input must be interleaved stereo");
+    let mut output = Vec::with_capacity(samples.len());
+    for frame in samples.chunks_exact(2) {
+        let mid  = (frame[0] + frame[1]) * 0.5;
+        let side = (frame[0] - frame[1]) * 0.5 * width;
+        output.push(mid + side);
+        output.push(mid - side);
     }
-
-    decode(&output)
+    output
 }
 
-/// M/S processor with configurable width and balance.
+/// M/S processor with configurable width and independent mid/side gains.
 pub struct MidSideProcessor {
     width: f32,
     mid_gain: f32,
@@ -99,44 +73,50 @@ impl MidSideProcessor {
         }
     }
 
-    /// Process stereo samples through M/S chain.
+    /// Process stereo samples through the M/S chain in a single pass.
+    ///
+    /// Encodes to M/S, applies mid gain, side gain, and width, then decodes
+    /// back to L/R — all without intermediate allocations.
     pub fn process(&mut self, samples: &[f32]) -> Vec<f32> {
         if !self.enabled {
             return samples.to_vec();
         }
 
-        // Encode L/R to M/S
-        let mut mid_side = encode(samples);
+        debug_assert!(samples.len() % 2 == 0, "process: input must be interleaved stereo");
 
-        // Apply gains
-        for i in (0..mid_side.len()).step_by(2) {
-            mid_side[i] *= self.mid_gain; // Mid
-            mid_side[i + 1] *= self.side_gain; // Side
+        // Fold width and side_gain into a single effective side multiplier so
+        // the side channel is only scaled once.
+        let effective_side = self.side_gain * self.width;
+        let mid_gain = self.mid_gain;
+
+        let mut output = Vec::with_capacity(samples.len());
+
+        for frame in samples.chunks_exact(2) {
+            let l = frame[0];
+            let r = frame[1];
+
+            // Encode, apply gains, decode — single pass, no intermediate Vec.
+            let mid  = (l + r) * 0.5 * mid_gain;
+            let side = (l - r) * 0.5 * effective_side;
+
+            output.push(mid + side); // L = Mid + Side
+            output.push(mid - side); // R = Mid - Side
         }
 
-        // Apply width
-        if (self.width - 1.0).abs() > 0.001 {
-            for i in (1..mid_side.len()).step_by(2) {
-                mid_side[i] *= self.width;
-            }
-        }
-
-        // Decode back to L/R
-        decode(&mid_side)
+        output
     }
 
-    /// Set stereo width.
+    /// Set stereo width. Clamped to [0.0, 2.0].
     pub fn set_width(&mut self, width: f32) {
-        // Clamp to reasonable range: 0 (mono) to 2.0 (double stereo)
         self.width = width.clamp(0.0, 2.0);
     }
 
-    /// Set mid (center) gain.
+    /// Set mid (center) gain. Clamped to [0.0, 2.0].
     pub fn set_mid_gain(&mut self, gain: f32) {
         self.mid_gain = gain.clamp(0.0, 2.0);
     }
 
-    /// Set side (stereo) gain.
+    /// Set side (stereo) gain. Clamped to [0.0, 2.0].
     pub fn set_side_gain(&mut self, gain: f32) {
         self.side_gain = gain.clamp(0.0, 2.0);
     }
@@ -204,23 +184,19 @@ mod tests {
         // Pure stereo: L = 1, R = -1
         let stereo = vec![1.0, -1.0];
 
-        // Normal width
+        // Normal width — signal unchanged
         let normal = apply_width(&stereo, 1.0);
         assert!((normal[0] - 1.0).abs() < 1e-6);
         assert!((normal[1] - (-1.0)).abs() < 1e-6);
 
-        // Double width
-        // Input: L=1, R=-1 -> Mid=0, Side=1
-        // After width=2: Side=2 -> L=2, R=-2
+        // Double width: L=1, R=-1 → Mid=0, Side=1 → Side*2=2 → L=2, R=-2
         let wide = apply_width(&stereo, 2.0);
         assert!((wide[0] - 2.0).abs() < 1e-6);
         assert!((wide[1] - (-2.0)).abs() < 1e-6);
 
-        // Zero width (mono)
-        // Input: L=1, R=-1 -> Mid=0, Side=1
-        // After width=0: Side=0 -> L=0, R=0 (mono)
+        // Zero width (mono): Side=0 → L=R
         let narrow = apply_width(&stereo, 0.0);
-        assert!((narrow[0] - narrow[1]).abs() < 1e-6); // Both should be equal
+        assert!((narrow[0] - narrow[1]).abs() < 1e-6);
     }
 
     #[test]
@@ -242,10 +218,56 @@ mod tests {
         let input = vec![1.0, -1.0];
         let output = proc.process(&input);
 
-        // With 0.5 width, side is halved
-        // L = mid + side*0.5 = 0 + 1*0.5 = 0.5
-        // R = mid - side*0.5 = 0 - 1*0.5 = -0.5
+        // Mid=0, Side=1 → Side*0.5=0.5 → L=0.5, R=-0.5
         assert!((output[0] - 0.5).abs() < 1e-6);
         assert!((output[1] - (-0.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn processor_width_and_side_gain_are_independent() {
+        // With both controls, effective side = side_gain * width.
+        // width=2, side_gain=0.5 → effective_side=1.0 → signal unchanged.
+        let mut proc = MidSideProcessor::new();
+        proc.set_enabled(true);
+        proc.set_width(2.0);
+        proc.set_side_gain(0.5);
+
+        let input = vec![1.0, -1.0];
+        let output = proc.process(&input);
+        // effective_side = 2.0 * 0.5 = 1.0 → no change
+        assert!((output[0] - 1.0).abs() < 1e-6, "L should be unchanged, got {}", output[0]);
+        assert!((output[1] - (-1.0)).abs() < 1e-6, "R should be unchanged, got {}", output[1]);
+    }
+
+    #[test]
+    fn processor_mid_gain_attenuates_center() {
+        let mut proc = MidSideProcessor::new();
+        proc.set_enabled(true);
+        proc.set_mid_gain(0.0); // kill center
+
+        // Mono signal → only mid → should be silenced
+        let input = vec![0.5, 0.5];
+        let output = proc.process(&input);
+        assert!(output[0].abs() < 1e-6);
+        assert!(output[1].abs() < 1e-6);
+    }
+
+    #[test]
+    fn unity_gain_is_identity() {
+        // width=1, mid_gain=1, side_gain=1 → no change
+        let mut proc = MidSideProcessor::new();
+        proc.set_enabled(true);
+
+        let input: Vec<f32> = (0..64).flat_map(|i| {
+            let l = (i as f32 * 0.1).sin() * 0.5;
+            let r = (i as f32 * 0.07).cos() * 0.3;
+            [l, r]
+        }).collect();
+
+        let output = proc.process(&input);
+
+        for (a, b) in input.iter().zip(output.iter()) {
+            assert!((a - b).abs() < 1e-6, "unity should be identity: {} != {}", a, b);
+        }
     }
 }

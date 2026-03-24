@@ -15,22 +15,18 @@ type audioTab int
 
 const (
 	tabOutput audioTab = iota
-	tabDSP
-	tabDSD
-	tabConvolution
-	tabCrossfeed
-	tabMidSide
-	tabDither
+	tabSignal
+	tabCorrection
+	tabStereo
+	tabFormat
 )
 
 var audioTabNames = []string{
 	"Output",
-	"DSP",
-	"DSD",
-	"Convolution",
-	"Crossfeed",
-	"Mid/Side",
-	"Dither",
+	"Signal",
+	"Correction",
+	"Stereo",
+	"Format",
 }
 
 type AudioSettingsModel struct {
@@ -43,10 +39,28 @@ type AudioSettingsModel struct {
 	settingItems map[audioTab][]*settingItem
 }
 
+// audioHeader returns a non-interactive section label rendered as a sub-heading.
+func audioHeader(label string) *settingItem {
+	return &settingItem{label: label, kind: settingInfo}
+}
+
+// firstSelectableIdx returns the index of the first non-header item in a tab.
+func firstSelectableIdx(items []*settingItem) int {
+	for i, item := range items {
+		if item.kind != settingInfo {
+			return i
+		}
+	}
+	return 0
+}
+
 func NewAudioSettingsModel() AudioSettingsModel {
 	m := AudioSettingsModel{
 		tab: tabOutput,
 		settingItems: map[audioTab][]*settingItem{
+
+			// ── Output ──────────────────────────────────────────────────────────
+			// Hardware sink, sample rate, and backend-specific parameters.
 			tabOutput: {
 				{
 					label:       "Output Target",
@@ -71,14 +85,14 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					intVal:      4096,
 					minVal:      512,
 					maxVal:      16384,
-					description: "Processing buffer size in samples",
+					description: "Processing buffer size in samples — smaller = lower latency, larger = more stable",
 				},
 				{
 					label:       "ALSA Device",
 					key:         "dsp.alsa_device",
 					kind:        settingString,
 					strVal:      "hw:0,0",
-					description: "ALSA hardware device (e.g. hw:0,0)",
+					description: "ALSA hardware device string (e.g. hw:0,0) — only used when output target is alsa",
 				},
 				{
 					label:       "PipeWire Role",
@@ -86,23 +100,53 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingChoice,
 					choiceVals:  []string{"Music", "Production"},
 					choiceIdx:   0,
-					description: "PipeWire stream role",
+					description: "PipeWire stream role — Production requests bypass of OS resampler",
 				},
 			},
-			tabDSP: {
+
+			// ── Signal ──────────────────────────────────────────────────────────
+			// Pipeline master switch, DC offset filter (first in chain),
+			// and resampler settings.
+			tabSignal: {
 				{
 					label:       "Enable DSP",
 					key:         "dsp.enabled",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Enable DSP processing pipeline",
+					description: "Master switch — enables the entire DSP processing pipeline",
 				},
+				audioHeader("DC Offset Filter"),
+				{
+					label:       "DC Offset Filter",
+					key:         "dsp.dc_offset_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Remove DC bias and very low frequency drift before further processing",
+				},
+				{
+					label:       "DC Cutoff (Hz)",
+					key:         "dsp.dc_offset_cutoff_hz",
+					kind:        settingInt,
+					intVal:      10,
+					minVal:      1,
+					maxVal:      100,
+					description: "DC high-pass cutoff frequency — 5-20 Hz removes DC, 80 Hz also removes rumble",
+				},
+				audioHeader("Resampler"),
 				{
 					label:       "Resampling",
 					key:         "dsp.resample_enabled",
 					kind:        settingBool,
 					boolVal:     true,
-					description: "Enable sample rate conversion",
+					description: "Enable sample rate conversion from input rate to output rate",
+				},
+				{
+					label:       "Input Rate",
+					key:         "dsp.input_sample_rate",
+					kind:        settingChoice,
+					choiceVals:  []string{"44100", "48000", "88200", "96000"},
+					choiceIdx:   0,
+					description: "Expected source sample rate — set to match your media",
 				},
 				{
 					label:       "Upsample Ratio",
@@ -110,7 +154,7 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingChoice,
 					choiceVals:  []string{"1", "2", "4", "8", "16"},
 					choiceIdx:   2,
-					description: "Upsampling multiplier",
+					description: "Upsampling multiplier applied on top of the input rate",
 				},
 				{
 					label:       "Filter Type",
@@ -118,86 +162,83 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingChoice,
 					choiceVals:  []string{"fast", "slow", "synchronous"},
 					choiceIdx:   2,
-					description: "Resampling filter characteristics",
-				},
-				{
-					label:       "Input Rate",
-					key:         "dsp.input_sample_rate",
-					kind:        settingChoice,
-					choiceVals:  []string{"44100", "48000", "88200", "96000"},
-					choiceIdx:   1,
-					description: "Expected input sample rate",
+					description: "Resampling filter — fast (low latency), slow (steep roll-off), synchronous (phase-linear)",
 				},
 			},
-			tabDSD: {
-				{
-					label:       "DSD→PCM",
-					key:         "dsp.dsd_to_pcm_enabled",
-					kind:        settingBool,
-					boolVal:     false,
-					description: "Convert DSD to PCM",
-				},
-				{
-					label:       "Output Mode",
-					key:         "dsp.output_mode",
-					kind:        settingChoice,
-					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
-					choiceIdx:   0,
-					description: "Audio output format",
-				},
-				{
-					label:       "DSD Rate",
-					key:         "dsp.dsd_output_rate",
-					kind:        settingChoice,
-					choiceVals:  []string{"88200", "176400", "352800", "705600"},
-					choiceIdx:   2,
-					description: "DSD to PCM output rate",
-				},
-			},
-			tabConvolution: {
+
+			// ── Correction ──────────────────────────────────────────────────────
+			// Convolution room/speaker correction and LUFS loudness normalization.
+			tabCorrection: {
+				audioHeader("Convolution"),
 				{
 					label:       "Enable",
 					key:         "dsp.convolution_enabled",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Enable convolution processing",
+					description: "Apply convolution — room correction or speaker EQ via impulse response",
 				},
 				{
 					label:       "Bypass",
 					key:         "dsp.convolution_bypass",
 					kind:        settingBool,
 					boolVal:     true,
-					description: "Bypass convolution filter",
+					description: "Bypass convolution without disabling it — useful for quick A/B comparison",
 				},
 				{
 					label:       "Filter File",
 					key:         "dsp.convolution_filter_path",
 					kind:        settingPath,
 					strVal:      "",
-					description: "Path to convolution filter WAV file",
+					description: "Path to impulse response WAV file",
+				},
+				audioHeader("LUFS Normalization"),
+				{
+					label:       "Normalize",
+					key:         "dsp.lufs_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Enable integrated loudness normalization (ITU-R BS.1770-4)",
+				},
+				{
+					label:       "Target LUFS",
+					key:         "dsp.lufs_target",
+					kind:        settingFloat,
+					floatVal:    -14.0,
+					description: "Target integrated loudness — -14 (streaming), -16 (YouTube), -23 (broadcast EBU R128)",
+				},
+				{
+					label:       "Max Gain (dB)",
+					key:         "dsp.lufs_max_gain_db",
+					kind:        settingFloat,
+					floatVal:    12.0,
+					description: "Maximum gain the normalizer will apply — prevents over-amplification of quiet content",
 				},
 			},
-			tabCrossfeed: {
+
+			// ── Stereo ──────────────────────────────────────────────────────────
+			// Crossfeed (headphone psychoacoustics) and Mid/Side (stereo image).
+			tabStereo: {
+				audioHeader("Crossfeed"),
 				{
 					label:       "Enable",
 					key:         "dsp.crossfeed_enabled",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Enable headphone crossfeed",
+					description: "Enable headphone crossfeed to reduce ear fatigue on hard-panned recordings",
 				},
 				{
 					label:       "Auto-detect",
 					key:         "dsp.crossfeed_auto",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Auto-detect headphones and enable crossfeed",
+					description: "Automatically enable crossfeed when headphones are detected",
 				},
 				{
 					label:       "Feed Level",
 					key:         "dsp.crossfeed_feed_level",
 					kind:        settingFloat,
 					floatVal:    0.45,
-					description: "Crossfeed blend level (0.0-0.9)",
+					description: "Crossfeed blend amount — 0.0 = none, 0.45 = natural, 0.9 = maximum",
 				},
 				{
 					label:       "Cutoff (Hz)",
@@ -206,68 +247,80 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					intVal:      700,
 					minVal:      300,
 					maxVal:      700,
-					description: "Crossfeed lowpass cutoff frequency",
+					description: "Crossfeed lowpass cutoff — higher = more natural, lower = stronger front-center effect",
 				},
-				{
-					label:       "DC Offset Filter",
-					key:         "dsp.dc_offset_enabled",
-					kind:        settingBool,
-					boolVal:     false,
-					description: "Remove DC offset and very low frequency drift",
-				},
-				{
-					label:       "DC Cutoff (Hz)",
-					key:         "dsp.dc_offset_cutoff_hz",
-					kind:        settingChoice,
-					choiceVals:  []string{"5", "10", "15", "20", "30"},
-					choiceIdx:   1,
-					description: "DC filter cutoff frequency",
-				},
-			},
-			tabMidSide: {
+				audioHeader("Mid/Side"),
 				{
 					label:       "Enable M/S",
 					key:         "dsp.ms_enabled",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Enable Mid/Side processing",
+					description: "Enable Mid/Side processing for independent control of center and stereo content",
 				},
 				{
 					label:       "Width",
 					key:         "dsp.ms_width",
 					kind:        settingFloat,
 					floatVal:    1.0,
-					description: "Stereo width (0.0=mono, 1.0=normal, >1=wider)",
+					description: "Stereo width — 0.0 = mono, 1.0 = unchanged, 2.0 = maximum width",
 				},
 				{
 					label:       "Mid Gain",
 					key:         "dsp.ms_mid_gain",
 					kind:        settingFloat,
 					floatVal:    1.0,
-					description: "Mid (center) channel gain",
+					description: "Gain on center (mid) channel — reduces lead vocals and bass at < 1.0",
 				},
 				{
 					label:       "Side Gain",
 					key:         "dsp.ms_side_gain",
 					kind:        settingFloat,
 					floatVal:    1.0,
-					description: "Side channel gain",
+					description: "Gain on stereo difference (side) channel — controls ambience and stereo width",
 				},
 			},
-			tabDither: {
+
+			// ── Format ──────────────────────────────────────────────────────────
+			// DSD conversion and dither — final output format stages.
+			tabFormat: {
+				audioHeader("DSD"),
+				{
+					label:       "DSD→PCM",
+					key:         "dsp.dsd_to_pcm_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Convert DSD bitstream input to PCM for DSP processing",
+				},
+				{
+					label:       "Output Mode",
+					key:         "dsp.output_mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
+					choiceIdx:   0,
+					description: "Output encoding format — pcm (standard), dsd (native bitstream), dsd_to_pcm",
+				},
+				{
+					label:       "DSD Rate",
+					key:         "dsp.dsd_output_rate",
+					kind:        settingChoice,
+					choiceVals:  []string{"88200", "176400", "352800", "705600"},
+					choiceIdx:   2,
+					description: "DSD to PCM output rate in Hz — higher = more bandwidth preserved",
+				},
+				audioHeader("Dither"),
 				{
 					label:       "Enable",
 					key:         "dsp.dither_enabled",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Enable TPDF dither before output",
+					description: "Enable TPDF dither — adds shaped noise to reduce quantization distortion",
 				},
 				{
 					label:       "Auto-detect",
 					key:         "dsp.dither_auto",
 					kind:        settingBool,
 					boolVal:     false,
-					description: "Auto-enable when output is ALSA at 16-bit",
+					description: "Auto-enable dither when output is ALSA at 16-bit",
 				},
 				{
 					label:       "Bit Depth",
@@ -275,7 +328,7 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingChoice,
 					choiceVals:  []string{"8", "16", "20", "24", "32"},
 					choiceIdx:   1,
-					description: "Output bit depth for quantization",
+					description: "Output bit depth — dither noise floor is calibrated to this depth",
 				},
 				{
 					label:       "Noise Shaping",
@@ -283,7 +336,7 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingChoice,
 					choiceVals:  []string{"none", "lipshitz", "fweighted", "modified_e_weighted", "improved_e_weighted", "shibata", "low_shibata", "high_shibata", "gesemann"},
 					choiceIdx:   0,
-					description: "Noise shaping algorithm",
+					description: "Noise shaping algorithm — pushes quantization noise to less audible frequencies",
 				},
 			},
 		},
@@ -332,51 +385,64 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		case "left", "h":
 			if m.tab > 0 {
 				m.tab--
-				m.selectedIdx = 0
+				items := m.settingItems[m.tab]
+				m.selectedIdx = firstSelectableIdx(items)
 			}
 		case "right", "l":
 			if m.tab < audioTab(len(audioTabNames)-1) {
 				m.tab++
-				m.selectedIdx = 0
+				items := m.settingItems[m.tab]
+				m.selectedIdx = firstSelectableIdx(items)
 			}
 		case "up", "k":
-			if m.selectedIdx > 0 {
-				m.selectedIdx--
+			items := m.settingItems[m.tab]
+			next := m.selectedIdx - 1
+			for next >= 0 && items[next].kind == settingInfo {
+				next--
+			}
+			if next >= 0 {
+				m.selectedIdx = next
 			}
 		case "down", "j":
-			if m.selectedIdx < len(m.settingItems[m.tab])-1 {
-				m.selectedIdx++
+			items := m.settingItems[m.tab]
+			next := m.selectedIdx + 1
+			for next < len(items) && items[next].kind == settingInfo {
+				next++
+			}
+			if next < len(items) {
+				m.selectedIdx = next
 			}
 		case "enter":
 			item := m.getCurrentItem()
-			if item != nil {
-				if item.kind == settingPath {
-					ti := textinput.New()
-					ti.SetValue(item.strVal)
-					ti.CursorEnd()
-					inputW := m.width - 40
-					if inputW < 20 {
-						inputW = 20
-					}
-					ti.SetWidth(inputW)
-					ti.CharLimit = 512
-					cmd := ti.Focus()
-					m.editInput = ti
-					m.editing = true
-					return m, cmd
-				}
-				item.toggle()
-				return m, settingChangedCmd(item)
+			if item == nil || item.kind == settingInfo {
+				return m, nil
 			}
+			if item.kind == settingPath {
+				ti := textinput.New()
+				ti.SetValue(item.strVal)
+				ti.CursorEnd()
+				inputW := m.width - 40
+				if inputW < 20 {
+					inputW = 20
+				}
+				ti.SetWidth(inputW)
+				ti.CharLimit = 512
+				cmd := ti.Focus()
+				m.editInput = ti
+				m.editing = true
+				return m, cmd
+			}
+			item.toggle()
+			return m, settingChangedCmd(item)
 		case "+", "=":
 			item := m.getCurrentItem()
-			if item != nil {
+			if item != nil && item.kind != settingInfo {
 				item.adjust(+1)
 				return m, settingChangedCmd(item)
 			}
 		case "-", "_":
 			item := m.getCurrentItem()
-			if item != nil {
+			if item != nil && item.kind != settingInfo {
 				item.adjust(-1)
 				return m, settingChangedCmd(item)
 			}
@@ -418,30 +484,36 @@ func (m AudioSettingsModel) View() tea.View {
 	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, tabLines...)
 
 	items := m.settingItems[m.tab]
-	var itemLines []string
-	catStyle := lipgloss.NewStyle().
-		Foreground(theme.T.Accent()).
-		Bold(true)
-	itemLines = append(itemLines, catStyle.Render("  "+audioTabNames[m.tab]))
-	itemLines = append(itemLines, "")
-
-	normalStyle := lipgloss.NewStyle().
-		Foreground(theme.T.Text())
-	valStyle := lipgloss.NewStyle().
-		Foreground(theme.T.TextDim())
 
 	rightW := m.width - 24
 	if rightW < 30 {
 		rightW = 30
 	}
 
+	normalStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	valStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	sectionStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
+
+	var itemLines []string
+	lineIdxOfSelected := -1
 
 	for i, item := range items {
+		if item.kind == settingInfo {
+			itemLines = append(itemLines, "")
+			itemLines = append(itemLines, sectionStyle.Render("  "+item.label))
+			continue
+		}
+
+		if i == m.selectedIdx {
+			lineIdxOfSelected = len(itemLines)
+		}
+
 		prefix := "  "
 		if i == m.selectedIdx {
 			prefix = accentStyle.Render("► ")
 		}
+
 		labelW := rightW - 14
 		if labelW < 10 {
 			labelW = 10
@@ -453,14 +525,10 @@ func (m AudioSettingsModel) View() tea.View {
 		itemLines = append(itemLines, line)
 	}
 
-	if m.editing {
+	if m.editing && lineIdxOfSelected >= 0 {
 		item := m.getCurrentItem()
 		if item != nil && item.kind == settingPath {
-			// +2 for the category header and blank line prepended above
-			lineIdx := 2 + m.selectedIdx
-			if lineIdx < len(itemLines) {
-				itemLines[lineIdx] = normalStyle.Render("  "+item.label+" ") + m.editInput.View()
-			}
+			itemLines[lineIdxOfSelected] = normalStyle.Render("  "+item.label+" ") + m.editInput.View()
 		}
 	}
 
@@ -469,7 +537,21 @@ func (m AudioSettingsModel) View() tea.View {
 		PaddingLeft(2).
 		Render(strings.Join(itemLines, "\n"))
 
-	footer := hintBar("←→ switch tabs", "enter toggle", "+/- adjust", "esc back")
+	// Description of the currently selected item shown as a help line.
+	descLine := ""
+	if item := m.getCurrentItem(); item != nil && item.description != "" {
+		desc := item.description
+		maxDescW := m.width - 4
+		if maxDescW > 0 && len(desc) > maxDescW {
+			desc = desc[:maxDescW-1] + "…"
+		}
+		descLine = lipgloss.NewStyle().
+			Foreground(theme.T.TextDim()).
+			PaddingLeft(2).
+			Render(desc) + "\n"
+	}
 
-	return tea.NewView(header + "\n\n" + tabBar + "\n\n" + itemsPanel + "\n\n" + footer + "\n")
+	footer := hintBar("←→ tabs", "↑↓ navigate", "enter toggle", "+/- adjust", "esc back")
+
+	return tea.NewView(header + "\n\n" + tabBar + "\n\n" + itemsPanel + "\n\n" + descLine + footer + "\n")
 }
