@@ -461,6 +461,12 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
         "convolution_enabled" => cfg.dsp.convolution_enabled = as_bool(key, value)?,
         "convolution_bypass" => cfg.dsp.convolution_bypass = as_bool(key, value)?,
         "buffer_size" => cfg.dsp.buffer_size = as_usize(key, value)?,
+        "crossfeed_enabled"    => cfg.dsp.crossfeed_enabled    = as_bool(key, value)?,
+        "crossfeed_auto"       => cfg.dsp.crossfeed_auto        = as_bool(key, value)?,
+        "crossfeed_feed_level" => cfg.dsp.crossfeed_feed_level  =
+            (as_f64(key, value)? as f32).clamp(0.0_f32, 0.9_f32),
+        "crossfeed_cutoff_hz"  => cfg.dsp.crossfeed_cutoff_hz   =
+            (as_f64(key, value)? as f32).clamp(300.0_f32, 700.0_f32),
         _ => {
             return Err(StuidError::config(format!("unknown dsp config key: {field}")));
         }
@@ -639,5 +645,44 @@ mod tests {
         // volume expects a number, not a string
         let result = m.set("player.default_volume", Value::String("loud".into())).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn dsp_crossfeed_keys() {
+        use crate::config::RuntimeConfig;
+
+        let mut cfg = RuntimeConfig::default();
+
+        // bool keys
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_enabled", &serde_json::Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.crossfeed_enabled);
+
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_auto", &serde_json::Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.crossfeed_auto);
+
+        // feed_level: valid value
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap())).unwrap();
+        assert!((cfg.dsp.crossfeed_feed_level - 0.5_f32).abs() < 1e-5);
+
+        // feed_level: clamp low (-0.1 → 0.0)
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(-0.1).unwrap())).unwrap();
+        assert_eq!(cfg.dsp.crossfeed_feed_level, 0.0_f32);
+
+        // feed_level: clamp high (1.5 → 0.9)
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(1.5).unwrap())).unwrap();
+        assert_eq!(cfg.dsp.crossfeed_feed_level, 0.9_f32);
+
+        // cutoff_hz: clamp low (250.0 → 300.0)
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
+            &serde_json::Value::Number(serde_json::Number::from_f64(250.0).unwrap())).unwrap();
+        assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 300.0_f32);
+
+        // cutoff_hz: clamp high (800.0 → 700.0)
+        apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
+            &serde_json::Value::Number(serde_json::Number::from_f64(800.0).unwrap())).unwrap();
+        assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 700.0_f32);
     }
 }
