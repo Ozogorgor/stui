@@ -127,6 +127,14 @@ pub struct DspConfig {
     pub alsa_device: Option<String>,
     /// PipeWire stream role ("Music" | "Production"). Production requests bypass OS resampler.
     pub pipewire_role: String,
+    /// Enable crossfeed (set manually, or overridden by auto-detect).
+    pub crossfeed_enabled: bool,
+    /// When true, probe_headphones() controls crossfeed_enabled at init/update.
+    pub crossfeed_auto: bool,
+    /// Crossfeed blend level. Clamped 0.0–0.9.
+    pub crossfeed_feed_level: f32,
+    /// Crossfeed lowpass cutoff frequency in Hz. Clamped 300.0–700.0.
+    pub crossfeed_cutoff_hz: f32,
 }
 
 impl Default for DspConfig {
@@ -148,6 +156,10 @@ impl Default for DspConfig {
             buffer_size: 4096,
             alsa_device: None,
             pipewire_role: "Music".to_string(),
+            crossfeed_enabled: false,
+            crossfeed_auto: false,
+            crossfeed_feed_level: 0.45,
+            crossfeed_cutoff_hz: 700.0,
         }
     }
 }
@@ -160,4 +172,18 @@ pub trait DspStage {
 
     /// Get the name of this stage.
     fn name(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crossfeed_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.crossfeed_enabled);
+        assert!(!cfg.crossfeed_auto);
+        assert!((cfg.crossfeed_feed_level - 0.45_f32).abs() < f32::EPSILON);
+        assert!((cfg.crossfeed_cutoff_hz - 700.0_f32).abs() < f32::EPSILON);
+    }
 }
