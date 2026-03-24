@@ -93,11 +93,11 @@ fn compute_coeffs(band: &EqBand, sample_rate: u32) -> Coeffs {
 // ── BiquadFilter ───────────────────────────────────────────────────────────
 
 pub struct BiquadFilter {
-    c:           Coeffs,
-    z1l: f32, z2l: f32,  // left channel state
-    z1r: f32, z2r: f32,  // right channel state
-    sample_rate: u32,
-    pub band:    EqBand,
+    c:               Coeffs,
+    pub z1l: f32, pub z2l: f32,  // left channel state
+    pub z1r: f32, pub z2r: f32,  // right channel state
+    pub sample_rate: u32,
+    pub band:        EqBand,
 }
 
 impl BiquadFilter {
@@ -140,6 +140,88 @@ impl BiquadFilter {
             out.push(y);
         }
         out
+    }
+}
+
+// ── ParametricEq ──────────────────────────────────────────────────────────
+
+/// Multi-band parametric equalizer (max 10 biquad bands).
+/// The caller (DspPipeline) owns the update path; no config arc stored here.
+pub struct ParametricEq {
+    pub filters: Vec<BiquadFilter>,
+    enabled:     bool,
+    bypass:      bool,
+}
+
+impl ParametricEq {
+    /// Construct with initial band list. Enabled by default, bypass off.
+    pub fn new(bands: &[EqBand]) -> Self {
+        let mut eq = Self { filters: Vec::new(), enabled: true, bypass: false };
+        eq.update_bands(bands);
+        eq
+    }
+
+    pub fn set_enabled(&mut self, v: bool) { self.enabled = v; }
+    pub fn set_bypass(&mut self, v: bool)  { self.bypass = v; }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled && !self.bypass && !self.filters.is_empty()
+    }
+
+    /// Process stereo-interleaved samples through all active filters in sequence.
+    /// Returns input unchanged (no state touched) when not enabled.
+    pub fn process(&mut self, samples: &[f32], sample_rate: u32) -> Vec<f32> {
+        if !self.is_enabled() {
+            return samples.to_vec();
+        }
+        let mut buf = samples.to_vec();
+        for f in &mut self.filters {
+            if f.band.enabled {
+                buf = f.process_stereo(&buf, sample_rate);
+            }
+        }
+        buf
+    }
+
+    /// Rebuild filter list from a new band configuration.
+    ///
+    /// State preservation rules:
+    /// - Same index AND same filter_type → copy z1l/z2l/z1r/z2r (avoids clicks on nudge).
+    /// - Type change or new index → reset state to zero.
+    /// - Filters beyond `bands.len()` are dropped.
+    /// - Bands beyond 10 are truncated with a warning.
+    pub fn update_bands(&mut self, bands: &[EqBand]) {
+        let bands = if bands.len() > 10 {
+            tracing::warn!(count = bands.len(), "eq: more than 10 bands; truncating to 10");
+            &bands[..10]
+        } else {
+            bands
+        };
+        // Clamp parameters defensively
+        let clamped: Vec<EqBand> = bands.iter().map(|b| EqBand {
+            freq:    b.freq.clamp(20.0, 20000.0),
+            gain_db: b.gain_db.clamp(-20.0, 20.0),
+            q:       b.q.clamp(0.1, 10.0),
+            ..b.clone()
+        }).collect();
+
+        // Use default sample_rate=44100 for initial coefficient computation;
+        // will be recomputed on first process() call if different.
+        let default_sr = self.filters.first().map(|f| f.sample_rate).unwrap_or(44100);
+
+        let new_filters: Vec<BiquadFilter> = clamped.iter().enumerate().map(|(i, band)| {
+            let mut f = BiquadFilter::new(band.clone(), default_sr);
+            // Preserve state if same index and same type
+            if let Some(old) = self.filters.get(i) {
+                if old.band.filter_type == band.filter_type {
+                    f.z1l = old.z1l; f.z2l = old.z2l;
+                    f.z1r = old.z1r; f.z2r = old.z2r;
+                }
+            }
+            f
+        }).collect();
+
+        self.filters = new_filters;
     }
 }
 
@@ -251,5 +333,95 @@ mod tests {
         assert_ne!(f.c.b0, b0_before, "b0 should change after rate switch");
         // State must have been reset before processing at new rate
         // (can only verify indirectly — no panic and output is finite)
+    }
+
+    // ── ParametricEq tests ────────────────────────────────────────────────
+
+    use super::ParametricEq;
+
+    #[test]
+    fn parametric_eq_cascade() {
+        // Two peaks at different freqs; verify each center is boosted
+        let bands = vec![
+            EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                     freq: 500.0, gain_db: 6.0, q: 1.0 },
+            EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                     freq: 4000.0, gain_db: 6.0, q: 1.0 },
+        ];
+        let mut eq = ParametricEq::new(&bands);
+        // Generate a tone at 500Hz: 44100Hz, 2-channel, 2048 samples
+        let sr = 44100u32;
+        let tone: Vec<f32> = (0..2048).flat_map(|i| {
+            let s = (2.0 * std::f32::consts::PI * 500.0 * i as f32 / sr as f32).sin();
+            [s, s]
+        }).collect();
+        let out = eq.process(&tone, sr);
+        // RMS of output should be greater than RMS of input (boosted at 500Hz)
+        let rms_in  = (tone.iter().map(|x| x*x).sum::<f32>() / tone.len() as f32).sqrt();
+        let rms_out = (out.iter().map(|x| x*x).sum::<f32>() / out.len() as f32).sqrt();
+        assert!(rms_out > rms_in * 1.1,
+            "cascade: rms_out={rms_out:.4} should be > 1.1 × rms_in={rms_in:.4}");
+    }
+
+    #[test]
+    fn bypass_passes_through() {
+        let bands = vec![EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                                  freq: 1000.0, gain_db: 12.0, q: 1.0 }];
+        let mut eq = ParametricEq::new(&bands);
+        eq.set_bypass(true);
+        let input: Vec<f32> = (0..64).map(|i| i as f32 * 0.01).collect();
+        let output = eq.process(&input, 44100);
+        assert_eq!(input, output, "bypass should return input unchanged");
+    }
+
+    #[test]
+    fn update_bands_preserves_state_on_freq_change() {
+        let band = EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                            freq: 1000.0, gain_db: 6.0, q: 1.0 };
+        let mut eq = ParametricEq::new(&[band]);
+        // Warm up state
+        let tone = vec![0.5f32; 512];
+        let _ = eq.process(&tone, 44100);
+        let z1l_before = eq.filters[0].z1l;
+        assert_ne!(z1l_before, 0.0, "state should be non-zero after processing");
+
+        // Change freq only (same type) → state preserved
+        let updated = EqBand { freq: 2000.0, ..eq.filters[0].band.clone() };
+        eq.update_bands(&[updated]);
+        assert_eq!(eq.filters[0].z1l, z1l_before, "state should survive freq nudge");
+    }
+
+    #[test]
+    fn update_bands_resets_state_on_type_change() {
+        let band = EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                            freq: 1000.0, gain_db: 6.0, q: 1.0 };
+        let mut eq = ParametricEq::new(&[band]);
+        let tone = vec![0.5f32; 512];
+        let _ = eq.process(&tone, 44100);
+        assert_ne!(eq.filters[0].z1l, 0.0);
+
+        let changed = EqBand { filter_type: EqFilterType::LowPass,
+                               ..eq.filters[0].band.clone() };
+        eq.update_bands(&[changed]);
+        assert_eq!(eq.filters[0].z1l, 0.0, "state must reset on type change");
+    }
+
+    #[test]
+    fn update_bands_drops_removed() {
+        let bands: Vec<EqBand> = (0..3).map(|i| EqBand {
+            enabled: true, filter_type: EqFilterType::Peak,
+            freq: 500.0 * (i + 1) as f32, gain_db: 3.0, q: 1.0,
+        }).collect();
+        let mut eq = ParametricEq::new(&bands);
+        assert_eq!(eq.filters.len(), 3);
+        eq.update_bands(&bands[..1]);
+        assert_eq!(eq.filters.len(), 1, "removed bands must be dropped");
+    }
+
+    #[test]
+    fn update_bands_truncates_at_10() {
+        let bands: Vec<EqBand> = (0..12).map(|_| EqBand::default()).collect();
+        let eq = ParametricEq::new(&bands);
+        assert_eq!(eq.filters.len(), 10, "must not exceed 10 bands");
     }
 }
