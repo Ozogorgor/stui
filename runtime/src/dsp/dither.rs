@@ -221,7 +221,7 @@ impl NoiseShaping {
 pub struct DitherFilter {
     bit_depth:     u32,
     noise_shaping: NoiseShaping,
-    sample_rate:   u32,            // 0 = never set; triggers reset on first process()
+    sample_rate:   u32,            // initialized to 44100; updated on each rate change
     // FIR error feedback state (per channel)
     pub(crate) err_l: Vec<f32>,
     pub(crate) err_r: Vec<f32>,
