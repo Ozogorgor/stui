@@ -136,14 +136,14 @@ pub struct DspConfig {
     /// Crossfeed lowpass cutoff frequency in Hz. Clamped 300.0–700.0.
     pub crossfeed_cutoff_hz: f32,
     /// Enable dither (set manually, or overridden by auto-detect).
-    pub dither_enabled:       bool,    // default: false
+    pub dither_enabled: bool,
     /// When true, auto-enable dither when output_target == Alsa && dither_bit_depth == 16.
-    pub dither_auto:          bool,    // default: false
+    pub dither_auto: bool,
     /// Output bit depth for quantization. Clamped 8–32.
-    pub dither_bit_depth:     u32,     // default: 16
+    pub dither_bit_depth: u32,
     /// Noise shaping algorithm. One of: "none"|"lipshitz"|"fweighted"|"modified_e_weighted"|
     /// "improved_e_weighted"|"shibata"|"low_shibata"|"high_shibata"|"gesemann".
-    pub dither_noise_shaping: String,  // default: "none"
+    pub dither_noise_shaping: String,
 }
 
 impl Default for DspConfig {
@@ -169,9 +169,9 @@ impl Default for DspConfig {
             crossfeed_auto: false,
             crossfeed_feed_level: 0.45,
             crossfeed_cutoff_hz: 700.0,
-            dither_enabled:       false,
-            dither_auto:          false,
-            dither_bit_depth:     16,
+            dither_enabled: false,
+            dither_auto: false,
+            dither_bit_depth: 16,
             dither_noise_shaping: "none".to_string(),
         }
     }
