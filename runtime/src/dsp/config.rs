@@ -135,6 +135,15 @@ pub struct DspConfig {
     pub crossfeed_feed_level: f32,
     /// Crossfeed lowpass cutoff frequency in Hz. Clamped 300.0–700.0.
     pub crossfeed_cutoff_hz: f32,
+    /// Enable dither (set manually, or overridden by auto-detect).
+    pub dither_enabled:       bool,    // default: false
+    /// When true, auto-enable dither when output_target == Alsa && dither_bit_depth == 16.
+    pub dither_auto:          bool,    // default: false
+    /// Output bit depth for quantization. Clamped 8–32.
+    pub dither_bit_depth:     u32,     // default: 16
+    /// Noise shaping algorithm. One of: "none"|"lipshitz"|"fweighted"|"modified_e_weighted"|
+    /// "improved_e_weighted"|"shibata"|"low_shibata"|"high_shibata"|"gesemann".
+    pub dither_noise_shaping: String,  // default: "none"
 }
 
 impl Default for DspConfig {
@@ -160,6 +169,10 @@ impl Default for DspConfig {
             crossfeed_auto: false,
             crossfeed_feed_level: 0.45,
             crossfeed_cutoff_hz: 700.0,
+            dither_enabled:       false,
+            dither_auto:          false,
+            dither_bit_depth:     16,
+            dither_noise_shaping: "none".to_string(),
         }
     }
 }
@@ -185,5 +198,14 @@ mod tests {
         assert!(!cfg.crossfeed_auto);
         assert!((cfg.crossfeed_feed_level - 0.45_f32).abs() < f32::EPSILON);
         assert!((cfg.crossfeed_cutoff_hz - 700.0_f32).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn dither_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.dither_enabled);
+        assert!(!cfg.dither_auto);
+        assert_eq!(cfg.dither_bit_depth, 16);
+        assert_eq!(cfg.dither_noise_shaping, "none");
     }
 }
