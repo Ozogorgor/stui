@@ -10,8 +10,9 @@ less audible high-frequency bands.
 **Algorithm:** TPDF dither + FIR/IIR error-feedback noise shaping
 **Parameters:** `bit_depth` (8–32, default 16) and `noise_shaping` (9 selectable
 algorithms), fully user-configurable
-**Auto-detection:** Enabled automatically when `output_target == Alsa` and
-`bit_depth == 16` (the case where dither matters most)
+**Auto-detection:** When `dither_auto = true`, dither is enabled automatically if
+`output_target == Alsa && dither_bit_depth == 16` (the case where dither matters most).
+Same two-field pattern as crossfeed: user must opt in to auto mode.
 **TUI:** Lipgloss-bordered dialog pushed from DSP Audio settings via
 `screen.TransitionCmd`, same pattern as crossfeed dialog
 
@@ -21,27 +22,47 @@ algorithms), fully user-configurable
 
 ### TPDF Dither + Error Feedback Noise Shaping
 
-For each interleaved stereo frame `[in_L, in_R]`:
+Input is assumed to be interleaved stereo; `samples.len()` must be even.
+Odd-length input is a caller error — `process()` panics in debug builds.
 
+For each interleaved stereo frame `[in_L, in_R]`, apply per-channel:
+
+**FIR algorithms (all except Gesemann and None):**
 ```
-// TPDF: sum of two uniform random values in [-0.5, 0.5] LSB
-tpdf      = uniform() + uniform()           // triangular PDF, range [-1, 1] LSB
-
-// Error feedback noise shaping (if shaping != None)
+tpdf      = uniform() + uniform()           // TPDF, range [-1, 1] LSB
 shaped    = tpdf + dot(coeffs, error_buf)   // add filtered past error
-
-// Quantize to target bit depth
 scale     = 2^(bit_depth - 1)
 out       = round(in * scale + shaped) / scale
-
-// Update error buffer (circular, length = len(coeffs))
-error_buf = [in - out, error_buf[0..n-2]]
+error_buf = [in - out, error_buf[0..n-2]]  // shift in new error
 ```
 
-When `noise_shaping == None`, `shaped = tpdf` and no error buffer is maintained.
+**IIR algorithm (Gesemann only):**
+```
+tpdf      = uniform() + uniform()
+shaped    = tpdf + dot(ff_coeffs, ff_buf) - dot(fb_coeffs, fb_buf)
+scale     = 2^(bit_depth - 1)
+out       = round(in * scale + shaped) / scale
+ff_buf    = [in - out, ff_buf[0..n-2]]     // feedforward: past quantization errors
+fb_buf    = [shaped,   fb_buf[0..n-2]]     // feedback: past shaped values (IIR memory)
+```
+The feedback term is subtracted (`-`) to match the standard IIR difference equation
+convention (`y[n] = b·x[n] - a·y[n-1]`). The SoX `ges44`/`ges48` coefficients are
+provided in this sign convention.
 
-TPDF generation uses a xorshift64 RNG seeded at construction. State (`error_buf`,
-`rng_state`) is reset whenever `bit_depth`, `noise_shaping`, or `sample_rate` changes.
+**No noise shaping (None):**
+```
+tpdf      = uniform() + uniform()
+scale     = 2^(bit_depth - 1)
+out       = round(in * scale + tpdf) / scale
+```
+No error buffer allocated or updated.
+
+When `bit_depth == 32`, dither is a no-op: return input unchanged (f32 has 24-bit
+mantissa; quantizing to 32 integer bits would exceed f32 precision and is meaningless).
+
+TPDF generation uses a xorshift64 RNG seeded at construction. All state (`error_buf`,
+`ff_buf`, `fb_buf`, `rng_state`) is reset whenever `bit_depth`, `noise_shaping`, or
+`sample_rate` changes.
 
 ### Noise Shaping Algorithms
 
@@ -54,18 +75,24 @@ All coefficients sourced from SoX `src/dither.c` (public domain / LGPL).
 | `fweighted` | 9 | FIR | F-weighted psychoacoustic (Lipshitz-Noll-Subotic) |
 | `modified_e_weighted` | 9 | FIR | Gentler E-weighted variant |
 | `improved_e_weighted` | 9 | FIR | Stronger E-weighted variant |
-| `shibata` | 20 | FIR | Aggressive, pushes noise well above 15 kHz |
-| `low_shibata` | 15 | FIR | Gentler Shibata variant |
+| `shibata` | 16–20 | FIR | Aggressive, pushes noise well above 15 kHz |
+| `low_shibata` | 15–16 | FIR | Gentler Shibata variant |
 | `high_shibata` | 20 | FIR | Most aggressive Shibata variant |
 | `gesemann` | 4 | IIR | Psychoacoustically shaped, efficient |
 
 #### Shibata per-rate selection
 
-Shibata has coefficient tables for multiple sample rates (8k / 11k / 16k / 22k / 32k /
-38k / 44.1k / 48k). On each `process()` call, the nearest available table is selected
-for the current `sample_rate`. When `sample_rate` changes, `error_buf` is cleared.
-Low-Shibata and High-Shibata follow the same per-rate selection logic (44.1k / 48k
-variants available; fall back to 44.1k for other rates).
+Shibata has coefficient tables at 8k / 11k / 16k / 22k / 32k / 37.8k / 44.1k / 48k.
+The active table is selected once when `sample_rate` is first set or changes (same
+event that clears `error_buf`). The table whose rate is closest to `sample_rate` is
+chosen (ties go to the higher rate). For rates above 48k (e.g. 96k, 192k), the 48k
+table is used. The pipeline invariant guarantees stereo interleaved input; all stages
+including dither operate on stereo frames only.
+
+Low-Shibata has tables at 44.1k and 48k only; all other rates fall back to whichever
+is nearer (≤46050 Hz → 44.1k table, >46050 Hz → 48k table).
+
+High-Shibata has a single 44.1k table; used at all sample rates (no per-rate selection).
 
 All other algorithms use a single coefficient table regardless of sample rate.
 
@@ -90,6 +117,75 @@ All other algorithms use a single coefficient table regardless of sample rate.
 ```
 [2.847, -4.685, 6.214, -7.184, 6.639, -5.032, 3.263, -1.632, 0.4191]
 ```
+
+**Shibata 8k (`shi08`, 20 taps, inverted sign convention):**
+```
+[-1.202863335609436,   -0.94103097915649414, -0.67878556251525879,
+ -0.57650017738342285, -0.50004476308822632, -0.44349345564842224,
+ -0.37833768129348755, -0.34028723835945129, -0.29413089156150818,
+ -0.24994957447052002, -0.21715600788593292, -0.18792112171649933,
+ -0.15268312394618988, -0.12135542929172516, -0.099610626697540283,
+ -0.075273610651493073,-0.048787496984004974,-0.042586319148540497,
+ -0.028991291299462318,-0.011869125068187714]
+```
+
+**Shibata 11k (`shi11`, 20 taps, inverted sign convention):**
+```
+[-0.9264228343963623,  -0.98695987462997437, -0.631156325340271,
+ -0.51966935396194458, -0.39738872647285461, -0.35679301619529724,
+ -0.29720726609230042, -0.26310476660728455, -0.21719355881214142,
+ -0.18561814725399017, -0.15404847264289856, -0.12687471508979797,
+ -0.10339745879173279, -0.083688631653785706,-0.05875682458281517,
+ -0.046893671154975891,-0.027950936928391457,-0.020740609616041183,
+ -0.009366452693939209,-0.0060260160826146603]
+```
+
+**Shibata 16k (`shi16`, 20 taps, inverted sign convention):**
+```
+[-0.37251132726669312, -0.81423574686050415, -0.55010956525802612,
+ -0.47405767440795898, -0.32624706625938416, -0.3161766529083252,
+ -0.2286367267370224,  -0.22916607558727264, -0.19565616548061371,
+ -0.18160104751586914, -0.15423151850700378, -0.14104481041431427,
+ -0.11844276636838913, -0.097583092749118805,-0.076493598520755768,
+ -0.068106919527053833,-0.041881654411554337,-0.036922425031661987,
+ -0.019364040344953537,-0.014994367957115173]
+```
+
+**Shibata 22k (`shi22`, 20 taps, inverted sign convention):**
+```
+[ 0.056581053882837296,-0.56956905126571655, -0.40727734565734863,
+ -0.33870288729667664, -0.29810553789138794, -0.19039161503314972,
+ -0.16510021686553955, -0.13468159735202789, -0.096633769571781158,
+ -0.081049129366874695,-0.064953058958053589,-0.054459091275930405,
+ -0.043378707021474838,-0.03660014271736145, -0.026256965473294258,
+ -0.018786206841468811,-0.013387725688517094,-0.0090983230620622635,
+ -0.0026585909072309732,-0.00042083300650119781]
+```
+
+**Shibata 32k (`shi32`, 20 taps, inverted sign convention):**
+```
+[ 0.82118552923202515, -1.0063692331314087,   0.62341964244842529,
+ -1.0447187423706055,   0.64532512426376343, -0.87615132331848145,
+  0.52219754457473755, -0.67434263229370117,  0.44954317808151245,
+ -0.52557498216629028,  0.34567299485206604, -0.39618203043937683,
+  0.26791760325431824, -0.28936097025871277,  0.1883765310049057,
+ -0.19097308814525604,  0.10431359708309174, -0.10633844882249832,
+  0.046832218766212463,-0.039653312414884567]
+```
+
+**Shibata 37.8k (`shi38`, 16 taps):**
+```
+[ 1.6335992813110351562, -2.2615492343902587891,  2.4077029228210449219,
+ -2.6341717243194580078,  2.1440362930297851562, -1.8153258562088012695,
+  1.0816224813461303711, -0.70302653312683105469, 0.15991993248462677002,
+  0.041549518704414367676,-0.29416576027870178223, 0.2518316805362701416,
+ -0.27766478061676025391,  0.15785403549671173096,-0.10165894031524658203,
+  0.016833892092108726501]
+```
+
+Note: `shi08`–`shi32` are marked "inverted" in the SoX source (generated by the
+`dmaker` tool). Use these coefficients with the standard `+ dot(coeffs, error_buf)`
+formula — the inversion is already baked into the coefficient values.
 
 **Shibata 44.1k (`shi44`, 20 taps):**
 ```
@@ -220,7 +316,8 @@ pub dither_noise_shaping: String,  // default: "none"
 dither: Option<DitherFilter>,
 ```
 
-**Initialisation** (`new`): gate construction on:
+**Initialisation** (`new`) and **`update_config`**: the auto condition is evaluated
+statically at config-apply time (not in the audio path). Gate construction on:
 - `dither_auto` → `output_target == Alsa && dither_bit_depth == 16`
 - otherwise → `dither_enabled`
 
@@ -242,8 +339,16 @@ Four new arms in `apply_dsp_key`:
 "dither_enabled"       => cfg.dsp.dither_enabled       = as_bool(key, value)?,
 "dither_auto"          => cfg.dsp.dither_auto           = as_bool(key, value)?,
 "dither_bit_depth"     => cfg.dsp.dither_bit_depth      =
-    (as_u64(key, value)? as u32).clamp(8, 32),
-"dither_noise_shaping" => cfg.dsp.dither_noise_shaping  = as_string(key, value)?,
+    as_u32(key, value)?.clamp(8, 32),
+"dither_noise_shaping" => {
+    let s = as_string(key, value)?;
+    match s.as_str() {
+        "none" | "lipshitz" | "fweighted" | "modified_e_weighted" |
+        "improved_e_weighted" | "shibata" | "low_shibata" | "high_shibata" | "gesemann"
+            => cfg.dsp.dither_noise_shaping = s,
+        _ => return Err(format!("unknown dither_noise_shaping value: {s}")),
+    }
+},
 ```
 
 ---
@@ -289,10 +394,10 @@ to appear as a floating dialog over a blank background.
 | `q` / `esc` | Commit and close |
 
 **Commit on close:** sends four IPC messages via `sendFn`:
-- `dsp.dither_enabled`
-- `dsp.dither_auto`
-- `dsp.dither_bit_depth`
-- `dsp.dither_noise_shaping`
+- `dsp.dither_enabled` — `m.enabled` (bool)
+- `dsp.dither_auto` — `m.auto` (bool)
+- `dsp.dither_bit_depth` — `bitDepths[m.bitDepth]` (the resolved int value, not the index)
+- `dsp.dither_noise_shaping` — `shapingNames[m.shapingIdx]` (the algorithm name string)
 
 No per-keystroke updates (same atomicity policy as EQ editor and crossfeed dialog).
 
@@ -309,7 +414,7 @@ type DitherDialogModel struct {
     sendFn       func(key string, value interface{}) tea.Cmd
 }
 
-var bitDepths    = []int{"8", "16", "20", "24", "32"}
+var bitDepths    = []int{8, 16, 20, 24, 32}
 var shapingNames = []string{
     "none", "lipshitz", "fweighted", "modified_e_weighted",
     "improved_e_weighted", "shibata", "low_shibata", "high_shibata", "gesemann",
@@ -346,8 +451,10 @@ case "dsp.dither_enabled":
 
 ### Rust (`dither.rs`)
 
-- `silence_in_silence_out_32bit` — all-zero input, `bit_depth=32`, `NoiseShaping::None`
-  → output equals input exactly (no quantization at full float precision)
+- `noop_at_32bit` — DC input at 0.5 full-scale, `bit_depth=32`; assert output equals
+  input exactly (bit_depth=32 is the no-op path — dither is skipped entirely; a
+  non-zero input is required so the test distinguishes the no-op path from a broken
+  dither path that happens to pass on silence)
 - `tpdf_zero_mean` — process 10,000 frames of 0.5 full-scale DC, `NoiseShaping::None`;
   assert mean of (output − input) < 0.001 (TPDF is unbiased)
 - `quantization_snaps_to_lsb` — `bit_depth=16`; assert all output values are exact
@@ -360,7 +467,10 @@ case "dsp.dither_enabled":
 - `shibata_selects_nearest_rate_table` — call `process()` at 44100, 48000, 96000;
   assert no panic (96000 falls back to 48000 table)
 - `gesemann_iir_no_nan` — process 1000 frames of sine; assert no NaN or Inf in output
-- `set_params_resets_state` — call `set_params` mid-stream; assert error_buf is zeroed
+- `set_params_resets_state` — call `set_params` mid-stream with Gesemann shaping active;
+  assert `error_buf`, `ff_buf`, and `fb_buf` are all zeroed after the call;
+  `rng_state` is re-seeded to the construction seed (not zeroed — a zero xorshift64
+  state is stuck; verify `rng_state != 0` after reset)
 
 ### Rust (`manager.rs`)
 
