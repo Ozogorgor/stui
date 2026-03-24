@@ -361,7 +361,7 @@ mod pipeline {
         fn dither_bypassed_when_disabled() {
             let cfg = DspConfig {
                 dither_enabled: false,
-                resample_enabled: false,
+                resample_enabled: false,  // disable resampler so passthrough is exact
                 ..Default::default()
             };
             let mut pipeline = DspPipeline::new(cfg);
