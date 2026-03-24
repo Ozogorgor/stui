@@ -461,6 +461,21 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
         "convolution_enabled" => cfg.dsp.convolution_enabled = as_bool(key, value)?,
         "convolution_bypass" => cfg.dsp.convolution_bypass = as_bool(key, value)?,
         "buffer_size" => cfg.dsp.buffer_size = as_usize(key, value)?,
+        "eq_enabled" => cfg.dsp.eq_enabled = as_bool(key, value)?,
+        "eq_bypass"  => cfg.dsp.eq_bypass  = as_bool(key, value)?,
+        "eq_bands"   => {
+            let s = as_string(key, value)?;
+            let bands: Vec<crate::dsp::config::EqBand> =
+                serde_json::from_str(&s).map_err(|e| {
+                    StuidError::config(format!("dsp.eq_bands invalid JSON: {e}"))
+                })?;
+            cfg.dsp.eq_bands = bands.into_iter().map(|b| crate::dsp::config::EqBand {
+                freq:    b.freq.clamp(20.0_f32, 20000.0_f32),
+                gain_db: b.gain_db.clamp(-20.0_f32, 20.0_f32),
+                q:       b.q.clamp(0.1_f32, 10.0_f32),
+                ..b
+            }).collect();
+        }
         _ => {
             return Err(StuidError::config(format!("unknown dsp config key: {field}")));
         }
@@ -639,5 +654,23 @@ mod tests {
         // volume expects a number, not a string
         let result = m.set("player.default_volume", Value::String("loud".into())).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn dsp_eq_keys() {
+        use crate::dsp::config::EqFilterType;
+        let mut cfg = RuntimeConfig::default();
+
+        apply_key(&mut cfg, "dsp.eq_enabled", &Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.eq_enabled);
+
+        apply_key(&mut cfg, "dsp.eq_bypass", &Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.eq_bypass);
+
+        let bands_json = r#"[{"enabled":true,"filter_type":"peak","freq":1000.0,"gain_db":3.0,"q":1.0}]"#;
+        apply_key(&mut cfg, "dsp.eq_bands", &Value::String(bands_json.to_string())).unwrap();
+        assert_eq!(cfg.dsp.eq_bands.len(), 1);
+        assert_eq!(cfg.dsp.eq_bands[0].filter_type, EqFilterType::Peak);
+        assert!((cfg.dsp.eq_bands[0].freq - 1000.0).abs() < 0.01);
     }
 }
