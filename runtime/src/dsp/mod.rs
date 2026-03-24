@@ -40,6 +40,7 @@ mod pipeline {
     use super::{
         config::DspConfig,
         convolution::ConvolutionEngine,
+        crossfeed::{CrossfeedFilter, probe_headphones},
         dsd::DsdConverter,
         output::{open_output, AudioOutput},
         resample::Resampler,
@@ -51,6 +52,7 @@ mod pipeline {
         resampler:     Option<Resampler>,
         dsd_converter: Option<DsdConverter>,
         convolution:   Option<ConvolutionEngine>,
+        crossfeed:     Option<CrossfeedFilter>,
         output:        Option<Box<dyn AudioOutput>>,
     }
 
@@ -77,10 +79,29 @@ mod pipeline {
                 None
             };
 
+            let crossfeed = if config_snap.crossfeed_auto {
+                if probe_headphones(&config_snap) {
+                    Some(CrossfeedFilter::new(
+                        config_snap.crossfeed_feed_level,
+                        config_snap.crossfeed_cutoff_hz,
+                    ))
+                } else {
+                    None
+                }
+            } else if config_snap.crossfeed_enabled {
+                Some(CrossfeedFilter::new(
+                    config_snap.crossfeed_feed_level,
+                    config_snap.crossfeed_cutoff_hz,
+                ))
+            } else {
+                None
+            };
+
             info!(
                 resampler   = resampler.is_some(),
                 dsd         = dsd_converter.is_some(),
                 convolution = convolution.is_some(),
+                crossfeed   = crossfeed.is_some(),
                 output      = output.is_some(),
                 "DSP pipeline initialized"
             );
@@ -90,6 +111,7 @@ mod pipeline {
                 resampler,
                 dsd_converter,
                 convolution,
+                crossfeed,
                 output,
             }
         }
@@ -129,6 +151,11 @@ mod pipeline {
                     input = convolution.process(&input);
                     debug!("convolution applied");
                 }
+            }
+
+            if let Some(ref mut cf) = self.crossfeed {
+                input = cf.process(&input, output_rate);
+                debug!("crossfeed applied");
             }
 
             if let Some(ref mut out) = self.output {
@@ -172,6 +199,40 @@ mod pipeline {
                     }
                 }
             }
+
+            // Recreate crossfeed when enable state, auto flag, or output device changes.
+            let crossfeed_recreate = old.crossfeed_enabled  != new_cfg.crossfeed_enabled
+                || old.crossfeed_auto    != new_cfg.crossfeed_auto
+                || old.output_target     != new_cfg.output_target
+                || old.alsa_device       != new_cfg.alsa_device
+                || old.pipewire_role     != new_cfg.pipewire_role;
+
+            let crossfeed_params_changed = old.crossfeed_feed_level != new_cfg.crossfeed_feed_level
+                || old.crossfeed_cutoff_hz != new_cfg.crossfeed_cutoff_hz;
+
+            if crossfeed_recreate {
+                self.crossfeed = if new_cfg.crossfeed_auto {
+                    if probe_headphones(&new_cfg) {
+                        Some(CrossfeedFilter::new(
+                            new_cfg.crossfeed_feed_level,
+                            new_cfg.crossfeed_cutoff_hz,
+                        ))
+                    } else {
+                        None
+                    }
+                } else if new_cfg.crossfeed_enabled {
+                    Some(CrossfeedFilter::new(
+                        new_cfg.crossfeed_feed_level,
+                        new_cfg.crossfeed_cutoff_hz,
+                    ))
+                } else {
+                    None
+                };
+            } else if crossfeed_params_changed {
+                if let Some(ref mut cf) = self.crossfeed {
+                    cf.set_params(new_cfg.crossfeed_feed_level, new_cfg.crossfeed_cutoff_hz);
+                }
+            }
         }
 
         /// Get current configuration.
@@ -199,6 +260,43 @@ mod pipeline {
     impl Default for DspPipeline {
         fn default() -> Self {
             Self::new(DspConfig::default())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::dsp::config::{DspConfig, OutputTarget};
+
+        #[test]
+        fn crossfeed_applied_when_enabled() {
+            // Hard-pan L=1.0 R=0.0 — with crossfeed the right channel must not be zero.
+            let cfg = DspConfig {
+                crossfeed_enabled: true,
+                crossfeed_feed_level: 0.45,
+                crossfeed_cutoff_hz: 700.0,
+                ..Default::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            let mut input: Vec<f32> = (0..64).flat_map(|_| [1.0_f32, 0.0_f32]).collect(); // L=1.0 R=0.0
+            let (out, _) = pipeline.process(&mut input, 44100);
+            // Right channel after crossfeed must be > 0
+            let r_max = out.iter().skip(1).step_by(2).cloned().fold(0.0_f32, f32::max);
+            assert!(r_max > 0.0, "right channel should have crossfeed contribution");
+        }
+
+        #[test]
+        fn crossfeed_bypassed_when_disabled() {
+            let cfg = DspConfig {
+                crossfeed_enabled: false,
+                ..Default::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            let mut input: Vec<f32> = (0..64).flat_map(|_| [1.0_f32, 0.0_f32]).collect();
+            let (out, _) = pipeline.process(&mut input, 44100);
+            // Right channel must remain 0.0 — no crossfeed applied
+            let r_max = out.iter().skip(1).step_by(2).cloned().fold(0.0_f32, f32::max);
+            assert_eq!(r_max, 0.0, "right channel must be untouched when crossfeed disabled");
         }
     }
 }
