@@ -386,6 +386,12 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							return m, func() tea.Msg { return OpenOfflineLibraryMsg{} }
 						case "stats.clear_cache":
 							return m, func() tea.Msg { return ClearMediaCacheMsg{} }
+						case "dsp.eq_enabled":
+							editor := NewEqEditorModel(func(key string, val interface{}) tea.Cmd {
+								return func() tea.Msg { return SettingsChangedMsg{Key: key, Value: val} }
+							}, 44100.0)
+							editor.SetSize(m.width, m.height)
+							return m, screen.TransitionCmd(editor, true)
 						default:
 							return m, func() tea.Msg { return OpenPluginSettingsMsg{} }
 						}
@@ -448,7 +454,16 @@ func settingChangedCmd(item *settingItem) tea.Cmd {
 
 func (m SettingsModel) View() tea.View {
 	if m.width == 0 {
-		return tea.NewView("  ⚙  Settings\n")
+		// Minimal plain-text rendering: list all categories and their item labels.
+		var sb strings.Builder
+		sb.WriteString("  ⚙  Settings\n\n")
+		for _, cat := range m.categories {
+			sb.WriteString("  " + cat.name + "\n")
+			for _, item := range cat.items {
+				sb.WriteString("    " + item.label + "\n")
+			}
+		}
+		return tea.NewView(sb.String())
 	}
 
 	// Styles
@@ -1171,6 +1186,12 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     true,
 					description: "Bypass convolution filter (keep enabled for quick toggle)",
+				},
+				{
+					label:       "Parametric EQ",
+					key:         "dsp.eq_enabled",
+					kind:        settingAction,
+					description: "Open parametric EQ band editor (biquad, up to 10 bands)",
 				},
 			},
 		},
