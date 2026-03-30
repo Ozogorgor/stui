@@ -65,6 +65,7 @@ type updateCandidate struct {
 
 // PluginManagerScreen is the unified plugin management hub.
 type PluginManagerScreen struct {
+	Dims
 	client *ipc.Client
 	tab    pmTab // active sub-tab
 
@@ -90,8 +91,6 @@ type PluginManagerScreen struct {
 	installing bool   // an install/update is in flight
 	status     string // last status/error message
 
-	width  int
-	height int
 
 	// Spinners
 	pluginsSpinner  components.Spinner
@@ -161,8 +160,7 @@ func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	case ipc.PluginListMsg:
 		m.plLoading = false

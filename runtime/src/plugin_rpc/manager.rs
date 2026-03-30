@@ -57,6 +57,7 @@ impl PluginRpcManager {
     }
 
     /// Create with custom supervisor config (e.g. different memory limit).
+    #[allow(dead_code)]
     pub fn with_config(config: SupervisorConfig) -> Self {
         PluginRpcManager {
             plugins: Arc::new(RwLock::new(vec![])),
@@ -71,6 +72,7 @@ impl PluginRpcManager {
     /// Each subdirectory is checked for an executable named `plugin`,
     /// `plugin.py`, `plugin.js`, `plugin.rb`, or any file matching the
     /// executable bit.  The first match is spawned.
+    #[allow(dead_code)]
     pub async fn discover_and_load(&self, plugin_dir: &Path) {
         let Ok(mut entries) = tokio::fs::read_dir(plugin_dir).await else {
             warn!(path = %plugin_dir.display(), "plugin directory not found or not accessible");

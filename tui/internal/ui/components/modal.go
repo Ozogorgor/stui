@@ -79,7 +79,7 @@ func (d *ConfirmDialog) Update(msg tea.Msg) (tea.Msg, tea.Cmd) {
 	return msg, nil
 }
 
-func (d *ConfirmDialog) View() string {
+func (d *ConfirmDialog) View() tea.View {
 	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	text := lipgloss.NewStyle().Foreground(theme.T.Text())
@@ -151,7 +151,7 @@ func (d *ConfirmDialog) View() string {
 	sb.WriteString(strings.Repeat(" ", hintPad) + hint + "\n")
 
 	_ = border
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func (d *ConfirmDialog) Focus() {
@@ -203,7 +203,7 @@ type Modal struct {
 }
 
 type ModalChild interface {
-	View() string
+	View() tea.View
 	Update(tea.Msg) (tea.Msg, tea.Cmd)
 	Init() tea.Cmd
 }
@@ -238,7 +238,7 @@ func (m *Modal) Update(msg tea.Msg) (tea.Msg, tea.Cmd) {
 	return msg, nil
 }
 
-func (m *Modal) View() string {
+func (m *Modal) View() tea.View {
 	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	text := lipgloss.NewStyle().Foreground(theme.T.Text())
 
@@ -260,7 +260,7 @@ func (m *Modal) View() string {
 	footer := accent.Render("└" + strings.Repeat("─", len(m.title)+6) + "┘")
 	sb.WriteString(strings.Repeat(" ", headerPad) + footer)
 
-	return sb.String()
+	return tea.NewView(sb.String())
 }
 
 func (m *Modal) Focus() {

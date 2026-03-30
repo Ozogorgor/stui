@@ -98,6 +98,7 @@ impl Default for CachePolicy {
 
 impl CachePolicy {
     /// Very short TTLs suitable for integration tests (everything expires in 1s).
+    #[allow(dead_code)]
     pub fn for_testing() -> Self {
         CachePolicy {
             search_ttl:   Duration::from_secs(1),
@@ -108,6 +109,7 @@ impl CachePolicy {
     }
 
     /// Aggressive caching for low-bandwidth / offline scenarios.
+    #[allow(dead_code)]
     pub fn offline() -> Self {
         CachePolicy {
             search_ttl:   Duration::from_secs(60 * 60),       // 1 hour

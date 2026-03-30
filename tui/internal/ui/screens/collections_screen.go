@@ -58,10 +58,9 @@ const continueWatchingName = "Continue Watching"
 // CollectionsScreen is the component embedded in Model for the Collections tab.
 // It follows the same value-receiver / copy-on-update pattern as MusicScreen.
 type CollectionsScreen struct {
+	Dims
 	store        *collections.Store
 	historyStore watchhistory.StoreInterface
-	width        int
-	height       int
 
 	activePane  collectionsPane
 	leftCursor  int // index into store.Collections
@@ -93,9 +92,8 @@ func (s CollectionsScreen) SetSize(w, h int) CollectionsScreen {
 func (s CollectionsScreen) Update(msg tea.Msg) (CollectionsScreen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		s.width = msg.Width
-		s.height = msg.Height
-	case tea.KeyMsg:
+		s.setWindowSize(msg)
+	case tea.KeyPressMsg:
 		return s.handleKey(msg.String())
 	case tea.MouseMsg:
 		return s.handleMouse(msg)

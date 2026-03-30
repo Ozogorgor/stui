@@ -108,10 +108,12 @@ impl IpcBatcher {
         }
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
@@ -120,7 +122,7 @@ impl IpcBatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::CatalogEntry;
+    use crate::catalog::{CatalogEntry, GridUpdateSource};
     use crate::ipc::MediaType;
 
     const TEST_FLUSH_INTERVAL: Duration = Duration::from_millis(100);

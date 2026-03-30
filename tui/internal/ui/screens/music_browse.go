@@ -14,13 +14,12 @@ import (
 
 // MusicBrowseScreen shows the music catalog with search filtering.
 type MusicBrowseScreen struct {
+	Dims
 	client  *ipc.Client
 	catalog []ipc.CatalogEntry
 	cursor  int
 	scroll  int
 	query   string
-	width   int
-	height  int
 }
 
 // NewMusicBrowseScreen creates a new browse screen.
@@ -48,8 +47,7 @@ func (s MusicBrowseScreen) Update(msg tea.Msg) (MusicBrowseScreen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	case ipc.GridUpdateMsg:
 		if m.Tab == "music" {
@@ -58,7 +56,7 @@ func (s MusicBrowseScreen) Update(msg tea.Msg) (MusicBrowseScreen, tea.Cmd) {
 			s.scroll = 0
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		results := s.filtered()
 		switch m.String() {
 		case "j", "down":

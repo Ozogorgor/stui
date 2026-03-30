@@ -134,6 +134,23 @@ impl MpdBridge {
         Ok(())
     }
 
+    /// Find the stui DSP FIFO output (`"stui-dsp"`) and enable it if currently disabled.
+    ///
+    /// Returns `Ok(true)` if the output exists (and was enabled), `Ok(false)` if MPD
+    /// has no output with that name — meaning the user needs to add the FIFO stanza to
+    /// `mpd.conf` (see [`crate::dsp::mpd_config::ensure_mpd_conf`]).
+    pub async fn ensure_dsp_output_enabled(&self) -> Result<bool> {
+        let outputs = self.outputs().await?;
+        let Some(out) = outputs.iter().find(|o| o.name == crate::dsp::mpd_config::FIFO_OUTPUT_NAME) else {
+            return Ok(false);
+        };
+        if !out.enabled {
+            self.cmd(&format!("enableoutput {}", out.id)).await?;
+            info!(id = out.id, "enabled stui-dsp MPD FIFO output");
+        }
+        Ok(true)
+    }
+
     /// List all configured MPD audio outputs.
     pub async fn outputs(&self) -> Result<Vec<MpdOutput>> {
         let mut guard = self.conn.lock().await;

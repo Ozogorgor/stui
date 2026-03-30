@@ -48,6 +48,7 @@ pub struct PlayerStartedEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PlayerProgressEvent {
     pub position:       f64,
     pub duration:       f64,
@@ -242,111 +243,110 @@ impl MpvPlayer {
 
     // ── High-level typed commands ────────────────────────────────────────────
 
-    /// Pause or resume playback.
+    #[allow(dead_code)]
     pub async fn set_pause(&self, paused: bool) -> Result<(), String> {
         self.send_command(&json!(["set_property", "pause", paused])).await
     }
 
-    /// Toggle pause state.
+    #[allow(dead_code)]
     pub async fn toggle_pause(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "pause"])).await
     }
 
-    /// Seek by `delta` seconds relative to the current position.
+    #[allow(dead_code)]
     pub async fn seek_relative(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["seek", delta, "relative"])).await
     }
 
-    /// Seek to an absolute position in seconds.
+    #[allow(dead_code)]
     pub async fn seek_absolute(&self, pos: f64) -> Result<(), String> {
         self.send_command(&json!(["seek", pos, "absolute"])).await
     }
 
-    /// Set volume (0–130).
+    #[allow(dead_code)]
     pub async fn set_volume(&self, level: f64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "volume", level])).await
     }
 
-    /// Adjust volume by a delta.
+    #[allow(dead_code)]
     pub async fn adjust_volume(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "volume", delta])).await
     }
 
-    /// Toggle mute.
+    #[allow(dead_code)]
     pub async fn toggle_mute(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "mute"])).await
     }
 
     // ── Subtitle control ──────────────────────────────────────────────────
 
-    /// Switch to subtitle track `id` (mpv sid).
+    #[allow(dead_code)]
     pub async fn set_subtitle_track(&self, id: i64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sid", id])).await
     }
 
-    /// Disable subtitles.
+    #[allow(dead_code)]
     pub async fn disable_subtitles(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sid", "no"])).await
     }
 
-    /// Cycle to the next subtitle track.
+    #[allow(dead_code)]
     pub async fn cycle_subtitles(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "sub"])).await
     }
 
-    /// Adjust subtitle delay by `delta` seconds (positive = later).
+    #[allow(dead_code)]
     pub async fn adjust_sub_delay(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "sub-delay", delta])).await
     }
 
-    /// Reset subtitle delay to 0.
+    #[allow(dead_code)]
     pub async fn reset_sub_delay(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sub-delay", 0.0])).await
     }
 
-    /// Load an external subtitle file.
+    #[allow(dead_code)]
     pub async fn load_subtitle(&self, path: &str) -> Result<(), String> {
         self.send_command(&json!(["sub-add", path, "select"])).await
     }
 
     // ── Audio track control ───────────────────────────────────────────────
 
-    /// Switch to audio track `id` (mpv aid).
+    #[allow(dead_code)]
     pub async fn set_audio_track(&self, id: i64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "aid", id])).await
     }
 
-    /// Cycle to the next audio track.
+    #[allow(dead_code)]
     pub async fn cycle_audio_tracks(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "audio"])).await
     }
 
-    /// Adjust audio delay by `delta` seconds (positive = later).
+    #[allow(dead_code)]
     pub async fn adjust_audio_delay(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "audio-delay", delta])).await
     }
 
-    /// Reset audio delay to 0.
+    #[allow(dead_code)]
     pub async fn reset_audio_delay(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "audio-delay", 0.0])).await
     }
 
     // ── Stream switching ──────────────────────────────────────────────────
 
-    /// Replace the current stream with `url` without restarting mpv.
-    /// This is the key command for live stream switching and fallback.
+    #[allow(dead_code)]
     pub async fn loadfile_replace(&self, url: &str) -> Result<(), String> {
         self.send_command(&json!(["loadfile", url, "replace"])).await
     }
 
     // ── Display ───────────────────────────────────────────────────────────
 
-    /// Toggle fullscreen.
+    #[allow(dead_code)]
     pub async fn toggle_fullscreen(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "fullscreen"])).await
     }
 
-    /// Take a screenshot.
+    #[allow(dead_code)]
     pub async fn screenshot(&self) -> Result<(), String> {
         self.send_command(&json!(["screenshot"])).await
     }

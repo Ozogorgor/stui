@@ -470,6 +470,7 @@ impl CatalogAggregator {
     }
 
     /// Merge, dedup, filter, and sort a raw list of entries.
+    #[allow(dead_code)]
     pub fn apply(&self, entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         let merged = self.merge(entries);
         let filtered = self.filters.apply(merged);

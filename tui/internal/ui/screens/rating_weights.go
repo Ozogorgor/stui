@@ -54,8 +54,7 @@ var profileHeaders = []string{"Movie", "Series", "Anime", "Doc", "Horror", "Musi
 
 // RatingWeightsScreen is a static informational screen — no live data needed.
 type RatingWeightsScreen struct {
-	width  int
-	height int
+	Dims
 	table  *components.SortableTable
 }
 
@@ -83,8 +82,7 @@ func (m RatingWeightsScreen) Init() tea.Cmd { return nil }
 func (m RatingWeightsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "esc":

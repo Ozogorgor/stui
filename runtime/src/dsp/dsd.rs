@@ -7,6 +7,7 @@ use tracing::{debug, info};
 use super::config::DspConfig;
 
 /// DSD to PCM converter.
+#[allow(dead_code)] // Used by DspPipeline internally
 pub struct DsdConverter {
     config: Arc<RwLock<DspConfig>>,
     output_rate: u32,
@@ -81,11 +82,13 @@ impl DsdConverter {
     }
 
     /// Get the output sample rate.
+    #[allow(dead_code)]
     pub fn output_rate(&self) -> u32 {
         self.output_rate
     }
 
     /// Set a new output rate.
+    #[allow(dead_code)]
     pub fn set_output_rate(&mut self, rate: u32) -> Result<(), String> {
         if rate != 176400 && rate != 352800 && rate != 705600 {
             return Err("Invalid DSD output rate".to_string());
@@ -96,6 +99,7 @@ impl DsdConverter {
 }
 
 /// DSD format variants.
+#[allow(dead_code)] // For future DSD format handling
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DsdFormat {
     Dsd64,
@@ -105,6 +109,7 @@ pub enum DsdFormat {
 }
 
 impl DsdFormat {
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Dsd64 => 2822400,
@@ -114,6 +119,7 @@ impl DsdFormat {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pcm_output(&self) -> u32 {
         match self {
             Self::Dsd64 => 176400,

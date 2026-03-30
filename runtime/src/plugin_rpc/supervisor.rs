@@ -42,6 +42,7 @@ use super::protocol::{PluginHandshake, RpcMediaItem, RpcStream, RpcSubtitleTrack
 
 /// Tunable parameters for a single plugin supervisor instance.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SupervisorConfig {
     /// Maximum number of restarts allowed within `crash_window_secs`.
     pub max_restarts: u32,
@@ -62,6 +63,7 @@ pub struct SupervisorConfig {
     pub cpu_nice_value: u32,
     /// Timeout for individual RPC calls in milliseconds.
     /// If a call takes longer, it returns an error.
+    #[allow(dead_code)]
     pub request_timeout_ms: u64,
 }
 
@@ -83,6 +85,7 @@ impl Default for SupervisorConfig {
 
 /// Live health snapshot for a supervised plugin.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct SupervisorStats {
     /// Number of times the plugin has crashed since load.
     pub crash_count: u32,
@@ -120,6 +123,7 @@ pub struct PluginSupervisor {
 
 impl PluginSupervisor {
     /// Spawn the plugin and start supervising it.
+    #[allow(dead_code)]
     pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
         let proc = PluginProcess::spawn(bin.clone()).await?;
         
@@ -153,21 +157,25 @@ impl PluginSupervisor {
     }
 
     /// Snapshot of the current health metrics.
+    #[allow(dead_code)]
     pub async fn stats(&self) -> SupervisorStats {
         self.stats.lock().await.clone()
     }
 
     /// `true` if the supervisor has permanently given up on this plugin.
+    #[allow(dead_code)]
     pub fn is_failed(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
     }
 
     /// `true` if the plugin advertises the given capability.
+    #[allow(dead_code)]
     pub async fn has_capability(&self, cap: &str) -> bool {
         self.info.read().await.capabilities.iter().any(|c| c == cap)
     }
 
     /// Gracefully shut down the plugin and stop the supervisor.
+    #[allow(dead_code)]
     pub async fn shutdown(&self) {
         self.failed.store(true, Ordering::Relaxed); // prevent restart after shutdown
         if let Some(proc) = self.process.read().await.as_ref().cloned() {

@@ -8,7 +8,7 @@
 //! ```text
 //! RankingPolicy::default()         # best quality first
 //! RankingPolicy::bandwidth_saver() # prefer 720p to reduce buffering
-//! RankingPolicy::fastest_start()   # weight seeders heavily
+//! RankingPolicy::fastest_start()  # weight seeders heavily (test-only stub)
 //! ```
 //!
 //! # Rating weights
@@ -200,18 +200,27 @@ impl RankingPolicy {
             prefer_lower_resolution: true,
             seeder_weight: 1.2,
             exclude_cam: true,
-            preferences: StreamPreferences { min_seeders: 5, ..StreamPreferences::default() },
+            preferences: StreamPreferences {
+                min_seeders: 5,
+                ..StreamPreferences::default()
+            },
         }
     }
 
     /// Maximise seeder count — minimises buffering at the cost of quality.
+    /// Note: Currently a stub. To integrate with production pipeline, add a caller
+    /// from pipeline.rs similar to how bandwidth_saver() is used.
+    #[cfg(test)]
     pub fn fastest_start() -> Self {
         RankingPolicy {
             resolution_weights: [100, 150, 200, 220],
             prefer_lower_resolution: false,
             seeder_weight: 3.0,
             exclude_cam: true,
-            preferences: StreamPreferences { min_seeders: 10, ..StreamPreferences::default() },
+            preferences: StreamPreferences {
+                min_seeders: 10,
+                ..StreamPreferences::default()
+            },
         }
     }
 }

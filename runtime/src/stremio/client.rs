@@ -53,6 +53,7 @@ impl StremioClient {
     // ── Catalog ───────────────────────────────────────────────────────────
 
     /// Fetch a catalog listing: `/catalog/{type}/{id}.json`
+    #[allow(dead_code)]
     pub async fn catalog(
         &self,
         media_type: &str, // "movie" | "series"
@@ -95,6 +96,7 @@ impl StremioClient {
     // ── Subtitles ─────────────────────────────────────────────────────────
 
     /// Fetch subtitle tracks: `/subtitles/{type}/{id}.json`
+    #[allow(dead_code)]
     pub async fn subtitles(
         &self,
         media_type: &str,

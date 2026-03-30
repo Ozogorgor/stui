@@ -64,7 +64,7 @@ func (c *Client) MpdGetQueue() {
 				msg.Tracks = payload.Tracks
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -117,7 +117,7 @@ func (c *Client) MpdBrowseDir(path string) {
 				msg.Entries = payload.Entries
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -182,7 +182,7 @@ func (c *Client) MpdListArtists() {
 				msg.Artists = payload.Artists
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -216,7 +216,7 @@ func (c *Client) MpdListAlbums(artist string) {
 				msg.Albums = payload.Albums
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -252,7 +252,7 @@ func (c *Client) MpdListSongs(artist, album string) {
 				msg.Songs = payload.Songs
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -300,7 +300,7 @@ func (c *Client) MpdGetPlaylists() {
 				msg.Playlists = payload.Playlists
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -332,6 +332,6 @@ func (c *Client) MpdGetPlaylistTracks(name string) {
 				msg.Tracks = payload.Tracks
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }

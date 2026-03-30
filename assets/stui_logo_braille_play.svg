@@ -144,11 +144,8 @@
 
   <!-- ─── Wordmark ─── -->
   <!-- STUI in monospace feel, below the terminal -->
-  <text x="340" y="390" text-anchor="middle" font-family="'Courier New', Courier, monospace" font-size="40" font-weight="700" letter-spacing="10" fill="#9B5DE5" style="fill:rgb(155, 93, 229);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Courier New&quot;, Courier, monospace;font-size:40px;font-weight:700;text-anchor:middle;dominant-baseline:auto">STUI</text>
+  <text x="340" y="390" text-anchor="middle" font-family="'CaskaydiaCove Nerd Font', 'Cascadia Code NF', 'Cascadia Code', 'Cascadia Mono', monospace" font-size="40" font-weight="700" letter-spacing="10" fill="#9B5DE5" style="fill:rgb(155, 93, 229);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;CaskaydiaCove Nerd Font&quot;, &quot;Cascadia Code NF&quot;, &quot;Cascadia Code&quot;, &quot;Cascadia Mono&quot;, monospace;font-size:40px;font-weight:700;text-anchor:middle;dominant-baseline:auto">stui</text>
 
   <!-- Subtle underline / terminal cursor bar -->
   <rect x="272" y="398" width="100" height="3" rx="1.5" fill="#5530a0" opacity="0.55" style="fill:rgb(85, 48, 160);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.55;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-
-  <!-- Tagline -->
-  <text x="340" y="426" text-anchor="middle" font-family="'Courier New', Courier, monospace" font-size="11" letter-spacing="3" fill="#6840b0" opacity="0.85" style="fill:rgb(104, 64, 176);stroke:none;color:rgb(251, 251, 254);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.85;font-family:&quot;Courier New&quot;, Courier, monospace;font-size:11px;font-weight:400;text-anchor:middle;dominant-baseline:auto">terminal media manager</text>
 </svg>

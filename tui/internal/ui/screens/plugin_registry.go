@@ -35,6 +35,7 @@ type OpenPluginRegistryMsg struct{}
 
 // PluginRegistryScreen browses the registry and installs plugins.
 type PluginRegistryScreen struct {
+	Dims
 	client      *ipc.Client
 	entries     []ipc.RegistryEntry
 	failedRepos []string
@@ -43,8 +44,6 @@ type PluginRegistryScreen struct {
 	installing  bool   // a download+install is in progress
 	status      string // last status/error message
 
-	width  int
-	height int
 
 	spinner components.Spinner
 }
@@ -76,8 +75,7 @@ func (m *PluginRegistryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	case ipc.RegistryBrowseResultMsg:
 		m.loading = false
@@ -111,7 +109,7 @@ func (m *PluginRegistryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			}
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.loading || m.installing {
 			return m, nil
 		}

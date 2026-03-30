@@ -26,11 +26,10 @@ import (
 // AudioTrackPickerScreen shows all audio tracks for the current mpv file and
 // lets the user select one by pressing Enter.
 type AudioTrackPickerScreen struct {
+	Dims
 	client *ipc.Client
 	tracks []ipc.TrackInfo // only audio tracks
 	cursor int
-	width  int
-	height int
 }
 
 // NewAudioTrackPickerScreen creates the screen from the full track list returned
@@ -61,14 +60,13 @@ func (s *AudioTrackPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width = msg.Width
-		s.height = msg.Height
+		s.setWindowSize(msg)
 
 	// Live track-list updates (e.g. mpv adds an external track while open)
 	case ipc.PlayerTracksUpdatedMsg:
 		s.refreshTracks(msg.Tracks)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc", "q":
 			return s, func() tea.Msg { return screen.PopMsg{} }

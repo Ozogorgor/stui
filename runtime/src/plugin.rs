@@ -271,6 +271,7 @@ pub struct AuthorMeta {
 // ── Loaded plugin record ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LoadedPlugin {
     pub id: String, // uuid assigned at load time
     pub manifest: PluginManifest,

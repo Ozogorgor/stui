@@ -54,13 +54,48 @@ const (
 	VisualizerModeMirror                       // mirrored bars (centered, symmetric)
 	VisualizerModeFilled                       // filled bars with rounded tops
 	VisualizerModeLED                          // LED-style discrete levels
+	// CLIAMP-style FFT visualizers
+	VisualizerModeWave      // oscilloscope waveform
+	VisualizerModeScope     // XY oscilloscope
+	VisualizerModeRetro     // 80s synthwave
+	VisualizerModeMatrix    // Matrix rain
+	VisualizerModeFlame     // rising flames
+	VisualizerModePulse     // pulsating circle
+	VisualizerModeBinary    // streaming binary
+	VisualizerModeButterfly // mirrored Rorschach
+	VisualizerModeTerrain   // scrolling mountains
+	VisualizerModeSakura    // cherry blossoms
+	VisualizerModeFirework  // exploding fireworks
+	VisualizerModeGlitch    // digital glitch
+	VisualizerModeLightning // electric bolts
+	VisualizerModeRain      // falling rain
+	VisualizerModeScatter   // particle sparkle
+	VisualizerModeColumns   // thin columns
+	VisualizerModeBricks    // brick wall
 )
 
 var visualizerModeStrings = map[VisualizerMode]string{
-	VisualizerModeBars:   "bars",
-	VisualizerModeMirror: "mirror",
-	VisualizerModeFilled: "filled",
-	VisualizerModeLED:    "led",
+	VisualizerModeBars:      "bars",
+	VisualizerModeMirror:    "mirror",
+	VisualizerModeFilled:    "filled",
+	VisualizerModeLED:       "led",
+	VisualizerModeWave:      "wave",
+	VisualizerModeScope:     "scope",
+	VisualizerModeRetro:     "retro",
+	VisualizerModeMatrix:    "matrix",
+	VisualizerModeFlame:     "flame",
+	VisualizerModePulse:     "pulse",
+	VisualizerModeBinary:    "binary",
+	VisualizerModeButterfly: "butterfly",
+	VisualizerModeTerrain:   "terrain",
+	VisualizerModeSakura:    "sakura",
+	VisualizerModeFirework:  "firework",
+	VisualizerModeGlitch:    "glitch",
+	VisualizerModeLightning: "lightning",
+	VisualizerModeRain:      "rain",
+	VisualizerModeScatter:   "scatter",
+	VisualizerModeColumns:   "columns",
+	VisualizerModeBricks:    "bricks",
 }
 
 func (m VisualizerMode) String() string {
@@ -78,6 +113,40 @@ func VisualizerModeFromString(s string) VisualizerMode {
 		return VisualizerModeFilled
 	case "led":
 		return VisualizerModeLED
+	case "wave":
+		return VisualizerModeWave
+	case "scope":
+		return VisualizerModeScope
+	case "retro":
+		return VisualizerModeRetro
+	case "matrix":
+		return VisualizerModeMatrix
+	case "flame":
+		return VisualizerModeFlame
+	case "pulse":
+		return VisualizerModePulse
+	case "binary":
+		return VisualizerModeBinary
+	case "butterfly":
+		return VisualizerModeButterfly
+	case "terrain":
+		return VisualizerModeTerrain
+	case "sakura":
+		return VisualizerModeSakura
+	case "firework":
+		return VisualizerModeFirework
+	case "glitch":
+		return VisualizerModeGlitch
+	case "lightning":
+		return VisualizerModeLightning
+	case "rain":
+		return VisualizerModeRain
+	case "scatter":
+		return VisualizerModeScatter
+	case "columns":
+		return VisualizerModeColumns
+	case "bricks":
+		return VisualizerModeBricks
 	default:
 		return VisualizerModeBars
 	}
@@ -153,7 +222,8 @@ type Visualizer struct {
 	peaks   []float64 // peak hold values (decay over time)
 	peakAge []int     // frames since last peak update
 	cancel  context.CancelFunc
-	done    chan struct{} // closed when the reader goroutine exits
+	done    chan struct{}  // closed when the reader goroutine exits
+	fftViz  *FftVisualizer // persistent FFT visualizer for CLIAMP modes
 }
 
 // NewVisualizer creates a Visualizer in the stopped state.
@@ -164,6 +234,7 @@ func NewVisualizer(cfg VisualizerConfig) *Visualizer {
 		bars:    make([]float64, n),
 		peaks:   make([]float64, n),
 		peakAge: make([]int, n),
+		fftViz:  NewFftVisualizer(44100),
 	}
 	v.done = make(chan struct{})
 	close(v.done) // already "done" — nothing running
@@ -514,6 +585,66 @@ func (v *Visualizer) RenderBars(width int) string {
 	}
 
 	return sb.String()
+}
+
+// RenderCliampStyle renders FFT-based visualizers (requires FFT data from runtime).
+// This is called when VisualizerMode is one of the CLIAMP-style modes.
+// The bands parameter should contain normalized FFT band data (0.0-1.0 per band).
+func (v *Visualizer) RenderCliampStyle(bands [visNumBands]float64) string {
+	v.mu.RLock()
+	cfg := v.cfg
+	fftViz := v.fftViz
+	v.mu.RUnlock()
+
+	fftViz.SetRows(clampInt(cfg.Height, 1, 20))
+
+	switch cfg.Mode {
+	case VisualizerModeWave:
+		return fftViz.RenderWave()
+	case VisualizerModeScope:
+		return fftViz.RenderScope()
+	case VisualizerModeRetro:
+		return fftViz.RenderRetro(bands)
+	case VisualizerModeMatrix:
+		return fftViz.RenderMatrix(bands)
+	case VisualizerModeFlame:
+		return fftViz.RenderFlame(bands)
+	case VisualizerModePulse:
+		return fftViz.RenderPulse(bands)
+	case VisualizerModeBinary:
+		return fftViz.RenderBinary(bands)
+	case VisualizerModeButterfly:
+		return fftViz.RenderButterfly(bands)
+	case VisualizerModeTerrain:
+		return fftViz.RenderTerrain(bands)
+	case VisualizerModeSakura:
+		return fftViz.RenderSakura(bands)
+	case VisualizerModeFirework:
+		return fftViz.RenderFirework(bands)
+	case VisualizerModeGlitch:
+		return fftViz.RenderGlitch(bands)
+	case VisualizerModeLightning:
+		return fftViz.RenderLightning(bands)
+	case VisualizerModeRain:
+		return fftViz.RenderRain(bands)
+	case VisualizerModeScatter:
+		return fftViz.RenderScatter(bands)
+	case VisualizerModeColumns:
+		return fftViz.RenderColumns(bands)
+	case VisualizerModeBricks:
+		return fftViz.RenderBricks(bands)
+	default:
+		return v.RenderBars(panelWidth)
+	}
+}
+
+// IsCliampMode returns true if the visualizer mode uses FFT-based rendering.
+func (v *Visualizer) IsCliampMode() bool {
+	v.mu.RLock()
+	mode := v.cfg.Mode
+	v.mu.RUnlock()
+
+	return mode >= VisualizerModeWave
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

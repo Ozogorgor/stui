@@ -36,6 +36,7 @@ const maxQueryLength = 256
 
 // SearchScreen is a self-contained screen for global incremental search.
 type SearchScreen struct {
+	Dims
 	client    *ipc.Client
 	activeTab ipc.MediaTab // tab that was active when search was opened
 	query     string
@@ -43,8 +44,6 @@ type SearchScreen struct {
 	cursor    int
 	loading   bool
 	err       string
-	width     int
-	height    int
 	searchAll bool // true = search all tabs; false = active tab only
 	reqSeq    int  // monotonic counter to discard stale results
 	spinner   components.Spinner
@@ -73,8 +72,7 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return s, nil
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	case tea.KeyPressMsg:
 		key := m.String()

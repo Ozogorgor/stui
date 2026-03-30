@@ -35,6 +35,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::aria2_bridge::Aria2Bridge;
 use crate::config::types::PlaybackConfig;
+use crate::dsp::DspPipeline;
 use crate::engine::Engine;
 use crate::mpd_bridge::MpdBridge;
 use crate::ipc::{MediaTab, MediaType};
@@ -83,6 +84,9 @@ pub struct PlayerBridge {
     ipc_tx:       mpsc::Sender<String>,
     data_dir:     String,
     playback_cfg: PlaybackConfig,
+    /// DSP pipeline reference. When present and `config.enabled`, mpv receives
+    /// equivalent `--af` / `--audio-samplerate` flags so movie presets apply.
+    dsp:          Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
 }
 
 impl PlayerBridge {
@@ -95,6 +99,7 @@ impl PlayerBridge {
         ipc_tx:       mpsc::Sender<String>,
         data_dir:     String,
         playback_cfg: PlaybackConfig,
+        dsp:          Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
     ) -> Self {
         let mpv = MpvPlayer::new();
 
@@ -105,7 +110,19 @@ impl PlayerBridge {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg }
+        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp }
+    }
+
+    /// Build the DSP-derived mpv flags for the current pipeline configuration.
+    ///
+    /// Returns an empty vec when the DSP pipeline is absent or disabled.
+    async fn mpv_dsp_flags(&self) -> Vec<String> {
+        let Some(ref dsp) = self.dsp else { return vec![]; };
+        // Clone the inner Arc while briefly holding the pipeline mutex, then drop
+        // the guard before the config read await so the future stays Send.
+        let config_arc = dsp.lock().await.config_arc();
+        let config = config_arc.read().await.clone();
+        crate::dsp::dsp_to_mpv_flags(&config)
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -259,9 +276,11 @@ impl PlayerBridge {
         if !self.playback_cfg.terminal_vo.is_empty() {
             self.push_terminal_takeover().await;
         }
+        let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
+        extra_flags.extend(self.mpv_dsp_flags().await);
         if let Err(e) = self.mpv.play(
             &file_path, title, sub, &self.data_dir,
-            &self.playback_cfg.mpv_extra_flags,
+            &extra_flags,
             &self.playback_cfg.terminal_vo,
         ).await {
             error!("player_bridge: mpv failed: {e}");
@@ -306,9 +325,11 @@ impl PlayerBridge {
         if !self.playback_cfg.terminal_vo.is_empty() {
             self.push_terminal_takeover().await;
         }
+        let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
+        extra_flags.extend(self.mpv_dsp_flags().await);
         if let Err(e) = self.mpv.play(
             url, title, sub, &self.data_dir,
-            &self.playback_cfg.mpv_extra_flags,
+            &extra_flags,
             &self.playback_cfg.terminal_vo,
         ).await {
             error!("player_bridge: mpv launch failed: {e}");

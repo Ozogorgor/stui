@@ -63,6 +63,7 @@ flate2            = "1"
 tar               = "0.4"
 hex               = "0.4"
 rusqlite          = { version = "0.32", features = ["bundled"] }
+percent-encoding = "2"
 rubato            = "1"
 audioadapter-buffers = "2"
 rustfft           = "6"

@@ -80,6 +80,7 @@ struct ManagerState {
 }
 
 impl PlayerManager {
+    #[allow(dead_code)]
     pub fn new(bridge: PlayerBridge, ipc_tx: mpsc::Sender<String>, bus: Arc<EventBus>) -> Self {
         PlayerManager {
             bridge,
@@ -98,6 +99,7 @@ impl PlayerManager {
 
     /// Set the ranked stream candidates for the current item.
     /// Called by the pipeline after resolving streams.
+    #[allow(dead_code)]
     pub async fn set_candidates(&self, candidates: Vec<StreamCandidate>) {
         let mut s = self.inner.lock().await;
         s.active_idx = 0;
@@ -108,6 +110,7 @@ impl PlayerManager {
     }
 
     /// Get a snapshot of the current playback state.
+    #[allow(dead_code)]
     pub async fn playback_state(&self) -> PlaybackState {
         self.inner.lock().await.state.clone()
     }

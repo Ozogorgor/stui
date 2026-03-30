@@ -41,10 +41,13 @@ type Client struct {
 	pending  map[string]chan RawResponse
 	reqIDSeq atomic.Uint64
 
-	program *tea.Program
-	ctx     context.Context
-	cancel  context.CancelFunc
-	once    sync.Once
+	// out receives every message the client wants to deliver to the UI.
+	// The UI drains it via a listenIPC tea.Cmd rather than via program.Send.
+	out chan tea.Msg
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
 
 	RuntimeVersion       string
 	NegotiatedIPCVersion uint32
@@ -52,8 +55,28 @@ type Client struct {
 	logger *log.IPCLogger
 }
 
+// send delivers msg to the UI event loop.
+// It is non-blocking: if the channel is full the message is dropped and a
+// warning is logged.  The channel is generously buffered (256 slots) so
+// this should only occur under extreme load.
+func (c *Client) send(msg tea.Msg) {
+	select {
+	case c.out <- msg:
+	default:
+		c.logger.Warn("IPC message channel full — dropping message",
+			"type", fmt.Sprintf("%T", msg))
+	}
+}
+
+// Chan returns the read end of the outbound message channel.
+// The UI model should call listenIPC(client.Chan()) once after startup
+// and re-subscribe after every message to keep the pipeline alive.
+func (c *Client) Chan() <-chan tea.Msg { return c.out }
+
 // Start spawns the stui-runtime binary and performs a handshake ping.
-func Start(runtimePath string, program *tea.Program) (*Client, error) {
+// The caller should call client.Chan() and drain it via a listenIPC Cmd
+// rather than passing a *tea.Program.
+func Start(runtimePath string) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(ctx, runtimePath)
@@ -84,7 +107,7 @@ func Start(runtimePath string, program *tea.Program) (*Client, error) {
 		stdin:   stdin,
 		stdout:  bufio.NewScanner(stdoutPipe),
 		pending: make(map[string]chan RawResponse),
-		program: program,
+		out:     make(chan tea.Msg, 256),
 		ctx:     ctx,
 		cancel:  cancel,
 		logger:  logger,
@@ -102,8 +125,8 @@ func Start(runtimePath string, program *tea.Program) (*Client, error) {
 		"ipc_version", c.NegotiatedIPCVersion,
 		"version_ok", versionOK,
 	)
-	if !versionOK && program != nil {
-		program.Send(IPCVersionMismatchMsg{
+	if !versionOK {
+		c.send(IPCVersionMismatchMsg{
 			TUIVersion:     IPCVersion,
 			RuntimeVersion: c.NegotiatedIPCVersion,
 			RuntimeSemver:  c.RuntimeVersion,

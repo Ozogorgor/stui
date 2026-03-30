@@ -24,11 +24,10 @@ import (
 
 // DownloadsScreen lists active and completed aria2 downloads.
 type DownloadsScreen struct {
+	Dims
 	client  *ipc.Client
 	entries []*ipc.DownloadEntry // kept in arrival order
 	cursor  int
-	width   int
-	height  int
 }
 
 func NewDownloadsScreen(client *ipc.Client, entries []*ipc.DownloadEntry) DownloadsScreen {
@@ -44,8 +43,7 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	// Keep entries in sync with live IPC events even while the screen is open.
 	case ipc.DownloadStartedMsg:
@@ -96,7 +94,7 @@ func (s DownloadsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			}
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := m.String()
 		switch key {
 		case "up", "k":

@@ -1,6 +1,8 @@
 //! Cross-episode fingerprint comparison to find recurring segments.
+//! Also integrates video scene detection and audio profile analysis.
 
 use super::fingerprint::Fingerprint;
+use super::video_analysis::AudioProfile;
 
 /// A detected temporal segment within an episode.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -37,10 +39,10 @@ pub fn find_common(
     b_offset: f64,
     min_secs: f64,
     max_secs: f64,
-    threshold: f64, // 0..1, higher = stricter (e.g. 0.85)
+    threshold: f64,
 ) -> Option<(Segment, Segment)> {
     // Per-frame "match" criterion: fraction of differing bits must be ≤ (1 - threshold)
-    let max_dist = ((1.0 - threshold) * 32.0) as u32;
+    let max_dist = ((1.0_f64 - threshold) * 32.0) as u32;
 
     let av = &a.values;
     let bv = &b.values;
@@ -143,6 +145,79 @@ pub fn detect_segment(
         start: starts[mid],
         end: ends[mid],
     })
+}
+
+/// Enhanced segment detection that combines audio fingerprint matching with
+/// audio profile similarity.
+///
+/// The algorithm weights audio fingerprint matches higher, but considers:
+/// - Audio profile similarity (consistent volume patterns)
+///
+/// Note: Scene change positions are not currently used in this enhanced detector.
+pub fn detect_segment_enhanced(
+    current: &Fingerprint,
+    current_profile: Option<&AudioProfile>,
+    current_offset: f64,
+    others: &[(Fingerprint, Option<&AudioProfile>, f64)],
+    min_secs: f64,
+    max_secs: f64,
+    fingerprint_threshold: f64,
+    profile_threshold: f64,
+) -> Option<Segment> {
+    use super::video_analysis::profile_similarity;
+
+    let mut candidates: Vec<(Segment, f64)> = Vec::new();
+
+    for (other_fp, other_profile, other_offset) in others {
+        // Get fingerprint match
+        if let Some((seg, _)) = find_common(
+            current,
+            other_fp,
+            current_offset,
+            *other_offset,
+            min_secs,
+            max_secs,
+            fingerprint_threshold,
+        ) {
+            // Calculate confidence based on:
+            // 1. Segment duration (longer = more confident)
+            // 2. Audio profile similarity (if available)
+            let duration: f64 = seg.end - seg.start;
+            let max_secs_f64: f64 = max_secs;
+            let duration_conf = if max_secs_f64 > 0.0 {
+                duration.min(max_secs_f64) / max_secs_f64
+            } else {
+                0.5 // neutral if max_secs is zero
+            };
+
+            let profile_conf =
+                if let (Some(cur_p), Some(other_p)) = (current_profile, other_profile) {
+                    1.0 - profile_similarity(cur_p, other_p)
+                } else {
+                    0.5 // neutral if no profile
+                };
+
+            // Weighted confidence: 70% fingerprint, 30% profile
+            let confidence = 0.7 * duration_conf + 0.3 * profile_conf;
+
+            // Only include candidate if profile confidence meets threshold OR profile comparison unavailable
+            if profile_conf >= profile_threshold
+                || current_profile.is_none()
+                || other_profile.is_none()
+            {
+                candidates.push((seg, confidence));
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Sort by confidence and take best
+    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    Some(candidates[0].0.clone())
 }
 
 #[cfg(test)]

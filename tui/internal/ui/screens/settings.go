@@ -42,6 +42,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -89,18 +90,19 @@ const (
 
 // settingItem represents one configurable value in a category.
 type settingItem struct {
-	label       string
-	key         string // dot-separated config key e.g. "player.default_volume"
-	kind        settingKind
-	boolVal     bool
-	intVal      int
-	floatVal    float64
-	choiceVals  []string
-	choiceIdx   int
-	strVal      string // current path value for settingPath items
-	description string // shown in the footer when focused
-	minVal      int    // lower bound for settingInt; 0 = no lower bound
-	maxVal      int    // upper bound for settingInt; 0 = no upper bound
+	label         string
+	key           string // dot-separated config key e.g. "player.default_volume"
+	kind          settingKind
+	boolVal       bool
+	intVal        int
+	floatVal      float64
+	choiceVals    []string
+	choiceIdx     int
+	strVal        string   // current path value for settingPath items
+	description   string   // shown in the footer when focused
+	minVal        int      // lower bound for settingInt; 0 = no lower bound
+	maxVal        int      // upper bound for settingInt; 0 = no upper bound
+	choiceDisplay []string // optional display names for choice values (if nil, use choiceVals)
 }
 
 func (s *settingItem) displayValue() string {
@@ -116,6 +118,10 @@ func (s *settingItem) displayValue() string {
 		return fmt.Sprintf("%.1f", s.floatVal)
 	case settingChoice:
 		if s.choiceIdx < len(s.choiceVals) {
+			// Use display name if available, otherwise use value
+			if s.choiceDisplay != nil && s.choiceIdx < len(s.choiceDisplay) {
+				return s.choiceDisplay[s.choiceIdx]
+			}
 			return s.choiceVals[s.choiceIdx]
 		}
 		return "—"
@@ -187,20 +193,21 @@ type SettingsChangedMsg struct {
 // SettingsModel is the standalone settings screen.
 // It implements the screen.Screen interface.
 type SettingsModel struct {
+	Dims
 	categories []settingCategory
 	catCursor  int  // which category is selected
 	itemCursor int  // which item within the category is focused
 	inCategory bool // true = navigating items; false = navigating categories
-	width      int
-	height     int
 	// Path editing state — active when the user is editing a settingPath item.
 	editing   bool
 	editInput textinput.Model
+	client    *ipc.Client
 }
 
-func NewSettingsModel() SettingsModel {
+func NewSettingsModel(client *ipc.Client) SettingsModel {
 	return SettingsModel{
 		categories: defaultCategories(),
+		client:     client,
 	}
 }
 
@@ -213,7 +220,7 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	// While editing, all input is consumed here. Navigation is suppressed.
 	if m.editing {
 		switch msg := msg.(type) {
-		case tea.KeyMsg:
+		case tea.KeyPressMsg:
 			switch msg.String() {
 			case "enter":
 				// Confirm: write the typed value back to the item.
@@ -246,8 +253,7 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	case tea.MouseMsg:
 		mouse := msg.Mouse()
@@ -372,6 +378,8 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					// Action items navigate to a sub-screen
 					if item.kind == settingAction {
 						switch item.key {
+						case "audio.dsp":
+							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), true)
 						case "plugins.manager":
 							return m, func() tea.Msg { return OpenPluginManagerMsg{} }
 						case "plugins.manage_repos":
@@ -584,6 +592,18 @@ func (m SettingsModel) View() tea.View {
 
 func defaultCategories() []settingCategory {
 	return []settingCategory{
+		{
+			name: "Audio",
+			icon: "🎵",
+			items: []*settingItem{
+				{
+					label:       "DSP Settings",
+					key:         "audio.dsp",
+					kind:        settingAction,
+					description: "Configure DSP, EQ, crossfeed, and other audio processing",
+				},
+			},
+		},
 		{
 			name: "Playback",
 			icon: "▶",
@@ -1184,7 +1204,7 @@ func defaultCategories() []settingCategory {
 					kind:        settingAction,
 					description: "BS2B headphone crossfeed — blend L/R for natural stereo image",
 				},
-				},
+			},
 		},
 		{
 			name: "Plugins",

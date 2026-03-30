@@ -37,6 +37,7 @@ const builtinRepo = "https://plugins.stui.dev"
 
 // PluginReposScreen manages the list of plugin repository URLs.
 type PluginReposScreen struct {
+	Dims
 	client  *ipc.Client
 	repos   []string // all repos; repos[0] is always the built-in one
 	cursor  int      // row cursor (0 = first repo, len(repos) = add-row)
@@ -47,8 +48,6 @@ type PluginReposScreen struct {
 	adding bool
 	addBuf string
 
-	width  int
-	height int
 
 	spinner components.Spinner
 }
@@ -80,8 +79,7 @@ func (m *PluginReposScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	case ipc.PluginReposResultMsg:
 		m.loading = false

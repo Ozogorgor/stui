@@ -41,6 +41,10 @@ impl TraceEmitter {
         self.enabled.store(true, Ordering::Relaxed);
     }
 
+    pub fn disable(&self) {
+        self.enabled.store(false, Ordering::Relaxed);
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }

@@ -166,13 +166,13 @@ func (b *benchState) speedLabel() string {
 // Activated by pressing `s` during playback or from the detail overlay.
 // To open: screen.TransitionCmd(NewStreamPickerScreen(client, title, entryID, benchEnabled), true)
 type StreamPickerScreen struct {
+	Dims
 	client  *ipc.Client
 	title   string
 	entryID string
 	streams []ipc.StreamInfo // sorted copy
 	cursor  int
 	loading bool
-	width   int
 
 	sortCol  sortColumn
 	sortDesc bool // true = descending (default for quality/seeders/size/score)
@@ -230,7 +230,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return s, nil
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
+		s.setWindowSize(m)
 
 	case ipc.StreamsResolvedMsg:
 		if m.EntryID == s.entryID {
@@ -308,7 +308,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		s.autoRanked = m.Ranked
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := m.String()
 
 		// ── Auto-pick mode controls ──────────────────────────────────────

@@ -8,6 +8,8 @@ use crate::config::types::SkipperConfig;
 use super::fingerprint;
 use super::analyzer::{self, Segment};
 use super::store::SkipperStore;
+use super::video_analysis;
+use super::text_analysis;
 
 #[derive(serde::Serialize)]
 struct SkipSegmentWire {
@@ -28,6 +30,38 @@ pub struct Skipper {
 }
 
 impl Skipper {
+    /// Get video duration using ffprobe with timeout.
+    async fn get_video_duration(url: &str) -> Option<f64> {
+        use tokio::time::timeout;
+        use std::time::Duration;
+        
+        let result = timeout(
+            Duration::from_secs(10),
+            tokio::process::Command::new("ffprobe")
+                .args([
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    url,
+                ])
+                .kill_on_drop(true)
+                .output()
+        ).await;
+        
+        match result {
+            Ok(Ok(output)) => {
+                if output.status.success() {
+                    let duration_str = String::from_utf8_lossy(&output.stdout);
+                    duration_str.trim().parse::<f64>().ok()
+                } else {
+                    None
+                }
+            }
+            Ok(Err(e)) => { debug!(error = %e, "ffprobe failed"); None }
+            Err(_) => { debug!("ffprobe timed out"); None }
+        }
+    }
+
     pub fn new(
         config: SkipperConfig,
         store:  SkipperStore,
@@ -62,24 +96,42 @@ impl Skipper {
 
         info!(series_id, episode_id, "skipper: starting analysis");
 
-        // Return immediately if we have cached segments for this episode
+        // Return immediately if we have cached segments for this episode.
+        // Only treat it as a hit if at least one segment was actually found —
+        // a cache entry with both fields None means a previous run found nothing
+        // with the episodes available then; fall through to retry so that newly
+        // watched episodes can unlock a detection.
         if let Some(cached) = self.store.load_segments(&series_id, &episode_id).await {
-            if let Some(ref intro) = cached.intro {
-                self.push("intro", intro, false).await;
-            }
-            if let Some(ref credits) = cached.credits {
-                self.push("credits", credits, true).await;
-            }
             if cached.intro.is_some() || cached.credits.is_some() {
+                if let Some(ref intro) = cached.intro {
+                    self.push("intro", intro, false).await;
+                }
+                if let Some(ref credits) = cached.credits {
+                    self.push("credits", credits, true).await;
+                }
                 info!(episode_id, "skipper: served segments from cache");
+                return;
             }
-            return;
         }
 
-        // Extract intro and credits fingerprints in parallel
-        let (intro_fp, credits_fp) = tokio::join!(
+        // Get video duration for analysis
+        let video_duration = Self::get_video_duration(url).await.unwrap_or(0.0);
+
+        // Extract additional signals in parallel with fingerprints
+        let (intro_fp, credits_fp, video_analysis, text_patterns) = tokio::join!(
             fingerprint::extract_intro(url, cfg.intro_scan_secs as f64),
             fingerprint::extract_credits(url, cfg.credits_scan_secs as f64),
+            async {
+                if video_duration > 0.0 {
+                    // Extract scene changes and audio profile for intro (first 60s)
+                    let scene = video_analysis::extract_scene_changes(url, 0.0, 60.0).await;
+                    let profile = video_analysis::extract_audio_profile(url, 0.0, 30.0).await;
+                    (scene, profile)
+                } else {
+                    (None, None)
+                }
+            },
+            text_analysis::extract_text_hints(url, video_duration),
         );
 
         // Persist fingerprints regardless of comparison outcome
@@ -113,6 +165,36 @@ impl Skipper {
                 ifp, 0.0, &other_intros,
                 cfg.min_intro_secs, cfg.max_intro_secs, cfg.similarity_threshold,
             );
+            
+            // Enhance with video/text analysis if available
+            if let Some(ref scene) = video_analysis.0 {
+                if let Some(ref intro) = det_intro {
+                    // Check scene cut alignment
+                    if let Some(first_cut) = scene.cuts.first() {
+                        // Intro should start near first scene cut
+                        let offset = (intro.start - first_cut).abs();
+                        if offset < 5.0 {
+                            debug!(intro_start = intro.start, first_cut = first_cut, "intro aligns with scene cut");
+                        }
+                    }
+                }
+            }
+
+            // Use audio profile for validation (if available)
+            if let Some(ref profile) = video_analysis.1 {
+                if let Some(ref intro) = det_intro {
+                    // Check for low silence ratio in intro (indicates active content, not black screen)
+                    if profile.silence_ratio < 0.3 {
+                        debug!(silence_ratio = profile.silence_ratio, "intro has active audio");
+                    }
+                }
+            }
+            
+            // Validate with text patterns
+            if let (Some(ref patterns), Some(ref intro)) = (&text_patterns, &det_intro) {
+                let score = text_analysis::validate_with_patterns(patterns, intro.start, intro.end, "intro", video_duration);
+                debug!(validation_score = score, "intro validation");
+            }
         }
 
         // Credits: fingerprints are anchored at offset 0.0 within the credits window;
@@ -122,18 +204,52 @@ impl Skipper {
                 .filter_map(|o| o.credits_fp.as_ref().map(|fp| (fp.clone(), 0.0f64)))
                 .collect();
 
-            // Detected segment is relative to start of the credits window.
-            // Convert to "from_end": start_from_end = scan_secs - seg.end
-            //                        end_from_end   = scan_secs - seg.start
-            det_credits = analyzer::detect_segment(
+            // raw_credits is window-relative (0..scan_secs).
+            // Text validation runs here, before the from_end flip, because
+            // validate_with_patterns and refine_boundaries work in absolute video time.
+            let scan = cfg.credits_scan_secs as f64;
+            let window_offset = if video_duration > scan { video_duration - scan } else { 0.0 };
+
+            let raw_credits = analyzer::detect_segment(
                 cfp, 0.0, &other_credits,
                 cfg.min_credits_secs, cfg.max_credits_secs, cfg.similarity_threshold,
-            ).map(|seg| {
-                let scan = cfg.credits_scan_secs as f64;
-                Segment {
-                    start: (scan - seg.end).max(0.0),
-                    end:   (scan - seg.start).max(0.0),
+            );
+
+            // Validate and optionally refine in absolute coordinates.
+            let final_raw = if let (Some(ref patterns), Some(ref seg)) = (&text_patterns, &raw_credits) {
+                let abs_start = window_offset + seg.start;
+                let abs_end   = window_offset + seg.end;
+                let score = text_analysis::validate_with_patterns(patterns, abs_start, abs_end, "credits", video_duration);
+                debug!(validation_score = score, "credits validation");
+
+                if score > 0.7 {
+                    let (rs, re) = text_analysis::refine_boundaries(patterns, video_duration, abs_start, abs_end, "credits");
+                    let refined_duration = re - rs;
+                    if refined_duration >= cfg.min_credits_secs && refined_duration <= cfg.max_credits_secs {
+                        debug!(refined_start = rs, refined_end = re, "credits refined with patterns");
+                        // Convert refined absolute back to window-relative.
+                        Some(Segment {
+                            start: (rs - window_offset).max(0.0),
+                            end:   (re - window_offset).max(0.0),
+                        })
+                    } else {
+                        warn!(refined_duration, min = cfg.min_credits_secs, max = cfg.max_credits_secs,
+                              "refined credits out of bounds, using original");
+                        raw_credits.clone()
+                    }
+                } else {
+                    raw_credits.clone()
                 }
+            } else {
+                raw_credits
+            };
+
+            // Convert window-relative → from_end:
+            //   start_from_end = scan - seg.end   (distance from end of video)
+            //   end_from_end   = scan - seg.start
+            det_credits = final_raw.map(|seg| Segment {
+                start: (scan - seg.end).max(0.0),
+                end:   (scan - seg.start).max(0.0),
             });
         }
 

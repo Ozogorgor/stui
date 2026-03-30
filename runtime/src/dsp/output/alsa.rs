@@ -12,6 +12,7 @@ use crate::dsp::config::DspConfig;
 
 pub struct AlsaOutput {
     pcm: PCM,
+    #[allow(dead_code)]
     sample_rate: u32,
     format: AlsaFormat,
 }

@@ -1,3 +1,5 @@
+use percent_encoding::percent_decode_str;
+
 use tokio::sync::oneshot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -107,31 +109,14 @@ fn parse_query(qs: &str) -> OAuthCallback {
     OAuthCallback { code, state, error }
 }
 
-/// Minimal percent-decoder: '+' → ' ', %XX → byte.
+/// Percent-decoder using the well-tested percent_encoding crate.
+/// Replaces '+' with ' ' BEFORE percent-decoding (correct URL encoding order).
 fn percent_decode(s: &str) -> String {
-    let mut out: Vec<u8> = Vec::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'+' {
-            out.push(b' ');
-            i += 1;
-        } else if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = std::str::from_utf8(&bytes[i+1..i+3]) {
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte);
-                    i += 3;
-                    continue;
-                }
-            }
-            out.push(b'%');
-            i += 1;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    let plus_replaced = s.replace('+', " ");
+    percent_decode_str(&plus_replaced)
+        .decode_utf8()
+        .map(|cow| cow.into_owned())
+        .unwrap_or_else(|_| plus_replaced)
 }
 
 #[cfg(test)]

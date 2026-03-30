@@ -27,7 +27,6 @@ pub struct TrackInfo {
     pub external: bool,
 }
 
-
 /// Authoritative playback state — updated from mpv property-change events.
 ///
 /// All fields have sensible defaults so the struct is valid before mpv connects.
@@ -129,6 +128,7 @@ impl Default for PlaybackState {
 
 impl PlaybackState {
     /// Progress as a fraction 0.0–1.0 (for drawing a progress bar).
+    #[allow(dead_code)]
     pub fn progress_fraction(&self) -> f64 {
         if self.duration > 0.0 {
             (self.position / self.duration).clamp(0.0, 1.0)
@@ -137,7 +137,6 @@ impl PlaybackState {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

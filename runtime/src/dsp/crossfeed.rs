@@ -5,28 +5,28 @@
 //! opposite channel to reduce headphone fatigue on hard-panned content.
 
 pub struct CrossfeedFilter {
-    feed_level:  f32,
-    cutoff_hz:   f32,
+    feed_level: f32,
+    cutoff_hz: f32,
     sample_rate: u32,
-    alpha:       f32,
-    norm:        f32,
-    z_l:         f32,
-    z_r:         f32,
+    alpha: f32,
+    norm: f32,
+    z_l: f32,
+    z_r: f32,
 }
 
-use std::f32::consts::PI;
 use crate::dsp::config::DspConfig;
+use std::f32::consts::PI;
 
 impl CrossfeedFilter {
     pub fn new(feed_level: f32, cutoff_hz: f32) -> Self {
         let mut f = Self {
             feed_level,
             cutoff_hz,
-            sample_rate: 0,  // triggers recompute on first process() call
+            sample_rate: 0, // triggers recompute on first process() call
             alpha: 0.0,
-            norm:  0.0,
-            z_l:   0.0,
-            z_r:   0.0,
+            norm: 0.0,
+            z_l: 0.0,
+            z_r: 0.0,
         };
         f.recompute(44100); // nominal value so struct is always valid
         f
@@ -35,9 +35,9 @@ impl CrossfeedFilter {
     fn recompute(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate;
         self.alpha = (-2.0 * PI * self.cutoff_hz / sample_rate as f32).exp();
-        self.norm  = 1.0 / (1.0 + self.feed_level);
-        self.z_l   = 0.0;
-        self.z_r   = 0.0;
+        self.norm = 1.0 / (1.0 + self.feed_level);
+        self.z_l = 0.0;
+        self.z_r = 0.0;
     }
 
     pub fn process(&mut self, samples: &[f32], sample_rate: u32) -> Vec<f32> {
@@ -66,8 +66,13 @@ impl CrossfeedFilter {
 
     pub fn set_params(&mut self, feed_level: f32, cutoff_hz: f32) {
         self.feed_level = feed_level;
-        self.cutoff_hz  = cutoff_hz;
+        self.cutoff_hz = cutoff_hz;
         self.recompute(self.sample_rate);
+    }
+
+    pub fn reset(&mut self) {
+        self.z_l = 0.0;
+        self.z_r = 0.0;
     }
 }
 
@@ -77,9 +82,9 @@ impl CrossfeedFilter {
 pub(crate) fn probe_headphones(config: &DspConfig) -> bool {
     use crate::dsp::config::OutputTarget;
     let haystack = match config.output_target {
-        OutputTarget::Alsa     => config.alsa_device.as_deref().unwrap_or(""),
+        OutputTarget::Alsa => config.alsa_device.as_deref().unwrap_or(""),
         OutputTarget::PipeWire => &config.pipewire_role,
-        _                      => return false,
+        _ => return false,
     };
     let h = haystack.to_lowercase();
     h.contains("headphone") || h.contains("headset") || h.contains("earphone")
@@ -111,7 +116,10 @@ mod tests {
         let silence = vec![0.0_f32; 1024];
         let out = f.process(&silence, 44100);
         assert_eq!(out.len(), 1024);
-        assert!(out.iter().all(|&s| s.abs() < 1e-20), "silence in must produce near-silence out");
+        assert!(
+            out.iter().all(|&s| s.abs() < 1e-20),
+            "silence in must produce near-silence out"
+        );
     }
 
     // feed_level=0.0 → output must equal input exactly.
@@ -120,7 +128,10 @@ mod tests {
     #[test]
     fn feed_zero_is_passthrough() {
         let mut f = CrossfeedFilter::new(0.0, 700.0);
-        let input: Vec<f32> = (0..64).map(|i| i as f32 * 0.01).flat_map(|v| [v, -v]).collect();
+        let input: Vec<f32> = (0..64)
+            .map(|i| i as f32 * 0.01)
+            .flat_map(|v| [v, -v])
+            .collect();
         let out = f.process(&input, 44100);
         assert_eq!(out.len(), input.len());
         for (a, b) in input.iter().zip(out.iter()) {
@@ -205,7 +216,10 @@ mod tests {
         // Access internal state via a second call that exercises z_l/z_r;
         // the test verifies no panic and that output is finite.
         let out = f.process(&near_zero, 44100);
-        assert!(out.iter().all(|s| s.is_finite()), "output must be finite after near-zero input");
+        assert!(
+            out.iter().all(|s| s.is_finite()),
+            "output must be finite after near-zero input"
+        );
     }
 
     // probe_headphones: ALSA keyword matching.
@@ -221,11 +235,11 @@ mod tests {
             }
         };
 
-        assert!(probe_headphones(&make("hw:Headphone")),     "headphone keyword");
-        assert!(probe_headphones(&make("hw:Headset,0")),     "headset keyword");
-        assert!(probe_headphones(&make("hw:earphone")),      "earphone keyword");
-        assert!(probe_headphones(&make("hw:HEADPHONE")),     "case-insensitive");
-        assert!(!probe_headphones(&make("hw:Generic")),      "no keyword → false");
+        assert!(probe_headphones(&make("hw:Headphone")), "headphone keyword");
+        assert!(probe_headphones(&make("hw:Headset,0")), "headset keyword");
+        assert!(probe_headphones(&make("hw:earphone")), "earphone keyword");
+        assert!(probe_headphones(&make("hw:HEADPHONE")), "case-insensitive");
+        assert!(!probe_headphones(&make("hw:Generic")), "no keyword → false");
     }
 
     // probe_headphones: non-ALSA targets always return false.

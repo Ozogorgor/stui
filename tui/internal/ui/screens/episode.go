@@ -30,6 +30,7 @@ import (
 // EpisodeScreen is the season/episode tree browser.
 // To open: screen.TransitionCmd(NewEpisodeScreen(client, seriesTitle, seriesID), true)
 type EpisodeScreen struct {
+	Dims
 	client       *ipc.Client
 	title        string
 	seriesID     string
@@ -39,7 +40,6 @@ type EpisodeScreen struct {
 	epCursor     int
 	inEpisodes   bool // false = navigating seasons, true = navigating episodes
 	loading      bool
-	width        int
 	gridView     bool // true = grid cell layout; false = list layout
 	bingeEnabled bool // true = auto-play next episode on end-of-file
 	spinner      components.Spinner
@@ -92,8 +92,7 @@ func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return s, nil
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.loading = false
+		s.setWindowSize(m)
 
 	case ipc.EpisodesLoadedMsg:
 		if m.SeriesID == s.seriesID {
@@ -103,7 +102,7 @@ func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.spinner.Stop()
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := m.String()
 
 		// ── Mode toggles (checked first so they always fire) ──────────────

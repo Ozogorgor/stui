@@ -238,17 +238,12 @@ impl Default for ProviderThrottle {
 // ── Default rate limits ───────────────────────────────────────────────────────
 
 /// Apply sensible default rate limits for known providers.
-pub fn apply_default_limits(throttle: &mut ProviderThrottle) {
-    tokio::spawn({
-        let t = throttle.clone();
-        async move {
-            t.set_limit("tmdb",          4).await;  // TMDB: 4 req/s (their public limit)
-            t.set_limit("omdb",          1).await;  // OMDB: ~1 req/s free tier
-            t.set_limit("torrentio",     2).await;  // Torrentio: be polite
-            t.set_limit("prowlarr",      5).await;  // Local — can be higher
-            t.set_limit("opensubtitles", 2).await;  // OS has strict limits
-        }
-    });
+pub async fn apply_default_limits(throttle: &ProviderThrottle) {
+    throttle.set_limit("tmdb",          4).await;  // TMDB: 4 req/s (their public limit)
+    throttle.set_limit("omdb",          1).await;  // OMDB: ~1 req/s free tier
+    throttle.set_limit("torrentio",     2).await;  // Torrentio: be polite
+    throttle.set_limit("prowlarr",      5).await;  // Local — can be higher
+    throttle.set_limit("opensubtitles", 2).await;  // OS has strict limits
 }
 
 #[cfg(test)]

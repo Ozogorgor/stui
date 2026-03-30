@@ -35,7 +35,10 @@ pub async fn extract_credits(url: &str, scan_secs: f64) -> Option<Fingerprint> {
 }
 
 async fn run_with_timeout(url: &str, from_end: Option<f64>, scan_secs: f64) -> Option<Fingerprint> {
-    let deadline = Duration::from_secs((scan_secs as u64).saturating_add(90));
+    const MAX_SCAN_SECS: f64 = 3600.0;
+    let deadline = Duration::from_secs(
+        (scan_secs.max(0.0).min(MAX_SCAN_SECS).ceil() as u64).saturating_add(90),
+    );
     match timeout(deadline, run_ffmpeg(url, from_end, scan_secs)).await {
         Ok(Ok(fp))  => Some(fp),
         Ok(Err(e))  => { debug!(url, error=%e, "fingerprint extraction failed"); None }

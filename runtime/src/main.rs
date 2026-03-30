@@ -47,7 +47,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use catalog::Catalog;
@@ -200,13 +200,59 @@ async fn main() -> Result<()> {
 
     // ── DSP pipeline ──────────────────────────────────────────────────────────
     let dsp_pipeline: Option<Arc<tokio::sync::Mutex<DspPipeline>>> = if cfg.dsp.enabled {
-        let pipeline = dsp::DspPipeline::new(cfg.dsp.clone());
+        let pipeline = dsp::DspPipeline::with_config_dir(cfg.dsp.clone(), cfg.data_dir.clone());
         info!(sample_rate = pipeline.output_sample_rate(), "DSP pipeline initialized");
         Some(Arc::new(tokio::sync::Mutex::new(pipeline)))
     } else {
         info!("DSP disabled (set dsp.enabled to enable)");
         None
     };
+
+    // ── MPD → DSP FIFO integration ────────────────────────────────────────────
+    // When both MPD and DSP are active, route MPD's audio through the DSP
+    // pipeline via a named FIFO.  MPD writes raw 16-bit LE stereo PCM to the
+    // FIFO; stui reads it, processes it through the DSP chain, and sends it
+    // to the configured output (PipeWire / ALSA).
+    if let (Some(ref dsp), Some(ref mpd)) = (&dsp_pipeline, &mpd_bridge) {
+        let fifo_path  = dsp::mpd_config::DEFAULT_FIFO_PATH.to_string();
+        let conf_path_opt = dsp::mpd_config::find_mpd_conf();
+        let sample_rate: u32 = conf_path_opt.as_deref()
+            .and_then(dsp::mpd_config::parse_fifo_sample_rate)
+            .unwrap_or(44100);
+
+        // Patch mpd.conf with the FIFO stanza if not already present.
+        if let Some(conf_path) = conf_path_opt {
+            match dsp::mpd_config::ensure_mpd_conf(&conf_path, &fifo_path, sample_rate) {
+                Ok(true)  => info!(
+                    path = %conf_path.display(),
+                    "patched mpd.conf with stui-dsp FIFO output — restart MPD to apply"
+                ),
+                Ok(false) => {}
+                Err(e)    => warn!(error = %e, "could not patch mpd.conf"),
+            }
+        } else {
+            info!("mpd.conf not found — add the stui-dsp FIFO output stanza manually");
+        }
+
+        // Enable the MPD output if it already exists (from a previous restart).
+        match mpd.ensure_dsp_output_enabled().await {
+            Ok(true)  => info!("stui-dsp MPD FIFO output enabled"),
+            Ok(false) => info!(
+                path = %fifo_path,
+                "stui-dsp output not found in MPD — restart MPD after mpd.conf is patched"
+            ),
+            Err(e)    => warn!(error = %e, "could not query/enable stui-dsp MPD output"),
+        }
+
+        // Spawn the long-running FIFO reader / DSP loop.
+        // run_mpd_dsp_loop is intended to run forever; log if it ever exits.
+        let pipeline_arc = Arc::clone(dsp);
+        tokio::spawn(async move {
+            dsp::run_mpd_dsp_loop(pipeline_arc, fifo_path, sample_rate).await;
+            warn!("MPD DSP FIFO loop exited unexpectedly — DSP processing has stopped");
+        });
+        info!("MPD DSP integration active (FIFO → pipeline → output)");
+    }
 
     // ── Skip detection ────────────────────────────────────────────────────
     let skipper = Skipper::new(
@@ -225,6 +271,7 @@ async fn main() -> Result<()> {
         event_tx.clone(),
         cfg.data_dir.to_string_lossy().into_owned(),
         cfg.playback.clone(),
+        dsp_pipeline.clone(),
     );
 
     // ── IPC loop — two modes ──────────────────────────────────────────────
@@ -250,8 +297,10 @@ async fn main() -> Result<()> {
             let mut reader = BufReader::new(rx).lines();
             let mut writer = tokio::io::BufWriter::new(tx);
 
-            // Borrow all the shared state for this client session
-            run_ipc_loop(
+            // Borrow all the shared state for this client session.
+            // Errors are connection-level (broken pipe, client crash) and must
+            // not propagate to main() — that would kill the whole daemon.
+            match run_ipc_loop(
                 &mut reader,
                 &mut writer,
                 &engine,
@@ -269,8 +318,10 @@ async fn main() -> Result<()> {
                 &mut event_rx,
                 event_tx.clone(),
                 &mut toast_rx,
-            ).await?;
-            info!("daemon: client disconnected");
+            ).await {
+                Ok(()) => info!("daemon: client disconnected"),
+                Err(e) => warn!(error = %e, "daemon: client session ended with error"),
+            }
         }
     } else {
         // ── Inline: stdin/stdout — single TUI process ─────────────────────
@@ -349,16 +400,25 @@ where
                             let _ = send_error(&mut writer, "payload_too_large", &format!("message size {} exceeds limit {}", line.len(), MAX_MSG_SIZE)).await;
                             continue;
                         }
-                        // Play commands are fire-and-forget — don't send a Response
-                        let msg_type = serde_json::from_str::<serde_json::Value>(&line)
-                            .ok()
-                            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
-                            .unwrap_or_default();
+                        // Parse once so every branch works from a consistent value and
+                        // malformed JSON is caught early rather than silently producing
+                        // empty req_ids that can't be routed back to the Go caller.
+                        let val: serde_json::Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!("IPC: malformed JSON: {}", e);
+                                let _ = send_error(&mut writer, "bad_request", "malformed JSON").await;
+                                continue;
+                            }
+                        };
+                        let msg_type = val.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .to_string();
                         match msg_type.as_str() {
                             // ── Long-running ops — spawned in background so the IPC loop
                             //    stays responsive while network I/O is in flight.
                             "browse_registry" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let req_id = val["id"].as_str().unwrap_or("").to_string();
                                 let config_c = Arc::clone(config);
                                 let tx = event_tx.clone();
@@ -380,7 +440,6 @@ where
                                 continue;
                             }
                             "install_plugin" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let req_id = val["id"].as_str().unwrap_or("").to_string();
                                 let req = ipc::InstallPluginRequest {
                                     name:       val["name"].as_str().unwrap_or("").to_string(),
@@ -407,7 +466,6 @@ where
                                 continue;
                             }
                             "play" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let tab = val["tab"].as_str().and_then(|t| match t {
                                     "music"    => Some(ipc::MediaTab::Music),
                                     "radio"    => Some(ipc::MediaTab::Radio),
@@ -443,7 +501,6 @@ where
                                 continue;
                             }
                             "download_stream" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let url   = val["url"].as_str().unwrap_or("").to_string();
                                 let title = val["title"].as_str().unwrap_or("").to_string();
                                 let media_type = val["media_type"].as_str()
@@ -454,14 +511,12 @@ where
                                 continue;
                             }
                             "download_cancel" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let gid = val["gid"].as_str().unwrap_or("").to_string();
                                 let p = player.clone();
                                 tokio::spawn(async move { p.cancel_download(&gid).await });
                                 continue;
                             }
                             "play_file" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let path  = val["path"].as_str().unwrap_or("").to_string();
                                 let title = val["title"].as_str().unwrap_or("").to_string();
                                 let p = player.clone();
@@ -469,7 +524,6 @@ where
                                 continue;
                             }
                             "player_command" => {
-                                let val: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                                 let cmd  = val["cmd"].as_str().unwrap_or("").to_string();
                                 let args = val["args"].as_array().cloned().unwrap_or_default();
                                 let p = player.clone();
@@ -816,6 +870,8 @@ async fn handle_line(
         Request::SetTrace { enabled } => {
             if enabled {
                 trace.enable();
+            } else {
+                trace.disable();
             }
             Response::Ok
         }
@@ -898,9 +954,70 @@ async fn handle_line(
             if cfg.output_target != OutputTarget::Mpd {
                 return Response::error(None, ErrorCode::InvalidRequest, "DSP output_target is not set to 'mpd'".to_string());
             }
-            // Generate MPD config for PipeWire output
             let mpd_config = "audio_output {\n    type \"pipewire\"\n    name \"STUI DSP\"\n}\n".to_string();
             Response::DspBoundToMpd { success: true, config: mpd_config }
+        }
+        Request::ListDspProfiles => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let profiles = d.lock().await.profile_store().list_profiles();
+            Response::DspProfilesListed { profiles }
+        }
+        Request::SaveDspProfile(r) => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let mut pipeline = d.lock().await;
+            let cfg = pipeline.config().await;
+            // Preserve existing profile for rollback in case save fails
+            let existing = pipeline.profile_store().get_profile(&r.name).cloned();
+            let profile = crate::dsp::config::DspProfileConfig::from_config(&cfg, r.name.clone());
+            pipeline.profile_store_mut().add_profile(r.name.clone(), profile);
+            match pipeline.profile_store_mut().save() {
+                Ok(_) => Response::DspProfileSaved { success: true },
+                Err(e) => {
+                    // Rollback: restore original or remove if new
+                    match existing {
+                        Some(orig) => { pipeline.profile_store_mut().add_profile(r.name.clone(), orig); }
+                        None => { let _ = pipeline.profile_store_mut().remove_profile(&r.name); }
+                    }
+                    Response::error(None, ErrorCode::Internal, e)
+                }
+            }
+        }
+        Request::LoadDspProfile(r) => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let mut pipeline = d.lock().await;
+            let mut cfg = pipeline.config().await;
+            if pipeline.profile_store().apply_profile(&r.name, &mut cfg) {
+                pipeline.update_config(cfg).await;
+                Response::DspProfileLoaded { success: true }
+            } else {
+                Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
+            }
+        }
+        Request::DeleteDspProfile(r) => {
+            let Some(d) = dsp else {
+                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+            };
+            let mut pipeline = d.lock().await;
+            let Some(backup) = pipeline.profile_store().get_profile(&r.name).cloned() else {
+                return Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name));
+            };
+            if pipeline.profile_store_mut().remove_profile(&r.name) {
+                match pipeline.profile_store_mut().save() {
+                    Ok(_) => Response::DspProfileDeleted { success: true },
+                    Err(e) => {
+                        pipeline.profile_store_mut().add_profile(r.name.clone(), backup);
+                        Response::error(None, ErrorCode::Internal, e)
+                    }
+                }
+            } else {
+                Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
+            }
         }
     }
 }

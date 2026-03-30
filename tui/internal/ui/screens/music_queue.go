@@ -31,11 +31,10 @@ import (
 
 // MusicQueueScreen displays and controls the live MPD playback queue.
 type MusicQueueScreen struct {
+	Dims
 	client     *ipc.Client
 	tracks     []ipc.MpdTrack
 	cursor     int
-	width      int
-	height     int
 	loading    bool
 	nowTitle   string // from MpdStatusMsg — used to highlight current track
 	nowArtist  string
@@ -103,8 +102,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		return s, nil
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	case ipc.MpdQueueResultMsg:
 		if m.Err == nil {
@@ -127,7 +125,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		s.nowSongID = m.SongID
 		s.nowSongPos = m.SongPos
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch m.String() {
 		case "j", "down":
 			if s.cursor < len(s.tracks)-1 {

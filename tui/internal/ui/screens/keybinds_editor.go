@@ -46,10 +46,10 @@ type kbEntry struct {
 
 // KeybindsEditorScreen lists every action and lets the user rebind them.
 type KeybindsEditorScreen struct {
+	Dims
 	entries  []kbEntry // flat list: header rows + action rows
 	cursor   int       // index into entries (only action rows are selectable)
 	capture  bool      // waiting for user to press a key
-	width    int
 	savePath string
 }
 
@@ -94,9 +94,9 @@ func (s KeybindsEditorScreen) Init() tea.Cmd { return nil }
 func (s KeybindsEditorScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
-		s.width = m.Width
+		s.setWindowSize(m)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		key := m.String()
 
 		// ── Capture mode: next key becomes the binding ────────────────────

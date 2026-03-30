@@ -33,7 +33,7 @@ func (c *Client) Search(reqID, query string, tab MediaTab, limit, offset int) {
 		})
 		raw := receiveWithTimeout(ch)
 		msg := decodeSearchResult(reqID, raw)
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -75,7 +75,7 @@ func (c *Client) LoadPlugin(path string) {
 			msg.PluginID = p.PluginID
 			msg.Name = p.Name
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -95,7 +95,7 @@ func (c *Client) ListPlugins() {
 		} else {
 			_ = json.Unmarshal(raw.Raw, &msg)
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -173,17 +173,17 @@ func (c *Client) Resolve(entryID, provider string) {
 		ch := c.sendWithID(id, payload)
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
-			c.program.Send(StatusMsg{Text: "stream resolve failed: " + raw.Err.Error()})
+			c.send(StatusMsg{Text: "stream resolve failed: " + raw.Err.Error()})
 			return
 		}
 		var resp struct {
 			Streams []StreamInfo `json:"streams"`
 		}
 		if err := raw.decodeData(&resp); err != nil {
-			c.program.Send(StatusMsg{Text: "stream decode failed: " + err.Error()})
+			c.send(StatusMsg{Text: "stream decode failed: " + err.Error()})
 			return
 		}
-		c.program.Send(StreamsResolvedMsg{EntryID: entryID, Streams: resp.Streams})
+		c.send(StreamsResolvedMsg{EntryID: entryID, Streams: resp.Streams})
 	}()
 }
 
@@ -244,17 +244,17 @@ func (c *Client) LoadEpisodes(seriesID string, season int) {
 		ch := c.sendWithID(id, payload)
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
-			c.program.Send(StatusMsg{Text: "episodes load failed: " + raw.Err.Error()})
+			c.send(StatusMsg{Text: "episodes load failed: " + raw.Err.Error()})
 			return
 		}
 		var resp struct {
 			Episodes []EpisodeEntry `json:"episodes"`
 		}
 		if err := raw.decodeData(&resp); err != nil {
-			c.program.Send(StatusMsg{Text: "episodes load failed: " + err.Error()})
+			c.send(StatusMsg{Text: "episodes load failed: " + err.Error()})
 			return
 		}
-		c.program.Send(EpisodesLoadedMsg{
+		c.send(EpisodesLoadedMsg{
 			SeriesID: seriesID,
 			Season:   season,
 			Episodes: resp.Episodes,
@@ -285,7 +285,7 @@ func (c *Client) GetProviderSettings() {
 				msg.Providers = payload.Providers
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -312,7 +312,7 @@ func (c *Client) GetPluginRepos() {
 				msg.Repos = payload.Repos
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -351,7 +351,7 @@ func (c *Client) BrowseRegistry() {
 				msg.FailedRepos = payload.FailedRepos
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -389,7 +389,7 @@ func (c *Client) InstallPlugin(name, version, binaryURL, checksum string) {
 				msg.Path = payload.Path
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -532,7 +532,7 @@ func (c *Client) RankStreams(streams []StreamInfo, prefs StreamPreferences) {
 				msg.Ranked = resp.Ranked
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -560,7 +560,7 @@ func (c *Client) GetStreamPolicy() {
 				msg.Policy = resp.Policy
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -972,7 +972,7 @@ func (c *Client) GetDspStatus() {
 				msg.Err = err
 			}
 		}
-		c.program.Send(msg)
+		c.send(msg)
 	}()
 }
 
@@ -1011,13 +1011,13 @@ func (c *Client) SetDspConfig(enabled *bool, outputSampleRate *uint32, upsampleR
 		ch := c.sendWithID(id, payload)
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
-			c.program.Send(StatusMsg{Text: "DSP config failed: " + raw.Err.Error()})
+			c.send(StatusMsg{Text: "DSP config failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
-			c.program.Send(StatusMsg{Text: fmt.Sprintf("DSP config failed: %s %s", ep.Code, ep.Message)})
+			c.send(StatusMsg{Text: fmt.Sprintf("DSP config failed: %s %s", ep.Code, ep.Message)})
 		} else {
-			c.program.Send(StatusMsg{Text: "DSP config updated"})
+			c.send(StatusMsg{Text: "DSP config updated"})
 		}
 	}()
 }
@@ -1033,13 +1033,13 @@ func (c *Client) LoadConvolutionFilter(path string) {
 		})
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
-			c.program.Send(StatusMsg{Text: "Load filter failed: " + raw.Err.Error()})
+			c.send(StatusMsg{Text: "Load filter failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
-			c.program.Send(StatusMsg{Text: fmt.Sprintf("Load filter failed: %s %s", ep.Code, ep.Message)})
+			c.send(StatusMsg{Text: fmt.Sprintf("Load filter failed: %s %s", ep.Code, ep.Message)})
 		} else {
-			c.program.Send(StatusMsg{Text: "Convolution filter loaded"})
+			c.send(StatusMsg{Text: "Convolution filter loaded"})
 		}
 	}()
 }
@@ -1051,22 +1051,22 @@ func (c *Client) BindDspToMpd() {
 		ch := c.sendWithID(id, map[string]any{"type": "bind_dsp_to_mpd", "id": id})
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
-			c.program.Send(StatusMsg{Text: "Bind DSP to MPD failed: " + raw.Err.Error()})
+			c.send(StatusMsg{Text: "Bind DSP to MPD failed: " + raw.Err.Error()})
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
-			c.program.Send(StatusMsg{Text: fmt.Sprintf("Bind DSP to MPD failed: %s %s", ep.Code, ep.Message)})
+			c.send(StatusMsg{Text: fmt.Sprintf("Bind DSP to MPD failed: %s %s", ep.Code, ep.Message)})
 		} else {
 			var resp struct {
 				Success bool   `json:"success"`
 				Config  string `json:"config"`
 			}
 			if err := json.Unmarshal(raw.Raw, &resp); err != nil {
-				c.program.Send(StatusMsg{Text: "Bind DSP to MPD: parse error"})
+				c.send(StatusMsg{Text: "Bind DSP to MPD: parse error"})
 			} else if resp.Success {
-				c.program.Send(StatusMsg{Text: "DSP bound to MPD successfully"})
+				c.send(StatusMsg{Text: "DSP bound to MPD successfully"})
 			} else {
-				c.program.Send(StatusMsg{Text: "DSP bind to MPD failed"})
+				c.send(StatusMsg{Text: "DSP bind to MPD failed"})
 			}
 		}
 	}()
@@ -1076,4 +1076,105 @@ func (c *Client) BindDspToMpd() {
 type DspBoundToMpdMsg struct {
 	Success bool
 	Config  string
+}
+
+// ListDspProfiles lists all saved DSP profiles.
+func (c *Client) ListDspProfiles() {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{"type": "list_dsp_profiles", "id": id})
+		raw := receiveWithTimeout(ch)
+		if raw.Err != nil {
+			c.send(StatusMsg{Text: "List profiles failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.send(StatusMsg{Text: fmt.Sprintf("List profiles failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			var resp struct {
+				Profiles []string `json:"profiles"`
+			}
+			if err := json.Unmarshal(raw.Raw, &resp); err != nil {
+				c.send(StatusMsg{Text: "List profiles: parse error"})
+			} else {
+				c.send(DspProfilesListedMsg{Profiles: resp.Profiles})
+			}
+		}
+	}()
+}
+
+// DspProfilesListedMsg is dispatched when ListDspProfiles completes.
+type DspProfilesListedMsg struct {
+	Profiles []string
+}
+
+// SaveDspProfile saves a DSP profile with the given name.
+func (c *Client) SaveDspProfile(name string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "save_dsp_profile",
+			"id":   id,
+			"name": name,
+		})
+		raw := receiveWithTimeout(ch)
+		if raw.Err != nil {
+			c.send(StatusMsg{Text: "Save profile failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.send(StatusMsg{Text: fmt.Sprintf("Save profile failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			c.send(StatusMsg{Text: "Profile saved: " + name})
+		}
+	}()
+}
+
+// LoadDspProfile loads a DSP profile with the given name.
+func (c *Client) LoadDspProfile(name string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "load_dsp_profile",
+			"id":   id,
+			"name": name,
+		})
+		raw := receiveWithTimeout(ch)
+		if raw.Err != nil {
+			c.send(StatusMsg{Text: "Load profile failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.send(StatusMsg{Text: fmt.Sprintf("Load profile failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			c.send(DspProfileLoadedMsg{Name: name})
+		}
+	}()
+}
+
+// DspProfileLoadedMsg is dispatched when LoadDspProfile completes.
+type DspProfileLoadedMsg struct {
+	Name string
+}
+
+// DeleteDspProfile deletes a DSP profile with the given name.
+func (c *Client) DeleteDspProfile(name string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "delete_dsp_profile",
+			"id":   id,
+			"name": name,
+		})
+		raw := receiveWithTimeout(ch)
+		if raw.Err != nil {
+			c.send(StatusMsg{Text: "Delete profile failed: " + raw.Err.Error()})
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.send(StatusMsg{Text: fmt.Sprintf("Delete profile failed: %s %s", ep.Code, ep.Message)})
+		} else {
+			c.send(StatusMsg{Text: "Profile deleted: " + name})
+		}
+	}()
 }

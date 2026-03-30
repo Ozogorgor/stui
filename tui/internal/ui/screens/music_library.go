@@ -43,9 +43,8 @@ const (
 // MusicLibraryScreen is the Artist→Album→Track browser with an optional
 // directory-tree view toggled with D.
 type MusicLibraryScreen struct {
+	Dims
 	client  *ipc.Client
-	width   int
-	height  int
 	dirMode bool // false = tag browser, true = directory browser
 
 	// Tag browser state
@@ -98,8 +97,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	case ipc.MpdLibraryResultMsg:
 		if m.Err != nil {
@@ -137,7 +135,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		}
 		s.loadingDir = false
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if s.dirMode {
 			s = s.handleDirKey(m.String())
 		} else {

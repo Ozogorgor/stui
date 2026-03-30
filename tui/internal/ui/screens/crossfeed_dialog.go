@@ -48,14 +48,13 @@ var crossfeedPresets = []crossfeedPreset{
 
 // CrossfeedDialogModel is the crossfeed settings dialog screen.
 type CrossfeedDialogModel struct {
+	Dims
 	enabled   bool
 	auto      bool
 	feedLevel float64 // 0.0–0.9
 	cutoffHz  float64 // 300–700
 	field     int     // 0=auto, 1=enabled, 2=feed, 3=cutoff
 	presetIdx int     // 0=Default, 1=Cmoy, 2=Jmeier
-	width     int
-	height    int
 	sendFn    func(key string, value interface{}) tea.Cmd
 }
 
@@ -195,5 +194,5 @@ func (m CrossfeedDialogModel) View() tea.View {
 	content := lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center, box)
 
-	return tea.View{Content: content}
+	return tea.NewView(content)
 }

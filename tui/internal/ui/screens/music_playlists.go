@@ -16,6 +16,7 @@ import (
 
 // MusicPlaylistsScreen displays saved MPD playlists with a track preview pane.
 type MusicPlaylistsScreen struct {
+	Dims
 	client         *ipc.Client
 	playlists      []ipc.MpdSavedPlaylist
 	cursor         int
@@ -24,8 +25,6 @@ type MusicPlaylistsScreen struct {
 	previewFor     string        // which playlist name the preview is for
 	loadingList    bool
 	loadingPreview bool
-	width          int
-	height         int
 	// Save-mode: prompt user for new playlist name
 	saving   bool
 	saveName string
@@ -82,8 +81,7 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 		return s, nil
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 
 	case ipc.MpdPlaylistsResultMsg:
 		s.loadingList = false

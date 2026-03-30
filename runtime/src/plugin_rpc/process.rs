@@ -47,10 +47,12 @@ type SharedAuthPhase = Arc<tokio::sync::Mutex<AuthPhase>>;
 #[allow(clippy::type_complexity)]
 pub struct PluginProcess {
     /// Resolved plugin ID (UUID assigned at load time).
+    #[allow(dead_code)]
     pub id:        String,
     /// Handshake info: name, version, capabilities.
     pub info:      PluginHandshake,
     /// Path to the plugin executable.
+    #[allow(dead_code)]
     pub bin:       PathBuf,
     /// Notified when the plugin process exits (stdout EOF).
     /// The supervisor awaits this to trigger restart logic.
@@ -59,6 +61,7 @@ pub struct PluginProcess {
     pub pid:          Option<u32>,
 
     stdin_tx:      mpsc::UnboundedSender<String>,
+    #[allow(dead_code)]
     auth_phase:    SharedAuthPhase,
     /// Pending calls: correlation-id → response sender.
     pending:       Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
@@ -68,6 +71,7 @@ pub struct PluginProcess {
 impl PluginProcess {
     /// Spawn `bin` as a child process, perform the handshake, and return a
     /// ready-to-use `PluginProcess`.
+    #[allow(dead_code)]
     pub async fn spawn(bin: PathBuf) -> Result<Self> {
         let mut child = Command::new(&bin)
             .stdin(std::process::Stdio::piped())
@@ -195,12 +199,14 @@ impl PluginProcess {
     }
 
     /// True if this plugin advertises the given capability string.
+    #[allow(dead_code)]
     pub fn has_capability(&self, cap: &str) -> bool {
         self.info.capabilities.iter().any(|c| c == cap)
     }
 
     // ── High-level typed methods ──────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub async fn catalog_search(
         &self,
         query: &str,
@@ -216,12 +222,14 @@ impl PluginProcess {
         Ok(serde_json::from_value(val)?)
     }
 
+    #[allow(dead_code)]
     pub async fn streams_resolve(&self, id: &str) -> Result<Vec<RpcStream>> {
         let params = serde_json::to_value(StreamsResolveParams { id: id.to_string() })?;
         let val = self.call("streams.resolve", params).await?;
         Ok(serde_json::from_value(val)?)
     }
 
+    #[allow(dead_code)]
     pub async fn subtitles_fetch(&self, id: &str) -> Result<Vec<RpcSubtitleTrack>> {
         let params = serde_json::to_value(SubtitlesFetchParams { id: id.to_string() })?;
         let val = self.call("subtitles.fetch", params).await?;
@@ -229,11 +237,13 @@ impl PluginProcess {
     }
 
     /// Send a graceful shutdown request then kill the process.
+    #[allow(dead_code)]
     pub async fn shutdown(&self) {
         let _ = self.call("shutdown", serde_json::json!({})).await;
     }
 }
 
+#[allow(dead_code)]
 async fn handle_action(
     req: ActionRequest,
     stdin_tx: mpsc::UnboundedSender<String>,
@@ -326,6 +336,7 @@ async fn handle_action(
     send_response(&stdin_tx, response);
 }
 
+#[allow(dead_code)]
 fn send_response(
     stdin_tx: &mpsc::UnboundedSender<String>,
     resp: ActionResponse,

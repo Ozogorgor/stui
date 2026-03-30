@@ -24,9 +24,17 @@ pub mod analyzer;
 pub mod detector;
 pub mod fingerprint;
 pub mod store;
+pub mod video_analysis;
+pub mod text_analysis;
 
 pub use detector::Skipper;
 #[allow(unused_imports)]
 pub use analyzer::Segment;
+#[allow(dead_code, unused_imports)]
 pub use fingerprint::Fingerprint;
+#[allow(dead_code, unused_imports)]
 pub use store::SkipperStore;
+
+// Functions available for enhanced detection (wired but not default)
+#[allow(dead_code, unused_imports)]
+pub use analyzer::detect_segment_enhanced;

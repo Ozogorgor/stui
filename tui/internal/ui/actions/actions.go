@@ -21,7 +21,7 @@
 //
 //	func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 //	    switch msg := msg.(type) {
-//	    case tea.KeyMsg:
+//	    case tea.KeyPressMsg:
 //	        if action, ok := actions.FromKey(msg.String()); ok {
 //	            return m.handleAction(action)
 //	        }

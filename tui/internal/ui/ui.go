@@ -269,11 +269,28 @@ func (m Model) Init() tea.Cmd {
 		return func() tea.Msg { return ipc.RuntimeReadyMsg{} }
 	}
 	return func() tea.Msg {
-		client, err := ipc.Start(m.opts.RuntimePath, m.program)
+		client, err := ipc.Start(m.opts.RuntimePath)
 		if err != nil {
 			return ipc.RuntimeErrorMsg{Err: err}
 		}
 		return runtimeStartedMsg{client: client}
+	}
+}
+
+// fromIPC wraps a message that arrived via the IPC channel so that the
+// Update switch can re-subscribe listenIPC in a single place.
+type fromIPC struct{ tea.Msg }
+
+// listenIPC returns a Cmd that blocks on the IPC message channel and
+// delivers the next message as a fromIPC wrapper.  Update re-subscribes
+// by returning another listenIPC after processing each message.
+func listenIPC(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return fromIPC{ipc.RuntimeErrorMsg{Err: fmt.Errorf("IPC channel closed")}}
+		}
+		return fromIPC{msg}
 	}
 }
 
@@ -283,6 +300,20 @@ type runtimeStartedMsg struct{ client *ipc.Client }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	// fromIPC unwraps a message from the IPC channel, re-subscribes the
+	// listener, then dispatches the inner message through Update as normal.
+	case fromIPC:
+		updated, cmd := m.Update(msg.Msg)
+		newModel, ok := updated.(Model)
+		if !ok {
+			return m, cmd
+		}
+		m = newModel
+		if m.client != nil {
+			return m, tea.Batch(cmd, listenIPC(m.client.Chan()))
+		}
+		return m, cmd
 
 	case tea.WindowSizeMsg:
 		m.state.Width = msg.Width
@@ -312,7 +343,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mediaCache.SaveTab(tab, m.grids[tab])
 		}
 		m.client.GetDspStatus()
-		return m, musicInitCmd
+		return m, tea.Batch(musicInitCmd, listenIPC(m.client.Chan()))
 
 	case ipc.RuntimeReadyMsg:
 		m.state.RuntimeStatus = state.RuntimeReady
@@ -1235,7 +1266,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case actions.ActionOpenSettings:
-			return m, screen.TransitionCmd(screens.NewSettingsModel(), true)
+			return m, screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
 		case actions.ActionOpenHelp:
 			return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 		case actions.ActionOpenSearch:
@@ -1701,7 +1732,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ",":
 		// Open the settings screen via the RootModel screen stack.
 		// When settings closes (ESC) it returns here automatically.
-		return m, screen.TransitionCmd(screens.NewSettingsModel(), true)
+		return m, screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
 	case "esc":
 		if m.cwFocused {
 			m.cwFocused = false

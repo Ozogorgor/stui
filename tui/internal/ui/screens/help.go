@@ -18,8 +18,7 @@ import (
 //
 // To open: screen.TransitionCmd(NewHelpScreen(), true)
 type HelpScreen struct {
-	width  int
-	height int
+	Dims
 }
 
 func NewHelpScreen() HelpScreen { return HelpScreen{} }
@@ -28,8 +27,7 @@ func (h HelpScreen) Init() tea.Cmd { return nil }
 
 func (h HelpScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
-		h.width = ws.Width
-		h.height = ws.Height
+		h.setWindowSize(ws)
 	}
 	return h, nil
 }

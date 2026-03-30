@@ -23,6 +23,7 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
+    #[allow(dead_code)]
     pub fn new(provider: &str, tab: &MediaTab, query: &str) -> Self {
         Self {
             provider: provider.to_string(),
@@ -74,6 +75,7 @@ pub struct Indexer {
 }
 
 impl Indexer {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::with_capacity(DEFAULT_CAPACITY)
     }
@@ -87,6 +89,7 @@ impl Indexer {
     }
 
     /// Retrieve cached results for a key, if present and not stale.
+    #[allow(dead_code)]
     pub async fn get(&self, key: &CacheKey) -> Option<Vec<MediaEntry>> {
         let mut cache = self.cache.lock().await;
         if let Some(entry) = cache.get(key) {
@@ -98,12 +101,14 @@ impl Indexer {
     }
 
     /// Store results in the cache.
+    #[allow(dead_code)]
     pub async fn put(&self, key: CacheKey, items: Vec<MediaEntry>) {
         let mut cache = self.cache.lock().await;
         cache.put(key, CacheEntry::new(items));
     }
 
     /// Invalidate all cached entries for a specific provider.
+    #[allow(dead_code)]
     pub async fn invalidate_provider(&self, provider: &str) {
         let mut cache = self.cache.lock().await;
         let stale_keys: Vec<CacheKey> = cache
@@ -117,17 +122,20 @@ impl Indexer {
     }
 
     /// Flush the entire cache.
+    #[allow(dead_code)]
     pub async fn flush(&self) {
         let mut cache = self.cache.lock().await;
         cache.clear();
     }
 
     /// Return the number of entries currently in the cache.
+    #[allow(dead_code)]
     pub async fn len(&self) -> usize {
         self.cache.lock().await.len()
     }
 
     /// Return true if the cache is empty.
+    #[allow(dead_code)]
     pub async fn is_empty(&self) -> bool {
         self.len().await == 0
     }

@@ -38,6 +38,7 @@ enum ResamplerKind {
 }
 
 /// High-quality audio resampler. Stereo interleaved f32 input and output.
+#[allow(dead_code)] // Used by DspPipeline internally
 #[allow(clippy::type_complexity)]
 pub struct Resampler {
     config: Arc<RwLock<DspConfig>>,
@@ -236,6 +237,7 @@ impl Resampler {
         self.output_rate
     }
 
+    #[allow(dead_code)]
     pub fn set_output_rate(&mut self, rate: u32) -> Result<(), String> {
         Self::validate_rates(self.input_rate, rate)?;
         let cfg = self.config.blocking_read();
@@ -244,6 +246,16 @@ impl Resampler {
         self.kind = Self::build_kind(filter_type, self.input_rate, rate, self.chunk_size)?;
         self.output_rate = rate;
         Ok(())
+    }
+
+    /// Reset the resampler state to clear any buffered data.
+    /// Should be called on seeks or stream discontinuities.
+    pub fn reset(&mut self) {
+        match &mut self.kind {
+            ResamplerKind::PolyOut(resampler) => resampler.reset(),
+            ResamplerKind::FftIn(resampler) => resampler.reset(),
+            ResamplerKind::SincIn(resampler) => resampler.reset(),
+        }
     }
 }
 

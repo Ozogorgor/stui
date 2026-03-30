@@ -109,9 +109,8 @@ type OpenStreamRadarMsg struct{}
 
 // StreamRadarScreen displays the accumulated stream stats.
 type StreamRadarScreen struct {
+	Dims
 	stats  StreamRadarStats
-	width  int
-	height int
 }
 
 // NewStreamRadarScreen creates the screen with a pre-populated stats snapshot.
@@ -127,14 +126,13 @@ func (m StreamRadarScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	case ipc.StreamsResolvedMsg:
 		// Live update while radar is on the stack.
 		m.stats.AddBatch(msg.Streams)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "esc":
 			return m, func() tea.Msg { return screen.PopMsg{} }

@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -19,6 +20,7 @@ const (
 	tabCorrection
 	tabStereo
 	tabFormat
+	numTabs
 )
 
 var audioTabNames = []string{
@@ -29,14 +31,62 @@ var audioTabNames = []string{
 	"Format",
 }
 
+// Built-in DSP profiles available in the UI
+var dspProfiles = []string{
+	// Music profiles
+	"Music: Default",
+	"Music: Jazz",
+	"Music: Classical",
+	"Music: Rock",
+	"Music: Electronic",
+	"Music: Pop",
+	"Music: Hip-Hop",
+	"Music: Acoustic",
+	// Movie profiles
+	"Movies: Default",
+	"Movies: Action",
+	"Movies: Drama",
+	"Movies: Comedy",
+	"Movies: Horror",
+	"Movies: Sci-Fi",
+	"Movies: Animation",
+	// Other
+	"Night Mode",
+	"Podcast",
+}
+
+// profileIDs maps display names to backend IDs
+var profileIDs = map[string]string{
+	"Music: Default":    "music_default",
+	"Music: Jazz":       "music_jazz",
+	"Music: Classical":  "music_classical",
+	"Music: Rock":       "music_rock",
+	"Music: Electronic": "music_electronic",
+	"Music: Pop":        "music_pop",
+	"Music: Hip-Hop":    "music_hiphop",
+	"Music: Acoustic":   "music_acoustic",
+	"Movies: Default":   "movies_default",
+	"Movies: Action":    "movies_action",
+	"Movies: Drama":     "movies_drama",
+	"Movies: Comedy":    "movies_comedy",
+	"Movies: Horror":    "movies_horror",
+	"Movies: Sci-Fi":    "movies_scifi",
+	"Movies: Animation": "movies_animation",
+	"Night Mode":        "night_mode",
+	"Podcast":           "podcast",
+}
+
 type AudioSettingsModel struct {
-	tab          audioTab
-	selectedIdx  int
-	width        int
-	height       int
-	editing      bool
-	editInput    textinput.Model
-	settingItems map[audioTab][]*settingItem
+	Dims
+	tab            audioTab
+	selectedIdx    int
+	editing        bool
+	editInput      textinput.Model
+	settingItems   map[audioTab][]*settingItem
+	currentProfile string
+	customProfiles []string // loaded from runtime via IPC
+	profileLoaded  bool
+	client         *ipc.Client
 }
 
 // audioHeader returns a non-interactive section label rendered as a sub-heading.
@@ -54,14 +104,68 @@ func firstSelectableIdx(items []*settingItem) int {
 	return 0
 }
 
-func NewAudioSettingsModel() AudioSettingsModel {
+// Helper to find setting item index by key
+func findSettingIdx(items []*settingItem, key string) int {
+	for i, item := range items {
+		if item.key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// stripProfilePrefix removes a "Saved: " or "Loaded: " prefix from a profile
+// display name to recover the bare built-in profile name for lookups.
+func stripProfilePrefix(name string) string {
+	if s := strings.TrimPrefix(name, "Saved: "); s != name {
+		return s
+	}
+	return strings.TrimPrefix(name, "Loaded: ")
+}
+
+// Helper to sync profile between currentProfile string and dropdown
+func (m *AudioSettingsModel) syncProfileDropdown() {
+	currentForLookup := stripProfilePrefix(m.currentProfile)
+	for i, p := range dspProfiles {
+		if currentForLookup == p {
+			if idx := findSettingIdx(m.settingItems[tabOutput], "dsp.profile"); idx >= 0 {
+				m.settingItems[tabOutput][idx].choiceIdx = i
+			}
+			return
+		}
+	}
+	// Custom profile not in built-in list - leave dropdown as-is (will show "—")
+	// Note: m.currentProfile contains the custom profile name for display purposes
+}
+
+func NewAudioSettingsModel(client *ipc.Client) AudioSettingsModel {
+	// Derive backend IDs from the canonical dspProfiles slice so the two
+	// never diverge — any profile missing from profileIDs gets an empty ID.
+	profileChoiceVals := make([]string, len(dspProfiles))
+	for i, name := range dspProfiles {
+		profileChoiceVals[i] = profileIDs[name]
+	}
+
 	m := AudioSettingsModel{
-		tab: tabOutput,
+		tab:            tabOutput,
+		currentProfile: dspProfiles[0],
+		customProfiles: []string{},
+		profileLoaded:  false,
+		client:         client,
 		settingItems: map[audioTab][]*settingItem{
 
 			// ── Output ──────────────────────────────────────────────────────────
 			// Hardware sink, sample rate, and backend-specific parameters.
 			tabOutput: {
+				{
+					label:         "Profile",
+					key:           "dsp.profile",
+					kind:          settingChoice,
+					choiceVals:    profileChoiceVals,
+					choiceDisplay: dspProfiles,
+					choiceIdx:     0,
+					description:   "DSP profile preset — applies optimized settings for different content types",
+				},
 				{
 					label:       "Output Target",
 					key:         "dsp.output_target",
@@ -93,14 +197,6 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					kind:        settingString,
 					strVal:      "hw:0,0",
 					description: "ALSA hardware device string (e.g. hw:0,0) — only used when output target is alsa",
-				},
-				{
-					label:       "PipeWire Role",
-					key:         "dsp.pipewire_role",
-					kind:        settingChoice,
-					choiceVals:  []string{"Music", "Production"},
-					choiceIdx:   0,
-					description: "PipeWire stream role — Production requests bypass of OS resampler",
 				},
 			},
 
@@ -283,7 +379,15 @@ func NewAudioSettingsModel() AudioSettingsModel {
 			// ── Format ──────────────────────────────────────────────────────────
 			// DSD conversion and dither — final output format stages.
 			tabFormat: {
-				audioHeader("DSD"),
+				audioHeader("DSD Native"),
+				{
+					label:       "DSD Mode",
+					key:         "dsp.dsd_mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"off", "dsd64", "dsd128", "dsd256", "dsd512"},
+					choiceIdx:   0,
+					description: "Native DSD output — off (PCM), dsd64 (2.8MHz), dsd128 (5.6MHz), dsd256 (11.2MHz), dsd512 (22.5MHz)",
+				},
 				{
 					label:       "DSD→PCM",
 					key:         "dsp.dsd_to_pcm_enabled",
@@ -292,20 +396,21 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					description: "Convert DSD bitstream input to PCM for DSP processing",
 				},
 				{
-					label:       "Output Mode",
-					key:         "dsp.output_mode",
-					kind:        settingChoice,
-					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
-					choiceIdx:   0,
-					description: "Output encoding format — pcm (standard), dsd (native bitstream), dsd_to_pcm",
-				},
-				{
 					label:       "DSD Rate",
 					key:         "dsp.dsd_output_rate",
 					kind:        settingChoice,
 					choiceVals:  []string{"88200", "176400", "352800", "705600"},
 					choiceIdx:   2,
 					description: "DSD to PCM output rate in Hz — higher = more bandwidth preserved",
+				},
+				audioHeader("Output Format"),
+				{
+					label:       "Output Mode",
+					key:         "dsp.output_mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
+					choiceIdx:   0,
+					description: "Output encoding format — pcm (standard), dsd (native bitstream), dsd_to_pcm",
 				},
 				audioHeader("Dither"),
 				{
@@ -331,12 +436,13 @@ func NewAudioSettingsModel() AudioSettingsModel {
 					description: "Output bit depth — dither noise floor is calibrated to this depth",
 				},
 				{
-					label:       "Noise Shaping",
-					key:         "dsp.dither_noise_shaping",
-					kind:        settingChoice,
-					choiceVals:  []string{"none", "lipshitz", "fweighted", "modified_e_weighted", "improved_e_weighted", "shibata", "low_shibata", "high_shibata", "gesemann"},
-					choiceIdx:   0,
-					description: "Noise shaping algorithm — pushes quantization noise to less audible frequencies",
+					label:         "Noise Shaping",
+					key:           "dsp.dither_noise_shaping",
+					kind:          settingChoice,
+					choiceVals:    []string{"none", "lipshitz", "fweighted", "modified_e_weighted", "improved_e_weighted", "shibata", "low_shibata", "high_shibata", "gesemann", "saw"},
+					choiceDisplay: []string{"None", "Lipshitz", "F-Weighted", "Modified E-Weighted", "Improved E-Weighted", "Shibata", "Low Shibata", "High Shibata", "Gesemann", "SAW (experimental)"},
+					choiceIdx:     0,
+					description:   "Noise shaping algorithm — pushes quantization noise to less audible frequencies",
 				},
 			},
 		},
@@ -344,12 +450,25 @@ func NewAudioSettingsModel() AudioSettingsModel {
 	return m
 }
 
-func (m AudioSettingsModel) Init() tea.Cmd { return nil }
+func (m AudioSettingsModel) Init() tea.Cmd {
+	if m.client != nil {
+		return func() tea.Msg {
+			m.client.ListDspProfiles()
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m AudioSettingsModel) SetClient(client *ipc.Client) AudioSettingsModel {
+	m.client = client
+	return m
+}
 
 func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	if m.editing {
 		switch msg := msg.(type) {
-		case tea.KeyMsg:
+		case tea.KeyPressMsg:
 			switch msg.String() {
 			case "enter":
 				item := m.getCurrentItem()
@@ -377,10 +496,19 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
-	case tea.KeyMsg:
+	case ipc.DspProfilesListedMsg:
+		m.customProfiles = msg.Profiles
+		m.profileLoaded = true
+		m.syncProfileDropdown()
+
+	case ipc.DspProfileLoadedMsg:
+		// Profile loaded successfully - Name contains the profile name
+		m.currentProfile = "Loaded: " + msg.Name
+		m.syncProfileDropdown()
+
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "left", "h":
 			if m.tab > 0 {
@@ -446,6 +574,58 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				item.adjust(-1)
 				return m, settingChangedCmd(item)
 			}
+		case "s":
+			// Profile save - persist current settings as a custom profile
+			if m.client != nil {
+				bare := stripProfilePrefix(m.currentProfile)
+				if strings.HasPrefix(m.currentProfile, "Saved: ") {
+					// Already saved - no action needed
+				} else if profileID, ok := profileIDs[bare]; ok {
+					m.client.SaveDspProfile(profileID)
+					m.currentProfile = "Saved: " + bare
+				} else {
+					// No matching profile - silently skip (custom profiles handled elsewhere)
+				}
+			}
+			return m, nil
+		case "L":
+			// Shift+L to cycle profiles - load selected profile from runtime.
+			// State (currentProfile + dropdown) is updated only in DspProfileLoadedMsg
+			// so the UI reflects a profile that is actually loaded, not just requested.
+			if m.client != nil {
+				profileIdx := 0
+				currentForLookup := stripProfilePrefix(m.currentProfile)
+				for i, p := range dspProfiles {
+					if currentForLookup == p {
+						profileIdx = i
+						break
+					}
+				}
+				profileIdx = (profileIdx + 1) % len(dspProfiles)
+				if profileID, ok := profileIDs[dspProfiles[profileIdx]]; ok {
+					m.client.LoadDspProfile(profileID)
+				}
+			}
+			return m, nil
+		case "D":
+			// Shift+D to clear profile - reset to first built-in
+			m.currentProfile = "Music: Default"
+			// Also reset the dropdown
+			if idx := findSettingIdx(m.settingItems[tabOutput], "dsp.profile"); idx >= 0 {
+				m.settingItems[tabOutput][idx].choiceIdx = 0
+			}
+			// Load the default profile on the runtime
+			if m.client != nil {
+				m.client.LoadDspProfile("music_default")
+			}
+			return m, nil
+		case "r", "R":
+			// 'r' or 'R' to refresh/load custom profiles from runtime
+			if m.client != nil {
+				m.client.ListDspProfiles()
+			}
+			// Note: m.profileLoaded is set in DspProfilesListedMsg handler
+			return m, nil
 		case "esc":
 			return m, screen.PopCmd()
 		}
@@ -551,7 +731,25 @@ func (m AudioSettingsModel) View() tea.View {
 			Render(desc) + "\n"
 	}
 
-	footer := hintBar("←→ tabs", "↑↓ navigate", "enter toggle", "+/- adjust", "esc back")
+	// Profile footer - persistent across all tabs
+	// Shows the current profile, custom profile count, and save/refresh shortcuts
+	profileStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	profileLabel := profileStyle.Render("Profile: ")
+	profileValue := profileStyle.Render(m.currentProfile)
 
-	return tea.NewView(header + "\n\n" + tabBar + "\n\n" + itemsPanel + "\n\n" + descLine + footer + "\n")
+	// Show custom profile count if any loaded
+	customHint := ""
+	if len(m.customProfiles) > 0 {
+		customHint = lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render(fmt.Sprintf(" (+%d custom)", len(m.customProfiles)))
+	}
+	saveHint := ""
+	if m.client != nil {
+		saveHint = lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render(" [S]ave | [R]efresh")
+	}
+
+	profileFooter := profileLabel + profileValue + customHint + saveHint
+
+	footer := hintBar("←→ tabs", "↑↓ navigate", "enter toggle", "+/- adjust", "L cycle | D reset", "esc back")
+
+	return tea.NewView(header + "\n\n" + tabBar + "\n\n" + itemsPanel + "\n\n" + descLine + profileFooter + "\n" + footer + "\n")
 }

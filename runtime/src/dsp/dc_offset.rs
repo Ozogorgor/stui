@@ -21,6 +21,12 @@ pub struct DcOffsetFilter {
 use std::f32::consts::PI;
 
 impl DcOffsetFilter {
+    /// Default cutoff frequency in Hz for DC offset removal.
+    /// Typical values: 5-20 Hz for DC removal, 80 Hz also removes rumble.
+    pub fn default_cutoff_hz() -> f32 {
+        10.0 // Standard for DC offset removal
+    }
+
     pub fn new(cutoff_hz: f32) -> Self {
         let mut f = Self {
             cutoff_hz,
@@ -75,6 +81,7 @@ impl DcOffsetFilter {
         out
     }
 
+    #[allow(dead_code)]
     pub fn process_mono(&mut self, samples: &[f32], sample_rate: u32) -> Vec<f32> {
         if sample_rate != self.sample_rate {
             self.recompute(sample_rate);
@@ -95,6 +102,12 @@ impl DcOffsetFilter {
     pub fn set_cutoff(&mut self, cutoff_hz: f32) {
         self.cutoff_hz = cutoff_hz;
         self.recompute(self.sample_rate);
+    }
+
+    /// Reset filter state to prevent audio artifacts at track boundaries.
+    pub fn reset(&mut self) {
+        self.z_l = 0.0;
+        self.z_r = 0.0;
     }
 
     pub fn cutoff(&self) -> f32 {

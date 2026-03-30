@@ -375,6 +375,12 @@ python3 plugins/torrentio-rpc/plugin.py
 
 ---
 
+## Acknowledgements
+
+- **[cliamp](https://github.com/bjarneo/cliamp)** by [bjarneo](https://github.com/bjarneo) — visualisation routines in `tui/internal/ui/components/vis_cliamp.go` are adapted from cliamp. Licensed under the MIT Licence.
+
+---
+
 ## Disclaimer
 
 stui does not host, store, or distribute any media.

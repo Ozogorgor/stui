@@ -43,6 +43,7 @@ type OpenPluginSettingsMsg struct{}
 // PluginSettingsScreen lets the user configure API keys for providers that
 // require them. Keys are sent to the runtime via SetConfig and persisted.
 type PluginSettingsScreen struct {
+	Dims
 	client    *ipc.Client
 	providers []ipc.ProviderSchema
 
@@ -61,8 +62,6 @@ type PluginSettingsScreen struct {
 	loading bool
 	status  string // transient feedback ("Saved!", "Error: ...")
 
-	width  int
-	height int
 
 	spinner components.Spinner
 }
@@ -95,8 +94,7 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
 	// ── Provider data arrived ──────────────────────────────────────────────
 	case ipc.ProviderSettingsResultMsg:

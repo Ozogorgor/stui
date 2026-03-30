@@ -121,6 +121,14 @@ pub enum Request {
     LoadConvolutionFilter(LoadConvolutionFilterRequest),
     /// Bind DSP to MPD audio output.
     BindDspToMpd,
+    /// List all saved DSP profiles.
+    ListDspProfiles,
+    /// Save the current DSP config as a named profile.
+    SaveDspProfile(SaveDspProfileRequest),
+    /// Load a named DSP profile.
+    LoadDspProfile(LoadDspProfileRequest),
+    /// Delete a named DSP profile.
+    DeleteDspProfile(DeleteDspProfileRequest),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -400,6 +408,22 @@ pub enum Response {
     DspBoundToMpd {
         success: bool,
         config: String,
+    },
+    /// Response to `ListDspProfiles`.
+    DspProfilesListed {
+        profiles: Vec<String>,
+    },
+    /// Response to `SaveDspProfile`.
+    DspProfileSaved {
+        success: bool,
+    },
+    /// Response to `LoadDspProfile`.
+    DspProfileLoaded {
+        success: bool,
+    },
+    /// Response to `DeleteDspProfile`.
+    DspProfileDeleted {
+        success: bool,
     },
 }
 
@@ -1079,6 +1103,21 @@ pub struct DspStatusResponse {
     pub convolution_enabled: bool,
     pub convolution_bypass: bool,
     pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveDspProfileRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoadDspProfileRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteDspProfileRequest {
+    pub name: String,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

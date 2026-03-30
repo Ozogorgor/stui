@@ -50,10 +50,9 @@ func (t MusicSubTab) String() string {
 
 // MusicScreen is the top-level container for all Music sub-tabs.
 type MusicScreen struct {
+	Dims
 	client *ipc.Client
 	active MusicSubTab
-	width  int
-	height int
 
 	browse    MusicBrowseScreen
 	queue     MusicQueueScreen
@@ -89,8 +88,7 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		s.width = m.Width
-		s.height = m.Height
+		s.setWindowSize(m)
 		// Fan out to all sub-screens.
 		var b1, b2, b3, b4 tea.Cmd
 		s.browse, b1 = s.browse.Update(m)
@@ -99,7 +97,7 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 		s.playlists, b4 = s.playlists.Update(m)
 		return s, tea.Batch(b1, b2, b3, b4)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch m.String() {
 		case "[":
 			s.active = (s.active + 3) % 4 // go left (wrap)

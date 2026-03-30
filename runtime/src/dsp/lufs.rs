@@ -95,11 +95,7 @@ impl KWeighting {
         let k = (PI * 38.135_470_876_024_44_f64 / fs).tan();
         let q = 0.500_327_037_323_877_3_f64;
         let a0 = 1.0 + k / q + k * k;
-        let s2_b = [
-            (1.0 / a0) as f32,
-            (-2.0 / a0) as f32,
-            (1.0 / a0) as f32,
-        ];
+        let s2_b = [(1.0 / a0) as f32, (-2.0 / a0) as f32, (1.0 / a0) as f32];
         let s2_a = [
             (2.0 * (k * k - 1.0) / a0) as f32,
             ((1.0 - k / q + k * k) / a0) as f32,
@@ -117,6 +113,7 @@ impl KWeighting {
         self.s2[ch].process(self.s1[ch].process(sample))
     }
 
+    #[allow(dead_code)]
     fn reset(&mut self) {
         for ch in 0..2 {
             self.s1[ch].reset();
@@ -127,6 +124,7 @@ impl KWeighting {
 
 // ─── LufsMeter ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct LufsMeter {
     /// Stereo-frame count per 400ms block.
     block_samples: usize,
@@ -183,10 +181,12 @@ impl LufsMeter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_target_lufs(&mut self, target: f32) {
         self.target_lufs = target.clamp(-70.0, 0.0);
     }
 
+    #[allow(dead_code)]
     pub fn set_channel_weights(&mut self, left: f32, right: f32) {
         self.channel_weights = [left, right];
     }
@@ -282,6 +282,7 @@ impl LufsMeter {
 
     /// Momentary loudness: mean-sq energy of the current 400ms sliding window.
     /// Returns `ABSOLUTE_GATE` (−70 LUFS) until the window is fully populated.
+    #[allow(dead_code)]
     pub fn momentary(&self) -> f32 {
         if self.sliding_buf.len() < self.block_samples {
             return ABSOLUTE_GATE;
@@ -291,22 +292,24 @@ impl LufsMeter {
 
     /// Short-term loudness: mean energy of the last 30 × 100ms non-overlapping hops
     /// (3s window). Returns `ABSOLUTE_GATE` when no hop data is available yet.
+    #[allow(dead_code)]
     pub fn short_term(&self) -> f32 {
         if self.short_term_energies.is_empty() {
             return ABSOLUTE_GATE;
         }
         energy_to_lufs(
-            self.short_term_energies.iter().sum::<f32>()
-                / self.short_term_energies.len() as f32,
+            self.short_term_energies.iter().sum::<f32>() / self.short_term_energies.len() as f32,
         )
     }
 
+    #[allow(dead_code)]
     pub fn integrated(&self) -> f32 {
         self.integrated_loudness
     }
 
     /// Sample-peak in dBFS. **Not** BS.1770-4 true-peak (which requires 4×
     /// oversampled interpolation); this is the maximum absolute sample value seen.
+    #[allow(dead_code)]
     pub fn true_peak_db(&self) -> f32 {
         if self.sample_peak > 0.0 {
             20.0 * self.sample_peak.log10()
@@ -319,6 +322,7 @@ impl LufsMeter {
         self.lufs_offset
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.sliding_buf.clear();
         self.hop_energy_acc = 0.0;
@@ -387,18 +391,22 @@ impl LufsNormalizer {
         samples
     }
 
+    #[allow(dead_code)]
     pub fn momentary(&self) -> f32 {
         self.meter.momentary()
     }
 
+    #[allow(dead_code)]
     pub fn short_term(&self) -> f32 {
         self.meter.short_term()
     }
 
+    #[allow(dead_code)]
     pub fn integrated(&self) -> f32 {
         self.meter.integrated()
     }
 
+    #[allow(dead_code)]
     pub fn true_peak_db(&self) -> f32 {
         self.meter.true_peak_db()
     }
@@ -407,6 +415,7 @@ impl LufsNormalizer {
         20.0 * self.current_gain.log10()
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.meter.reset();
         self.current_gain = 1.0;
@@ -541,7 +550,10 @@ mod tests {
         let mut meter = LufsMeter::new(sr);
 
         meter.process(&make_sine(1000.0, 2000, sr, 0.1));
-        assert!(meter.integrated() > ABSOLUTE_GATE, "must have loudness data before reset");
+        assert!(
+            meter.integrated() > ABSOLUTE_GATE,
+            "must have loudness data before reset"
+        );
 
         meter.reset();
 

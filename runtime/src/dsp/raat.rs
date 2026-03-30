@@ -9,6 +9,7 @@ use tracing::{debug, info};
 use super::config::DspConfig;
 
 /// RAAT endpoint information.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RaatEndpoint {
     pub name: String,
@@ -21,6 +22,7 @@ pub struct RaatEndpoint {
 }
 
 /// RAAT audio format.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RaatFormat {
     pub sample_rate: u32,
@@ -42,15 +44,21 @@ impl Default for RaatFormat {
 
 /// RAAT processor for streaming audio to Roon endpoints.
 #[allow(clippy::type_complexity)]
+#[allow(dead_code)]
 pub struct RaatProcessor {
+    #[allow(dead_code)]
     config: Arc<RwLock<DspConfig>>,
+    #[allow(dead_code)]
     endpoint: Option<RaatEndpoint>,
+    #[allow(dead_code)]
     active: bool,
+    #[allow(dead_code)]
     format: RaatFormat,
 }
 
 impl RaatProcessor {
     /// Create a new RAAT processor.
+    #[allow(dead_code)]
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let sample_rate = config.blocking_read().output_sample_rate;
 
@@ -68,6 +76,7 @@ impl RaatProcessor {
     }
 
     /// Discover available Roon endpoints.
+    #[allow(dead_code)]
     pub async fn discover_endpoints(&self) -> Result<Vec<RaatEndpoint>, String> {
         // In production, this would use RAAT discovery protocol
         // For now, return empty list - would require Roon server integration
@@ -77,6 +86,7 @@ impl RaatProcessor {
     }
 
     /// Connect to a Roon endpoint.
+    #[allow(dead_code)]
     pub async fn connect(&mut self, endpoint: RaatEndpoint) -> Result<(), String> {
         if self.active {
             return Err("Already connected".to_string());
@@ -149,6 +159,7 @@ impl RaatProcessor {
 }
 
 /// RAAT protocol encoding types.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RaatEncoding {
     PCM,
@@ -157,6 +168,7 @@ pub enum RaatEncoding {
 }
 
 impl RaatEncoding {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         match self {
             Self::PCM => "PCM",
@@ -167,6 +179,7 @@ impl RaatEncoding {
 }
 
 /// Roon/RAAT integration status.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Default)]
 pub enum RaatStatus {

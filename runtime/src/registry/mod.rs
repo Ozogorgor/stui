@@ -100,6 +100,7 @@ pub async fn fetch_index(repo_url: &str) -> Result<Vec<RegistryEntry>> {
 ///
 /// Entries from repos listed first take precedence when plugin names collide
 /// (the first occurrence wins).  The returned Vec is stable-sorted by name.
+#[allow(dead_code)]
 pub async fn fetch_merged_index(repos: &[String]) -> Vec<RegistryEntry> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut all: Vec<RegistryEntry> = Vec::new();

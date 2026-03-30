@@ -3119,6 +3119,7 @@ dependencies = [
  "lru",
  "nix 0.29.0",
  "notify",
+ "percent-encoding",
  "pipewire",
  "proptest",
  "reqwest",

@@ -96,7 +96,7 @@ func (c *Client) readLoop() {
 		}
 		if err := json.Unmarshal(line, &env); err != nil {
 			logger.Warn("failed to parse response envelope", "error", err)
-			c.program.Send(StatusMsg{Text: fmt.Sprintf("ipc: bad response: %v", err)})
+			c.send(StatusMsg{Text: fmt.Sprintf("ipc: bad response: %v", err)})
 			continue
 		}
 
@@ -136,7 +136,7 @@ func (c *Client) readLoop() {
 
 	if err := c.stdout.Err(); err != nil && c.ctx.Err() == nil {
 		logger.Error("runtime stdout closed unexpectedly", "error", err)
-		c.program.Send(RuntimeErrorMsg{Err: fmt.Errorf("ipc: runtime stdout closed: %w", err)})
+		c.send(RuntimeErrorMsg{Err: fmt.Errorf("ipc: runtime stdout closed: %w", err)})
 	}
 	logger.Info("read loop terminated")
 
@@ -165,147 +165,147 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse grid_update", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "plugin_toast":
 		var msg PluginToastMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse plugin_toast", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "theme_update":
 		var msg ThemeUpdateMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse theme_update", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_started":
 		var msg PlayerStartedMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_started", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_progress":
 		var msg PlayerProgressMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_progress", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_ended":
 		var msg PlayerEndedMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_ended", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_terminal_takeover":
 		var msg PlayerTerminalTakeoverMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_terminal_takeover", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_tracks_updated":
 		var msg PlayerTracksUpdatedMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_tracks_updated", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "download_started":
 		var msg DownloadStartedMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse download_started", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "download_progress":
 		var msg DownloadProgressMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse download_progress", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "download_complete":
 		var msg DownloadCompleteMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse download_complete", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "download_error":
 		var msg DownloadErrorMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse download_error", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_buffering":
 		var msg PlayerBufferingMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_buffering", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "player_buffer_ready":
 		var msg PlayerBufferReadyMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse player_buffer_ready", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "queue_update":
 		var msg QueueUpdateMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse queue_update", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "catalog_loaded":
 		var msg CatalogLoadedMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse catalog_loaded", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "skip_segment":
 		var msg SkipSegmentMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse skip_segment", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "mpd_status":
 		var msg MpdStatusMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse mpd_status", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "mpd_outputs_result":
 		var msg MpdOutputsResultMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse mpd_outputs_result", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "dsp_status":
 		var msg DspStatusMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse dsp_status", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	case "dsp_bound_to_mpd":
 		var msg DspBoundToMpdMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
 			c.logger.Warn("failed to parse dsp_bound_to_mpd", "error", err)
 		} else {
-			c.program.Send(msg)
+			c.send(msg)
 		}
 	}
 }

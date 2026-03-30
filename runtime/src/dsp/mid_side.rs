@@ -14,8 +14,12 @@
 /// Process audio from L/R to Mid/Side representation.
 ///
 /// Input must be interleaved stereo: [L0, R0, L1, R1, ...]
+#[allow(dead_code)] // Used by MidSideProcessor internally
 pub fn encode(samples: &[f32]) -> Vec<f32> {
-    debug_assert!(samples.len() % 2 == 0, "encode: input must be interleaved stereo");
+    debug_assert!(
+        samples.len() % 2 == 0,
+        "encode: input must be interleaved stereo"
+    );
     let mut output = Vec::with_capacity(samples.len());
     for frame in samples.chunks_exact(2) {
         output.push((frame[0] + frame[1]) * 0.5); // Mid = (L + R) / 2
@@ -27,8 +31,12 @@ pub fn encode(samples: &[f32]) -> Vec<f32> {
 /// Process audio from Mid/Side back to L/R representation.
 ///
 /// Input must be interleaved M/S: [M0, S0, M1, S1, ...]
+#[allow(dead_code)] // Used by MidSideProcessor internally
 pub fn decode(samples: &[f32]) -> Vec<f32> {
-    debug_assert!(samples.len() % 2 == 0, "decode: input must be interleaved M/S");
+    debug_assert!(
+        samples.len() % 2 == 0,
+        "decode: input must be interleaved M/S"
+    );
     let mut output = Vec::with_capacity(samples.len());
     for frame in samples.chunks_exact(2) {
         output.push(frame[0] + frame[1]); // L = Mid + Side
@@ -42,11 +50,15 @@ pub fn decode(samples: &[f32]) -> Vec<f32> {
 /// - `width = 1.0`: unchanged
 /// - `width > 1.0`: wider stereo image
 /// - `width < 1.0`: narrower (0.0 = mono)
+#[allow(dead_code)] // Available for future use
 pub fn apply_width(samples: &[f32], width: f32) -> Vec<f32> {
-    debug_assert!(samples.len() % 2 == 0, "apply_width: input must be interleaved stereo");
+    debug_assert!(
+        samples.len() % 2 == 0,
+        "apply_width: input must be interleaved stereo"
+    );
     let mut output = Vec::with_capacity(samples.len());
     for frame in samples.chunks_exact(2) {
-        let mid  = (frame[0] + frame[1]) * 0.5;
+        let mid = (frame[0] + frame[1]) * 0.5;
         let side = (frame[0] - frame[1]) * 0.5 * width;
         output.push(mid + side);
         output.push(mid - side);
@@ -55,6 +67,7 @@ pub fn apply_width(samples: &[f32], width: f32) -> Vec<f32> {
 }
 
 /// M/S processor with configurable width and independent mid/side gains.
+#[allow(dead_code)]
 pub struct MidSideProcessor {
     width: f32,
     mid_gain: f32,
@@ -62,6 +75,7 @@ pub struct MidSideProcessor {
     enabled: bool,
 }
 
+#[allow(dead_code)] // MidSideProcessor for future use
 impl MidSideProcessor {
     /// Create a new M/S processor with default settings.
     pub fn new() -> Self {
@@ -74,15 +88,16 @@ impl MidSideProcessor {
     }
 
     /// Process stereo samples through the M/S chain in a single pass.
-    ///
-    /// Encodes to M/S, applies mid gain, side gain, and width, then decodes
-    /// back to L/R — all without intermediate allocations.
+    #[allow(dead_code)]
     pub fn process(&mut self, samples: &[f32]) -> Vec<f32> {
         if !self.enabled {
             return samples.to_vec();
         }
 
-        debug_assert!(samples.len() % 2 == 0, "process: input must be interleaved stereo");
+        debug_assert!(
+            samples.len() % 2 == 0,
+            "process: input must be interleaved stereo"
+        );
 
         // Fold width and side_gain into a single effective side multiplier so
         // the side channel is only scaled once.
@@ -96,7 +111,7 @@ impl MidSideProcessor {
             let r = frame[1];
 
             // Encode, apply gains, decode — single pass, no intermediate Vec.
-            let mid  = (l + r) * 0.5 * mid_gain;
+            let mid = (l + r) * 0.5 * mid_gain;
             let side = (l - r) * 0.5 * effective_side;
 
             output.push(mid + side); // L = Mid + Side
@@ -235,8 +250,16 @@ mod tests {
         let input = vec![1.0, -1.0];
         let output = proc.process(&input);
         // effective_side = 2.0 * 0.5 = 1.0 → no change
-        assert!((output[0] - 1.0).abs() < 1e-6, "L should be unchanged, got {}", output[0]);
-        assert!((output[1] - (-1.0)).abs() < 1e-6, "R should be unchanged, got {}", output[1]);
+        assert!(
+            (output[0] - 1.0).abs() < 1e-6,
+            "L should be unchanged, got {}",
+            output[0]
+        );
+        assert!(
+            (output[1] - (-1.0)).abs() < 1e-6,
+            "R should be unchanged, got {}",
+            output[1]
+        );
     }
 
     #[test]
@@ -258,16 +281,23 @@ mod tests {
         let mut proc = MidSideProcessor::new();
         proc.set_enabled(true);
 
-        let input: Vec<f32> = (0..64).flat_map(|i| {
-            let l = (i as f32 * 0.1).sin() * 0.5;
-            let r = (i as f32 * 0.07).cos() * 0.3;
-            [l, r]
-        }).collect();
+        let input: Vec<f32> = (0..64)
+            .flat_map(|i| {
+                let l = (i as f32 * 0.1).sin() * 0.5;
+                let r = (i as f32 * 0.07).cos() * 0.3;
+                [l, r]
+            })
+            .collect();
 
         let output = proc.process(&input);
 
         for (a, b) in input.iter().zip(output.iter()) {
-            assert!((a - b).abs() < 1e-6, "unity should be identity: {} != {}", a, b);
+            assert!(
+                (a - b).abs() < 1e-6,
+                "unity should be identity: {} != {}",
+                a,
+                b
+            );
         }
     }
 }

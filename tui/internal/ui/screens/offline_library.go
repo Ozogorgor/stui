@@ -50,13 +50,12 @@ var offlineTabs = []string{"movies", "series", "library"}
 
 // OfflineLibraryScreen shows the locally cached catalog.
 type OfflineLibraryScreen struct {
+	Dims
 	cache     mediacache.StoreInterface
 	tabs      []string           // tabs that have cached data
 	activeTab int                // index into tabs
 	entries   []ipc.CatalogEntry // entries for the current tab
 	cursor    int
-	width     int
-	height    int
 }
 
 // NewOfflineLibraryScreen creates the screen, pre-selecting the first tab
@@ -107,10 +106,9 @@ func (m OfflineLibraryScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.setWindowSize(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
