@@ -72,6 +72,11 @@ pipewire          = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs
 crossbeam-channel = "0.5"
 nix               = "0.29"
 bytemuck          = "1"
+rustls            = "0.23"
+tokio-rustls      = "0.26"
+rcgen             = "0.13"
+mdns-sd           = "0.12"
+tokio-tungstenite = "0.26"
 
 # WASM host — only compiled in with --features wasm-host
 wasmtime      = { version = "22", optional = true, features = ["async", "cranelift"] }

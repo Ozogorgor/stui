@@ -426,6 +426,81 @@ mod inner_impl {
                 }
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
+            // ── stui_exec(cmd_json_ptr, cmd_json_len, timeout_ms) -> i64 ───────────
+            // cmd_json: {"cmd":"yt-dlp","args":["--flat-playlist","-j"],"timeout_ms":30000}
+            // Returns: {"status":0,"stdout":"...","stderr":"..."}
+            linker.func_wrap_async("stui", "stui_exec",
+                |mut caller: Caller<HostState>, (ptr, len, timeout_ms_raw): (i32, i32, i32)| {
+                    Box::new(async move {
+                        let json_str = match read_str_from_memory(&mut caller, ptr, len) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let resp = format!(r#"{{"status":-1,"stdout":"","stderr":"read error: {e}"}}"#);
+                                return write_bytes_to_memory(&mut caller, resp.as_bytes()).await;
+                            }
+                        };
+
+                        let val: serde_json::Value = match serde_json::from_str(&json_str) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let resp = format!(r#"{{"status":-1,"stdout":"","stderr":"parse error: {e}"}}"#);
+                                return write_bytes_to_memory(&mut caller, resp.as_bytes()).await;
+                            }
+                        };
+
+                        let cmd = match val["cmd"].as_str() {
+                            Some(s) if !s.is_empty() => s.to_string(),
+                            _ => {
+                                let resp = r#"{"status":-1,"stdout":"","stderr":"missing cmd"}"#.to_string();
+                                return write_bytes_to_memory(&mut caller, resp.as_bytes()).await;
+                            }
+                        };
+
+                        let args: Vec<String> = val["args"]
+                            .as_array()
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+
+                        // Clamp timeout to [1000, 60000] ms
+                        let timeout_ms = (timeout_ms_raw.clamp(1_000, 60_000)) as u64;
+                        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+                        let (tx, rx) = std::sync::mpsc::channel();
+
+                        std::thread::spawn(move || {
+                            let result = std::process::Command::new(cmd)
+                                .args(&args)
+                                .output();
+                            let _ = tx.send(result);
+                        });
+
+                        let output = match rx.recv_timeout(timeout) {
+                            Ok(Ok(out)) => out,
+                            Ok(Err(e)) => {
+                                let resp = format!(r#"{{"status":-1,"stdout":"","stderr":"exec error: {e}"}}"#);
+                                return write_bytes_to_memory(&mut caller, resp.as_bytes()).await;
+                            }
+                            Err(_) => {
+                                let resp = format!(r#"{{"status":-1,"stdout":"","stderr":"timeout after {}ms"}}"#, timeout_ms);
+                                return write_bytes_to_memory(&mut caller, resp.as_bytes()).await;
+                            }
+                        };
+
+                        let status = output.status.code().unwrap_or(-1);
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+                        let resp = serde_json::json!({
+                            "status": status,
+                            "stdout": stdout,
+                            "stderr": stderr
+                        }).to_string();
+
+                        write_bytes_to_memory(&mut caller, resp.as_bytes()).await
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
             let instance = linker.instantiate_async(&mut store, &module).await
                 .map_err(|e| AbiError::Execution(format!("instantiate: {e}")))?;
 

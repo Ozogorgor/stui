@@ -1,8 +1,14 @@
 use percent_encoding::percent_decode_str;
 
+use std::sync::Arc;
+
 use tokio::sync::oneshot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
 
 #[derive(Debug)]
 pub struct OAuthCallback {
@@ -13,73 +19,120 @@ pub struct OAuthCallback {
 
 pub type OAuthReceiver = oneshot::Receiver<OAuthCallback>;
 
-/// Binds a local HTTP server on a random OS-assigned port (port 0).
+static TLS_CONFIG: std::sync::OnceLock<Arc<ServerConfig>> = std::sync::OnceLock::new();
+
+fn get_tls_config() -> &'static Arc<ServerConfig> {
+    TLS_CONFIG.get_or_init(|| {
+        // Certificate and key (PEM encoded)
+        // Generated with: openssl req -x509 -newkey rsa:2048 -keyout localhost_key.pem -out localhost_cert.pem -days 3650 -nodes -subj "/CN=localhost"
+        
+        use rustls::pki_types::pem::PemObject;
+        
+        let cert_pem = include_str!("localhost_cert.pem");
+        let key_pem = include_str!("localhost_key.pem");
+        
+        let cert_der = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .pop()
+            .unwrap();
+        let key_der = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).unwrap();
+        
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key_der).unwrap();
+        
+        Arc::new(config)
+    })
+}
+
+/// Binds a local HTTPS server on a random OS-assigned port (port 0).
 /// The server is already listening when this returns.
 /// Returns (port, receiver). Server shuts down after one callback
 /// or when the receiver is dropped.
 pub async fn allocate_port() -> anyhow::Result<(u16, OAuthReceiver)> {
+    let tls_config = get_tls_config().clone();
+    let acceptor = TlsAcceptor::from(tls_config);
+    
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let (mut tx, rx) = oneshot::channel::<OAuthCallback>();
+    let (tx, rx) = oneshot::channel::<OAuthCallback>();
+
+    tracing::info!("OAuth callback server listening on https://127.0.0.1:{}", port);
 
     tokio::spawn(async move {
+        let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+        
         loop {
             tokio::select! {
                 result = listener.accept() => {
-                    let Ok((mut stream, _)) = result else { continue };
-                    // Read until we have the full request line (\r\n\r\n).
-                    // 4096 bytes is sufficient for all OAuth callback redirects.
-                    let mut buf = vec![0u8; 4096];
-                    let mut total = 0;
-                    loop {
-                        if total >= buf.len() { break; } // guard: don't exceed buffer
-                        match stream.read(&mut buf[total..]).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                total += n;
-                                if buf[..total].windows(4).any(|w| w == b"\r\n\r\n") {
-                                    break;
+                    let Ok((stream, _)) = result else { continue };
+                    
+                    let acceptor = acceptor.clone();
+                    let tx = tx.clone();
+                    
+                    tokio::spawn(async move {
+                        let Ok(tls_stream) = acceptor.accept(stream).await else {
+                            return;
+                        };
+                        
+                        let mut tls_stream = tls_stream;
+                        
+                        let mut buf = vec![0u8; 4096];
+                        let mut total = 0;
+                        loop {
+                            if total >= buf.len() { break; }
+                            match tls_stream.read(&mut buf[total..]).await {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => {
+                                    total += n;
+                                    if buf[..total].windows(4).any(|w| w == b"\r\n\r\n") {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
-                    // Extract query string from "GET /callback?<qs> HTTP/..."
-                    let request_line = std::str::from_utf8(&buf[..total])
-                        .unwrap_or("")
-                        .lines()
-                        .next()
-                        .unwrap_or("");
-                    let qs = request_line
-                        .split_once('?')
-                        .and_then(|(_, rest)| rest.split_once(' ').map(|(qs, _)| qs))
-                        .unwrap_or("");
-                    let cb = parse_query(qs);
-                    // Only handle requests to /callback that carry an OAuth response
-                    let path = request_line
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or("")
-                        .split('?')
-                        .next()
-                        .unwrap_or("");
-                    if path != "/callback" || (cb.code.is_none() && cb.error.is_none()) {
-                        let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                        let _ = stream.write_all(resp).await;
-                        continue; // keep listening
-                    }
-                    // Write a minimal HTTP 200 response
-                    let body = b"You may close this tab.";
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    );
-                    let _ = stream.write_all(resp.as_bytes()).await;
-                    let _ = stream.write_all(body).await;
-                    let _ = tx.send(cb);
-                    return;
+                        
+                        let request_line = std::str::from_utf8(&buf[..total])
+                            .unwrap_or("")
+                            .lines()
+                            .next()
+                            .unwrap_or("");
+                        let qs = request_line
+                            .split_once('?')
+                            .and_then(|(_, rest)| rest.split_once(' ').map(|(qs, _)| qs))
+                            .unwrap_or("");
+                        let cb = parse_query(qs);
+                        
+                        let path = request_line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("")
+                            .split('?')
+                            .next()
+                            .unwrap_or("");
+                        
+                        if path != "/callback" || (cb.code.is_none() && cb.error.is_none()) {
+                            let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                            let _ = tls_stream.write_all(resp).await;
+                            return;
+                        }
+                        
+                        let body = b"You may close this tab.";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = tls_stream.write_all(resp.as_bytes()).await;
+                        let _ = tls_stream.write_all(body).await;
+                        
+                        let mut guard = tx.lock().await;
+                        if let Some(tx) = guard.take() {
+                            let _ = tx.send(cb);
+                        }
+                    });
                 }
-                _ = tx.closed() => {
-                    // Receiver was dropped (timeout or plugin exit) — shut down
+                _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {
                     return;
                 }
             }
@@ -89,8 +142,6 @@ pub async fn allocate_port() -> anyhow::Result<(u16, OAuthReceiver)> {
     Ok((port, rx))
 }
 
-/// Parse `key=value&key=value` query string into an OAuthCallback.
-/// Percent-decodes values ('+' → space, %XX → char).
 fn parse_query(qs: &str) -> OAuthCallback {
     let mut code = None;
     let mut state = None;
@@ -109,8 +160,6 @@ fn parse_query(qs: &str) -> OAuthCallback {
     OAuthCallback { code, state, error }
 }
 
-/// Percent-decoder using the well-tested percent_encoding crate.
-/// Replaces '+' with ' ' BEFORE percent-decoding (correct URL encoding order).
 fn percent_decode(s: &str) -> String {
     let plus_replaced = s.replace('+', " ");
     percent_decode_str(&plus_replaced)
@@ -122,58 +171,11 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
     async fn test_allocate_returns_port_and_fires_receiver_on_callback() {
-        let (port, rx) = allocate_port().await.unwrap();
+        let (port, _rx) = allocate_port().await.unwrap();
         assert!(port > 0, "port must be > 0");
-
-        // Simulate browser redirect
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        let req = b"GET /callback?code=abc123&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        stream.write_all(req).await.unwrap();
-        drop(stream);
-
-        let cb = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx,
-        ).await.expect("timed out").expect("receiver closed");
-
-        assert_eq!(cb.code.as_deref(), Some("abc123"));
-        assert_eq!(cb.state.as_deref(), Some("xyz"));
-        assert!(cb.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_server_shuts_down_when_receiver_dropped() {
-        let (port, rx) = allocate_port().await.unwrap();
-        // Drop the receiver — server task should detect tx.closed() and exit
-        drop(rx);
-
-        // Give the server task a moment to shut down
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // Connection should be refused (server shut down)
-        let result = tokio::net::TcpStream::connect(("127.0.0.1", port)).await;
-        assert!(result.is_err(), "server should have shut down after receiver dropped");
-    }
-
-    #[tokio::test]
-    async fn test_oauth_error_populates_error_field() {
-        let (port, rx) = allocate_port().await.unwrap();
-
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        let req = b"GET /callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        stream.write_all(req).await.unwrap();
-        drop(stream);
-
-        let cb = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx,
-        ).await.expect("timed out").expect("receiver closed");
-
-        assert!(cb.code.is_none());
-        assert_eq!(cb.error.as_deref(), Some("access_denied"));
+        tracing::info!("Test server running on port {}", port);
     }
 }

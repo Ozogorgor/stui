@@ -105,9 +105,14 @@ pub enum PluginResult<T> {
 }
 
 impl<T> PluginResult<T> {
-    pub fn ok(value: T) -> Self { Self::Ok(value) }
+    pub fn ok(value: T) -> Self {
+        Self::Ok(value)
+    }
     pub fn err(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::Err(PluginError { code: code.into(), message: message.into() })
+        Self::Err(PluginError {
+            code: code.into(),
+            message: message.into(),
+        })
     }
 }
 
@@ -127,9 +132,9 @@ impl PluginType {
             Self::Provider => "provider",
             Self::Resolver => "resolver",
             Self::Metadata => "metadata",
-            Self::Auth     => "auth",
+            Self::Auth => "auth",
             Self::Subtitle => "subtitle",
-            Self::Indexer  => "indexer",
+            Self::Indexer => "indexer",
         }
     }
 }
@@ -161,12 +166,10 @@ extern "C" {
     pub fn stui_log(level: i32, ptr: *const u8, len: i32);
     pub fn stui_http_get(url_ptr: *const u8, url_len: i32) -> i64;
     pub fn stui_cache_get(key_ptr: *const u8, key_len: i32) -> i64;
-    pub fn stui_cache_set(
-        key_ptr: *const u8, key_len: i32,
-        val_ptr: *const u8, val_len: i32,
-    );
+    pub fn stui_cache_set(key_ptr: *const u8, key_len: i32, val_ptr: *const u8, val_len: i32);
     pub fn stui_auth_allocate_port() -> i32;
     pub fn stui_auth_open_and_wait(url_ptr: *const u8, url_len: i32, timeout_ms: i32) -> i64;
+    pub fn stui_exec(cmd_ptr: *const u8, cmd_len: i32, timeout_ms: i32) -> i64;
 }
 
 /// Log a message at the given level through the host logger.
@@ -182,10 +185,14 @@ pub fn host_log(level: i32, msg: &str) {
 }
 
 /// Convenience macros for logging from plugins.
-#[macro_export] macro_rules! plugin_info  { ($($t:tt)*) => { $crate::host_log(2, &format!($($t)*)) }; }
-#[macro_export] macro_rules! plugin_warn  { ($($t:tt)*) => { $crate::host_log(3, &format!($($t)*)) }; }
-#[macro_export] macro_rules! plugin_error { ($($t:tt)*) => { $crate::host_log(4, &format!($($t)*)) }; }
-#[macro_export] macro_rules! plugin_debug { ($($t:tt)*) => { $crate::host_log(1, &format!($($t)*)) }; }
+#[macro_export]
+macro_rules! plugin_info  { ($($t:tt)*) => { $crate::host_log(2, &format!($($t)*)) }; }
+#[macro_export]
+macro_rules! plugin_warn  { ($($t:tt)*) => { $crate::host_log(3, &format!($($t)*)) }; }
+#[macro_export]
+macro_rules! plugin_error { ($($t:tt)*) => { $crate::host_log(4, &format!($($t)*)) }; }
+#[macro_export]
+macro_rules! plugin_debug { ($($t:tt)*) => { $crate::host_log(1, &format!($($t)*)) }; }
 
 /// Make an HTTP GET request through the sandboxed host.
 /// Returns the response body as a String, or an error message.
@@ -193,13 +200,14 @@ pub fn http_get(url: &str) -> Result<String, String> {
     #[cfg(target_arch = "wasm32")]
     {
         let packed = unsafe { stui_http_get(url.as_ptr(), url.len() as i32) };
-        if packed == 0 { return Err("http_get returned null".into()); }
+        if packed == 0 {
+            return Err("http_get returned null".into());
+        }
         let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
         let len = (packed & 0xFFFFFFFF) as usize;
         let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
             .map_err(|e| e.to_string())?;
-        let resp: crate::HttpResponse = serde_json::from_str(json)
-            .map_err(|e| e.to_string())?;
+        let resp: crate::HttpResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
         if resp.status >= 200 && resp.status < 300 {
             Ok(resp.body)
         } else {
@@ -208,7 +216,9 @@ pub fn http_get(url: &str) -> Result<String, String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Err(format!("http_get only available in WASM context (url: {url})"))
+        Err(format!(
+            "http_get only available in WASM context (url: {url})"
+        ))
     }
 }
 
@@ -239,13 +249,14 @@ pub fn http_post_json(url: &str, body: &str) -> Result<String, String> {
             fn stui_http_post(ptr: *const u8, len: i32) -> i64;
         }
         let packed = unsafe { stui_http_post(payload.as_ptr(), payload.len() as i32) };
-        if packed == 0 { return Err("http_post returned null".into()); }
+        if packed == 0 {
+            return Err("http_post returned null".into());
+        }
         let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
         let len = (packed & 0xFFFFFFFF) as usize;
         let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
             .map_err(|e| e.to_string())?;
-        let resp: HttpResponse = serde_json::from_str(json)
-            .map_err(|e| e.to_string())?;
+        let resp: HttpResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
         if resp.status >= 200 && resp.status < 300 {
             Ok(resp.body)
         } else {
@@ -255,7 +266,9 @@ pub fn http_post_json(url: &str, body: &str) -> Result<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = payload;
-        Err(format!("http_post only available in WASM context (url: {url})"))
+        Err(format!(
+            "http_post only available in WASM context (url: {url})"
+        ))
     }
 }
 
@@ -265,7 +278,9 @@ pub fn cache_get(key: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
         let packed = unsafe { stui_cache_get(key.as_ptr(), key.len() as i32) };
-        if packed == 0 { return None; }
+        if packed == 0 {
+            return None;
+        }
         let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
         let len = (packed & 0xFFFFFFFF) as usize;
         let s = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }.ok()?;
@@ -284,13 +299,18 @@ pub fn cache_set(key: &str, value: &str) {
     #[cfg(target_arch = "wasm32")]
     unsafe {
         stui_cache_set(
-            key.as_ptr(), key.len() as i32,
-            value.as_ptr(), value.len() as i32,
+            key.as_ptr(),
+            key.len() as i32,
+            value.as_ptr(),
+            value.len() as i32,
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        eprintln!("[stui-plugin cache_set] key={key} value_len={}", value.len());
+        eprintln!(
+            "[stui-plugin cache_set] key={key} value_len={}",
+            value.len()
+        );
     }
 }
 
@@ -310,8 +330,8 @@ pub struct OAuthCallback {
 /// `error: Some(other)` → `Err("denied: <other>")`.
 /// Both absent (malformed) → `Err("timed_out")` as safe fallback.
 pub fn parse_auth_json(json: &str) -> Result<OAuthCallback, String> {
-    let val: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("timed_out (parse error: {e})"))?;
+    let val: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("timed_out (parse error: {e})"))?;
     if let Some(code) = val["code"].as_str().filter(|s| !s.is_empty()) {
         return Ok(OAuthCallback {
             code: code.to_string(),
@@ -319,13 +339,13 @@ pub fn parse_auth_json(json: &str) -> Result<OAuthCallback, String> {
         });
     }
     match val["error"].as_str() {
-        Some("timed_out")  => Err("timed_out".into()),
+        Some("timed_out") => Err("timed_out".into()),
         Some("denied") => {
             let msg = val["message"].as_str().unwrap_or("unknown");
             Err(format!("denied: {msg}"))
         }
         Some(e) => Err(format!("denied: {e}")),
-        None    => Err("timed_out".into()),
+        None => Err("timed_out".into()),
     }
 }
 
@@ -348,9 +368,7 @@ pub fn auth_open_and_wait(url: &str, timeout_ms: u32) -> Result<OAuthCallback, S
     #[cfg(target_arch = "wasm32")]
     {
         let t_ms = timeout_ms.min(i32::MAX as u32) as i32;
-        let packed = unsafe {
-            stui_auth_open_and_wait(url.as_ptr(), url.len() as i32, t_ms)
-        };
+        let packed = unsafe { stui_auth_open_and_wait(url.as_ptr(), url.len() as i32, t_ms) };
         if packed == 0 {
             return Err("timed_out".into());
         }
@@ -380,13 +398,14 @@ pub fn http_post_form(url: &str, body: &str) -> Result<String, String> {
             fn stui_http_post(ptr: *const u8, len: i32) -> i64;
         }
         let packed = unsafe { stui_http_post(payload.as_ptr(), payload.len() as i32) };
-        if packed == 0 { return Err("http_post_form returned null".into()); }
+        if packed == 0 {
+            return Err("http_post_form returned null".into());
+        }
         let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
         let len = (packed & 0xFFFFFFFF) as usize;
         let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
             .map_err(|e| e.to_string())?;
-        let resp: HttpResponse = serde_json::from_str(json)
-            .map_err(|e| e.to_string())?;
+        let resp: HttpResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
         if resp.status >= 200 && resp.status < 300 {
             Ok(resp.body)
         } else {
@@ -396,8 +415,61 @@ pub fn http_post_form(url: &str, body: &str) -> Result<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = payload;
-        Err(format!("http_post_form only available in WASM context (url: {url})"))
+        Err(format!(
+            "http_post_form only available in WASM context (url: {url})"
+        ))
     }
+}
+
+/// Execute an external command and return its stdout.
+///
+/// The `cmd` should be a JSON object with the command and arguments:
+/// ```json
+/// {"cmd": "yt-dlp", "args": ["--flat-playlist", "-j", "https://soundcloud.com/search?q=test"]}
+/// ```
+///
+/// Returns stdout on success, or an error message on failure.
+/// Timeout is in milliseconds.
+pub fn exec(cmd: &str, args: &[&str], timeout_ms: u32) -> Result<String, String> {
+    let payload = format!(
+        "{{\"cmd\":{},\"args\":{},\"timeout_ms\":{}}}",
+        serde_json::to_string(cmd).unwrap_or_default(),
+        serde_json::to_string(&args).unwrap_or_default(),
+        timeout_ms
+    );
+    #[cfg(target_arch = "wasm32")]
+    {
+        extern "C" {
+            fn stui_exec(ptr: *const u8, len: i32, timeout_ms: i32) -> i64;
+        }
+        let packed =
+            unsafe { stui_exec(payload.as_ptr(), payload.len() as i32, timeout_ms as i32) };
+        if packed == 0 {
+            return Err("stui_exec returned null".into());
+        }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| e.to_string())?;
+        let resp: ExecResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        if resp.status == 0 {
+            Ok(resp.stdout)
+        } else {
+            Err(resp.stderr)
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (cmd, args, timeout_ms);
+        Err("exec only available in WASM context".into())
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ExecResponse {
+    status: i32,
+    stdout: String,
+    stderr: String,
 }
 
 // ── ABI glue macro ────────────────────────────────────────────────────────────
@@ -451,14 +523,17 @@ macro_rules! stui_export_plugin {
         /// Search entry point. Input: SearchRequest JSON. Output: packed (ptr<<32)|len.
         #[no_mangle]
         pub extern "C" fn stui_search(ptr: i32, len: i32) -> i64 {
-            let input = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, len as usize)
-            };
+            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
             let req: $crate::SearchRequest = match serde_json::from_slice(input) {
                 Ok(r) => r,
-                Err(e) => return $crate::__write_result(
-                    &$crate::PluginResult::<$crate::SearchResponse>::err("PARSE_ERROR", e.to_string())
-                ),
+                Err(e) => {
+                    return $crate::__write_result(
+                        &$crate::PluginResult::<$crate::SearchResponse>::err(
+                            "PARSE_ERROR",
+                            e.to_string(),
+                        ),
+                    )
+                }
             };
             let result = get_plugin().search(req);
             $crate::__write_result(&result)
@@ -467,14 +542,17 @@ macro_rules! stui_export_plugin {
         /// Resolve entry point. Input: ResolveRequest JSON. Output: packed (ptr<<32)|len.
         #[no_mangle]
         pub extern "C" fn stui_resolve(ptr: i32, len: i32) -> i64 {
-            let input = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, len as usize)
-            };
+            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
             let req: $crate::ResolveRequest = match serde_json::from_slice(input) {
                 Ok(r) => r,
-                Err(e) => return $crate::__write_result(
-                    &$crate::PluginResult::<$crate::ResolveResponse>::err("PARSE_ERROR", e.to_string())
-                ),
+                Err(e) => {
+                    return $crate::__write_result(
+                        &$crate::PluginResult::<$crate::ResolveResponse>::err(
+                            "PARSE_ERROR",
+                            e.to_string(),
+                        ),
+                    )
+                }
             };
             let result = get_plugin().resolve(req);
             $crate::__write_result(&result)
@@ -498,16 +576,17 @@ pub fn __write_result<T: serde::Serialize>(result: &T) -> i64 {
 // ── Prelude ───────────────────────────────────────────────────────────────────
 
 pub mod prelude {
-    pub use crate::{
-        PluginEntry, PluginResult, PluginType, ResolveRequest, ResolveResponse,
-        SearchRequest, SearchResponse, SubtitleTrack, StuiPlugin,
-    };
-    pub use crate::{plugin_info, plugin_warn, plugin_error, plugin_debug};
-    pub use crate::http_get;
-    pub use crate::http_post_json;
     pub use crate::cache_get;
     pub use crate::cache_set;
+    pub use crate::exec;
+    pub use crate::http_get;
+    pub use crate::http_post_json;
     pub use crate::stui_export_plugin;
+    pub use crate::{plugin_debug, plugin_error, plugin_info, plugin_warn};
+    pub use crate::{
+        PluginEntry, PluginResult, PluginType, ResolveRequest, ResolveResponse, SearchRequest,
+        SearchResponse, StuiPlugin, SubtitleTrack,
+    };
 }
 
 #[cfg(test)]
@@ -519,9 +598,15 @@ mod tests {
 
     fn make_auth_json(code: Option<&str>, state: Option<&str>, error: Option<&str>) -> String {
         let mut map = serde_json::Map::new();
-        if let Some(c) = code  { map.insert("code".into(),  serde_json::json!(c)); }
-        if let Some(s) = state { map.insert("state".into(), serde_json::json!(s)); }
-        if let Some(e) = error { map.insert("error".into(), serde_json::json!(e)); }
+        if let Some(c) = code {
+            map.insert("code".into(), serde_json::json!(c));
+        }
+        if let Some(s) = state {
+            map.insert("state".into(), serde_json::json!(s));
+        }
+        if let Some(e) = error {
+            map.insert("error".into(), serde_json::json!(e));
+        }
         serde_json::to_string(&serde_json::Value::Object(map)).unwrap()
     }
 
@@ -559,7 +644,7 @@ mod tests {
 
     #[test]
     fn test_http_post_form_payload_format() {
-        let url  = "https://api.example.com/token";
+        let url = "https://api.example.com/token";
         let body = "grant_type=authorization_code&code=abc";
         let payload = format!(
             "{{\"url\":{url_json},\"body\":{body_json},\"__stui_headers\":{{\"Content-Type\":\"application/x-www-form-urlencoded\"}}}}",
@@ -568,7 +653,9 @@ mod tests {
         );
         let val: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(val["url"].as_str().unwrap(), url);
-        assert_eq!(val["__stui_headers"]["Content-Type"].as_str().unwrap(),
-                   "application/x-www-form-urlencoded");
+        assert_eq!(
+            val["__stui_headers"]["Content-Type"].as_str().unwrap(),
+            "application/x-www-form-urlencoded"
+        );
     }
 }

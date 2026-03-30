@@ -45,6 +45,7 @@ pub mod storage;
 pub mod watchhistory;
 pub mod mediacache;
 pub mod dsp;
+pub mod roon;
 
 // `pipeline` ties the stages together into a single orchestrated flow.
 pub mod pipeline;

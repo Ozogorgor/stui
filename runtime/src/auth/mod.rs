@@ -58,14 +58,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_open_and_wait_denied() {
-        // Bypass browser step by using a pre-allocated port.
-        // In headless CI where xdg-open fails, BrowserOpenFailed is acceptable.
+        // The callback server speaks TLS — we use tokio-rustls with the same
+        // self-signed cert embedded in the binary to simulate a browser callback.
+        use tokio_rustls::rustls;
+        use tokio_rustls::TlsConnector;
+        use tokio::io::AsyncWriteExt;
+
         let (port, rx) = allocate_port().await.unwrap();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+
+            // Accept the self-signed cert by using a custom verifier that
+            // trusts any certificate (suitable only for loopback tests).
+            #[derive(Debug)]
+            struct AcceptAny;
+            impl rustls::client::danger::ServerCertVerifier for AcceptAny {
+                fn verify_server_cert(
+                    &self, _end_entity: &rustls::pki_types::CertificateDer<'_>,
+                    _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+                    _server_name: &rustls::pki_types::ServerName<'_>,
+                    _ocsp_response: &[u8],
+                    _now: rustls::pki_types::UnixTime,
+                ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                    Ok(rustls::client::danger::ServerCertVerified::assertion())
+                }
+                fn verify_tls12_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                }
+                fn verify_tls13_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+                }
+                fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                    rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
+                }
+            }
+
+            let tls_cfg = rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAny))
+                .with_no_client_auth();
+
+            let connector = TlsConnector::from(std::sync::Arc::new(tls_cfg));
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+            let mut tls = connector.connect(server_name, tcp).await.unwrap();
+
             let req = b"GET /callback?error=access_denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
-            stream.write_all(req).await.unwrap();
+            tls.write_all(req).await.unwrap();
         });
         let result = open_and_wait(
             "http://example.com/oauth",

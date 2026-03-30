@@ -232,21 +232,21 @@ impl DspNode for EqNode {
     }
 
     fn update_config(&mut self, config: &DspConfig) {
-        let name = &config.eq_preset;
+        let name = config.eq_preset.as_str();
         // "custom" bands are set directly via set_preset(EqPreset::Custom(..)) and
         // cannot be reconstructed from DspConfig alone — skip to avoid overwriting them.
-        if name == "custom" || name == self.current_preset {
+        if name == "custom" || name == self.current_preset.as_str() {
             return;
         }
-        let preset = match name.as_str() {
-            "bass_boost"    => EqPreset::BassBoost,
-            "treble_boost"  => EqPreset::TrebleBoost,
-            "vocal"         => EqPreset::Vocal,
-            "loudness"      => EqPreset::Loudness,
-            _               => EqPreset::Flat, // "flat" and unknown values
+        let preset = match name {
+            "bass_boost" => EqPreset::BassBoost,
+            "treble_boost" => EqPreset::TrebleBoost,
+            "vocal" => EqPreset::Vocal,
+            "loudness" => EqPreset::Loudness,
+            _ => EqPreset::Flat, // "flat" and unknown values
         };
         self.set_preset(preset);
-        self.current_preset = name.clone();
+        self.current_preset = name.to_string();
     }
 
     fn flush(&mut self) {
