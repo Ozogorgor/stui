@@ -613,7 +613,10 @@ mod defaults {
 
     // Plugin repos default
     pub fn plugin_repos() -> Vec<String> {
-        vec!["https://plugins.stui.dev".to_string()]
+        vec![
+            "https://plugins.stui.dev".to_string(),
+            "https://ozogorgor.github.io/stui_plugins".to_string(),
+        ]
     }
 
     // SkipperConfig defaults
