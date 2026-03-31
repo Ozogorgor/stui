@@ -17,8 +17,6 @@ pub enum SortOrder {
     Alphabetical,
     /// Sort by provider-native relevance score (preserve original order).
     Relevance,
-    /// Sort by popularity proxy: rating × log(vote_count) — requires tmdb data.
-    Popularity,
 }
 
 impl SortOrder {
@@ -67,22 +65,6 @@ impl SortOrder {
             }
             SortOrder::Relevance => {
                 // Preserve original order — already sorted by relevance from provider
-            }
-            SortOrder::Popularity => {
-                // Without vote_count data we fall back to rating
-                entries.sort_by(|a, b| {
-                    let ra: f64 = a
-                        .rating
-                        .as_deref()
-                        .and_then(|r| r.parse().ok())
-                        .unwrap_or(0.0);
-                    let rb: f64 = b
-                        .rating
-                        .as_deref()
-                        .and_then(|r| r.parse().ok())
-                        .unwrap_or(0.0);
-                    rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
-                });
             }
         }
         entries

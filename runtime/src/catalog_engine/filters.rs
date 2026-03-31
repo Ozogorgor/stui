@@ -65,7 +65,7 @@ impl Filter {
                 .as_deref()
                 .and_then(|r| r.parse::<f64>().ok())
                 .map(|r| r >= *min)
-                .unwrap_or(true),
+                .unwrap_or(false),
 
             Filter::Provider(p) => entry
                 .provider

@@ -20,9 +20,9 @@
 //! | Source          | Weight | Rationale                              |
 //! |-----------------|--------|----------------------------------------|
 //! | tomatometer     | 0.35   | Professional critics most reliable     |
-//! | imdb            | 0.30   | Bayesian, large, hard to game          |
+//! | imdb            | 0.35   | Bayesian, large, hard to game          |
 //! | audience_score  | 0.15   | Popular appeal, gameable               |
-//! | tmdb            | 0.10   | Decent, smaller sample                 |
+//! | tmdb            | 0.15   | Decent, smaller sample                 |
 //! | anilist         | —      | N/A                                    |
 //!
 //! ## Series / Episode
@@ -46,10 +46,10 @@
 //! ## Documentary
 //! | Source          | Weight | Rationale                              |
 //! |-----------------|--------|----------------------------------------|
-//! | tomatometer     | 0.45   | Critics define quality for docs        |
+//! | tomatometer     | 0.50   | Critics define quality for docs        |
 //! | imdb            | 0.25   | Solid secondary signal                 |
 //! | audience_score  | 0.10   | Less signal for non-entertainment docs |
-//! | tmdb            | 0.10   | Smaller pool                           |
+//! | tmdb            | 0.15   | Smaller pool                           |
 //! | anilist         | —      | N/A                                    |
 //!
 //! ## Horror
@@ -58,7 +58,7 @@
 //! | tomatometer     | 0.25   | Critics and audiences routinely diverge|
 //! | imdb            | 0.30   | Balanced middle ground                 |
 //! | audience_score  | 0.30   | Audience enjoyment central to horror   |
-//! | tmdb            | 0.10   | Supplementary                          |
+//! | tmdb            | 0.15   | Supplementary                          |
 //! | anilist         | —      | N/A                                    |
 //!
 //! ## Music / Album / Track
@@ -66,8 +66,8 @@
 //! |-----------------|--------|----------------------------------------|
 //! | tomatometer     | 0.20   | Critics less dominant in music         |
 //! | imdb            | 0.20   | Limited music coverage                 |
-//! | audience_score  | 0.30   | Engagement signal strongest            |
-//! | tmdb            | 0.20   | Music data increasingly useful         |
+//! | audience_score  | 0.35   | Engagement signal strongest            |
+//! | tmdb            | 0.25   | Music data increasingly useful         |
 //! | anilist         | —      | N/A                                    |
 //!
 //! All scores are normalised to 0–10 before weighting.
@@ -102,7 +102,7 @@ pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "imdb",
-        weight: 0.30,
+        weight: 0.35,
         normalize: 1.0,
     },
     RatingWeight {
@@ -112,7 +112,7 @@ pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "tmdb",
-        weight: 0.10,
+        weight: 0.15,
         normalize: 1.0,
     },
     RatingWeight {
@@ -184,7 +184,7 @@ const WEIGHTS_ANIME: &[RatingWeight] = &[
 const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
-        weight: 0.45,
+        weight: 0.50,
         normalize: 10.0,
     },
     RatingWeight {
@@ -199,7 +199,7 @@ const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "tmdb",
-        weight: 0.10,
+        weight: 0.15,
         normalize: 1.0,
     },
     RatingWeight {
@@ -228,7 +228,7 @@ const WEIGHTS_HORROR: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "tmdb",
-        weight: 0.10,
+        weight: 0.15,
         normalize: 1.0,
     },
     RatingWeight {
@@ -252,12 +252,12 @@ const WEIGHTS_MUSIC: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "audience_score",
-        weight: 0.30,
+        weight: 0.35,
         normalize: 10.0,
     },
     RatingWeight {
         key: "tmdb",
-        weight: 0.20,
+        weight: 0.25,
         normalize: 1.0,
     },
     RatingWeight {
@@ -584,13 +584,16 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
 
 /// If an entry has a plain `rating` string but an empty `ratings` map,
 /// try to parse the string and insert it under the provider's canonical key.
+/// Skipped for unrecognised providers — storing their values under a wrong key
+/// with an incorrect normalization divisor would corrupt the composite score.
 #[allow(dead_code)]
 fn promote_rating_to_map(entry: &mut CatalogEntry) {
     if entry.ratings.is_empty() {
         if let Some(ref r) = entry.rating.clone() {
-            let key = rating_key_for_provider(&entry.provider);
-            if let Some(val) = parse_rating_str(r) {
-                entry.ratings.insert(key.to_string(), val);
+            if let Some(key) = rating_key_for_provider(&entry.provider) {
+                if let Some(val) = parse_rating_str(r) {
+                    entry.ratings.insert(key.to_string(), val);
+                }
             }
         }
     }
@@ -598,46 +601,35 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 
 /// Select the weight profile and compute the weighted median into `entry.rating`.
 ///
-/// If insufficient sources are available, falls back to the best available source's rating.
-/// If no sources are available at all, preserves the original rating string.
+/// If no recognised sources are present, the original `entry.rating` string
+/// (set by the provider) is preserved unchanged. The raw ratings map may contain
+/// values on unknown scales so they are never used as a direct fallback.
 #[allow(dead_code)]
 fn apply_weighted_rating(entry: &mut CatalogEntry) {
     let weights = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
 
-    // Try weighted median first
     if let Some(composite) = weighted_median(&entry.ratings, weights) {
         entry.rating = Some(format!("{:.1}", composite));
-        return;
     }
-
-    // Fallback: use best available single source if ratings map has any data
-    if !entry.ratings.is_empty() {
-        // Find the highest-rated single source as fallback
-        if let Some((_source, &rating)) = entry
-            .ratings
-            .iter()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-        {
-            entry.rating = Some(format!("{:.1}", rating));
-        }
-    }
-
-    // No weighted sources available - keep original rating if present
-    // (could be from a single provider that doesn't match our weight keys)
+    // No recognised sources — preserve the provider's original rating string.
 }
 
 /// Map a provider name to the canonical ratings key used in the weight tables.
+///
+/// Returns `None` for unrecognised providers so callers can skip promotion
+/// rather than storing values under the wrong key with the wrong normalization.
 #[allow(dead_code)]
-fn rating_key_for_provider(provider: &str) -> &'static str {
+fn rating_key_for_provider(provider: &str) -> Option<&'static str> {
     // Provider names can be comma-joined (e.g. "tmdb,imdb") — take first.
     let first = provider.split(',').next().unwrap_or(provider).trim();
     match first {
-        "imdb" => "imdb",
-        "tmdb" => "tmdb",
-        "omdb" => "imdb", // OMDB reflects IMDB score
-        "anilist" => "anilist",
-        "rottentomatoes" => "tomatometer",
-        _ => "imdb", // safe fallback
+        "imdb" => Some("imdb"),
+        "tmdb" => Some("tmdb"),
+        "omdb" => Some("imdb"), // OMDB reflects IMDB score
+        "anilist" => Some("anilist"),
+        "rottentomatoes" => Some("tomatometer"),
+        "rottentomatoes_audience" => Some("audience_score"),
+        _ => None,
     }
 }
 
@@ -906,18 +898,18 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_weighted_rating_uses_fallback() {
-        // Test that apply_weighted_rating falls back correctly
+    fn test_apply_weighted_rating_preserves_original_for_unknown_source() {
+        // When the ratings map contains only unrecognised keys, the provider's
+        // original rating string must be preserved unchanged (no fallback to
+        // raw unscaled values from the map).
         let mut entry = make_entry(
             "Movie",
             "tt0000001",
-            Some("8.5"),                // Original rating
-            &[("unknown_source", 7.5)], // Not in weights
+            Some("8.5"),                // Provider's original rating
+            &[("unknown_source", 7.5)], // Not in any weight table
             MediaType::Movie,
         );
         apply_weighted_rating(&mut entry);
-        // Should fall back to the unknown source since it's the only one
-        // Or preserve the original rating
-        assert!(entry.rating.is_some());
+        assert_eq!(entry.rating, Some("8.5".to_string()));
     }
 }
