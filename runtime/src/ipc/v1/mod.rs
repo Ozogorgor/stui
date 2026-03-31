@@ -814,6 +814,12 @@ pub struct PluginInfo {
     /// Tags for organizing plugins (e.g., "movies", "music", "anime", "tv", "subtitles")
     #[serde(default)]
     pub tags: Vec<String>,
+    /// One-line description from plugin.toml [plugin] description field.
+    #[serde(default)]
+    pub description: String,
+    /// Author from plugin.toml [meta] author field.
+    #[serde(default)]
+    pub author: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

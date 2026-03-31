@@ -108,16 +108,17 @@ func NewPluginManagerScreen(client *ipc.Client) *PluginManagerScreen {
 	installedCols := []table.Column{
 		{Title: "Name", Width: 22},
 		{Title: "Version", Width: 9},
-		{Title: "Type", Width: 8},
-		{Title: "Tags", Width: 15},
-		{Title: "Status", Width: 12},
+		{Title: "Type", Width: 14},
+		{Title: "Author", Width: 12},
+		{Title: "Status", Width: 10},
 	}
 
 	availableCols := []table.Column{
 		{Title: "Name", Width: 22},
 		{Title: "Version", Width: 9},
-		{Title: "Type", Width: 8},
-		{Title: "Status", Width: 15},
+		{Title: "Type", Width: 14},
+		{Title: "Author", Width: 12},
+		{Title: "Status", Width: 10},
 	}
 
 	updatesCols := []table.Column{
@@ -431,6 +432,10 @@ func (m *PluginManagerScreen) viewInstalled() string {
 	tableView := m.installedTable.View()
 
 	sb.WriteString(dim.Render(tableView))
+	if m.plCursor < len(m.plugins) {
+		p := m.plugins[m.plCursor]
+		sb.WriteString(pluginDetail(p.Description, p.Author))
+	}
 	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("u", "unload") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
 }
@@ -463,6 +468,10 @@ func (m *PluginManagerScreen) viewAvailable() string {
 	tableView := m.availableTable.View()
 
 	sb.WriteString(dim.Render(tableView))
+	if m.avCursor < len(m.available) {
+		e := m.available[m.avCursor]
+		sb.WriteString(pluginDetail(e.Description, e.Author))
+	}
 	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("enter", "install") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
 }
@@ -502,15 +511,11 @@ func (m *PluginManagerScreen) viewUpdates() string {
 func (m *PluginManagerScreen) updateInstalledTable() {
 	rows := make([][]string, len(m.plugins))
 	for i, p := range m.plugins {
-		tags := ""
-		if len(p.Tags) > 0 {
-			tags = strings.Join(p.Tags, ",")
-		}
 		rows[i] = []string{
 			truncate(p.Name, 22),
 			truncate(p.Version, 9),
-			truncate(p.PluginType, 8),
-			truncate(tags, 15),
+			truncate(p.PluginType, 14),
+			truncate(p.Author, 12),
 			p.Status,
 		}
 	}
@@ -527,11 +532,29 @@ func (m *PluginManagerScreen) updateAvailableTable() {
 		rows[i] = []string{
 			truncate(e.Name, 22),
 			truncate(e.Version, 9),
-			truncate(e.PluginType, 8),
+			truncate(e.PluginType, 14),
+			truncate(e.Author, 12),
 			status,
 		}
 	}
 	m.availableTable.SetData(rows)
+}
+
+// pluginDetail returns a dim one-liner with description and author for the focused row.
+func pluginDetail(desc, author string) string {
+	if desc == "" && author == "" {
+		return ""
+	}
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	line := desc
+	if author != "" {
+		if line != "" {
+			line += "  —  by " + author
+		} else {
+			line = "by " + author
+		}
+	}
+	return "  " + dim.Render(truncate(line, 72)) + "\n"
 }
 
 func (m *PluginManagerScreen) updateUpdatesTable() {

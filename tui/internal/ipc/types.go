@@ -58,12 +58,14 @@ type MediaEntry struct {
 }
 
 type PluginInfo struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Version    string   `json:"version"`
-	PluginType string   `json:"plugin_type"`
-	Status     string   `json:"status"`
-	Tags       []string `json:"tags"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	PluginType  string   `json:"plugin_type"`
+	Status      string   `json:"status"`
+	Tags        []string `json:"tags"`
+	Description string   `json:"description"`
+	Author      string   `json:"author"`
 }
 
 type PluginListResult struct {

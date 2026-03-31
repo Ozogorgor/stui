@@ -222,6 +222,11 @@ impl Engine {
                 plugin_type: p.manifest.plugin.plugin_type.to_string(),
                 status: PluginStatus::Loaded,
                 tags: p.manifest.plugin.tags.clone(),
+                description: p.manifest.plugin.description.clone().unwrap_or_default(),
+                author: p.manifest.meta.as_ref()
+                    .and_then(|m| m.author.as_deref())
+                    .unwrap_or_default()
+                    .to_string(),
             })
             .collect();
         Response::PluginList(PluginListResponse { plugins })
