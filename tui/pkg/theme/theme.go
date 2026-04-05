@@ -89,21 +89,23 @@ func Default() Palette {
 // stui Palette. The input map is colors["dark"] from the JSON output.
 //
 // Matugen JSON structure:
-//   { "colors": { "dark": { "background": "#1b1b1f", "primary": "#adc6ff", ... } } }
+//
+//	{ "colors": { "dark": { "background": "#1b1b1f", "primary": "#adc6ff", ... } } }
 //
 // M3 role → stui semantic mapping:
-//   background          → Bg
-//   surface             → Surface (use background if absent)
-//   outline_variant     → Border
-//   primary             → Accent + TabActive
-//   secondary           → AccentAlt
-//   tertiary            → Neon
-//   on_surface          → Text + TabText
-//   on_surface_variant  → TextMuted + TabTextDim
-//   outline             → TextDim
-//   surface_variant     → TabInactive + BorderFoc
-//   error               → Red
-//   (no direct M3 green/yellow → kept from default or derived)
+//
+//	background          → Bg
+//	surface             → Surface (use background if absent)
+//	outline_variant     → Border
+//	primary             → Accent + TabActive
+//	secondary           → AccentAlt
+//	tertiary            → Neon
+//	on_surface          → Text + TabText
+//	on_surface_variant  → TextMuted + TabTextDim
+//	outline             → TextDim
+//	surface_variant     → TabInactive + BorderFoc
+//	error               → Red
+//	(no direct M3 green/yellow → kept from default or derived)
 func FromMatugen(dark map[string]string) Palette {
 	p := Default() // start from defaults so missing keys don't break anything
 
@@ -259,14 +261,20 @@ func (t *Theme) TextMuted() color.Color { return t.P().TextMuted }
 
 // ── Chrome styles ─────────────────────────────────────────────────────────────
 
-func (t *Theme) TopBarStyle() lipgloss.Style {
+// TopBarStyle returns the chrome style for the top navigation bar.
+// focused=true uses the accent border (when search input is active).
+func (t *Theme) TopBarStyle(focused bool) lipgloss.Style {
 	p := t.P()
+	borderColor := p.Border
+	if focused {
+		borderColor = p.BorderFoc
+	}
 	return lipgloss.NewStyle().
 		Background(p.Surface).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(p.Border).
-		BorderBottom(true).
-		PaddingLeft(1).PaddingRight(1)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		PaddingLeft(1).PaddingRight(1).
+		MarginLeft(1).MarginRight(1).MarginTop(1)
 }
 
 func (t *Theme) TabStyle() lipgloss.Style {
@@ -312,14 +320,32 @@ func (t *Theme) GearFocusedStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(t.P().Neon).PaddingLeft(2).PaddingRight(1)
 }
 
+// StatusBarStyle returns the chrome style for the bottom status bar.
+// The statusbar is never focused — it always uses the dim border color.
 func (t *Theme) StatusBarStyle() lipgloss.Style {
 	p := t.P()
 	return lipgloss.NewStyle().
 		Background(p.Surface).Foreground(p.TextMuted).
-		BorderStyle(lipgloss.NormalBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Border).
-		BorderTop(true).
-		PaddingLeft(2).PaddingRight(2)
+		PaddingLeft(2).PaddingRight(2).
+		MarginLeft(1).MarginRight(1).MarginBottom(1)
+}
+
+// MainCardStyle returns the chrome style for the main content area card.
+// focused=true uses the accent border (when the grid/content has keyboard focus).
+func (t *Theme) MainCardStyle(focused bool) lipgloss.Style {
+	p := t.P()
+	borderColor := p.Border
+	if focused {
+		borderColor = p.BorderFoc
+	}
+	return lipgloss.NewStyle().
+		Background(p.Bg).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		PaddingLeft(1).PaddingRight(1).
+		MarginLeft(1).MarginRight(1)
 }
 
 func (t *Theme) StatusAccentStyle() lipgloss.Style {
@@ -364,7 +390,13 @@ func (t *Theme) ResultRowHoveredStyle() lipgloss.Style {
 }
 
 func (t *Theme) ResultsPanelStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Background(t.P().Bg).PaddingLeft(1).PaddingRight(1)
+	p := t.P()
+	return lipgloss.NewStyle().
+		Background(p.Bg).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(p.Border).
+		BorderTop(true).BorderBottom(true).BorderLeft(true).BorderRight(true).
+		PaddingLeft(1).PaddingRight(1)
 }
 
 // ── Detail panel styles ───────────────────────────────────────────────────────

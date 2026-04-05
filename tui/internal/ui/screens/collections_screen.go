@@ -394,7 +394,7 @@ func (s CollectionsScreen) renderHeader() string {
 
 	gapW := max(0, s.width-lipgloss.Width(title)-lipgloss.Width(hint)-4)
 	row := title + strings.Repeat(" ", gapW) + hint
-	return theme.T.TopBarStyle().Width(s.width - 2).Render(row)
+	return theme.T.TopBarStyle(false).Width(s.width - 2).Render(row)
 }
 
 func (s CollectionsScreen) renderBody() string {

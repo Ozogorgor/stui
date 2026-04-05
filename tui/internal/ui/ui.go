@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -88,6 +89,9 @@ type Model struct {
 	client  *ipc.Client
 	program *tea.Program
 	reqSeq  *atomic.Uint64
+
+	// Loading spinner - animates during loading state
+	loadingSpinner spinner.Model
 
 	// Grid
 	grids      map[string][]ipc.CatalogEntry
@@ -238,6 +242,12 @@ func New(opts Options) Model {
 		seedGrids[tab] = ct.Entries
 	}
 
+	// Initialize loading spinner
+	loadingSpinner := spinner.New(
+		spinner.WithSpinner(spinner.Dot),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(theme.T.TextDim())),
+	)
+
 	return Model{
 		opts:              opts,
 		state:             appState,
@@ -246,6 +256,7 @@ func New(opts Options) Model {
 		search:            ti,
 		screen:            screenGrid,
 		reqSeq:            new(atomic.Uint64),
+		loadingSpinner:    loadingSpinner,
 		visualizer:        components.NewVisualizer(components.DefaultVisualizerConfig()),
 		musicScreen:       ms,
 		sessionPath:       sessionPath,
@@ -266,15 +277,16 @@ func (m *Model) SetProgram(p *tea.Program) { m.program = p }
 
 func (m Model) Init() tea.Cmd {
 	if m.opts.NoRuntime {
-		return func() tea.Msg { return ipc.RuntimeReadyMsg{} }
+		return tea.Batch(m.loadingSpinner.Tick, func() tea.Msg { return ipc.RuntimeReadyMsg{} })
 	}
-	return func() tea.Msg {
+
+	return tea.Batch(m.loadingSpinner.Tick, func() tea.Msg {
 		client, err := ipc.Start(m.opts.RuntimePath)
 		if err != nil {
 			return ipc.RuntimeErrorMsg{Err: err}
 		}
 		return runtimeStartedMsg{client: client}
-	}
+	})
 }
 
 // fromIPC wraps a message that arrived via the IPC channel so that the
@@ -327,7 +339,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runtimeStartedMsg:
 		m.client = msg.client
 		m.state.RuntimeStatus = state.RuntimeReady
-		m.state.StatusMsg = "Loading catalog\u2026"
+		m.state.StatusMsg = "Loading catalog…"
 		m.state.RuntimeVersion = msg.client.RuntimeVersion
 		if m.opts.Verbose {
 			m.client.SetTrace(true)
@@ -343,6 +355,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mediaCache.SaveTab(tab, m.grids[tab])
 		}
 		m.client.GetDspStatus()
+		// Start spinner tick if still loading
+		if m.state.IsLoading {
+			return m, tea.Batch(m.loadingSpinner.Tick, musicInitCmd, listenIPC(m.client.Chan()))
+		}
 		return m, tea.Batch(musicInitCmd, listenIPC(m.client.Chan()))
 
 	case ipc.RuntimeReadyMsg:
@@ -404,6 +420,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.musicScreen, _ = m.musicScreen.Update(msg) // keep Browse catalog fresh
 		if msg.Tab == m.state.ActiveTab.MediaTabID() {
 			m.state.IsLoading = false
+			m.state.LoadingStart = 0
 			if msg.Source == "cache" {
 				m.state.StatusMsg = fmt.Sprintf("Loaded %d titles from cache \u2014 refreshing\u2026", len(msg.Entries))
 			} else {
@@ -419,6 +436,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ipc.SearchResultMsg:
 		m.state.IsLoading = false
+		m.state.LoadingStart = 0
 		if msg.Err != nil {
 			m.state.StatusMsg = fmt.Sprintf("Search error: %v", msg.Err)
 			return m, nil
@@ -732,6 +750,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, bingeTickCmd()
 		}
+
+	case spinner.TickMsg:
+		var spinCmd tea.Cmd
+		m.loadingSpinner, spinCmd = m.loadingSpinner.Update(msg)
+		return m, spinCmd
 
 	// ── MPD audio events ──────────────────────────────────────────────────
 
@@ -1054,9 +1077,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		y := mouse.Y
 		x := mouse.X
 		if y == topBarY {
-			// Click on top tab bar — hit-test which tab was clicked.
+			// Click on top tab bar — hit-test tabs, search, and gear.
 			if tab, ok := m.hitTestTopTabBar(x); ok {
 				m.switchTab(tab)
+				return m, nil
+			}
+			if cmd := m.hitTestTopBarWidgets(x); cmd != nil {
+				return m, cmd
 			}
 			return m, nil
 		}
@@ -1146,6 +1173,63 @@ func (m Model) hitTestTopTabBar(x int) (state.Tab, bool) {
 		pos += w
 	}
 	return 0, false
+}
+
+// hitTestTopBarWidgets returns a command if the click hit the search box or
+// gear icon in the top bar. Returns nil if no widget was clicked.
+func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
+	w := m.state.Width
+	// Compute tab strip width (same logic as viewTopBar / hitTestTopTabBar).
+	tabsW := 0
+	for _, t := range state.Tabs() {
+		label := fmt.Sprintf(" %s ", t.String())
+		var rendered string
+		if t == m.state.ActiveTab {
+			rendered = theme.T.TabActiveStyle().Render(label)
+		} else {
+			rendered = theme.T.TabStyle().Render(label)
+		}
+		tabsW += lipgloss.Width(rendered)
+	}
+
+	// Compute search box and gear widths (same logic as viewTopBar).
+	prefix := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Render("\u2315 ")
+	var searchBox string
+	switch {
+	case m.state.Focus == state.FocusSearch:
+		searchBox = theme.T.SearchFocusedStyle().Render(prefix + m.search.View())
+	case m.search.Value() != "":
+		searchBox = theme.T.SearchStyle().Render(prefix + lipgloss.NewStyle().Foreground(theme.T.Text()).Render(m.search.Value()))
+	default:
+		searchBox = theme.T.SearchStyle().Render(prefix + lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render("Search\u2026  /"))
+	}
+	var gear string
+	switch m.state.RuntimeStatus {
+	case state.RuntimeError:
+		gear = theme.T.GearStyle().Foreground(theme.T.Red()).Render("\u2699")
+	case state.RuntimeReady:
+		gear = theme.T.GearFocusedStyle().Render("\u2699")
+	default:
+		gear = theme.T.GearStyle().Render("\u2699")
+	}
+	searchW := lipgloss.Width(searchBox)
+	gearW := lipgloss.Width(gear)
+
+	spacerLeft := max(0, (w/2)-tabsW-(searchW/2))
+	// TopBarStyle has PaddingLeft(1); content starts at column 1.
+	const topBarPaddingLeft = 1
+	searchStart := topBarPaddingLeft + tabsW + spacerLeft
+	searchEnd := searchStart + searchW
+	gearStart := searchEnd + max(0, w-tabsW-searchW-gearW-spacerLeft-2)
+	gearEnd := gearStart + gearW
+
+	switch {
+	case x >= searchStart && x < searchEnd:
+		return screen.TransitionCmd(screens.NewSearchScreen(m.client, ipc.MediaTab(m.state.ActiveTab.MediaTabID())), true)
+	case x >= gearStart && x < gearEnd:
+		return screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
+	}
+	return nil
 }
 
 // ── Player helpers ────────────────────────────────────────────────────────────
@@ -1274,19 +1358,34 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case actions.ActionNextTab:
 			next := (int(m.state.ActiveTab) + 1) % len(state.Tabs())
 			m.switchTab(state.Tab(next))
+			if m.state.IsLoading {
+				return m, m.loadingSpinner.Tick
+			}
 			return m, nil
 		case actions.ActionPrevTab:
 			prev := (int(m.state.ActiveTab) - 1 + len(state.Tabs())) % len(state.Tabs())
 			m.switchTab(state.Tab(prev))
+			if m.state.IsLoading {
+				return m, m.loadingSpinner.Tick
+			}
 			return m, nil
 		case actions.ActionTab1:
 			m.switchTab(state.TabMovies)
+			if m.state.IsLoading {
+				return m, m.loadingSpinner.Tick
+			}
 			return m, nil
 		case actions.ActionTab2:
 			m.switchTab(state.TabSeries)
+			if m.state.IsLoading {
+				return m, m.loadingSpinner.Tick
+			}
 			return m, nil
 		case actions.ActionTab3:
 			m.switchTab(state.TabMusic)
+			if m.state.IsLoading {
+				return m, m.loadingSpinner.Tick
+			}
 			return m, nil
 		case actions.ActionTab4:
 			m.switchTab(state.TabLibrary)
@@ -1522,6 +1621,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.search.Blur()
 			m.state.SearchActive = false
 			m.screen = screenGrid
+			return m, nil
 		case "enter":
 			query := m.search.Value()
 			m.state.SearchQuery = query
@@ -1529,8 +1629,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.search.Blur()
 			if query != "" {
 				m.state.IsLoading = true
+				m.state.LoadingStart = time.Now().Unix()
 				m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
 				m.dispatchSearch(query)
+				return m, m.loadingSpinner.Tick
 			}
 		default:
 			var cmd tea.Cmd
@@ -2187,6 +2289,7 @@ func (m *Model) switchTab(t state.Tab) {
 	// Collections is local-only — no runtime grid to load.
 	if t != state.TabCollections && len(m.grids[t.MediaTabID()]) == 0 {
 		m.state.IsLoading = true
+		m.state.LoadingStart = time.Now().Unix()
 	}
 	// Persist the tab choice immediately (pointer receiver — mutation is visible to caller).
 	_ = session.Save(m.sessionPath, session.State{
@@ -2435,7 +2538,10 @@ func (m Model) viewMain() string {
 			m.state.Width,
 			m.state.Height,
 			m.state.IsLoading,
+			m.state.LoadingStart,
 			m.state.RuntimeStatus.String(),
+			m.state.Plugins,
+			&m.loadingSpinner,
 		)
 		if cwSection != "" {
 			return lipgloss.JoinVertical(lipgloss.Left, cwSection, grid)
@@ -2489,7 +2595,7 @@ func (m Model) viewTopBar() string {
 	spacerRight := max(0, w-tabsW-searchW-gearW-spacerLeft-2)
 
 	row := tabs + strings.Repeat(" ", spacerLeft) + searchBox + strings.Repeat(" ", spacerRight) + gear
-	return theme.T.TopBarStyle().Width(w - 2).Render(row)
+	return theme.T.TopBarStyle(false).Width(w).Render(row)
 }
 
 func (m Model) viewColumnHeaders() string {
@@ -2513,15 +2619,15 @@ func (m Model) viewResults() string {
 		return screens.CenteredMsg(w, availH, lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render("No results"))
 	}
 
+	// Virtualized list for scrollbar
+	vl := components.NewVirtualizedList(len(m.state.Results), m.state.Cursor, availH)
+	scrollbar := vl.VerticalScrollbar(1, lipgloss.NewStyle().Foreground(theme.T.TextDim()))
+
 	titleW := w/2 - 2
 	yearW, genreW, ratingW := 6, 14, 8
 	provW := max(10, w-titleW-yearW-genreW-ratingW-5)
 
-	start := 0
-	if m.state.Cursor >= availH {
-		start = m.state.Cursor - availH + 1
-	}
-	end := min(start+availH, len(m.state.Results))
+	start, end := vl.VisibleRange()
 
 	var rows []string
 	for i := start; i < end; i++ {
@@ -2546,6 +2652,19 @@ func (m Model) viewResults() string {
 		}
 		rows = append(rows, styled)
 	}
+
+	// Add scrollbar characters to each row
+	if scrollbar != "" && len(rows) > 0 {
+		scrollRunes := []rune(scrollbar)
+		for i := range rows {
+			scrollChar := " "
+			if i < len(scrollRunes) {
+				scrollChar = string(scrollRunes[i])
+			}
+			rows[i] = rows[i] + " " + scrollChar
+		}
+	}
+
 	return theme.T.ResultsPanelStyle().Width(w).Height(availH).Render(strings.Join(rows, "\n"))
 }
 
@@ -2583,9 +2702,9 @@ func (m Model) viewStatusBar() string {
 	right := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
 		Render(fmt.Sprintf("%s  %d titles  v toggle ", m.state.ActiveTab.String(), count))
 
-	gap := max(0, w-lipgloss.Width(pill)-lipgloss.Width(screenIndicator)-lipgloss.Width(statusMsg)-lipgloss.Width(right)-2)
+	gap := max(0, w-lipgloss.Width(pill)-lipgloss.Width(screenIndicator)-lipgloss.Width(statusMsg)-lipgloss.Width(right)-4)
 	bar := pill + screenIndicator + statusMsg + strings.Repeat(" ", gap) + right
-	return theme.T.StatusBarStyle().Width(w - 2).Render(bar)
+	return theme.T.StatusBarStyle().Width(w).Render(bar)
 }
 
 // ── Data conversion helpers ───────────────────────────────────────────────────
