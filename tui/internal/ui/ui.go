@@ -2545,7 +2545,7 @@ func (m Model) viewMain() string {
 	// Continue Watching row (Movies and Series tabs only)
 	var cwSection string
 	if items := m.cwCurrentItems(); len(items) > 0 {
-		cwSection = renderContinueWatchingRow(items, m.cwCursor, m.cwFocused, m.state.Width)
+		cwSection = renderContinueWatchingRow(items, m.cwCursor, m.cwFocused, m.innerWidth())
 	}
 
 	if m.screen == screenGrid || !m.state.SearchActive {
