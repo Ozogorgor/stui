@@ -2618,7 +2618,7 @@ func (m Model) viewTopBar(focused bool) string {
 }
 
 func (m Model) viewColumnHeaders() string {
-	w := m.state.Width
+	w := m.innerWidth()
 	col := func(s string, width int) string { return theme.T.ColHeaderStyle().Width(width).Render(s) }
 	titleW := w/2 - 2
 	yearW, genreW, ratingW := 6, 14, 8
@@ -2631,7 +2631,7 @@ func (m Model) viewColumnHeaders() string {
 }
 
 func (m Model) viewResults() string {
-	w := m.state.Width
+	w := m.innerWidth()
 	availH := max(1, m.state.Height-9)
 
 	if len(m.state.Results) == 0 {
