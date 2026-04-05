@@ -123,9 +123,9 @@ tab_text     = "#e2e8f0"
 tab_text_dim = "#4a5568"
 ```
 
-**Built-in theme names** (reserved, no file lookup): `"default"`, `"high-contrast"`, `"monochrome"`, `"matugen"`. Any other value is treated as a filename in `~/.config/stui/themes/`.
+**Built-in theme names** (reserved, no file lookup): `"default"`, `"high-contrast"`, `"monochrome"`, `"matugen"`. Any other value is treated as a filename in `~/.config/stui/themes/`. If a user places a file named `default.toml` or another reserved name in `themes/`, it is silently skipped by `ListThemes` (reserved names always resolve to the built-in).
 
-`"matugen"` continues to use the existing `MatugenWatcher` with `theme_mode` controlling dark/light. When `theme = "matugen"`, the `MatugenWatcher` is still started alongside the config watcher.
+`"matugen"` continues to use the existing `MatugenWatcher` with `theme_mode` controlling dark/light. When `theme = "matugen"`, the `MatugenWatcher` is started alongside the config watcher; the config palette is not applied on startup (matugen owns the palette).
 
 ---
 
@@ -140,8 +140,9 @@ tab_text_dim = "#4a5568"
 ### `pkg/config/config.go`
 
 ```go
-// Config is the full set of user preferences. All fields have zero values
-// that match the application defaults, so a missing config file is valid.
+// Config is the full set of user preferences.
+// Always construct via Default() — never use a zero-value Config directly,
+// as many defaults are non-zero (e.g. DefaultVolume = 100, PreferHTTP = true).
 type Config struct {
     Interface     InterfaceConfig     `toml:"interface"`
     Playback      PlaybackConfig      `toml:"playback"`
@@ -157,10 +158,74 @@ type Config struct {
 Sub-structs mirror the TOML sections above. Field types match the setting kinds in `settings.go` (bool, int, float64, string).
 
 Key functions:
-- `Default() Config` — returns Config with all application-default values
+- `Default() Config` — returns Config with all application-default values (matches hardcoded defaults in `defaultCategories()`). **This is the only valid way to construct a Config.**
 - `DefaultPath() string` — `~/.config/stui/config.toml` via `os.UserConfigDir()`
-- `Load(path string) (Config, error)` — reads TOML, merges over `Default()` so missing keys get defaults; returns `Default()` (no error) if the file does not exist
+- `Load(path string) (Config, error)` — starts from `Default()`, decodes TOML over it so missing keys keep defaults; returns `Default()` (no error) if the file does not exist
 - `Save(path string, cfg Config) error` — atomic write (temp file + rename), creates parent dir
+- `ApplyChange(cfg Config, key string, value interface{}) Config` — maps a `SettingsChangedMsg.Key` string to the correct Config field (see key mapping table below)
+
+**`ConfigReloadMsg`** is defined in this package:
+```go
+// ConfigReloadMsg is sent to the bubbletea program when the config file or
+// active theme file is changed by an external process.
+type ConfigReloadMsg struct {
+    Config Config
+}
+```
+
+### `ApplyChange` key mapping table
+
+`SettingsChangedMsg.Key` values (from `settings.go`) → Config struct fields:
+
+| Key string | Config field |
+|---|---|
+| `"interface.theme"` | `Interface.Theme` (full theme name, e.g. `"noctalia"`, `"default"`) |
+| `"app.theme_mode"` | `Interface.ThemeMode` (matugen dark/light string: `"dark"` or `"light"`) |
+| `"ui.show_borders"` | `Interface.ShowBorders` |
+| `"ui.mouse_support"` | `Interface.MouseSupport` |
+| `"ui.bidi_mode"` | `Interface.BiDiMode` |
+| `"player.default_volume"` | `Playback.DefaultVolume` |
+| `"player.hwdec"` | `Playback.Hwdec` |
+| `"player.cache_secs"` | `Playback.CacheSecs` |
+| `"player.keep_open"` | `Playback.KeepOpen` |
+| `"playback.autoplay_next"` | `Playback.AutoplayNext` |
+| `"playback.autoplay_countdown"` | `Playback.AutoplayCountdown` |
+| `"player.min_preroll_secs"` | `Playback.MinPrerollSecs` |
+| `"player.demuxer_max_mb"` | `Playback.DemuxerMaxMB` |
+| `"player.terminal_vo"` | `Playback.TerminalVO` |
+| `"streaming.prefer_http"` | `Streaming.PreferHTTP` |
+| `"streaming.auto_fallback"` | `Streaming.AutoFallback` |
+| `"streaming.max_candidates"` | `Streaming.MaxCandidates` |
+| `"streaming.benchmark_streams"` | `Streaming.BenchmarkStreams` |
+| `"streaming.auto_delete_video"` | `Streaming.AutoDeleteVideo` |
+| `"streaming.auto_delete_audio"` | `Streaming.AutoDeleteAudio` |
+| `"downloads.video_dir"` | `Downloads.VideoDir` |
+| `"downloads.music_dir"` | `Downloads.MusicDir` |
+| `"subtitles.auto_download"` | `Subtitles.AutoDownload` |
+| `"subtitles.preferred_language"` | `Subtitles.PreferredLanguage` |
+| `"subtitles.default_delay"` | `Subtitles.DefaultDelay` |
+| `"providers.enable_tmdb"` | `Providers.EnableTMDB` |
+| `"providers.enable_omdb"` | `Providers.EnableOMDB` |
+| `"providers.enable_torrentio"` | `Providers.EnableTorrentio` |
+| `"providers.enable_prowlarr"` | `Providers.EnableProwlarr` |
+| `"providers.enable_opensubtitles"` | `Providers.EnableOpenSubtitles` |
+| `"notifications.enabled"` | `Notifications.Enabled` |
+| `"notifications.backend"` | `Notifications.Backend` |
+| `"notifications.on_playback"` | `Notifications.OnPlayback` |
+| `"notifications.on_download"` | `Notifications.OnDownload` |
+| `"notifications.on_streams"` | `Notifications.OnStreams` |
+| `"skipper.enabled"` | `Skipper.Enabled` |
+| `"skipper.auto_skip_intro"` | `Skipper.AutoSkipIntro` |
+| `"skipper.auto_skip_credits"` | `Skipper.AutoSkipCredits` |
+| `"skipper.intro_scan_secs"` | `Skipper.IntroScanSecs` |
+| `"skipper.min_intro_secs"` | `Skipper.MinIntroSecs` |
+| `"skipper.max_intro_secs"` | `Skipper.MaxIntroSecs` |
+| `"skipper.similarity_threshold"` | `Skipper.SimilarityThreshold` |
+| `"skipper.min_episodes"` | `Skipper.MinEpisodes` |
+
+**Note on theme keys:** The settings screen gains a new `"interface.theme"` `settingChoice` item (full theme name, e.g. `"high-contrast"`, `"noctalia"`) in addition to the existing `"app.theme_mode"` dark/light toggle (which remains for matugen mode). Both are kept in the Interface category.
+
+`settingAction` and `settingInfo` items (`"audio.dsp"`, `"providers.open_settings"`, `"keybinds.edit"`) have no config mapping and are ignored by `ApplyChange`.
 
 ### `pkg/config/theme_loader.go`
 
@@ -169,42 +234,53 @@ Key functions:
 func ThemesDir() string
 
 // LoadTheme resolves a theme name to a Palette.
-// Built-in names ("default", "high-contrast", "monochrome") return the
-// corresponding Go palette. "matugen" returns Default() as a placeholder
-// (the actual palette comes from MatugenWatcher). Any other name is looked
-// up as ThemesDir()/<name>.toml; missing fields fall back to Default().
+// Built-in names: "default" → theme.Default(), "high-contrast" → theme.HighContrast(),
+// "monochrome" → theme.Monochrome(), "matugen" → theme.Default() (placeholder;
+// MatugenWatcher owns the actual palette at runtime).
+// Any other name → load ThemesDir()/<name>.toml, decode hex fields over Default().
+// Returns (Default(), error) if the file is not found or cannot be parsed.
 func LoadTheme(name string) (theme.Palette, error)
 
-// ListThemes returns built-in names followed by filenames (without .toml)
-// found in ThemesDir(). Returns built-ins only if the directory does not exist.
+// ListThemes returns the sorted list of available theme names:
+// built-ins first (["default", "high-contrast", "monochrome", "matugen"]),
+// followed by filenames (without .toml) found in ThemesDir(), sorted
+// alphabetically. Files whose names collide with a built-in are silently
+// skipped. Returns built-ins only if ThemesDir() does not exist.
 func ListThemes() []string
 ```
 
 ### `pkg/config/watcher.go`
 
-Wraps `fsnotify` (already a dependency). Watches both `config.toml` and the active theme file for external changes.
+Watches the entire `themes/` directory (not just one file) so that any theme file update triggers a check. On an event, the watcher checks whether the changed file matches the currently active theme name; if not, the event is dropped.
 
 ```go
 type Watcher struct { ... }
 
-// NewWatcher creates a watcher for cfgPath and the themes directory.
-// onReload is called with the freshly loaded Config whenever an external
-// write is detected. The watcher ignores events for 200ms after Save() is
-// called (write-guard to prevent reload loops).
+// NewWatcher creates a watcher for cfgPath and ThemesDir().
+// onReload is called with a freshly loaded Config when an external write is
+// detected. The watcher ignores events for 200ms after NotifyWrite() is
+// called (write-guard to prevent reload loops on stui's own saves).
 func NewWatcher(cfgPath string, onReload func(Config)) (*Watcher, error)
 
 // Start begins watching in the background.
 func (w *Watcher) Start()
 
-// NotifyWrite tells the watcher that stui itself just wrote the file.
-// Events arriving within 200ms of this call are suppressed.
+// SetActiveTheme tells the watcher which theme file to watch for changes.
+// Called by ui.go whenever the active theme changes (including on startup).
+// "default", "high-contrast", "monochrome", and "matugen" have no file to
+// watch — calling SetActiveTheme with a built-in name disables theme-file watching.
+func (w *Watcher) SetActiveTheme(name string)
+
+// NotifyWrite suppresses watcher events for 200ms after stui writes config.toml.
+// The 200ms window is intentionally larger than the 150ms debounce so events
+// fired by the write itself always fall within the guard window.
 func (w *Watcher) NotifyWrite()
 
 // Stop closes the watcher.
 func (w *Watcher) Stop() error
 ```
 
-Debounce: 150ms (matching `MatugenWatcher`). Both `config.toml` and `themes/` directory are watched. When any `.toml` file in `themes/` changes and its name matches the active theme, a reload is triggered.
+Debounce: 150ms (matching `MatugenWatcher`). The write-guard (200ms) covers stui's own writes to `config.toml` only — theme files are never written by stui, so they have no write-guard.
 
 ---
 
@@ -213,29 +289,37 @@ Debounce: 150ms (matching `MatugenWatcher`). Both `config.toml` and `themes/` di
 ### Startup (`cmd/stui/main.go`)
 
 ```
-config.Load(config.DefaultPath())    → cfg Config
-config.LoadTheme(cfg.Interface.Theme) → palette theme.Palette
-theme.T.Apply(palette)
-ui.New(opts, cfg)                    → Model (settings screen pre-populated)
-config.NewWatcher(path, onReload)    → watcher
+config.Load(config.DefaultPath())         → cfg Config
+config.LoadTheme(cfg.Interface.Theme)     → palette theme.Palette
+theme.T.Apply(palette)                    // skipped if theme == "matugen"
+ui.New(opts, cfg)                         → innerModel (settings screen pre-populated)
+mainModel := ui.NewRootModel(...)
+watcher := config.NewWatcher(path, func(c Config) { p.Send(ConfigReloadMsg{c}) })
+watcher.SetActiveTheme(cfg.Interface.Theme)
 watcher.Start()
+p := tea.NewProgram(&mainModel / &splashModel)   // p now available; onReload closure captures it
 ```
 
-`onReload` sends a `ConfigReloadMsg{Config}` to the running bubbletea `Program` via `p.Send()`.
+The `onReload` callback captures `p` by pointer. Since the `Watcher.Start()` goroutine begins after `tea.NewProgram`, `p` is valid when any reload fires. Both branches (`noSplash` and default splash) must wire the watcher the same way — `watcher.Start()` is called after `tea.NewProgram` in both code paths.
 
-If `cfg.Interface.Theme == "matugen"`, start `MatugenWatcher` as today (the two watchers coexist).
+If `cfg.Interface.Theme == "matugen"`, start `MatugenWatcher` as today (coexists with `config.Watcher`).
 
 ### TUI Settings Change → Write-back (`internal/ui/ui.go`)
 
 ```
 SettingsChangedMsg{Key, Value}
-  → m.cfg = config.ApplyChange(m.cfg, key, value)
-  → if theme key: theme.T.Apply(config.LoadTheme(m.cfg.Interface.Theme))
-  → arm 300ms debounce timer
-  → on timer fire: watcher.NotifyWrite(); config.Save(path, m.cfg)
+  → m.cfg = config.ApplyChange(m.cfg, Key, Value)
+  → if Key == "interface.theme": theme.T.Apply(loadTheme(m.cfg)); watcher.SetActiveTheme(...)
+  → m.cfgSaveSeq++; seq := m.cfgSaveSeq
+  → return tea.Tick(300ms, func(t) { return configSaveTickMsg{seq} })
+
+case configSaveTickMsg:
+  → if msg.seq != m.cfgSaveSeq { return }  // stale tick — a later change superseded this one
+  → watcher.NotifyWrite()
+  → config.Save(m.cfgPath, m.cfg)
 ```
 
-`config.ApplyChange(cfg Config, key string, value interface{}) Config` maps dot-notation keys (e.g. `"playback.default_volume"`) to the correct struct field via a switch statement.
+**Debounce pattern:** `m.cfgSaveSeq int` is incremented on every change. The `tea.Tick` closure captures the seq at the time of the change. When the tick fires, it checks whether the seq still matches the current counter. If a newer change arrived within the 300ms window, the seq will have advanced and the tick is discarded. This is the standard bubbletea v2 debounce idiom — no stored `tea.Cmd` field.
 
 ### External Write → Live Reload
 
@@ -243,41 +327,47 @@ SettingsChangedMsg{Key, Value}
 Script writes ~/.config/stui/themes/noctalia.toml (or config.toml)
   → fsnotify event (debounced 150ms)
   → watcher checks write-guard window — not suppressed
+  → watcher checks active theme name matches changed file (for theme files)
   → config.Load() → new Config
   → onReload(newCfg) → p.Send(ConfigReloadMsg{newCfg})
-  → ui.go: m.cfg = msg.Config
-           theme.T.Apply(config.LoadTheme(m.cfg.Interface.Theme))
-           settings screen refreshes displayed values
+
+case config.ConfigReloadMsg in ui.go:
+  → m.cfg = msg.Config
+  → theme.T.Apply(config.LoadTheme(m.cfg.Interface.Theme))
+  → watcher.SetActiveTheme(m.cfg.Interface.Theme)
+  → forward ConfigReloadMsg to settings screen
 ```
 
 ---
 
 ## Settings Screen Changes (`internal/ui/screens/settings.go`)
 
-- `NewSettingsModel(client *ipc.Client, cfg config.Config)` — takes Config, populates item values from cfg instead of hardcoded defaults
-- Interface > Theme: `settingChoice` with values from `config.ListThemes()` (built-ins + user files)
-- `Update` handles `ConfigReloadMsg` by rebuilding the displayed item values from the new config
-
-Settings items that are `settingAction` or `settingInfo` have no config file representation and are unchanged.
+- `NewSettingsModel(client *ipc.Client, cfg config.Config)` — accepts Config; populates item values by calling `populateFromConfig(cfg)` (new private helper)
+- `populateFromConfig(cfg config.Config)` — iterates all items in `m.categories` and sets `boolVal`, `intVal`, `floatVal`, `choiceIdx`, `strVal` from the corresponding Config field. Preserves `catCursor` and `itemCursor` (does not reset navigation state). Used both in `NewSettingsModel` and in `ConfigReloadMsg` handling.
+- Interface > Theme item: new `settingChoice` with key `"interface.theme"`, values from `config.ListThemes()`. The `choiceIdx` is set to the index of `cfg.Interface.Theme` in the list, or 0 if not found.
+- `Update` handles `config.ConfigReloadMsg` by calling `m.populateFromConfig(msg.Config)`.
 
 ---
 
 ## `ui.go` Changes (`internal/ui/ui.go`)
 
-- `Model` gains `cfg config.Config` and `cfgPath string` fields
-- `ui.New(opts Options, cfg config.Config)` accepts the loaded config
+- `Model` gains `cfg config.Config`, `cfgPath string`, `cfgSaveSeq int`, `watcher *config.Watcher` fields
+- `ui.New(opts Options, cfg config.Config)` accepts the loaded config; passes `cfg` to `NewSettingsModel`
 - `Options` gains `CfgPath string`
-- `SettingsChangedMsg` handler: apply to `m.cfg`, arm debounce, save, apply theme
-- `ConfigReloadMsg` handler: update `m.cfg`, apply theme, forward to settings screen
-- Debounce: a `configSaveTimer` `tea.Cmd` field; reset on each change, fire triggers save
+- `SettingsChangedMsg` handler: `ApplyChange`, theme apply if theme key, increment seq, return debounce tick
+- `configSaveTickMsg{seq int}` (unexported): seq-check, `NotifyWrite`, `Save`
+- `config.ConfigReloadMsg` handler: update `m.cfg`, apply theme, `SetActiveTheme`, forward to settings screen
 
 ---
 
 ## `cmd/stui/main.go` Changes
 
-- Load config before creating `ui.New`
-- Create and start `config.Watcher`; pass `p.Send` as the reload callback (set after `tea.NewProgram`)
-- Pass `cfg` and `cfgPath` through `ui.Options`
+- Load config before `ui.New`
+- Create `config.Watcher` with `onReload` closure referencing `p` (pointer)
+- Call `watcher.SetActiveTheme(cfg.Interface.Theme)`
+- Call `watcher.Start()` after `tea.NewProgram` in **both** the `noSplash` and splash branches
+- Pass `cfg` and `CfgPath` through `ui.Options`
+- If `cfg.Interface.Theme == "matugen"`, start `MatugenWatcher` as today
 
 ---
 
@@ -285,13 +375,13 @@ Settings items that are `settingAction` or `settingInfo` have no config file rep
 
 | File | Change |
 |---|---|
-| `pkg/config/config.go` | New — Config struct, Default, Load, Save, DefaultPath, ApplyChange |
+| `pkg/config/config.go` | New — Config, sub-structs, Default, Load, Save, DefaultPath, ApplyChange, ConfigReloadMsg |
 | `pkg/config/theme_loader.go` | New — LoadTheme, ListThemes, ThemesDir |
-| `pkg/config/watcher.go` | New — Watcher wrapping fsnotify |
-| `pkg/config/config_test.go` | New — tests for Load, Save, ApplyChange, LoadTheme |
-| `cmd/stui/main.go` | Load config, create watcher, pass to ui.New |
-| `internal/ui/ui.go` | cfg field, SettingsChangedMsg write-back, ConfigReloadMsg handler, debounce |
-| `internal/ui/screens/settings.go` | Accept Config in constructor, populate from cfg, handle ConfigReloadMsg, add theme choices |
+| `pkg/config/watcher.go` | New — Watcher, SetActiveTheme, NotifyWrite |
+| `pkg/config/config_test.go` | New — tests for Load, Save, ApplyChange, LoadTheme, ListThemes |
+| `cmd/stui/main.go` | Load config, create and start watcher (both branches), pass cfg via Options |
+| `internal/ui/ui.go` | cfg/cfgPath/cfgSaveSeq/watcher fields, SettingsChangedMsg write-back, debounce, ConfigReloadMsg handler |
+| `internal/ui/screens/settings.go` | Accept Config in constructor, populateFromConfig helper, ConfigReloadMsg handler, add "interface.theme" choice |
 | `go.mod` / `go.sum` | Add github.com/BurntSushi/toml |
 
 ---
