@@ -330,9 +330,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.state.Width = msg.Width
 		m.state.Height = msg.Height
-		m.search.SetWidth(max(20, msg.Width/3))
-		m.musicScreen, _ = m.musicScreen.Update(msg)
-		m.collectionsScreen = m.collectionsScreen.SetSize(msg.Width, msg.Height)
+		m.search.SetWidth(max(20, m.innerWidth()/3))
+		innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: max(0, msg.Height-12)}
+		m.musicScreen, _ = m.musicScreen.Update(innerMsg)
+		m.collectionsScreen = m.collectionsScreen.SetSize(m.innerWidth(), max(0, msg.Height-12))
 
 	// ── Runtime lifecycle ─────────────────────────────────────────────────
 
@@ -1157,7 +1158,7 @@ func (m Model) overlayRowCount() int {
 
 // hitTestTopTabBar returns the Tab the user clicked based on the X coordinate.
 func (m Model) hitTestTopTabBar(x int) (state.Tab, bool) {
-	pos := 0
+	pos := 3 // MarginLeft(1) + BorderLeft(1) + PaddingLeft(1)
 	for _, t := range state.Tabs() {
 		label := fmt.Sprintf(" %s ", t.String())
 		var rendered string
@@ -1215,12 +1216,13 @@ func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
 	searchW := lipgloss.Width(searchBox)
 	gearW := lipgloss.Width(gear)
 
-	spacerLeft := max(0, (w/2)-tabsW-(searchW/2))
-	// TODO(task3): update to 3 once TopBarStyle margins are fully wired (MarginLeft(1)+BorderLeft(1)+PaddingLeft(1)=3).
-	const topBarPaddingLeft = 1
+	contentW := w - 6
+	spacerLeft := max(0, (contentW/2)-tabsW-(searchW/2))
+	// TopBarStyle has MarginLeft(1) + BorderLeft(1) + PaddingLeft(1) = 3.
+	const topBarPaddingLeft = 3
 	searchStart := topBarPaddingLeft + tabsW + spacerLeft
 	searchEnd := searchStart + searchW
-	gearStart := searchEnd + max(0, w-tabsW-searchW-gearW-spacerLeft-2)
+	gearStart := searchEnd + max(0, contentW-tabsW-searchW-gearW-spacerLeft)
 	gearEnd := gearStart + gearW
 
 	switch {
@@ -2317,6 +2319,13 @@ func (m Model) currentGridEntries() []ipc.CatalogEntry {
 	return nil
 }
 
+// innerWidth returns the usable content width inside MainCardStyle
+// (terminal width minus margins, border, and padding: 1+1+1+1+1+1 = 6).
+// Floored at 0 to prevent negative dimensions on tiny terminals.
+func (m Model) innerWidth() int {
+	return max(0, m.state.Width-6)
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m Model) View() tea.View {
@@ -2335,8 +2344,10 @@ func (m Model) View() tea.View {
 		content = m.applyToast(overlay)
 	} else {
 		base := lipgloss.JoinVertical(lipgloss.Left,
-			m.viewTopBar(),
-			m.viewMain(),
+			m.viewTopBar(m.state.Focus == state.FocusSearch),
+			"",
+			m.viewMainCard(),
+			"",
 			m.viewStatusBar(),
 		)
 		content = m.applyToast(base)
@@ -2518,6 +2529,12 @@ func (m Model) viewBufferingOverlay() string {
 	return "\n" + box + "\n"
 }
 
+func (m Model) viewMainCard() string {
+	focused := m.state.Focus != state.FocusSearch
+	inner := m.viewMain()
+	return theme.T.MainCardStyle(focused).Width(m.state.Width - 2).Render(inner)
+}
+
 func (m Model) viewMain() string {
 	if m.state.ActiveTab == state.TabMusic {
 		return m.musicScreen.View().Content
@@ -2536,7 +2553,7 @@ func (m Model) viewMain() string {
 		grid := screens.RenderGrid(
 			m.currentGridEntries(),
 			m.gridCursor,
-			m.state.Width,
+			m.innerWidth(),
 			availH,
 			m.state.IsLoading,
 			m.state.LoadingStart,
@@ -2555,7 +2572,7 @@ func (m Model) viewMain() string {
 	)
 }
 
-func (m Model) viewTopBar() string {
+func (m Model) viewTopBar(focused bool) string {
 	w := m.state.Width
 	var tabParts []string
 	for _, t := range state.Tabs() {
@@ -2592,11 +2609,12 @@ func (m Model) viewTopBar() string {
 	tabsW := lipgloss.Width(tabs)
 	searchW := lipgloss.Width(searchBox)
 	gearW := lipgloss.Width(gear)
-	spacerLeft := max(0, (w/2)-tabsW-(searchW/2))
-	spacerRight := max(0, w-tabsW-searchW-gearW-spacerLeft-2)
+	contentW := w - 6
+	spacerLeft := max(0, (contentW/2)-tabsW-(searchW/2))
+	spacerRight := max(0, contentW-tabsW-searchW-gearW-spacerLeft)
 
 	row := tabs + strings.Repeat(" ", spacerLeft) + searchBox + strings.Repeat(" ", spacerRight) + gear
-	return theme.T.TopBarStyle(false).Width(w).Render(row)
+	return theme.T.TopBarStyle(focused).Width(w - 2).Render(row)
 }
 
 func (m Model) viewColumnHeaders() string {
@@ -2703,9 +2721,10 @@ func (m Model) viewStatusBar() string {
 	right := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
 		Render(fmt.Sprintf("%s  %d titles  v toggle ", m.state.ActiveTab.String(), count))
 
-	gap := max(0, w-lipgloss.Width(pill)-lipgloss.Width(screenIndicator)-lipgloss.Width(statusMsg)-lipgloss.Width(right)-4)
+	contentW := w - 8
+	gap := max(0, contentW-lipgloss.Width(pill)-lipgloss.Width(screenIndicator)-lipgloss.Width(statusMsg)-lipgloss.Width(right))
 	bar := pill + screenIndicator + statusMsg + strings.Repeat(" ", gap) + right
-	return theme.T.StatusBarStyle().Width(w).Render(bar)
+	return theme.T.StatusBarStyle().Width(w - 2).Render(bar)
 }
 
 // ── Data conversion helpers ───────────────────────────────────────────────────
