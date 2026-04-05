@@ -20,12 +20,18 @@ package screens
 
 import (
 	"strings"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
+)
+
+const (
+	loadingTimeout = 30 * time.Second
 )
 
 // GridCursor tracks position in the 2D grid.
@@ -45,20 +51,45 @@ func (c GridCursor) IsAtTopRow() bool {
 
 // RenderGrid renders the full poster grid for the given entries.
 // cursor is the currently focused card index.
-// termWidth/termHeight are used for layout.
+// termWidth is the full terminal width; availH is the pre-computed available height.
+// loadingStart is the timestamp when loading started (0 if not loading).
+// plugins is the list of loaded metadata provider plugins.
+// spinner is an optional spinner model for loading animation (can be nil).
+// No outer border is applied — the caller (viewMainCard) provides that wrapper.
 func RenderGrid(
 	entries []ipc.CatalogEntry,
 	cursor GridCursor,
-	termWidth, termHeight int,
+	termWidth, availH int,
 	isLoading bool,
+	loadingStart int64,
 	runtimeStatus string,
+	plugins []string,
+	spinner *spinner.Model,
 ) string {
-	availH := termHeight - 7 // account for top bar + status bar
+	if availH <= 0 {
+		return ""
+	}
 
 	// ── Loading / empty states ────────────────────────────────────────────
 	if isLoading {
+		if loadingStart > 0 {
+			elapsed := time.Since(time.Unix(loadingStart, 0))
+			if elapsed > loadingTimeout {
+				hint := "Loading timed out"
+				if runtimeStatus == "error" {
+					hint = "Runtime unavailable"
+				}
+				return CenteredMsg(termWidth, availH,
+					lipgloss.NewStyle().Foreground(theme.T.Yellow()).Render("⚠ "+hint),
+				)
+			}
+		}
+		spinnerView := "Loading…"
+		if spinner != nil {
+			spinnerView = spinner.View() + " Loading…"
+		}
 		return CenteredMsg(termWidth, availH,
-			lipgloss.NewStyle().Foreground(theme.T.Neon()).Render("⠿  Loading…"),
+			lipgloss.NewStyle().Foreground(theme.T.Neon()).Render(spinnerView),
 		)
 	}
 	if len(entries) == 0 {
@@ -67,21 +98,31 @@ func RenderGrid(
 			hint = "Connecting to runtime…"
 		} else if runtimeStatus == "error" {
 			hint = "Runtime unavailable — try: OMDB_API_KEY=... stui"
+		} else if len(plugins) == 0 {
+			hint = "No metadata sources — install provider plugins"
 		}
 		return CenteredMsg(termWidth, availH,
 			lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render(hint),
 		)
 	}
 
-	cw := components.CardWidth(termWidth)
+	// Determine if scrollbar is needed before computing card width,
+	// so we can reserve 2 columns (1 gap + 1 scrollbar) upfront.
 	cols := components.CardColumns
-
-	// Compute visible row window
 	totalRows := (len(entries) + cols - 1) / cols
-	visibleRows := availH / (components.CardPosterRows + 4 + 2) // card height + meta lines + border
+	rowH := components.CardPosterRows + 4 + 2 // card height + meta lines + border
+	visibleRows := availH / rowH
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
+
+	needsScrollbar := totalRows > visibleRows
+	gridWidth := termWidth
+	if needsScrollbar {
+		gridWidth -= 2 // reserve 1 gap + 1 scrollbar column
+	}
+
+	cw := components.CardWidth(gridWidth)
 
 	startRow := 0
 	if cursor.row >= visibleRows {
@@ -89,38 +130,78 @@ func RenderGrid(
 	}
 	endRow := min(startRow+visibleRows, totalRows)
 
-	var rowStrings []string
+	// Build scrollbar track (one char per visible row).
+	var sbChars []string
+	if needsScrollbar {
+		thumbH := max(1, visibleRows*visibleRows/max(1, totalRows))
+		thumbTop := 0
+		if totalRows > visibleRows {
+			thumbTop = startRow * (visibleRows - thumbH) / max(1, totalRows-visibleRows)
+		}
+		accentStr := lipgloss.NewStyle().Foreground(theme.T.Accent()).Render
+		trackStr := lipgloss.NewStyle().Foreground(theme.T.Border()).Render
+		for i := range visibleRows {
+			inThumb := i >= thumbTop && i < thumbTop+thumbH
+			if !inThumb {
+				sbChars = append(sbChars, trackStr("│"))
+				continue
+			}
+			if thumbH == 1 {
+				sbChars = append(sbChars, accentStr("█"))
+				continue
+			}
+			switch i {
+			case thumbTop:
+				sbChars = append(sbChars, accentStr("▐"))
+			case thumbTop + thumbH - 1:
+				sbChars = append(sbChars, accentStr("▌"))
+			default:
+				sbChars = append(sbChars, accentStr("█"))
+			}
+		}
+	}
 
+	// Render grid rows.
+	var rowStrings []string
 	for rowIdx := startRow; rowIdx < endRow; rowIdx++ {
 		var cardStrings []string
-
 		for colIdx := 0; colIdx < cols; colIdx++ {
 			idx := rowIdx*cols + colIdx
 			if idx >= len(entries) {
-				// Empty filler card to maintain grid alignment
 				filler := lipgloss.NewStyle().
-					Width(cw + 4). // card width + border + padding
-					Height(components.CardPosterRows + 5).
+					Width(cw + 4).
+					Height(rowH).
 					Render("")
 				cardStrings = append(cardStrings, filler)
 				continue
 			}
-
 			selected := (rowIdx == cursor.row && colIdx == cursor.col)
-			card := components.RenderCard(entries[idx], cw, selected)
-			cardStrings = append(cardStrings, card)
+			cardStrings = append(cardStrings, components.RenderCard(entries[idx], cw, selected))
 		}
-
 		row := lipgloss.JoinHorizontal(lipgloss.Top, cardStrings...)
 		rowStrings = append(rowStrings, row)
 	}
 
-	grid := strings.Join(rowStrings, "\n")
-	return lipgloss.NewStyle().
-		Background(theme.T.Bg()).
-		Width(termWidth).
-		Height(availH).
-		Render(grid)
+	if !needsScrollbar {
+		return strings.Join(rowStrings, "\n")
+	}
+
+	// Attach scrollbar: each grid row is rowH terminal lines tall.
+	// Distribute the sbChars across rows — one char per visible row index.
+	sbIdx := 0
+	var finalRows []string
+	for _, rowStr := range rowStrings {
+		lines := strings.Split(rowStr, "\n")
+		for li := range lines {
+			// Append the scrollbar char to the first line of each card row.
+			if li == 0 && sbIdx < len(sbChars) {
+				lines[li] = lines[li] + " " + sbChars[sbIdx]
+				sbIdx++
+			}
+		}
+		finalRows = append(finalRows, strings.Join(lines, "\n"))
+	}
+	return strings.Join(finalRows, "\n")
 }
 
 // CenteredMsg renders a single message centered in the available space.

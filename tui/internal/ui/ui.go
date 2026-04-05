@@ -1216,7 +1216,7 @@ func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
 	gearW := lipgloss.Width(gear)
 
 	spacerLeft := max(0, (w/2)-tabsW-(searchW/2))
-	// TopBarStyle has PaddingLeft(1); content starts at column 1.
+	// TODO(task3): update to 3 once TopBarStyle margins are fully wired (MarginLeft(1)+BorderLeft(1)+PaddingLeft(1)=3).
 	const topBarPaddingLeft = 1
 	searchStart := topBarPaddingLeft + tabsW + spacerLeft
 	searchEnd := searchStart + searchW
@@ -2532,11 +2532,12 @@ func (m Model) viewMain() string {
 	}
 
 	if m.screen == screenGrid || !m.state.SearchActive {
+		availH := max(0, m.state.Height-12)
 		grid := screens.RenderGrid(
 			m.currentGridEntries(),
 			m.gridCursor,
 			m.state.Width,
-			m.state.Height,
+			availH,
 			m.state.IsLoading,
 			m.state.LoadingStart,
 			m.state.RuntimeStatus.String(),
