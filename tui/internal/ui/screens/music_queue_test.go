@@ -262,3 +262,69 @@ func TestQueueVolumeBarZero(t *testing.T) {
 		t.Errorf("volume=0 should have 0 filled blocks, got %d", filled)
 	}
 }
+
+// ── View layout tests ──────────────────────────────────────────────────
+
+func TestQueueViewNarrowNoRightPanel(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(80, 20)
+	// narrow: no right panel TITLE label
+	if strings.Contains(out, "TITLE") {
+		t.Error("narrow view (width=80) should not contain right panel TITLE label")
+	}
+}
+
+func TestQueueViewWideHasRightPanel(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(120, 30)
+	if !strings.Contains(out, "TITLE") {
+		t.Error("wide view (width=120) should contain right panel TITLE label")
+	}
+	if !strings.Contains(out, "ARTIST") {
+		t.Error("wide view should contain ARTIST label")
+	}
+}
+
+func TestQueueViewWideHasColumnHeaders(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(120, 30)
+	if !strings.Contains(out, "Title") {
+		t.Error("wide view should contain Title column header")
+	}
+	if !strings.Contains(out, "Artist") {
+		t.Error("wide view should contain Artist column header")
+	}
+}
+
+func TestQueueViewWideHasSeekBar(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(120, 30)
+	if !strings.ContainsRune(out, '╸') {
+		t.Error("wide view should contain seek bar cursor ╸")
+	}
+}
+
+func TestQueueViewWideHasVolumeBar(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(120, 30)
+	if !strings.Contains(out, "▮") {
+		t.Error("wide view should contain volume bar filled blocks ▮")
+	}
+}
+
+func TestQueueViewAlbumColumnAtWidth143(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(143, 30)
+	if !strings.Contains(out, "Album") {
+		t.Error("view at width=143 should show Album column header")
+	}
+}
+
+func TestQueueViewNoAlbumColumnAtWidth142(t *testing.T) {
+	s := queueWithTrack()
+	out := s.View(142, 30)
+	// L = 142-23 = 119 < 120, no album column
+	if strings.Contains(out, "Album") {
+		t.Error("view at width=142 (L=119) should NOT show Album column header")
+	}
+}
