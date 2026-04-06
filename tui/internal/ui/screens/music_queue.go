@@ -134,6 +134,13 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		s.nowArtist = m.SongArtist
 		s.nowSongID = m.SongID
 		s.nowSongPos = m.SongPos
+		s.nowElapsed = m.Elapsed
+		s.nowDuration = m.Duration
+		s.nowVolume = m.Volume
+		// External volume change clears local mute state
+		if s.nowMuted && m.Volume > 0 {
+			s.nowMuted = false
+		}
 
 	case tea.KeyPressMsg:
 		switch m.String() {
@@ -150,6 +157,37 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		case "G":
 			if len(s.tracks) > 0 {
 				s.cursor = len(s.tracks) - 1
+			}
+		case "0":
+			if s.nowMuted {
+				// unmute: restore saved volume
+				if s.client != nil {
+					s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": int(s.prevVolume)})
+				}
+				s.nowMuted = false
+			} else {
+				// mute: save current volume (even if 0)
+				s.prevVolume = s.nowVolume
+				if s.client != nil {
+					s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": 0})
+				}
+				s.nowMuted = true
+			}
+		case "<":
+			if s.nowDuration > 0 && s.client != nil {
+				seekTime := s.nowElapsed - 5
+				if seekTime < 0 {
+					seekTime = 0
+				}
+				s.client.MpdCmd("mpd_seek", map[string]any{"id": s.nowSongID, "time": seekTime})
+			}
+		case ">":
+			if s.nowDuration > 0 && s.client != nil {
+				seekTime := s.nowElapsed + 5
+				if seekTime > s.nowDuration {
+					seekTime = s.nowDuration
+				}
+				s.client.MpdCmd("mpd_seek", map[string]any{"id": s.nowSongID, "time": seekTime})
 			}
 		case "d", "delete":
 			if len(s.tracks) > 0 && s.cursor < len(s.tracks) {
