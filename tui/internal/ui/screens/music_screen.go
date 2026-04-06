@@ -54,6 +54,7 @@ type MusicScreen struct {
 	Dims
 	client *ipc.Client
 	active MusicSubTab
+	vizRef *components.Visualizer // retained so SetClient can re-apply it
 
 	browse    MusicBrowseScreen
 	queue     MusicQueueScreen
@@ -80,6 +81,7 @@ func (s MusicScreen) ActiveSubTab() MusicSubTab { return s.active }
 // SetVisualizer passes the visualizer reference to the queue sub-tab so it
 // can render the visualizer strip inline.
 func (s *MusicScreen) SetVisualizer(v *components.Visualizer) {
+	s.vizRef = v
 	s.queue.visualizer = v
 }
 
@@ -278,6 +280,7 @@ func (s MusicScreen) SetClient(client *ipc.Client) (MusicScreen, tea.Cmd) {
 	// initial fetches (queue, artist list, playlist list).
 	s.browse = NewMusicBrowseScreen(client)
 	s.queue = NewMusicQueueScreen(client)
+	s.queue.visualizer = s.vizRef // re-apply stored reference
 	s.library = NewMusicLibraryScreen(client)
 	s.playlists = NewMusicPlaylistsScreen(client)
 	return s, tea.Batch(s.playlists.Init(), s.library.Init())

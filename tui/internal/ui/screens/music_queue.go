@@ -181,6 +181,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			if s.client != nil {
 				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": vol})
 			}
+			s.nowVolume = uint32(vol) // optimistic update so display refreshes immediately
 			s.nowMuted = false
 
 		case "-":
@@ -191,6 +192,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			if s.client != nil {
 				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": vol})
 			}
+			s.nowVolume = uint32(vol) // optimistic update
 
 		case "<":
 			if s.nowDuration > 0 && s.client != nil {
@@ -324,8 +326,8 @@ func (s MusicQueueScreen) View(w, h int) string {
 		vizHeight = s.visualizer.Config().Height
 	}
 
-	// Box outer height: all rows minus footer and visualizer
-	boxH := h - 1 - vizHeight
+	// Box outer height: all rows minus visualizer
+	boxH := h - vizHeight
 	if boxH < 3 {
 		boxH = 3
 	}
@@ -448,7 +450,6 @@ func (s MusicQueueScreen) View(w, h int) string {
 		}
 		sb.WriteString(ll + rl + "\n")
 	}
-	sb.WriteString(footerLine + "\n")
 
 	if s.visualizer != nil && s.visualizer.IsRunning() {
 		sb.WriteString(s.visualizer.RenderBars(w))
@@ -681,19 +682,22 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 
 // queueColWidths returns (titleW, artistW, albumW) for the track list columns
 // given left-panel width L. albumW == 0 means the Album column is hidden.
-// Fixed overhead = 13ch (prefix 3 + # 3 + space 1 + duration 6).
+// Fixed overhead: 15ch (no album) or 16ch (with album).
 func queueColWidths(L int) (titleW, artistW, albumW int) {
-	R := L - 13
-	if R < 1 {
-		R = 1
-	}
 	if L >= 120 {
+		R := L - 16
+		if R < 1 {
+			R = 1
+		}
 		titleW  = R * 40 / 100
 		artistW = R * 35 / 100
 		albumW  = R * 25 / 100
-		// remainder goes to title
 		titleW += R - titleW - artistW - albumW
 	} else {
+		R := L - 15
+		if R < 1 {
+			R = 1
+		}
 		titleW  = R * 55 / 100
 		artistW = R * 45 / 100
 		albumW  = 0
