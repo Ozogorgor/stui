@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -159,5 +160,105 @@ func TestQueueColWidthsBelowThreshold(t *testing.T) {
 	_, _, alw := queueColWidths(119)
 	if alw != 0 {
 		t.Errorf("album column should not appear at L=119, got albumW=%d", alw)
+	}
+}
+
+// ── Art placeholder ────────────────────────────────────────────────────
+
+func TestQueueArtPlaceholderIs9Rows(t *testing.T) {
+	lines := strings.Split(strings.TrimRight(queueArtPlaceholder(), "\n"), "\n")
+	if len(lines) != 9 {
+		t.Errorf("art placeholder has %d rows, want 9", len(lines))
+	}
+}
+
+func TestQueueArtPlaceholderContainsMusicNote(t *testing.T) {
+	out := queueArtPlaceholder()
+	if !strings.Contains(out, "♪") {
+		t.Error("art placeholder should contain ♪")
+	}
+}
+
+// ── Seek bar ───────────────────────────────────────────────────────────
+
+func TestQueueSeekBarZeroDuration(t *testing.T) {
+	bar, times := queueSeekBar(0, 0)
+	for _, ch := range bar {
+		if ch != '─' {
+			t.Errorf("seek bar with duration=0 should be all ─, got %q", bar)
+			break
+		}
+	}
+	if !strings.Contains(times, "0:00") {
+		t.Errorf("seek bar times %q should contain 0:00", times)
+	}
+}
+
+func TestQueueSeekBarLength20(t *testing.T) {
+	bar, _ := queueSeekBar(63, 214)
+	// strip ANSI — count runes that are bar chars
+	count := 0
+	for _, r := range bar {
+		if r == '━' || r == '╸' || r == '─' {
+			count++
+		}
+	}
+	if count != 20 {
+		t.Errorf("seek bar has %d bar chars, want 20", count)
+	}
+}
+
+func TestQueueSeekBarCursorChar(t *testing.T) {
+	bar, _ := queueSeekBar(63, 214)
+	if !strings.ContainsRune(bar, '╸') {
+		t.Errorf("seek bar %q should contain ╸ (U+2578)", bar)
+	}
+}
+
+func TestQueueSeekBarFullProgress(t *testing.T) {
+	// elapsed == duration: filled=19, cursor at pos 19
+	bar, _ := queueSeekBar(214, 214)
+	if !strings.ContainsRune(bar, '╸') {
+		t.Errorf("full seek bar should still have ╸")
+	}
+}
+
+// ── Volume bar ─────────────────────────────────────────────────────────
+
+func TestQueueVolumeBar72(t *testing.T) {
+	bar, hint := queueVolumeBar(72, false)
+	if !strings.Contains(bar, "72%") {
+		t.Errorf("volume bar %q should contain 72%%", bar)
+	}
+	if !strings.Contains(hint, "mute") {
+		t.Errorf("hint %q should contain 'mute' when not muted", hint)
+	}
+}
+
+func TestQueueVolumeBarMuted(t *testing.T) {
+	_, hint := queueVolumeBar(0, true)
+	if !strings.Contains(hint, "unmute") {
+		t.Errorf("hint %q should contain 'unmute' when muted", hint)
+	}
+}
+
+func TestQueueVolumeBar100(t *testing.T) {
+	bar, _ := queueVolumeBar(100, false)
+	// 10 filled blocks
+	filled := strings.Count(bar, "▮")
+	if filled != 10 {
+		t.Errorf("volume=100 should have 10 filled blocks, got %d", filled)
+	}
+	empty := strings.Count(bar, "▯")
+	if empty != 0 {
+		t.Errorf("volume=100 should have 0 empty blocks, got %d", empty)
+	}
+}
+
+func TestQueueVolumeBarZero(t *testing.T) {
+	bar, _ := queueVolumeBar(0, false)
+	filled := strings.Count(bar, "▮")
+	if filled != 0 {
+		t.Errorf("volume=0 should have 0 filled blocks, got %d", filled)
 	}
 }

@@ -207,6 +207,69 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	return s, nil
 }
 
+// queueArtPlaceholder returns a fixed 9-row art placeholder box (20ch wide).
+func queueArtPlaceholder() string {
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.TextDim()).
+		Width(18).
+		Height(9).
+		Align(lipgloss.Center, lipgloss.Center)
+	return boxStyle.Render(dim.Render("♪")) + "\n"
+}
+
+// queueSeekBar returns (barRow, timeRow) for the progress display.
+// barRow is 20 chars of ━/╸/─. timeRow shows elapsed and total, padded to 20ch.
+func queueSeekBar(elapsed, duration float64) (barRow, timeRow string) {
+	const w = 20
+	// When duration == 0, return all dashes (no cursor tip)
+	if duration <= 0 {
+		barRow  = strings.Repeat("─", w)
+		timeRow = "0:00" + strings.Repeat(" ", w-8) + "0:00"
+		return
+	}
+	filled := int(elapsed / duration * w)
+	if filled > w-1 {
+		filled = w - 1
+	}
+	var b strings.Builder
+	for i := 0; i < w; i++ {
+		switch {
+		case i < filled:
+			b.WriteRune('━')
+		case i == filled:
+			b.WriteRune('╸')
+		default:
+			b.WriteRune('─')
+		}
+	}
+	barRow = b.String()
+
+	elStr := fmtMusicDuration(elapsed)
+	totStr := fmtMusicDuration(duration)
+	pad := w - len(elStr) - len(totStr)
+	if pad < 1 {
+		pad = 1
+	}
+	timeRow = elStr + strings.Repeat(" ", pad) + totStr
+	return
+}
+
+// queueVolumeBar returns (barRow, hintRow) for the volume display.
+func queueVolumeBar(volume uint32, muted bool) (barRow, hintRow string) {
+	filled := int(volume / 10)
+	empty  := 10 - filled
+	bar := strings.Repeat("▮", filled) + strings.Repeat("▯", empty)
+	barRow = fmt.Sprintf("%s  %d%%", bar, volume)
+	if muted {
+		hintRow = "+ vol  - vol  0 unmute"
+	} else {
+		hintRow = "+ vol  - vol  0 mute"
+	}
+	return
+}
+
 // View renders the queue screen within the given width/height constraints.
 func (s MusicQueueScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
