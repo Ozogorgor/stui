@@ -298,7 +298,7 @@ func (t *Theme) SearchStyle() lipgloss.Style {
 	p := t.P()
 	return lipgloss.NewStyle().
 		Background(p.Bg).Foreground(p.Text).
-		BorderStyle(lipgloss.RoundedBorder()).
+		Border(lipgloss.RoundedBorder(), false, true, false, true).
 		BorderForeground(p.Border).
 		PaddingLeft(1).PaddingRight(1)
 }
@@ -307,7 +307,7 @@ func (t *Theme) SearchFocusedStyle() lipgloss.Style {
 	p := t.P()
 	return lipgloss.NewStyle().
 		Background(p.Bg).Foreground(p.Text).
-		BorderStyle(lipgloss.RoundedBorder()).
+		Border(lipgloss.RoundedBorder(), false, true, false, true).
 		BorderForeground(p.Accent).
 		PaddingLeft(1).PaddingRight(1)
 }

@@ -1129,7 +1129,12 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		topBarY := m.overlayRowCount()
 		y := mouse.Y
 		x := mouse.X
-		if y == topBarY {
+		// TopBarStyle: MarginTop(1) + border-top(1) + content(1) + border-bottom(1) = 4 rows.
+		// Content row (tabs/search/gear) is at topBarY+2.
+		// After topbar + 1 blank gap row, main content starts at topBarY+5.
+		const topBarContentOffset = 2 // MarginTop + border-top
+		const topBarTotalRows = 5     // 4 topbar rows + 1 gap blank line
+		if y == topBarY+topBarContentOffset {
 			// Click on top tab bar — hit-test tabs, search, and gear.
 			if tab, ok := m.hitTestTopTabBar(x); ok {
 				m.switchTab(tab)
@@ -1142,7 +1147,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.state.ActiveTab == state.TabMusic {
 			// Relay to music screen with Y relative to music content (after top bar).
-			relY := y - topBarY - 1
+			relY := y - topBarY - topBarTotalRows
 			prev := m.musicScreen.ActiveSubTab()
 			var cmd tea.Cmd
 			m.musicScreen, cmd = m.musicScreen.HandleMouse(x, relY)
@@ -1158,8 +1163,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.screen == screenList {
 			// Click on a result row in the list view.
-			topBarRows := topBarY + 1      // overlay + top bar
-			colHeaderRow := topBarRows     // column header row
+			topBarRows := topBarY + topBarTotalRows // overlay rows + topbar rows + gap
+			colHeaderRow := topBarRows              // column header row
 			bodyStartY := colHeaderRow + 1 // result rows start here
 			bodyRow := y - bodyStartY
 			if bodyRow >= 0 {
