@@ -91,3 +91,152 @@ func TestDefaultPathNotEmpty(t *testing.T) {
 		t.Error("DefaultPath() should not be empty")
 	}
 }
+
+func TestLoadThemeBuiltinDefault(t *testing.T) {
+	p, err := LoadTheme("default")
+	if err != nil {
+		t.Fatalf("LoadTheme(default): %v", err)
+	}
+	if p.Bg == nil {
+		t.Error("LoadTheme(default): Bg should not be nil")
+	}
+}
+
+func TestLoadThemeBuiltinHighContrast(t *testing.T) {
+	p, err := LoadTheme("high-contrast")
+	if err != nil {
+		t.Fatalf("LoadTheme(high-contrast): %v", err)
+	}
+	if p.Bg == nil {
+		t.Error("LoadTheme(high-contrast): Bg should not be nil")
+	}
+}
+
+func TestLoadThemeBuiltinMonochrome(t *testing.T) {
+	p, err := LoadTheme("monochrome")
+	if err != nil {
+		t.Fatalf("LoadTheme(monochrome): %v", err)
+	}
+	if p.Bg == nil {
+		t.Error("LoadTheme(monochrome): Bg should not be nil")
+	}
+}
+
+func TestLoadThemeBuiltinMatugen(t *testing.T) {
+	// "matugen" returns Default() as a placeholder — no error.
+	p, err := LoadTheme("matugen")
+	if err != nil {
+		t.Fatalf("LoadTheme(matugen): %v", err)
+	}
+	if p.Bg == nil {
+		t.Error("LoadTheme(matugen): should return default palette")
+	}
+}
+
+func TestLoadThemeFromFile(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := `bg = "#112233"` + "\n"
+	path := filepath.Join(dir, "mytheme.toml")
+	if err := os.WriteFile(path, []byte(tomlContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := loadThemeFromPath(path)
+	if err != nil {
+		t.Fatalf("loadThemeFromPath: %v", err)
+	}
+	if p.Bg == nil {
+		t.Error("Bg should not be nil after loading theme file")
+	}
+	if p.Surface == nil {
+		t.Error("Surface should fall back to Default() and not be nil")
+	}
+}
+
+func TestLoadThemeMissingFileReturnsDefault(t *testing.T) {
+	p, err := LoadTheme("nonexistent-theme-xyzzy")
+	if err == nil {
+		t.Error("LoadTheme of nonexistent theme should return an error")
+	}
+	if p.Bg == nil {
+		t.Error("LoadTheme missing: should return Default() palette")
+	}
+}
+
+func TestListThemesContainsBuiltins(t *testing.T) {
+	themes := ListThemes()
+	builtins := []string{"default", "high-contrast", "monochrome", "matugen"}
+	for _, b := range builtins {
+		found := false
+		for _, name := range themes {
+			if name == b {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("ListThemes: missing builtin %q", b)
+		}
+	}
+}
+
+func TestListThemesBuiltinsFirst(t *testing.T) {
+	themes := ListThemes()
+	if len(themes) < 4 {
+		t.Fatalf("ListThemes: expected at least 4 items, got %d", len(themes))
+	}
+	if themes[0] != "default" {
+		t.Errorf("first theme = %q, want %q", themes[0], "default")
+	}
+}
+
+func TestListThemesSkipsReservedFileNames(t *testing.T) {
+	themes := ListThemes()
+	seen := map[string]int{}
+	for _, name := range themes {
+		seen[name]++
+		if seen[name] > 1 {
+			t.Errorf("ListThemes: %q appears more than once", name)
+		}
+	}
+}
+
+func TestApplyChangeBool(t *testing.T) {
+	cfg := Default()
+	cfg = ApplyChange(cfg, "ui.show_borders", false)
+	if cfg.Interface.ShowBorders != false {
+		t.Error("ApplyChange ui.show_borders should set ShowBorders to false")
+	}
+}
+
+func TestApplyChangeInt(t *testing.T) {
+	cfg := Default()
+	cfg = ApplyChange(cfg, "player.default_volume", 55)
+	if cfg.Playback.DefaultVolume != 55 {
+		t.Errorf("ApplyChange player.default_volume: got %d, want 55", cfg.Playback.DefaultVolume)
+	}
+}
+
+func TestApplyChangeFloat(t *testing.T) {
+	cfg := Default()
+	cfg = ApplyChange(cfg, "skipper.similarity_threshold", 0.9)
+	if cfg.Skipper.SimilarityThreshold != 0.9 {
+		t.Errorf("ApplyChange skipper.similarity_threshold: got %f, want 0.9", cfg.Skipper.SimilarityThreshold)
+	}
+}
+
+func TestApplyChangeThemeName(t *testing.T) {
+	cfg := Default()
+	cfg = ApplyChange(cfg, "interface.theme", "noctalia")
+	if cfg.Interface.Theme != "noctalia" {
+		t.Errorf("ApplyChange interface.theme: got %q, want %q", cfg.Interface.Theme, "noctalia")
+	}
+}
+
+func TestApplyChangeUnknownKeyIsNoop(t *testing.T) {
+	cfg := Default()
+	before := cfg.Playback.DefaultVolume
+	cfg = ApplyChange(cfg, "audio.dsp", "open")
+	if cfg.Playback.DefaultVolume != before {
+		t.Error("ApplyChange unknown key should not change any field")
+	}
+}
