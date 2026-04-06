@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultReturnsNonZeroValues(t *testing.T) {
@@ -239,4 +240,78 @@ func TestApplyChangeUnknownKeyIsNoop(t *testing.T) {
 	if cfg.Playback.DefaultVolume != before {
 		t.Error("ApplyChange unknown key should not change any field")
 	}
+}
+
+func TestWatcherFiresOnConfigChange(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := Save(cfgPath, Default()); err != nil {
+		t.Fatal(err)
+	}
+
+	received := make(chan Config, 1)
+	w, err := NewWatcher(cfgPath, func(c Config) { received <- c })
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Stop()
+	w.Start()
+
+	time.Sleep(50 * time.Millisecond)
+	cfg := Default()
+	cfg.Playback.DefaultVolume = 42
+	if err := Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-received:
+		if got.Playback.DefaultVolume != 42 {
+			t.Errorf("reloaded DefaultVolume = %d, want 42", got.Playback.DefaultVolume)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("watcher did not fire within 2s")
+	}
+}
+
+func TestWatcherWriteGuardSuppressesSelfWrite(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := Save(cfgPath, Default()); err != nil {
+		t.Fatal(err)
+	}
+
+	callCount := 0
+	w, err := NewWatcher(cfgPath, func(Config) { callCount++ })
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Stop()
+	w.Start()
+	time.Sleep(50 * time.Millisecond)
+
+	w.NotifyWrite()
+	if err := Save(cfgPath, Default()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if callCount != 0 {
+		t.Errorf("write guard failed: onReload called %d times after NotifyWrite", callCount)
+	}
+}
+
+func TestWatcherSetActiveThemeFiltersUnrelatedChanges(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := Save(cfgPath, Default()); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWatcher(cfgPath, func(Config) {})
+	if err != nil {
+		t.Fatalf("NewWatcher: %v", err)
+	}
+	defer w.Stop()
+	w.SetActiveTheme("default")
+	w.SetActiveTheme("noctalia")
+	w.SetActiveTheme("high-contrast")
 }
