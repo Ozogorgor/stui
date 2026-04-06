@@ -52,6 +52,8 @@ import (
 type RootModel struct {
 	active  screen.Screen
 	history []screen.Screen // previous screens (stack); ESC pops the top
+	width   int
+	height  int
 }
 
 // NewRootModel creates a RootModel with `initial` as the active screen.
@@ -64,22 +66,49 @@ func (r RootModel) Init() tea.Cmd {
 	return r.active.Init()
 }
 
+// SetProgram propagates the program to the active screen.
+func (r *RootModel) SetProgram(p *tea.Program) {
+	if ls, ok := r.active.(LegacyScreen); ok {
+		r.active = ls.SetProgram(p)
+	}
+}
+
 // Update handles global keys then delegates to the active screen.
 func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Track current terminal size so newly activated screens get it immediately.
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		r.width = ws.Width
+		r.height = ws.Height
+	}
+
 	// ── Screen transition (from screen.TransitionCmd) ──────────────────────────
 	if t, ok := msg.(screen.TransitionMsg); ok {
 		if t.PushBack {
 			r.history = append(r.history, r.active)
 		}
 		r.active = t.Next
-		return r, r.active.Init()
+		initCmd := r.active.Init()
+		// Inject the current window size into the new screen right away so its
+		// View() renders at full size instead of falling back to the zero-width stub.
+		if r.width > 0 {
+			sized, sizeCmd := r.active.Update(tea.WindowSizeMsg{Width: r.width, Height: r.height})
+			r.active = sized
+			return r, tea.Batch(initCmd, sizeCmd)
+		}
+		return r, initCmd
 	}
 
 	// ── Global keys ────────────────────────────────────────────────────
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return r, tea.Quit
+		case "q":
+			// Only quit from the root screen; subscreens (search, settings, etc.)
+			// must handle or ignore "q" themselves so typed text is not intercepted.
+			if len(r.history) == 0 {
+				return r, tea.Quit
+			}
 		case "esc":
 			if len(r.history) > 0 {
 				// Pop the previous screen
@@ -108,9 +137,13 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return r, cmd
 }
 
-// View delegates to the active screen.
+// View delegates to the active screen, always enforcing alt-screen and mouse
+// mode so subscreens don't need to declare these themselves.
 func (r RootModel) View() tea.View {
-	return r.active.View()
+	v := r.active.View()
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // ── LegacyScreen adapter ──────────────────────────────────────────────────────
@@ -144,4 +177,9 @@ func (s LegacyScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 func (s LegacyScreen) View() tea.View {
 	return s.m.View()
+}
+
+func (s LegacyScreen) SetProgram(p *tea.Program) LegacyScreen {
+	s.m.SetProgram(p)
+	return s
 }
