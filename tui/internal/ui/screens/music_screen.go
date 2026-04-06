@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -75,6 +76,12 @@ func NewMusicScreen(client *ipc.Client) MusicScreen {
 
 // ActiveSubTab returns the currently visible sub-tab.
 func (s MusicScreen) ActiveSubTab() MusicSubTab { return s.active }
+
+// SetVisualizer passes the visualizer reference to the queue sub-tab so it
+// can render the visualizer strip inline.
+func (s *MusicScreen) SetVisualizer(v *components.Visualizer) {
+	s.queue.visualizer = v
+}
 
 // WithActiveSubTab returns a copy of s with the active sub-tab overridden.
 // Used to restore the saved sub-tab preference on startup.
@@ -241,7 +248,7 @@ func (s MusicScreen) HandleMouse(x, relY int) (MusicScreen, tea.Cmd) {
 // x falls outside all tab labels.
 func (s MusicScreen) hitTestSubTabBar(x int) (MusicSubTab, bool) {
 	tabs := []MusicSubTab{MusicBrowse, MusicQueue, MusicLibrary, MusicPlaylists}
-	pos := 2 // "  " prefix
+	pos := 2 // "  " prefix (MainCardStyle left offset already subtracted by caller)
 	for _, t := range tabs {
 		var label string
 		if t == MusicQueue && len(s.queue.tracks) > 0 {
@@ -273,5 +280,5 @@ func (s MusicScreen) SetClient(client *ipc.Client) (MusicScreen, tea.Cmd) {
 	s.queue = NewMusicQueueScreen(client)
 	s.library = NewMusicLibraryScreen(client)
 	s.playlists = NewMusicPlaylistsScreen(client)
-	return s, s.playlists.Init()
+	return s, tea.Batch(s.playlists.Init(), s.library.Init())
 }

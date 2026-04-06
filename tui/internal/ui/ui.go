@@ -260,7 +260,7 @@ func New(opts Options, cfg config.Config) Model {
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(theme.T.TextDim())),
 	)
 
-	return Model{
+	m := Model{
 		opts:              opts,
 		state:             appState,
 		keys:              keybinds.Default(),
@@ -283,6 +283,8 @@ func New(opts Options, cfg config.Config) Model {
 		cfg:               cfg,
 		cfgPath:           opts.CfgPath,
 	}
+	m.musicScreen.SetVisualizer(m.visualizer)
+	return m
 }
 
 func (m *Model) SetProgram(p *tea.Program) { m.program = p }
@@ -792,6 +794,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var spinCmd tea.Cmd
 		m.loadingSpinner, spinCmd = m.loadingSpinner.Update(msg)
+		// Clear stale loading state if nothing responded within the timeout.
+		if m.state.IsLoading && m.state.LoadingStart > 0 &&
+			time.Since(time.Unix(m.state.LoadingStart, 0)) > 8*time.Second {
+			m.state.IsLoading = false
+			m.state.LoadingStart = 0
+		}
 		return m, spinCmd
 
 	// ── MPD audio events ──────────────────────────────────────────────────
@@ -1147,10 +1155,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.state.ActiveTab == state.TabMusic {
 			// Relay to music screen with Y relative to music content (after top bar).
-			relY := y - topBarY - topBarTotalRows
+			relY := y - topBarY - topBarTotalRows - 1 // -1 for MainCardStyle top border
 			prev := m.musicScreen.ActiveSubTab()
 			var cmd tea.Cmd
-			m.musicScreen, cmd = m.musicScreen.HandleMouse(x, relY)
+			cardX := x - 3 // subtract MainCardStyle left offset (margin+border+padding)
+			m.musicScreen, cmd = m.musicScreen.HandleMouse(cardX, relY)
 			if m.musicScreen.ActiveSubTab() != prev {
 				return m, tea.Batch(cmd, m.sessionSaveCmd())
 			}
@@ -1284,9 +1293,11 @@ func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
 
 	switch {
 	case x >= searchStart && x < searchEnd:
-		return screen.TransitionCmd(screens.NewSearchScreen(m.client, ipc.MediaTab(m.state.ActiveTab.MediaTabID())), true)
+		m.state.Focus = state.FocusSearch
+		m.state.SearchActive = true
+		return m.search.Focus()
 	case x >= gearStart && x < gearEnd:
-		return screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
+		return screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
 	}
 	return nil
 }
@@ -1409,11 +1420,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case actions.ActionOpenSettings:
-			return m, screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
+			return m, screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
 		case actions.ActionOpenHelp:
 			return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 		case actions.ActionOpenSearch:
-			return m, screen.TransitionCmd(screens.NewSearchScreen(m.client, ipc.MediaTab(m.state.ActiveTab.MediaTabID())), true)
+			m.state.Focus = state.FocusSearch
+			m.state.SearchActive = true
+			return m, m.search.Focus()
 		case actions.ActionNextTab:
 			next := (int(m.state.ActiveTab) + 1) % len(state.Tabs())
 			m.switchTab(state.Tab(next))
@@ -1858,8 +1871,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "/":
-		// Full-screen search via the Screen stack
-		return m, screen.TransitionCmd(screens.NewSearchScreen(m.client, ipc.MediaTab(m.state.ActiveTab.MediaTabID())), true)
+		// Activate the inline search bar in the topbar.
+		m.state.Focus = state.FocusSearch
+		m.state.SearchActive = true
+		return m, m.search.Focus()
 	case "?":
 		return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 	case "D":
@@ -1891,9 +1906,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "5":
 		m.switchTab(state.TabCollections)
 	case ",":
-		// Open the settings screen via the RootModel screen stack.
-		// When settings closes (ESC) it returns here automatically.
-		return m, screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
+		return m, screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
 	case "esc":
 		if m.cwFocused {
 			m.cwFocused = false
@@ -2427,9 +2440,14 @@ func (m Model) applyToast(base string) string {
 	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" {
 		hud := components.RenderMpdNowPlaying(m.mpdNowPlaying, m.state.Width)
 		if hud != "" {
-			if m.visualizer.IsRunning() {
-				if viz := m.visualizer.RenderBars(m.state.Width); viz != "" {
-					hud = hud + viz
+			queueActive := m.state.ActiveTab == state.TabMusic &&
+				m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
+				m.state.Width > 80
+			if !queueActive {
+				if m.visualizer.IsRunning() {
+					if viz := m.visualizer.RenderBars(m.state.Width); viz != "" {
+						hud = hud + viz
+					}
 				}
 			}
 			base = hud + base
