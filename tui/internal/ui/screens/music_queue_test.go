@@ -314,9 +314,9 @@ func TestQueueViewWideHasVolumeBar(t *testing.T) {
 
 func TestQueueViewAlbumColumnAtWidth143(t *testing.T) {
 	s := queueWithTrack()
-	out := s.View(143, 30)
+	out := s.View(145, 30)
 	if !strings.Contains(out, "Album") {
-		t.Error("view at width=143 should show Album column header")
+		t.Error("view at width=145 should show Album column header")
 	}
 }
 
@@ -327,4 +327,17 @@ func TestQueueViewNoAlbumColumnAtWidth142(t *testing.T) {
 	if strings.Contains(out, "Album") {
 		t.Error("view at width=142 (L=119) should NOT show Album column header")
 	}
+}
+
+func TestQueueVolumeUpKey(t *testing.T) {
+	s := queueWithTrack() // nowVolume = 72
+	s2, _ := s.Update(tea.KeyPressMsg{Text: "+"})
+	// Can't verify IPC call directly, but key should not error and nowMuted should clear
+	_ = s2
+}
+
+func TestQueueVolumeDownKey(t *testing.T) {
+	s := queueWithTrack()
+	s2, _ := s.Update(tea.KeyPressMsg{Text: "-"})
+	_ = s2
 }

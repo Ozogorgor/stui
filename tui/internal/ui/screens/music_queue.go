@@ -173,6 +173,25 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 				}
 				s.nowMuted = true
 			}
+		case "+", "=":
+			vol := int(s.nowVolume) + 5
+			if vol > 100 {
+				vol = 100
+			}
+			if s.client != nil {
+				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": vol})
+			}
+			s.nowMuted = false
+
+		case "-":
+			vol := int(s.nowVolume) - 5
+			if vol < 0 {
+				vol = 0
+			}
+			if s.client != nil {
+				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": vol})
+			}
+
 		case "<":
 			if s.nowDuration > 0 && s.client != nil {
 				seekTime := s.nowElapsed - 5
@@ -270,6 +289,16 @@ func queueVolumeBar(volume uint32, muted bool) (barRow, hintRow string) {
 	return
 }
 
+// padRightANSI pads s with spaces on the right to reach visual width w.
+// Uses lipgloss.Width to correctly handle ANSI escape codes.
+func padRightANSI(s string, w int) string {
+	vis := lipgloss.Width(s)
+	if vis >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-vis)
+}
+
 // View renders the queue screen within the given width/height constraints.
 func (s MusicQueueScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
@@ -284,53 +313,47 @@ func (s MusicQueueScreen) View(w, h int) string {
 		return s.viewNarrow(w, h, accentStyle, dimStyle, textStyle, cursorStyle, footerLine)
 	}
 
-	// ── Wide layout (>80 cols) ─────────────────────────────────────────────
-	const rightPanelW = 22
-	const sepW        = 1
-	L := w - rightPanelW - sepW // left panel width
+	// Wide layout: two bordered boxes side by side
+	const rightBoxW = 22  // outer width of right box (border + 20 inner + border)
+	leftBoxW := w - rightBoxW  // outer width of left box
+	innerL   := leftBoxW - 2   // inner content width of left box
+	const innerR = 20           // inner content width of right box
 
-	// Visualizer height
 	vizHeight := 0
 	if s.visualizer != nil && s.visualizer.IsRunning() {
 		vizHeight = s.visualizer.Config().Height
 	}
 
-	// Track list height: h minus header + colheader + footer rows, minus viz
-	TH := h - 3 - vizHeight
+	// Box outer height: all rows minus footer and visualizer
+	boxH := h - 1 - vizHeight
+	if boxH < 3 {
+		boxH = 3
+	}
+	innerBoxH := boxH - 2  // inner content rows (border top+bottom = 2)
+
+	// Track rows = innerBoxH - 1 (first inner row is column header)
+	TH := innerBoxH - 1
 	if TH < 1 {
 		TH = 1
 	}
 
-	// ── Header line ───────────────────────────────────────────────────────
-	headerText := fmt.Sprintf("Queue (%d tracks · %s)", len(s.tracks), fmtMusicDuration(s.totalDuration()))
-	header := accentStyle.Render(headerText)
+	// ── Column widths ─────────────────────────────────────────────────────
+	titleW, artistW, albumW := queueColWidths(innerL)
 
 	// ── Column headers row ────────────────────────────────────────────────
-	titleW, artistW, albumW := queueColWidths(L)
-	var colHeader string
+	var colHeaderRaw string
 	if albumW > 0 {
-		colHeader = fmt.Sprintf("   %-3s %-*s %-*s %-*s %6s",
-			"#",
-			titleW,  "Title",
-			artistW, "Artist",
-			albumW,  "Album",
-			"Dur",
-		)
+		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %-*s %6s",
+			"#", titleW, "Title", artistW, "Artist", albumW, "Album", "Dur")
 	} else {
-		colHeader = fmt.Sprintf("   %-3s %-*s %-*s %6s",
-			"#",
-			titleW,  "Title",
-			artistW, "Artist",
-			"Dur",
-		)
+		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %6s",
+			"#", titleW, "Title", artistW, "Artist", "Dur")
 	}
-	colHeader = dimStyle.Render(colHeader)
+	colHeaderStyled := dimStyle.Render(colHeaderRaw)
 
-	// ── Track list (virtualized) ──────────────────────────────────────────
+	// ── Track list ────────────────────────────────────────────────────────
 	vl := components.NewVirtualizedList(
-		len(s.tracks),
-		s.cursor,
-		TH,
+		len(s.tracks), s.cursor, TH,
 		components.WithScrollMode(components.ScrollModeCenter),
 	)
 	start, end := vl.VisibleRange()
@@ -346,7 +369,6 @@ func (s MusicQueueScreen) View(w, h int) string {
 		if isCurrent {
 			prefix = "▶  "
 		}
-
 		posStr   := fmt.Sprintf("%3d", tr.Pos+1)
 		durStr   := fmt.Sprintf("%6s", fmtMusicDuration(tr.Duration))
 		titleStr  := truncate(tr.Title,  titleW)
@@ -356,69 +378,78 @@ func (s MusicQueueScreen) View(w, h int) string {
 		if albumW > 0 {
 			albumStr := truncate(tr.Album, albumW)
 			line = fmt.Sprintf("%s%s %-*s %-*s %-*s %s",
-				prefix, posStr,
-				titleW,  titleStr,
-				artistW, artistStr,
-				albumW,  albumStr,
-				durStr,
-			)
+				prefix, posStr, titleW, titleStr, artistW, artistStr, albumW, albumStr, durStr)
 		} else {
 			line = fmt.Sprintf("%s%s %-*s %-*s %s",
-				prefix, posStr,
-				titleW,  titleStr,
-				artistW, artistStr,
-				durStr,
-			)
+				prefix, posStr, titleW, titleStr, artistW, artistStr, durStr)
 		}
 
-		var style lipgloss.Style
+		var st lipgloss.Style
 		switch {
-		case isCurrent:
-			style = accentStyle
-		case isCursor:
-			style = cursorStyle
-		default:
-			style = textStyle
+		case isCurrent: st = accentStyle
+		case isCursor:  st = cursorStyle
+		default:        st = textStyle
 		}
-		trackLines = append(trackLines, style.Render(line))
+		trackLines = append(trackLines, st.Render(line))
 	}
-	// Pad to TH
 	for len(trackLines) < TH {
 		trackLines = append(trackLines, "")
 	}
-
-	// ── Right panel lines ─────────────────────────────────────────────────
-	availPanelH := h - 3 - vizHeight
-	rightLines  := s.buildRightPanel(availPanelH, albumW > 0)
-	// Pad right panel to TH rows
-	for len(rightLines) < TH {
-		rightLines = append(rightLines, "")
-	}
-	if len(rightLines) > TH {
-		rightLines = rightLines[:TH]
-	}
-
-	// ── Combine track list + separator + right panel ──────────────────────
-	sep := dimStyle.Render("│")
-	var sb strings.Builder
-	sb.WriteString(header + "\n")
-	sb.WriteString(colHeader + "\n")
 
 	if scrollbar != "" && len(trackLines) > 0 {
 		trackLines[0] = trackLines[0] + " " + scrollbar
 	}
 
-	for i, tl := range trackLines {
+	// ── Build left bordered box ───────────────────────────────────────────
+	queueTitle := fmt.Sprintf("Queue (%d tracks · %s)", len(s.tracks), fmtMusicDuration(s.totalDuration()))
+	titleRunes := len([]rune(queueTitle))
+	// Top border: ╭─ {title} {dashes}╮  total visible = leftBoxW
+	// ╭(1) + ─(1) + space(1) + title + space(1) + dashes + ╮(1) = leftBoxW
+	dashCt := innerL - 3 - titleRunes
+	if dashCt < 0 {
+		dashCt = 0
+	}
+	topLeft := dimStyle.Render("╭─ ") + accentStyle.Render(queueTitle) +
+		dimStyle.Render(" "+strings.Repeat("─", dashCt)+"╮")
+	botLeft    := dimStyle.Render("╰" + strings.Repeat("─", innerL) + "╯")
+	borderVert := dimStyle.Render("│")
+
+	var leftLines []string
+	leftLines = append(leftLines, topLeft)
+	leftLines = append(leftLines, borderVert+padRightANSI(colHeaderStyled, innerL)+borderVert)
+	for _, tl := range trackLines {
+		leftLines = append(leftLines, borderVert+padRightANSI(tl, innerL)+borderVert)
+	}
+	leftLines = append(leftLines, botLeft)
+
+	// ── Build right bordered box ──────────────────────────────────────────
+	rightContent := s.buildRightPanel(innerBoxH, albumW > 0)
+	for len(rightContent) < innerBoxH {
+		rightContent = append(rightContent, "")
+	}
+	rightContent = rightContent[:innerBoxH]
+
+	topRight := dimStyle.Render("╭" + strings.Repeat("─", innerR) + "╮")
+	botRight  := dimStyle.Render("╰" + strings.Repeat("─", innerR) + "╯")
+
+	var rightLines []string
+	rightLines = append(rightLines, topRight)
+	for _, rl := range rightContent {
+		rightLines = append(rightLines, dimStyle.Render("│")+padRightANSI(rl, innerR)+dimStyle.Render("│"))
+	}
+	rightLines = append(rightLines, botRight)
+
+	// ── Combine ───────────────────────────────────────────────────────────
+	var sb strings.Builder
+	for i, ll := range leftLines {
 		rl := ""
 		if i < len(rightLines) {
 			rl = rightLines[i]
 		}
-		sb.WriteString(tl + sep + rl + "\n")
+		sb.WriteString(ll + rl + "\n")
 	}
-
 	sb.WriteString(footerLine + "\n")
 
-	// ── Visualizer strip ──────────────────────────────────────────────────
 	if s.visualizer != nil && s.visualizer.IsRunning() {
 		sb.WriteString(s.visualizer.RenderBars(w))
 	}
