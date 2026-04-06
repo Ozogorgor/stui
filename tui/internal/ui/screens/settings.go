@@ -44,6 +44,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screen"
+	"github.com/stui/stui/pkg/config"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -204,10 +205,143 @@ type SettingsModel struct {
 	client    *ipc.Client
 }
 
-func NewSettingsModel(client *ipc.Client) SettingsModel {
-	return SettingsModel{
+func NewSettingsModel(client *ipc.Client, cfg config.Config) SettingsModel {
+	m := SettingsModel{
 		categories: defaultCategories(),
 		client:     client,
+	}
+	m.populateFromConfig(cfg)
+	return m
+}
+
+// populateFromConfig sets each settingItem's value from cfg.
+func (m *SettingsModel) populateFromConfig(cfg config.Config) {
+	for _, cat := range m.categories {
+		for _, item := range cat.items {
+			switch item.key {
+			case "interface.theme":
+				for i, v := range item.choiceVals {
+					if v == cfg.Interface.Theme {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "app.theme_mode":
+				for i, v := range item.choiceVals {
+					if v == cfg.Interface.ThemeMode {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "ui.show_borders":
+				item.boolVal = cfg.Interface.ShowBorders
+			case "ui.mouse_support":
+				item.boolVal = cfg.Interface.MouseSupport
+			case "ui.bidi_mode":
+				for i, v := range item.choiceVals {
+					if v == cfg.Interface.BiDiMode {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "player.default_volume":
+				item.intVal = cfg.Playback.DefaultVolume
+			case "player.hwdec":
+				for i, v := range item.choiceVals {
+					if v == cfg.Playback.Hwdec {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "player.cache_secs":
+				item.intVal = cfg.Playback.CacheSecs
+			case "player.keep_open":
+				item.boolVal = cfg.Playback.KeepOpen
+			case "playback.autoplay_next":
+				item.boolVal = cfg.Playback.AutoplayNext
+			case "playback.autoplay_countdown":
+				item.intVal = cfg.Playback.AutoplayCountdown
+			case "player.min_preroll_secs":
+				item.intVal = cfg.Playback.MinPrerollSecs
+			case "player.demuxer_max_mb":
+				item.intVal = cfg.Playback.DemuxerMaxMB
+			case "player.terminal_vo":
+				for i, v := range item.choiceVals {
+					if v == cfg.Playback.TerminalVO {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "streaming.prefer_http":
+				item.boolVal = cfg.Streaming.PreferHTTP
+			case "streaming.auto_fallback":
+				item.boolVal = cfg.Streaming.AutoFallback
+			case "streaming.max_candidates":
+				item.intVal = cfg.Streaming.MaxCandidates
+			case "streaming.benchmark_streams":
+				item.boolVal = cfg.Streaming.BenchmarkStreams
+			case "streaming.auto_delete_video":
+				item.boolVal = cfg.Streaming.AutoDeleteVideo
+			case "streaming.auto_delete_audio":
+				item.boolVal = cfg.Streaming.AutoDeleteAudio
+			case "downloads.video_dir":
+				item.strVal = cfg.Downloads.VideoDir
+			case "downloads.music_dir":
+				item.strVal = cfg.Downloads.MusicDir
+			case "subtitles.auto_download":
+				item.boolVal = cfg.Subtitles.AutoDownload
+			case "subtitles.preferred_language":
+				for i, v := range item.choiceVals {
+					if v == cfg.Subtitles.PreferredLanguage {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "subtitles.default_delay":
+				item.floatVal = cfg.Subtitles.DefaultDelay
+			case "providers.enable_tmdb":
+				item.boolVal = cfg.Providers.EnableTMDB
+			case "providers.enable_omdb":
+				item.boolVal = cfg.Providers.EnableOMDB
+			case "providers.enable_torrentio":
+				item.boolVal = cfg.Providers.EnableTorrentio
+			case "providers.enable_prowlarr":
+				item.boolVal = cfg.Providers.EnableProwlarr
+			case "providers.enable_opensubtitles":
+				item.boolVal = cfg.Providers.EnableOpenSubtitles
+			case "notifications.enabled":
+				item.boolVal = cfg.Notifications.Enabled
+			case "notifications.backend":
+				for i, v := range item.choiceVals {
+					if v == cfg.Notifications.Backend {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "notifications.on_playback":
+				item.boolVal = cfg.Notifications.OnPlayback
+			case "notifications.on_download":
+				item.boolVal = cfg.Notifications.OnDownload
+			case "notifications.on_streams":
+				item.boolVal = cfg.Notifications.OnStreams
+			case "skipper.enabled":
+				item.boolVal = cfg.Skipper.Enabled
+			case "skipper.auto_skip_intro":
+				item.boolVal = cfg.Skipper.AutoSkipIntro
+			case "skipper.auto_skip_credits":
+				item.boolVal = cfg.Skipper.AutoSkipCredits
+			case "skipper.intro_scan_secs":
+				item.intVal = cfg.Skipper.IntroScanSecs
+			case "skipper.min_intro_secs":
+				item.intVal = cfg.Skipper.MinIntroSecs
+			case "skipper.max_intro_secs":
+				item.intVal = cfg.Skipper.MaxIntroSecs
+			case "skipper.similarity_threshold":
+				item.floatVal = cfg.Skipper.SimilarityThreshold
+			case "skipper.min_episodes":
+				item.intVal = cfg.Skipper.MinEpisodes
+			}
+		}
 	}
 }
 
@@ -254,6 +388,10 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.setWindowSize(msg)
+
+	case config.ConfigReloadMsg:
+		m.populateFromConfig(msg.Config)
+		return m, nil
 
 	case tea.MouseMsg:
 		mouse := msg.Mouse()
@@ -872,11 +1010,19 @@ func defaultCategories() []settingCategory {
 			items: []*settingItem{
 				{
 					label:       "Theme",
+					key:         "interface.theme",
+					kind:        settingChoice,
+					choiceVals:  config.ListThemes(),
+					choiceIdx:   0,
+					description: "Active colour theme (built-in or from ~/.config/stui/themes/)",
+				},
+				{
+					label:       "Theme",
 					key:         "app.theme_mode",
 					kind:        settingChoice,
 					choiceVals:  []string{"dark", "light"},
 					choiceIdx:   0,
-					description: "Colour theme (restart may be needed)",
+					description: "Matugen mode — only used when Theme = matugen",
 				},
 				{
 					label:       "Show borders",

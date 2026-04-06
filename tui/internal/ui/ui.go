@@ -19,6 +19,7 @@ import (
 	"github.com/stui/stui/internal/ui/screens"
 	"github.com/stui/stui/pkg/bidi"
 	"github.com/stui/stui/pkg/collections"
+	"github.com/stui/stui/pkg/config"
 	"github.com/stui/stui/pkg/keybinds"
 	"github.com/stui/stui/pkg/mediacache"
 	"github.com/stui/stui/pkg/notify"
@@ -40,12 +41,17 @@ type Options struct {
 	RuntimePath string
 	NoRuntime   bool
 	Verbose     bool
+	CfgPath     string
 }
 
 // ── Binge mode tick ───────────────────────────────────────────────────────────
 
 // bingeTickMsg is sent every second during a binge countdown.
 type bingeTickMsg struct{}
+
+// configSaveTickMsg is sent by the debounce timer after a settings change.
+// seq must match m.cfgSaveSeq; stale ticks are discarded.
+type configSaveTickMsg struct{ seq int }
 
 func bingeTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return bingeTickMsg{} })
@@ -189,9 +195,15 @@ type Model struct {
 
 	// Media cache — persists catalog grid data for offline browsing.
 	mediaCache mediacache.StoreInterface
+
+	// Config persistence.
+	cfg        config.Config
+	cfgPath    string
+	cfgSaveSeq int
+	watcher    *config.Watcher
 }
 
-func New(opts Options) Model {
+func New(opts Options, cfg config.Config) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search titles, genres, people\u2026"
 	ti.SetStyles(textinput.Styles{
@@ -268,6 +280,8 @@ func New(opts Options) Model {
 		downloadMap:       make(map[string]*ipc.DownloadEntry),
 		notifyCfg:         notify.DefaultConfig(),
 		mediaCache:        mcStore,
+		cfg:               cfg,
+		cfgPath:           opts.CfgPath,
 	}
 }
 
@@ -534,6 +548,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.StatusMsg = "Theme updated from matugen"
 		return m, func() tea.Msg { return nil }
 
+	// ── Config file reload (hot-reload from watcher) ──────────────────────
+	case config.ConfigReloadMsg:
+		m.cfg = msg.Config
+		if msg.Config.Interface.Theme != "matugen" {
+			if p, err := config.LoadTheme(msg.Config.Interface.Theme); err == nil {
+				theme.T.Apply(p)
+			}
+		}
+		if m.watcher != nil {
+			m.watcher.SetActiveTheme(msg.Config.Interface.Theme)
+		}
+		return m, nil
+
 	// ── Visualizer ────────────────────────────────────────────────────────
 
 	case components.VisualizerTickMsg:
@@ -752,6 +779,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, bingeTickCmd()
 		}
 
+	case configSaveTickMsg:
+		if msg.seq != m.cfgSaveSeq {
+			return m, nil
+		}
+		if m.watcher != nil {
+			m.watcher.NotifyWrite()
+		}
+		_ = config.Save(m.cfgPath, m.cfg)
+		return m, nil
+
 	case spinner.TickMsg:
 		var spinCmd tea.Cmd
 		m.loadingSpinner, spinCmd = m.loadingSpinner.Update(msg)
@@ -948,6 +985,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.client.SetTrace(v)
 			}
 		}
+		// Persist to config file (debounced 300ms).
+		m.cfg = config.ApplyChange(m.cfg, msg.Key, msg.Value)
+		if msg.Key == "interface.theme" {
+			if p, err := config.LoadTheme(m.cfg.Interface.Theme); err == nil {
+				theme.T.Apply(p)
+			}
+			if m.watcher != nil {
+				m.watcher.SetActiveTheme(m.cfg.Interface.Theme)
+			}
+		}
+		m.cfgSaveSeq++
+		seq := m.cfgSaveSeq
+		return m, tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg {
+			return configSaveTickMsg{seq}
+		})
 
 	// ── Plugin settings screen ────────────────────────────────────────────
 
@@ -1229,7 +1281,7 @@ func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
 	case x >= searchStart && x < searchEnd:
 		return screen.TransitionCmd(screens.NewSearchScreen(m.client, ipc.MediaTab(m.state.ActiveTab.MediaTabID())), true)
 	case x >= gearStart && x < gearEnd:
-		return screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
+		return screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
 	}
 	return nil
 }
@@ -1352,7 +1404,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case actions.ActionOpenSettings:
-			return m, screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
+			return m, screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
 		case actions.ActionOpenHelp:
 			return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 		case actions.ActionOpenSearch:
@@ -1836,7 +1888,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ",":
 		// Open the settings screen via the RootModel screen stack.
 		// When settings closes (ESC) it returns here automatically.
-		return m, screen.TransitionCmd(screens.NewSettingsModel(m.client), true)
+		return m, screen.TransitionCmd(screens.NewSettingsModel(m.client, m.cfg), true)
 	case "esc":
 		if m.cwFocused {
 			m.cwFocused = false

@@ -10,8 +10,21 @@ import (
 
 	"github.com/stui/stui/internal/ui"
 	"github.com/stui/stui/internal/ui/components"
+	"github.com/stui/stui/pkg/config"
 	"github.com/stui/stui/pkg/log"
+	"github.com/stui/stui/pkg/theme"
 )
+
+// tuiLogPath returns ~/.config/stui/tui.log (same dir as runtime.log).
+func tuiLogPath() string {
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "stui", "tui.log")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "stui", "tui.log")
+	}
+	return ""
+}
 
 type SplashScreenModel struct {
 	splash    *components.Splash
@@ -30,8 +43,15 @@ func (m *SplashScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.splash = components.NewSplash(msg.Width, msg.Height)
-		return m, m.splash.Init()
+		// Forward to existing splash so it updates dimensions without re-initializing timers.
+		var splashCmd tea.Cmd
+		_, splashCmd = m.splash.Update(msg)
+		// Forward to main model so it has correct dimensions when the splash finishes.
+		// Without this, mainModel.state.Width == 0 on takeover and View() returns
+		// "Loading…" without AltScreen=true, causing BubbleTea to exit alt screen.
+		var mainCmd tea.Cmd
+		m.mainModel, mainCmd = m.mainModel.Update(msg)
+		return m, tea.Batch(splashCmd, mainCmd)
 	}
 
 	_, cmd := m.splash.Update(msg)
@@ -65,6 +85,22 @@ func main() {
 	noSplash := flag.Bool("no-splash", false, "skip the splash screen on startup")
 	flag.Parse()
 
+	// Redirect TUI logs to a file so they don't bleed into the terminal.
+	// This runs before any log calls so nothing is lost.
+	var logFile *os.File
+	if lp := tuiLogPath(); lp != "" {
+		_ = os.MkdirAll(filepath.Dir(lp), 0o755)
+		if f, err := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			logFile = f
+			log.SetOutput(f)
+		}
+	}
+	defer func() {
+		if logFile != nil {
+			logFile.Close()
+		}
+	}()
+
 	if *verbose {
 		log.SetLevel(log.LevelDebug)
 	}
@@ -78,17 +114,60 @@ func main() {
 		"version", version(),
 	)
 
+	cfgPath := config.DefaultPath()
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		log.Warn("failed to load config, using defaults", "error", err)
+		cfg = config.Default()
+	}
+
+	// Apply the configured theme before the UI starts.
+	if cfg.Interface.Theme != "matugen" {
+		if palette, err := config.LoadTheme(cfg.Interface.Theme); err == nil {
+			theme.T.Apply(palette)
+		}
+	}
+
 	opts := ui.Options{
 		RuntimePath: *runtimePath,
 		NoRuntime:   *noRuntime,
 		Verbose:     *verbose,
+		CfgPath:     cfgPath,
 	}
 
-	mainModel := ui.New(opts)
+	// Wrap the inner Model in RootModel so that screen.TransitionMsg (used by
+	// settings, search, help, etc.) is intercepted and the active screen is
+	// swapped correctly. Without this wrapper all TransitionCmd returns from
+	// Model.Update() are silently dropped.
+	innerModel := ui.New(opts, cfg)
+	mainModel := ui.NewRootModel(ui.NewLegacyScreen(innerModel))
+
+	var p *tea.Program
+
+	cfgWatcher, watchErr := config.NewWatcher(cfgPath, func(c config.Config) {
+		if p != nil {
+			p.Send(config.ConfigReloadMsg{Config: c})
+		}
+	})
+	if watchErr != nil {
+		log.Warn("could not start config watcher", "error", watchErr)
+		cfgWatcher = nil
+	}
+	if cfgWatcher != nil {
+		cfgWatcher.SetActiveTheme(cfg.Interface.Theme)
+	}
+	defer func() {
+		if cfgWatcher != nil {
+			cfgWatcher.Stop()
+		}
+	}()
 
 	if *noSplash {
-		p := tea.NewProgram(mainModel)
+		p = tea.NewProgram(&mainModel)
 		mainModel.SetProgram(p)
+		if cfgWatcher != nil {
+			cfgWatcher.Start()
+		}
 		if _, err := p.Run(); err != nil {
 			log.Error("stui terminated with error", "error", err)
 			fmt.Fprintf(os.Stderr, "stui error: %v\n", err)
@@ -103,8 +182,11 @@ func main() {
 		mainModel: mainModel,
 	}
 
-	p := tea.NewProgram(model)
-	mainModel.SetProgram(p)
+	p = tea.NewProgram(model)
+	(&mainModel).SetProgram(p)
+	if cfgWatcher != nil {
+		cfgWatcher.Start()
+	}
 
 	if _, err := p.Run(); err != nil {
 		log.Error("stui terminated with error", "error", err)
