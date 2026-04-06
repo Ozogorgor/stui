@@ -41,6 +41,16 @@ type MusicQueueScreen struct {
 	nowSongID  int32 // from MpdStatusMsg.SongID; 0 if unknown
 	nowSongPos int32 // from MpdStatusMsg.SongPos; -1 if unknown
 	spinner    components.Spinner
+
+	// Now-playing state from MpdStatusMsg
+	nowElapsed  float64
+	nowDuration float64
+	nowVolume   uint32
+	prevVolume  uint32 // saved before local mute toggle
+	nowMuted    bool
+
+	// Visualizer reference — set by MusicScreen.SetVisualizer
+	visualizer *components.Visualizer
 }
 
 // NewMusicQueueScreen creates a new queue screen and triggers the initial fetch.
@@ -98,8 +108,8 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case spinner.TickMsg:
-		s.spinner.Update(m)
-		return s, nil
+		_, cmd := s.spinner.Update(m)
+		return s, cmd
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
@@ -199,6 +209,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 
 	// Add scroll indicator if there are more items above
 	start, _ := vl.VisibleRange()
+	scrollbar := vl.VerticalScrollbar(1, dimStyle)
 	if start > 0 {
 		sb.WriteString(dimStyle.Render("↑ more\n"))
 	}
@@ -282,6 +293,15 @@ func (s MusicQueueScreen) View(w, h int) string {
 	// Pad list to listHeight
 	for len(listLines) < listHeight {
 		listLines = append(listLines, "")
+	}
+
+	// Add scrollbar to right side
+	if scrollbar != "" {
+		for i := range listLines {
+			if i < len(listLines) {
+				listLines[i] = listLines[i] + " " + scrollbar
+			}
+		}
 	}
 
 	if !wide {
