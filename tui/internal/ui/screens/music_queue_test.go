@@ -114,3 +114,50 @@ func TestQueueSeekFwdNoopWhenNoDuration(t *testing.T) {
 		t.Error("seek > should be a no-op when nowDuration == 0")
 	}
 }
+
+// queueColWidths(L) returns (titleW, artistW, albumW) where albumW==0 means no album column.
+// Fixed overhead: prefix 3 + # 3 + space 1 + dur 6 = 13. Remaining R = L - 13.
+// Wide (L>=120): title=R*40/100, artist=R*35/100, album=R*25/100, remainder to title.
+// Narrow (L<120): title=R*55/100, artist=R*45/100, album=0, remainder to title.
+
+func TestQueueColWidthsNarrow(t *testing.T) {
+	// L=100, R=87: title=47 (87*55/100=47 rem 85), artist=39 (87*45/100=39 rem 15)
+	// remainder = 87 - 47 - 39 = 1 goes to title → title=48
+	tw, aw, alw := queueColWidths(100)
+	if alw != 0 {
+		t.Errorf("albumW = %d, want 0 for narrow layout", alw)
+	}
+	if tw+aw != 87 {
+		t.Errorf("titleW(%d)+artistW(%d) = %d, want 87", tw, aw, tw+aw)
+	}
+	_ = tw
+	_ = aw
+}
+
+func TestQueueColWidthsWide(t *testing.T) {
+	// L=120, R=107: title=42, artist=37, album=26, rem=2 → title=44
+	tw, aw, alw := queueColWidths(120)
+	if alw == 0 {
+		t.Error("albumW should be > 0 for L=120")
+	}
+	if tw+aw+alw != 107 {
+		t.Errorf("column widths sum %d, want 107", tw+aw+alw)
+	}
+}
+
+func TestQueueColWidthsExact143Terminal(t *testing.T) {
+	// terminal width=143 → L=143-23=120, triggers wide layout
+	L := 143 - 23
+	_, _, alw := queueColWidths(L)
+	if alw == 0 {
+		t.Errorf("album column should appear at L=%d (terminal width 143)", L)
+	}
+}
+
+func TestQueueColWidthsBelowThreshold(t *testing.T) {
+	// L=119: narrow layout
+	_, _, alw := queueColWidths(119)
+	if alw != 0 {
+		t.Errorf("album column should not appear at L=119, got albumW=%d", alw)
+	}
+}

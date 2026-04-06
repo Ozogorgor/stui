@@ -427,6 +427,29 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 	return s
 }
 
+// queueColWidths returns (titleW, artistW, albumW) for the track list columns
+// given left-panel width L. albumW == 0 means the Album column is hidden.
+// Fixed overhead = 13ch (prefix 3 + # 3 + space 1 + duration 6).
+func queueColWidths(L int) (titleW, artistW, albumW int) {
+	R := L - 13
+	if R < 1 {
+		R = 1
+	}
+	if L >= 120 {
+		titleW  = R * 40 / 100
+		artistW = R * 35 / 100
+		albumW  = R * 25 / 100
+		// remainder goes to title
+		titleW += R - titleW - artistW - albumW
+	} else {
+		titleW  = R * 55 / 100
+		artistW = R * 45 / 100
+		albumW  = 0
+		titleW += R - titleW - artistW
+	}
+	return
+}
+
 // wrapText wraps a string to the given width, returning lines.
 func wrapText(s string, width int) []string {
 	if width <= 0 {
