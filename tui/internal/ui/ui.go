@@ -2442,7 +2442,7 @@ func (m Model) applyToast(base string) string {
 		if hud != "" {
 			queueActive := m.state.ActiveTab == state.TabMusic &&
 				m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
-				m.state.Width > 80
+				m.innerWidth() > 80
 			if !queueActive {
 				if m.visualizer.IsRunning() {
 					if viz := m.visualizer.RenderBars(m.state.Width); viz != "" {

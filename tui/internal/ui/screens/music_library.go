@@ -23,7 +23,9 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
@@ -68,14 +70,21 @@ type MusicLibraryScreen struct {
 	dirCursor  int
 	dirScroll  int
 	loadingDir bool
+
+	spinner      components.Spinner
+	loadingStart time.Time
 }
 
 // NewMusicLibraryScreen creates a new library screen and starts fetching artists.
 func NewMusicLibraryScreen(client *ipc.Client) MusicLibraryScreen {
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	s := MusicLibraryScreen{
 		client:         client,
 		loadingArtists: true,
+		spinner:        *components.NewSpinner("loading…", dimStyle),
+		loadingStart:   time.Now(),
 	}
+	s.spinner.Start()
 	if client != nil {
 		client.MpdListArtists()
 	}
@@ -83,18 +92,31 @@ func NewMusicLibraryScreen(client *ipc.Client) MusicLibraryScreen {
 }
 
 // Init returns the command to fetch all artists.
-func (s MusicLibraryScreen) Init() tea.Cmd {
-	return func() tea.Msg {
-		if s.client != nil {
-			s.client.MpdListArtists()
-		}
-		return nil
-	}
+func (s *MusicLibraryScreen) Init() tea.Cmd {
+	s.spinner.Start()
+	s.loadingStart = time.Now()
+	return tea.Batch(
+		s.spinner.Init(),
+		func() tea.Msg {
+			if s.client != nil {
+				s.client.MpdListArtists()
+			}
+			return nil
+		},
+	)
 }
 
 // Update handles incoming messages and key events.
 func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 	switch m := msg.(type) {
+
+	case spinner.TickMsg:
+		_, cmd := s.spinner.Update(m)
+		if s.loadingArtists && !s.loadingStart.IsZero() && time.Since(s.loadingStart) > 8*time.Second {
+			s.loadingArtists = false
+			s.spinner.Stop()
+		}
+		return s, cmd
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
@@ -122,6 +144,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 			// Artist list arrived
 			s.artists = m.Artists
 			s.loadingArtists = false
+			s.spinner.Stop()
 			// Pre-fetch albums for the first artist
 			if len(m.Artists) > 0 && s.client != nil {
 				s.loadingAlbums = true
@@ -485,10 +508,8 @@ func (s MusicLibraryScreen) View(w, h int) string {
 
 // viewTag renders the three-column tag browser.
 func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle lipgloss.Style) string {
-	footer := dimStyle.Render("  ↑↓ navigate · l/→ drill in · h/← back · a add to queue · D dir view")
-
-	// Reserve 2 rows: header line + footer
-	listH := h - 2
+	// Reserve 1 row: header line
+	listH := h - 1
 	if listH < 1 {
 		listH = 1
 	}
@@ -498,6 +519,11 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		paneW = 10
 	}
 
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(0, 1)
+
 	var sb strings.Builder
 
 	// Header
@@ -505,9 +531,13 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	sb.WriteString(headerStr + "\n")
 
 	// Build each column
+	artistLoadingText := s.spinner.View()
+	if artistLoadingText == "" {
+		artistLoadingText = "Loading…"
+	}
 	artistLines := s.buildPaneLines(
 		s.artistNames(), s.artistCursor, s.artistScroll, listH,
-		s.activePane == LibPaneArtists, s.loadingArtists, "Loading…", "No artists",
+		s.activePane == LibPaneArtists, s.loadingArtists, artistLoadingText, "No artists",
 		paneW, accentStyle, dimStyle, textStyle,
 	)
 	albumLines := s.buildPaneLines(
@@ -522,6 +552,7 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	)
 
 	sep := dimStyle.Render("│")
+	var paneContent strings.Builder
 	for i := 0; i < listH; i++ {
 		al := ""
 		bl := ""
@@ -535,10 +566,13 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		if i < len(songLines) {
 			sl = songLines[i]
 		}
-		sb.WriteString(al + sep + bl + sep + sl + "\n")
+		paneContent.WriteString(al + sep + bl + sep + sl + "\n")
 	}
 
-	sb.WriteString(footer + "\n")
+	// Wrap in border container
+	borderedContent := borderStyle.Width(w - 2).Render(paneContent.String())
+	sb.WriteString(borderedContent + "\n")
+
 	return sb.String()
 }
 
@@ -657,8 +691,6 @@ func (s MusicLibraryScreen) songNames() []string {
 
 // viewDir renders the directory browser view.
 func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle lipgloss.Style) string {
-	footer := dimStyle.Render("  ↑↓ navigate · enter open/add · h/← back · a add · D tag view")
-
 	var sb strings.Builder
 
 	// Breadcrumb
@@ -668,21 +700,19 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 	}
 	sb.WriteString(accentStyle.Render(crumb) + "\n")
 
-	// Reserve rows: 1 breadcrumb + 1 footer
-	listH := h - 2
+	// Reserve 1 row: breadcrumb
+	listH := h - 1
 	if listH < 1 {
 		listH = 1
 	}
 
 	if s.loadingDir {
 		sb.WriteString(dimStyle.Render("  Loading…") + "\n")
-		sb.WriteString(footer + "\n")
 		return sb.String()
 	}
 
 	if len(s.dirEntries) == 0 {
 		sb.WriteString(dimStyle.Render("  Empty directory") + "\n")
-		sb.WriteString(footer + "\n")
 		return sb.String()
 	}
 
@@ -744,6 +774,5 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(footer + "\n")
 	return sb.String()
 }

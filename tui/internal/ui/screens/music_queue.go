@@ -308,11 +308,9 @@ func (s MusicQueueScreen) View(w, h int) string {
 	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
 	cursorStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
 
-	footerLine := hintBar("enter play", "d remove", "c clear", "g top", "G bottom", "< seek-", "> seek+", "0 mute")
-
 	// ── Narrow layout (≤80 cols): existing single-column behaviour ────────
 	if w <= 80 {
-		return s.viewNarrow(w, h, accentStyle, dimStyle, textStyle, cursorStyle, footerLine)
+		return s.viewNarrow(w, h, accentStyle, dimStyle, textStyle, cursorStyle)
 	}
 
 	// Wide layout: two bordered boxes side by side
@@ -534,10 +532,9 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool) []string {
 // viewNarrow renders the original single-column queue layout for width ≤ 80.
 func (s MusicQueueScreen) viewNarrow(w, h int,
 	accentStyle, dimStyle, textStyle, cursorStyle lipgloss.Style,
-	footerLine string,
 ) string {
-	// Reserve 2 rows: 1 header + 1 footer
-	listHeight := h - 2
+	// Reserve 1 row: 1 header
+	listHeight := h - 1
 	if listHeight < 1 {
 		listHeight = 1
 	}
@@ -565,7 +562,6 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 
 	if s.loading && len(s.tracks) == 0 {
 		sb.WriteString("  " + s.spinner.View() + "\n")
-		sb.WriteString(footerLine + "\n")
 		return sb.String()
 	}
 
@@ -583,7 +579,6 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 				sb.WriteString("\n")
 			}
 		}
-		sb.WriteString(footerLine + "\n")
 		return sb.String()
 	}
 
@@ -642,7 +637,6 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 
 	sb.WriteString(strings.Join(listLines, "\n"))
 	sb.WriteString("\n")
-	sb.WriteString(footerLine + "\n")
 	return sb.String()
 }
 

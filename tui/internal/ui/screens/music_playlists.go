@@ -62,14 +62,17 @@ func (s MusicPlaylistsScreen) hoveredPlaylistName() string {
 }
 
 // Init triggers the initial playlist fetch.
-func (s MusicPlaylistsScreen) Init() tea.Cmd {
+func (s *MusicPlaylistsScreen) Init() tea.Cmd {
 	s.spinner.Start()
-	return func() tea.Msg {
-		if s.client != nil {
-			s.client.MpdGetPlaylists()
-		}
-		return nil
-	}
+	return tea.Batch(
+		s.spinner.Init(),
+		func() tea.Msg {
+			if s.client != nil {
+				s.client.MpdGetPlaylists()
+			}
+			return nil
+		},
+	)
 }
 
 // Update handles incoming messages and key events.
@@ -77,8 +80,8 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 	switch m := msg.(type) {
 
 	case spinner.TickMsg:
-		s.spinner.Update(m)
-		return s, nil
+		_, cmd := s.spinner.Update(m)
+		return s, cmd
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
@@ -244,11 +247,7 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 	altStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt())
 
-	footerText := "  enter load · a append · d delete · s save queue"
-	footerLine := dimStyle.Render(footerText)
-
-	// Reserve 1 row for the footer.
-	bodyH := h - 1
+	bodyH := h
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -259,7 +258,6 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 		for i := 1; i < bodyH; i++ {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(footerLine + "\n")
 		return sb.String()
 	}
 
@@ -346,9 +344,15 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 		rightLines = append(rightLines, "")
 	}
 
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(0, 1)
+
 	// Combine panes side by side.
 	sep := dimStyle.Render("│")
 	var sb strings.Builder
+	var paneContent strings.Builder
 	for i := 0; i < bodyH; i++ {
 		ll := ""
 		if i < len(leftLines) {
@@ -358,15 +362,17 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 		if i < len(rightLines) {
 			rr = rightLines[i]
 		}
-		sb.WriteString(ll + sep + rr + "\n")
+		paneContent.WriteString(ll + sep + rr + "\n")
 	}
+
+	// Wrap in border container
+	borderedContent := borderStyle.Width(w - 2).Render(paneContent.String())
+	sb.WriteString(borderedContent + "\n")
 
 	// Save-mode overlay at bottom.
 	if s.saving {
 		prompt := fmt.Sprintf("  Save current queue as: %s_", s.saveName)
 		sb.WriteString(accentStyle.Render(prompt) + "\n")
-	} else {
-		sb.WriteString(footerLine + "\n")
 	}
 
 	return sb.String()
