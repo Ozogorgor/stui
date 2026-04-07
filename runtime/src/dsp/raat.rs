@@ -1,12 +1,15 @@
 //! Roon RAAT protocol integration.
 //!
-//! Provides output to Roon endpoints via RAAT (Roon Audio Audio Transport) protocol.
+//! Provides endpoint discovery via `RoonClient` (mDNS + Extension API) and a
+//! stub audio-transport layer. Full RAAT TCP framing is not yet implemented —
+//! audio writes are accepted and dropped. See SCAFFOLD_TODOS.md.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::config::DspConfig;
+use crate::roon::{RoonClient, RoonServer};
 
 /// RAAT endpoint information.
 #[allow(dead_code)]
@@ -19,6 +22,7 @@ pub struct RaatEndpoint {
     pub sample_rates: Vec<u32>,
     pub bit_depths: Vec<u8>,
     pub is_connected: bool,
+    pub token: Option<String>,
 }
 
 /// RAAT audio format.
@@ -43,29 +47,24 @@ impl Default for RaatFormat {
 }
 
 /// RAAT processor for streaming audio to Roon endpoints.
-#[allow(clippy::type_complexity)]
 #[allow(dead_code)]
 pub struct RaatProcessor {
-    #[allow(dead_code)]
     config: Arc<RwLock<DspConfig>>,
-    #[allow(dead_code)]
+    roon_client: Option<Arc<RoonClient>>,
     endpoint: Option<RaatEndpoint>,
-    #[allow(dead_code)]
     active: bool,
-    #[allow(dead_code)]
     format: RaatFormat,
 }
 
 impl RaatProcessor {
     /// Create a new RAAT processor.
-    #[allow(dead_code)]
-    pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
+    /// Pass a shared `RoonClient` to enable endpoint discovery and connection.
+    pub fn new(config: Arc<RwLock<DspConfig>>, roon_client: Option<Arc<RoonClient>>) -> Result<Self, String> {
         let sample_rate = config.blocking_read().output_sample_rate;
-
         info!(sample_rate = sample_rate, "RAAT processor created");
-
         Ok(Self {
             config,
+            roon_client,
             endpoint: None,
             active: false,
             format: RaatFormat {
@@ -75,37 +74,44 @@ impl RaatProcessor {
         })
     }
 
-    /// Discover available Roon endpoints.
-    #[allow(dead_code)]
+    /// Discover Roon servers on the local network and return them as RAAT endpoints.
+    ///
+    /// Requires a `RoonClient` to have been supplied at construction time.
+    /// Falls back to an empty list when no client is present.
     pub async fn discover_endpoints(&self) -> Result<Vec<RaatEndpoint>, String> {
-        // In production, this would use RAAT discovery protocol
-        // For now, return empty list - would require Roon server integration
-        
-        info!("RAAT endpoint discovery (placeholder)");
-        Ok(vec![])
+        let Some(client) = &self.roon_client else {
+            info!("RAAT discovery: no RoonClient configured, returning empty list");
+            return Ok(vec![]);
+        };
+
+        let servers = client.discover().await.map_err(|e: anyhow::Error| e.to_string())?;
+        info!(count = servers.len(), "RAAT endpoint discovery complete");
+
+        Ok(servers.into_iter().map(server_to_endpoint).collect())
     }
 
-    /// Connect to a Roon endpoint.
-    #[allow(dead_code)]
+    /// Connect to a Roon endpoint via the Extension API, then mark this processor active.
     pub async fn connect(&mut self, endpoint: RaatEndpoint) -> Result<(), String> {
         if self.active {
             return Err("Already connected".to_string());
         }
 
-        // In production, this would:
-        // 1. Connect to Roon server via RAAT protocol
-        // 2. Perform handshake
-        // 3. Set up audio stream
-        
-        self.endpoint = Some(endpoint.clone());
-        self.active = true;
-        
-        info!(
-            endpoint = endpoint.name,
-            ip = endpoint.ip_address,
-            "connected to RAAT endpoint"
-        );
+        let Some(client) = &self.roon_client else {
+            return Err("Cannot connect: no RoonClient configured".to_string());
+        };
 
+        let server = RoonServer {
+            host: endpoint.ip_address.clone(),
+            port: endpoint.port,
+            core_id: endpoint.device_id.clone(),
+            display_name: endpoint.name.clone(),
+            token: endpoint.token.clone(),
+        };
+        client.connect(&server).await.map_err(|e: anyhow::Error| e.to_string())?;
+
+        info!(endpoint = %endpoint.name, ip = %endpoint.ip_address, "connected to RAAT endpoint");
+        self.endpoint = Some(endpoint);
+        self.active = true;
         Ok(())
     }
 
@@ -158,6 +164,20 @@ impl RaatProcessor {
     }
 }
 
+fn server_to_endpoint(s: RoonServer) -> RaatEndpoint {
+    RaatEndpoint {
+        name: s.display_name,
+        device_id: s.core_id,
+        ip_address: s.host,
+        port: s.port,
+        // TODO: Query actual capabilities from Roon endpoint
+        sample_rates: vec![44100, 48000, 88200, 96000, 176400, 192000],
+        bit_depths: vec![16, 24, 32],
+        is_connected: false,
+        token: s.token,
+    }
+}
+
 /// RAAT protocol encoding types.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,7 +224,7 @@ mod tests {
     #[test]
     fn test_processor_creation() {
         let config = make_config();
-        let processor = RaatProcessor::new(config);
+        let processor = RaatProcessor::new(config, None);
         assert!(processor.is_ok());
     }
 

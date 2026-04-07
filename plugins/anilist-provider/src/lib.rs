@@ -255,6 +255,7 @@ impl AnimeMedia {
             description: self.description,
             poster_url,
             imdb_id: None,
+            duration: None,
         }
     }
 }

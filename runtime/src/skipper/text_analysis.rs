@@ -126,7 +126,7 @@ fn detect_common_patterns(_stderr: &str, duration: f64) -> TextPatterns {
 /// Returns refined start/end times based on text patterns detected.
 pub fn refine_boundaries(
     patterns: &TextPatterns,
-    duration: f64,
+    _duration: f64,
     segment_start: f64,
     segment_end: f64,
     segment_type: &str,
@@ -180,7 +180,7 @@ pub fn refine_boundaries(
 pub fn validate_with_patterns(
     patterns: &TextPatterns,
     segment_start: f64,
-    segment_end: f64,
+    _segment_end: f64,
     segment_type: &str,
     duration: f64,
 ) -> f64 {

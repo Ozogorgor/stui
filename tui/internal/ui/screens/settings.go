@@ -340,6 +340,37 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 				item.floatVal = cfg.Skipper.SimilarityThreshold
 			case "skipper.min_episodes":
 				item.intVal = cfg.Skipper.MinEpisodes
+			case "visualizer.backend":
+				for i, v := range item.choiceVals {
+					if v == cfg.Visualizer.Backend {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "visualizer.bars":
+				item.intVal = cfg.Visualizer.Bars
+			case "visualizer.height":
+				item.intVal = cfg.Visualizer.Height
+			case "visualizer.framerate":
+				item.intVal = cfg.Visualizer.Framerate
+			case "visualizer.mode":
+				for i, v := range item.choiceVals {
+					if v == cfg.Visualizer.Mode {
+						item.choiceIdx = i
+						break
+					}
+				}
+			case "visualizer.peak_hold":
+				item.boolVal = cfg.Visualizer.PeakHold
+			case "visualizer.gradient":
+				item.boolVal = cfg.Visualizer.Gradient
+			case "visualizer.input_method":
+				for i, v := range item.choiceVals {
+					if v == cfg.Visualizer.InputMethod {
+						item.choiceIdx = i
+						break
+					}
+				}
 			}
 		}
 	}
@@ -517,7 +548,7 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					if item.kind == settingAction {
 						switch item.key {
 						case "audio.dsp":
-							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), true)
+							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), false)
 						case "plugins.manager":
 							return m, func() tea.Msg { return OpenPluginManagerMsg{} }
 						case "plugins.manage_repos":

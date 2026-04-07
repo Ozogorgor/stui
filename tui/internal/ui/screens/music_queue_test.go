@@ -117,38 +117,38 @@ func TestQueueSeekFwdNoopWhenNoDuration(t *testing.T) {
 }
 
 // queueColWidths(L) returns (titleW, artistW, albumW) where albumW==0 means no album column.
-// Fixed overhead: 15ch (no album) or 16ch (with album).
-// Wide (L>=120): R=L-16, title=R*40/100, artist=R*35/100, album=R*25/100, remainder to title.
-// Narrow (L<120): R=L-15, title=R*55/100, artist=R*45/100, album=0, remainder to title.
+// Fixed overhead: 17ch (no album) or 18ch (with album) — Dur is %7s + 1ch gap.
+// Wide (L>=120): R=L-18, title=R*40/100, artist=R*35/100, album=R*25/100, remainder to title.
+// Narrow (L<120): R=L-17, title=R*55/100, artist=R*45/100, album=0, remainder to title.
 
 func TestQueueColWidthsNarrow(t *testing.T) {
-	// L=100, R=100-15=85: title=46 (85*55/100=46), artist=38 (85*45/100=38)
-	// remainder = 85 - 46 - 38 = 1 goes to title → title=47
+	// L=100, R=100-17=83: title=45 (83*55/100=45), artist=37 (83*45/100=37)
+	// remainder = 83 - 45 - 37 = 1 goes to title → title=46
 	tw, aw, alw := queueColWidths(100)
 	if alw != 0 {
 		t.Errorf("albumW = %d, want 0 for narrow layout", alw)
 	}
-	if tw+aw != 85 {
-		t.Errorf("titleW(%d)+artistW(%d) = %d, want 85", tw, aw, tw+aw)
+	if tw+aw != 83 {
+		t.Errorf("titleW(%d)+artistW(%d) = %d, want 83", tw, aw, tw+aw)
 	}
 	_ = tw
 	_ = aw
 }
 
 func TestQueueColWidthsWide(t *testing.T) {
-	// L=120, R=120-16=104: title=41, artist=36, album=26, rem=1 → title=42
+	// L=120, R=120-18=102: title=40, artist=35, album=25, rem=2 → title=42
 	tw, aw, alw := queueColWidths(120)
 	if alw == 0 {
 		t.Error("albumW should be > 0 for L=120")
 	}
-	if tw+aw+alw != 104 {
-		t.Errorf("column widths sum %d, want 104", tw+aw+alw)
+	if tw+aw+alw != 102 {
+		t.Errorf("column widths sum %d, want 102", tw+aw+alw)
 	}
 }
 
 func TestQueueColWidthsExact143Terminal(t *testing.T) {
-	// terminal width=146 → leftBoxW=146-22=124, L=124-2=122 >= 120, triggers wide layout
-	L := 146 - 24
+	// terminal width=146, rightBoxW=24: leftBoxW=146-24=122, L=122-2=120 >= 120, wide layout
+	L := 146 - 26
 	_, _, alw := queueColWidths(L)
 	if alw == 0 {
 		t.Errorf("album column should appear at L=%d (terminal width 146)", L)
@@ -165,15 +165,18 @@ func TestQueueColWidthsBelowThreshold(t *testing.T) {
 
 // ── Art placeholder ────────────────────────────────────────────────────
 
-func TestQueueArtPlaceholderIs9Rows(t *testing.T) {
-	lines := strings.Split(strings.TrimRight(queueArtPlaceholder(), "\n"), "\n")
-	if len(lines) != 9 {
-		t.Errorf("art placeholder has %d rows, want 9", len(lines))
+func TestQueueArtPlaceholderRowCount(t *testing.T) {
+	// With innerW=22: Height(22/2)=Height(11) → 11 outer rows.
+	const innerW = 22
+	lines := strings.Split(strings.TrimRight(queueArtPlaceholder(innerW), "\n"), "\n")
+	want := innerW / 2
+	if len(lines) != want {
+		t.Errorf("art placeholder has %d rows, want %d (innerW/2)", len(lines), want)
 	}
 }
 
 func TestQueueArtPlaceholderContainsMusicNote(t *testing.T) {
-	out := queueArtPlaceholder()
+	out := queueArtPlaceholder(22)
 	if !strings.Contains(out, "♪") {
 		t.Error("art placeholder should contain ♪")
 	}
@@ -182,7 +185,7 @@ func TestQueueArtPlaceholderContainsMusicNote(t *testing.T) {
 // ── Seek bar ───────────────────────────────────────────────────────────
 
 func TestQueueSeekBarZeroDuration(t *testing.T) {
-	bar, times := queueSeekBar(0, 0)
+	bar, times := queueSeekBar(0, 0, 22)
 	for _, ch := range bar {
 		if ch != '─' {
 			t.Errorf("seek bar with duration=0 should be all ─, got %q", bar)
@@ -194,8 +197,8 @@ func TestQueueSeekBarZeroDuration(t *testing.T) {
 	}
 }
 
-func TestQueueSeekBarLength20(t *testing.T) {
-	bar, _ := queueSeekBar(63, 214)
+func TestQueueSeekBarLength22(t *testing.T) {
+	bar, _ := queueSeekBar(63, 214, 22)
 	// strip ANSI — count runes that are bar chars
 	count := 0
 	for _, r := range bar {
@@ -203,21 +206,21 @@ func TestQueueSeekBarLength20(t *testing.T) {
 			count++
 		}
 	}
-	if count != 20 {
-		t.Errorf("seek bar has %d bar chars, want 20", count)
+	if count != 22 {
+		t.Errorf("seek bar has %d bar chars, want 22", count)
 	}
 }
 
 func TestQueueSeekBarCursorChar(t *testing.T) {
-	bar, _ := queueSeekBar(63, 214)
+	bar, _ := queueSeekBar(63, 214, 22)
 	if !strings.ContainsRune(bar, '╸') {
 		t.Errorf("seek bar %q should contain ╸ (U+2578)", bar)
 	}
 }
 
 func TestQueueSeekBarFullProgress(t *testing.T) {
-	// elapsed == duration: filled=19, cursor at pos 19
-	bar, _ := queueSeekBar(214, 214)
+	// elapsed == duration: filled=21, cursor at pos 21
+	bar, _ := queueSeekBar(214, 214, 22)
 	if !strings.ContainsRune(bar, '╸') {
 		t.Errorf("full seek bar should still have ╸")
 	}
@@ -244,10 +247,10 @@ func TestQueueVolumeBarMuted(t *testing.T) {
 
 func TestQueueVolumeBar100(t *testing.T) {
 	bar, _ := queueVolumeBar(100, false)
-	// 10 filled blocks
+	// 16 filled blocks
 	filled := strings.Count(bar, "▮")
-	if filled != 10 {
-		t.Errorf("volume=100 should have 10 filled blocks, got %d", filled)
+	if filled != 16 {
+		t.Errorf("volume=100 should have 16 filled blocks, got %d", filled)
 	}
 	empty := strings.Count(bar, "▯")
 	if empty != 0 {
@@ -312,20 +315,21 @@ func TestQueueViewWideHasVolumeBar(t *testing.T) {
 	}
 }
 
-func TestQueueViewAlbumColumnAtWidth143(t *testing.T) {
+func TestQueueViewAlbumColumnAtWidth147(t *testing.T) {
 	s := queueWithTrack()
-	out := s.View(145, 30)
+	// rightBoxW=24: leftBoxW=147-24=123, innerL=123-2=121 >= 120, wide layout
+	out := s.View(147, 30)
 	if !strings.Contains(out, "Album") {
-		t.Error("view at width=145 should show Album column header")
+		t.Error("view at width=147 should show Album column header")
 	}
 }
 
-func TestQueueViewNoAlbumColumnAtWidth142(t *testing.T) {
+func TestQueueViewNoAlbumColumnAtWidth145(t *testing.T) {
 	s := queueWithTrack()
-	out := s.View(142, 30)
-	// L = 142-23 = 119 < 120, no album column
+	// rightBoxW=24: leftBoxW=145-24=121, innerL=121-2=119 < 120, narrow layout
+	out := s.View(145, 30)
 	if strings.Contains(out, "Album") {
-		t.Error("view at width=142 (L=119) should NOT show Album column header")
+		t.Error("view at width=145 (L=119) should NOT show Album column header")
 	}
 }
 

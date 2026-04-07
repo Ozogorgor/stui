@@ -165,6 +165,8 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 // View renders the sub-tab bar followed by the active sub-screen.
 func (s MusicScreen) View() tea.View {
 	tabBar := s.renderSubTabBar()
+	// s.height is set by computeMusicHeight() in ui.go, which already accounts
+	// for whether the footer is shown. Simply subtract the 2-row subtab bar.
 	subH := s.height - 2
 	if subH < 0 {
 		subH = 0

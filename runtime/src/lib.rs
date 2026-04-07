@@ -26,7 +26,6 @@ pub mod discovery;
 pub mod engine;
 pub mod error;
 pub mod events;
-pub mod indexer;
 pub mod ipc;
 pub mod ipc_batcher;
 pub mod logging;

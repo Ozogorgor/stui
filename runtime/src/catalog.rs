@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, info, warn};
@@ -60,7 +61,13 @@ fn cache_path(cache_dir: &Path, tab: &MediaTab) -> PathBuf {
 
 fn read_cache(path: &Path) -> Option<CacheFile> {
     let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    match serde_json::from_str::<CacheFile>(&raw) {
+        Ok(cache) => Some(cache),
+        Err(e) => {
+            warn!("catalog: failed to deserialize cache {:?}: {}", path, e);
+            None
+        }
+    }
 }
 
 fn write_cache(path: &Path, entries: &[CatalogEntry]) -> Result<()> {
@@ -82,18 +89,38 @@ struct CacheFile {
     entries: Vec<CatalogEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GridUpdate {
     pub tab: String,
     pub entries: Vec<CatalogEntry>,
     pub source: GridUpdateSource,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GridUpdateSource {
     Cache,
     Live,
+}
+
+fn tmdb_id_from_num_or_str<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum TmdbId {
+        Num(u64),
+        Str(String),
+    }
+
+    let tmdb: Option<TmdbId> = Deserialize::deserialize(deserializer)?;
+    match tmdb {
+        Some(TmdbId::Num(n)) => Ok(Some(n.to_string())),
+        Some(TmdbId::Str(s)) if !s.is_empty() => Ok(Some(s)),
+        Some(TmdbId::Str(_)) => Ok(None),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +136,8 @@ pub struct CatalogEntry {
     pub provider: String,
     pub tab: String,
     pub imdb_id: Option<String>,
-    pub tmdb_id: Option<u64>,
+    #[serde(default, deserialize_with = "tmdb_id_from_num_or_str")]
+    pub tmdb_id: Option<String>,
     #[serde(default)]
     pub media_type: MediaType,
     #[serde(default)]
@@ -211,6 +239,7 @@ impl Catalog {
             None,            // provider_filter (all providers)
             50,              // limit
             0,               // offset
+            crate::engine::SearchOptions::default(),
         ).await;
 
         let entries = match response {

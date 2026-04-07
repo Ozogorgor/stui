@@ -260,6 +260,22 @@ pub struct SearchRequest {
     pub limit: Option<usize>,
     #[serde(default)]
     pub offset: Option<usize>,
+    /// Sort order: "rating" | "newest" | "oldest" | "alphabetical" | "relevance".
+    /// Omit or set to null for default (rating).
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Genre substring filter (case-insensitive). Null = no filter.
+    #[serde(default)]
+    pub genre: Option<String>,
+    /// Minimum composite rating (0.0–10.0). Null = no minimum.
+    #[serde(default)]
+    pub min_rating: Option<f64>,
+    /// Earliest release year to include. Can be used independently or with `year_to`.
+    #[serde(default)]
+    pub year_from: Option<u32>,
+    /// Latest release year to include. Can be used independently or with `year_from`.
+    #[serde(default)]
+    pub year_to: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -769,6 +785,10 @@ pub struct MediaEntry {
     /// Per-source raw scores forwarded to the TUI for detail display.
     #[serde(default)]
     pub ratings: std::collections::HashMap<String, f64>,
+    #[serde(default)]
+    pub imdb_id: Option<String>,
+    #[serde(default)]
+    pub tmdb_id: Option<String>,
 }
 
 /// A single stream candidate as sent to the TUI.

@@ -122,11 +122,12 @@ type AppState struct {
 	Results      []ResultItem
 	Cursor       int
 	IsLoading    bool
+	LoadingStart int64 // timestamp when loading started (for timeout)
 
 	// Runtime connection
 	RuntimeStatus  RuntimeStatus
 	RuntimeError   string
-	RuntimeVersion string // semver string from the runtime binary, e.g. "0.8.1"
+	RuntimeVersion string   // semver string from the runtime binary, e.g. "0.8.1"
 	Plugins        []string // loaded plugin names
 
 	// Layout

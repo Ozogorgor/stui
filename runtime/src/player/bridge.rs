@@ -28,6 +28,7 @@
 //   {"type":"player_ended",       "reason":"eof"|"quit"|"error","error":"…"}
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -87,6 +88,8 @@ pub struct PlayerBridge {
     /// DSP pipeline reference. When present and `config.enabled`, mpv receives
     /// equivalent `--af` / `--audio-samplerate` flags so movie presets apply.
     dsp:          Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
+    /// Tracks whether MPD is the active player (true) or mpv (false).
+    mpd_active:   Arc<AtomicBool>,
 }
 
 impl PlayerBridge {
@@ -110,7 +113,7 @@ impl PlayerBridge {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp }
+        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Build the DSP-derived mpv flags for the current pipeline configuration.
@@ -131,6 +134,11 @@ impl PlayerBridge {
     /// Access the underlying `MpvPlayer` for typed command dispatch.
     pub fn mpv(&self) -> &MpvPlayer {
         &self.mpv
+    }
+
+    /// Returns `true` when MPD is the active player (last `play` routed to MPD).
+    pub fn is_mpd_active(&self) -> bool {
+        self.mpd_active.load(Ordering::Relaxed)
     }
 
     pub async fn play(&self, entry_id: &str, provider: &str, imdb_id: &str, tab: Option<MediaTab>, media_type: Option<MediaType>, year: Option<u32>) {
@@ -210,6 +218,25 @@ impl PlayerBridge {
         }
     }
 
+    pub async fn switch_stream_mpd(&self, url: &str, title: &str) {
+        let Some(ref mpd) = self.mpd else {
+            warn!("switch_stream_mpd called but MPD not configured");
+            return;
+        };
+        match mpd.queue_and_play(url).await {
+            Ok(()) => {
+                self.mpd_active.store(true, Ordering::Relaxed);
+                let duration = mpd.current_song_duration_with_retry(10, 50).await;
+                self.push_started(title, url, duration).await;
+            }
+            Err(e) => {
+                self.mpd_active.store(false, Ordering::Relaxed);
+                error!("player_bridge: switch_stream_mpd failed: {e}");
+                self.push_ended("error", &e.to_string()).await;
+            }
+        }
+    }
+
     // ── Routing ───────────────────────────────────────────────────────────────
 
     async fn start_stream(&self, entry_id: &str, url: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
@@ -221,6 +248,7 @@ impl PlayerBridge {
     }
 
     async fn play_via_aria2(&self, entry_id: &str, uri: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
+        self.mpd_active.store(false, Ordering::Relaxed);
         let Some(aria2) = &self.aria2 else {
             warn!("player_bridge: aria2 not available");
             self.push_ended(
@@ -322,6 +350,7 @@ impl PlayerBridge {
     }
 
     async fn launch_mpv(&self, url: &str, title: &str, sub: Option<&str>) {
+        self.mpd_active.store(false, Ordering::Relaxed);
         if !self.playback_cfg.terminal_vo.is_empty() {
             self.push_terminal_takeover().await;
         }
@@ -367,15 +396,31 @@ impl PlayerBridge {
                 return;
             };
             let file_url = format!("file://{file_path}");
-            if let Err(e) = mpd.queue_and_play(&file_url).await {
-                error!("player_bridge: mpd play failed: {e}");
-                let msg = e.to_string();
-                self.push_ended("error", &msg).await;
+            match mpd.queue_and_play(&file_url).await {
+                Ok(()) => {
+                    self.mpd_active.store(true, Ordering::Relaxed);
+                    let duration = mpd.current_song_duration_with_retry(10, 50).await;
+                    self.push_started(title, &file_url, duration).await;
+                }
+                Err(e) => {
+                    self.mpd_active.store(false, Ordering::Relaxed);
+                    error!("player_bridge: mpd play failed: {e}");
+                    self.push_ended("error", &e.to_string()).await;
+                }
             }
-        } else if let Err(e) = mpd.queue_and_play(url).await {
-            error!("player_bridge: mpd play failed: {e}");
-            let msg = e.to_string();
-            self.push_ended("error", &msg).await;
+        } else {
+            match mpd.queue_and_play(url).await {
+                Ok(()) => {
+                    self.mpd_active.store(true, Ordering::Relaxed);
+                    let duration = mpd.current_song_duration_with_retry(10, 50).await;
+                    self.push_started(title, url, duration).await;
+                }
+                Err(e) => {
+                    self.mpd_active.store(false, Ordering::Relaxed);
+                    error!("player_bridge: mpd play failed: {e}");
+                    self.push_ended("error", &e.to_string()).await;
+                }
+            }
         }
     }
 
@@ -392,6 +437,16 @@ impl PlayerBridge {
             r#type: "player_ended",
             reason,
             error:  err.to_string(),
+        }).unwrap_or_default();
+        let _ = self.ipc_tx.send(msg).await;
+    }
+
+    async fn push_started(&self, title: &str, path: &str, duration: f64) {
+        let msg = serde_json::to_string(&PlayerStartedWire {
+            r#type:   "player_started",
+            title,
+            path,
+            duration,
         }).unwrap_or_default();
         let _ = self.ipc_tx.send(msg).await;
     }

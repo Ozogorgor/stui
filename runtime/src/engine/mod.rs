@@ -113,6 +113,75 @@ impl PluginRegistry {
     }
 }
 
+// ── SearchOptions ─────────────────────────────────────────────────────────────
+
+/// Optional sort and filter parameters forwarded from the TUI search request.
+///
+/// All fields are optional; the defaults produce rating-sorted, unfiltered output.
+/// Callers that do not need filtering (e.g. catalog trending refresh) should pass
+/// `SearchOptions::default()`.
+#[derive(Debug, Default)]
+pub struct SearchOptions {
+    /// Sort order applied after merging. Defaults to `SortOrder::Rating`.
+    pub sort: crate::catalog_engine::SortOrder,
+    /// Keep only entries whose genre contains this string (case-insensitive).
+    pub genre: Option<String>,
+    /// Exclude entries with a composite rating below this threshold (0.0–10.0).
+    pub min_rating: Option<f64>,
+    /// Keep only entries released from this year onward (inclusive).
+    pub year_from: Option<u32>,
+    /// Keep only entries released up to this year (inclusive).
+    pub year_to: Option<u32>,
+    /// When `false`, plugins tagged `"adult"` are skipped entirely.
+    /// Defaults to `false` (adult content off by default).
+    pub adult_content_enabled: bool,
+}
+
+/// Apply sort and filters from `options` to a list of already-merged entries.
+fn apply_search_options(
+    options: &SearchOptions,
+    entries: Vec<crate::catalog::CatalogEntry>,
+) -> Vec<crate::catalog::CatalogEntry> {
+    use crate::catalog_engine::{Filter, FilterSet};
+
+    let mut fs = FilterSet::new();
+    if let Some(g) = &options.genre {
+        fs.add(Filter::genre(g));
+    }
+    if let Some(min) = options.min_rating {
+        fs.add(Filter::min_rating(min));
+    }
+    match (options.year_from, options.year_to) {
+        (Some(from), Some(to)) => fs.add(Filter::year_range(from, to)),
+        (Some(from), None) => fs.add(Filter::year_from(from)),
+        (None, Some(to)) => fs.add(Filter::year_to(to)),
+        (None, None) => {}
+    }
+    options.sort.apply(fs.apply(entries))
+}
+
+/// Convert a list of `CatalogEntry` to `MediaEntry` for the wire response.
+fn catalog_entries_to_media(
+    entries: Vec<crate::catalog::CatalogEntry>,
+    tab: &MediaTab,
+) -> Vec<MediaEntry> {
+    entries.into_iter().map(|e| MediaEntry {
+        id:          e.id,
+        title:       e.title,
+        year:        e.year,
+        genre:       e.genre,
+        rating:      e.rating,
+        description: e.description,
+        poster_url:  e.poster_url,
+        provider:    e.provider,
+        tab:         tab.clone(),
+        media_type:  e.media_type,
+        ratings:     e.ratings,
+        imdb_id:     e.imdb_id,
+        tmdb_id:     e.tmdb_id,
+    }).collect()
+}
+
 // ── Engine ───────────────────────────────────────────────────────────────────
 
 use crate::cache::RuntimeCache;
@@ -242,6 +311,7 @@ impl Engine {
         provider_filter: Option<&str>,
         limit: usize,
         offset: usize,
+        options: SearchOptions,
     ) -> Response {
         use crate::cache::search::SearchKey;
 
@@ -255,24 +325,11 @@ impl Engine {
 
         if let Some(ref key) = cache_key {
             if let Some(cached) = self.cache.search.get(key).await {
-                let total = cached.len();
-                let paged: Vec<_> = cached.into_iter().skip(offset).take(limit).collect();
-                // Convert CatalogEntry → MediaEntry for the response
-                let items: Vec<crate::ipc::MediaEntry> = paged.into_iter().map(|e| {
-                    crate::ipc::MediaEntry {
-                        id:          e.id,
-                        title:       e.title,
-                        year:        e.year,
-                        genre:       e.genre,
-                        rating:      e.rating,
-                        description: e.description,
-                        poster_url:  e.poster_url,
-                        provider:    e.provider,
-                        tab:         tab.clone(),
-                        media_type:  e.media_type,
-                        ratings:     std::collections::HashMap::new(),
-                    }
-                }).collect();
+                // Apply sort and filters to the already-merged cache entries.
+                let processed = apply_search_options(&options, cached);
+                let total = processed.len();
+                let paged: Vec<_> = processed.into_iter().skip(offset).take(limit).collect();
+                let items = catalog_entries_to_media(paged, tab);
                 return Response::SearchResult(SearchResponse {
                     id: req_id.to_string(),
                     items,
@@ -301,6 +358,12 @@ impl Engine {
             if let Some(filter) = provider_filter {
                 if plugin.manifest.plugin.name != filter { continue; }
             }
+            // Skip plugins tagged "adult" when adult content is disabled.
+            if !options.adult_content_enabled
+                && plugin.manifest.plugin.tags.iter().any(|t| t.eq_ignore_ascii_case("adult"))
+            {
+                continue;
+            }
             let plugin_clone = (*plugin).clone();
             let q = query.to_string();
             let t = tab.clone();
@@ -318,7 +381,7 @@ impl Engine {
                         set.spawn(async move {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
-                            let result = std::panic::AssertUnwindSafe(async move {
+                                let result = std::panic::AssertUnwindSafe(async move {
                                 let req = SearchRequest { query: q, tab: tab_str, page: 0, limit: 50 };
                                 sup.search(&req).await
                                     .map(|r| r.items.into_iter().map(|e| MediaEntry {
@@ -333,6 +396,8 @@ impl Engine {
                                         tab:         tab_out.clone(),
                                         media_type:  crate::ipc::MediaType::default(),
                                         ratings:     std::collections::HashMap::new(),
+                                        imdb_id:     e.imdb_id,
+                                        tmdb_id:     None,
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })
@@ -377,36 +442,47 @@ impl Engine {
             }
         }
 
+        // ── Aggregate ────────────────────────────────────────────────────
+        // Convert raw MediaEntry results to CatalogEntry for dedup + rating computation.
+        let tab_str = format!("{:?}", tab).to_lowercase();
+        let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
+            crate::catalog::CatalogEntry {
+                id:          e.id,
+                title:       e.title,
+                year:        e.year,
+                genre:       e.genre,
+                rating:      e.rating,
+                description: e.description,
+                poster_url:  e.poster_url,
+                poster_art:  None,
+                provider:    e.provider,
+                tab:         tab_str.clone(),
+                imdb_id:     e.imdb_id,
+                tmdb_id:     e.tmdb_id,
+                media_type:  e.media_type,
+                ratings:     e.ratings,
+            }
+        }).collect();
+
+        // Merge: dedup by IMDB id / title+year, fill sparse fields, compute
+        // weighted-median composite rating from all per-source scores.
+        let merged = crate::catalog_engine::CatalogAggregator::new().merge(raw_entries);
+
         // ── Populate cache ────────────────────────────────────────────────
+        // Store the merged (unsorted, unfiltered) entries so that subsequent
+        // requests with different sort/filter options can reuse the same cache.
         if let Some(key) = cache_key {
-            // Convert MediaEntry → CatalogEntry for storage
-            let catalog_entries: Vec<crate::catalog::CatalogEntry> = all_items.iter().map(|e| {
-                crate::catalog::CatalogEntry {
-                    id:          e.id.clone(),
-                    title:       e.title.clone(),
-                    year:        e.year.clone(),
-                    genre:       e.genre.clone(),
-                    rating:      e.rating.clone(),
-                    description: e.description.clone(),
-                    poster_url:  e.poster_url.clone(),
-                    poster_art:  None,
-                    provider:    e.provider.clone(),
-                    tab:         format!("{:?}", tab).to_lowercase(),
-                    imdb_id:     None,
-                    tmdb_id:     None,
-                    media_type:  e.media_type.clone(),
-                    ratings:     std::collections::HashMap::new(),
-                }
-            }).collect();
-            self.cache.search.insert(key, catalog_entries).await;
+            self.cache.search.insert(key, merged.clone()).await;
         }
 
-        let total = all_items.len();
-        let paged: Vec<_> = all_items.into_iter().skip(offset).take(limit).collect();
+        // Apply sort and filters for this specific request.
+        let processed = apply_search_options(&options, merged);
+        let total = processed.len();
+        let paged: Vec<_> = processed.into_iter().skip(offset).take(limit).collect();
 
         Response::SearchResult(SearchResponse {
-            id: req_id.to_string(),
-            items: paged,
+            id:     req_id.to_string(),
+            items:  catalog_entries_to_media(paged, tab),
             total,
             offset,
         })

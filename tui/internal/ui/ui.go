@@ -269,7 +269,16 @@ func New(opts Options, cfg config.Config) Model {
 		screen:            screenGrid,
 		reqSeq:            new(atomic.Uint64),
 		loadingSpinner:    loadingSpinner,
-		visualizer:        components.NewVisualizer(components.DefaultVisualizerConfig()),
+		visualizer:        components.NewVisualizer(components.VisualizerConfig{
+			Backend:     components.BackendFromString(cfg.Visualizer.Backend),
+			Bars:        cfg.Visualizer.Bars,
+			Height:      cfg.Visualizer.Height,
+			Framerate:   cfg.Visualizer.Framerate,
+			Mode:        components.VisualizerModeFromString(cfg.Visualizer.Mode),
+			Gradient:    cfg.Visualizer.Gradient,
+			PeakHold:    cfg.Visualizer.PeakHold,
+			InputMethod: cfg.Visualizer.InputMethod,
+		}),
 		musicScreen:       ms,
 		sessionPath:       sessionPath,
 		pendingQueueURIs:  sess.QueueURIs,
@@ -347,7 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.Width = msg.Width
 		m.state.Height = msg.Height
 		m.search.SetWidth(max(20, m.innerWidth()/3))
-		innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: max(0, msg.Height-12)}
+		innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
 		m.musicScreen, _ = m.musicScreen.Update(innerMsg)
 		m.collectionsScreen = m.collectionsScreen.SetSize(m.innerWidth(), max(0, msg.Height-12))
 
@@ -810,6 +819,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Already stopped — skip unnecessary alloc
 			break
 		}
+		prevHudRows := m.hudRows()
 		if m.mpdNowPlaying == nil {
 			m.mpdNowPlaying = &components.MpdNowPlayingState{}
 		}
@@ -822,6 +832,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err := m.visualizer.Start(); err == nil {
 				return m, m.visualizer.TickCmd()
 			}
+		}
+		// HUD visibility may have changed — resize music screen so the
+		// visualizer section doesn't get clipped or leave a gap.
+		if newHudRows := m.hudRows(); newHudRows != prevHudRows {
+			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
+			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
 		}
 
 	case ipc.MpdOutputsResultMsg:
@@ -863,34 +879,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "visualizer.backend":
 				if v, ok := msg.Value.(string); ok {
 					cfg.Backend = components.BackendFromString(v)
+					m.cfg.Visualizer.Backend = v
 				}
 			case "visualizer.bars":
 				if v, ok := msg.Value.(int); ok {
 					cfg.Bars = v
+					m.cfg.Visualizer.Bars = v
 				}
 			case "visualizer.height":
 				if v, ok := msg.Value.(int); ok {
 					cfg.Height = v
+					m.cfg.Visualizer.Height = v
 				}
 			case "visualizer.framerate":
 				if v, ok := msg.Value.(int); ok {
 					cfg.Framerate = v
+					m.cfg.Visualizer.Framerate = v
 				}
 			case "visualizer.mode":
 				if v, ok := msg.Value.(string); ok {
 					cfg.Mode = components.VisualizerModeFromString(v)
+					m.cfg.Visualizer.Mode = v
 				}
 			case "visualizer.peak_hold":
 				if v, ok := msg.Value.(bool); ok {
 					cfg.PeakHold = v
+					m.cfg.Visualizer.PeakHold = v
 				}
 			case "visualizer.gradient":
 				if v, ok := msg.Value.(bool); ok {
 					cfg.Gradient = v
+					m.cfg.Visualizer.Gradient = v
 				}
 			case "visualizer.input_method":
 				if v, ok := msg.Value.(string); ok {
 					cfg.InputMethod = v
+					m.cfg.Visualizer.InputMethod = v
 				}
 			}
 			return m, m.visualizer.Reconfigure(cfg)
@@ -1174,7 +1198,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			// Click on a result row in the list view.
 			topBarRows := topBarY + topBarTotalRows // overlay rows + topbar rows + gap
 			colHeaderRow := topBarRows              // column header row
-			bodyStartY := colHeaderRow + 1 // result rows start here
+			bodyStartY := colHeaderRow + 1          // result rows start here
 			bodyRow := y - bodyStartY
 			if bodyRow >= 0 {
 				availH := max(1, m.state.Height-9)
@@ -1667,6 +1691,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.musicScreen, cmd = m.musicScreen.Update(msg)
 		if m.musicScreen.ActiveSubTab() != prev {
+			// Footer visibility may have changed (Browse shows footer; others hide it).
+			// Resend height so the music screen fills the newly available space.
+			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
+			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
 			// Sub-tab changed — persist the new preference asynchronously.
 			return m, tea.Batch(cmd, m.sessionSaveCmd())
 		}
@@ -2396,6 +2424,35 @@ func (m Model) innerWidth() int {
 	return max(0, m.state.Width-6)
 }
 
+// hudRows returns the number of terminal rows consumed by the MPD HUD when
+// it is visible, or 0 when the HUD is hidden.
+// Layout: border_top(1) + title(1) + optional_artist(1) + progress(1) + info(1)
+// + hints(1) + border_bottom(1) + trailing_blank(1) = 8 (with artist) / 7 (without).
+func (m Model) hudRows() int {
+	if m.mpdNowPlaying == nil || m.mpdNowPlaying.State == "stop" {
+		return 0
+	}
+	if m.mpdNowPlaying.Artist != "" || m.mpdNowPlaying.Album != "" {
+		return 8
+	}
+	return 7
+}
+
+// computeMusicHeight returns the correct height to send to MusicScreen.
+// It accounts for the HUD, the top-bar chrome, the main-card borders, and
+// whether the footer (status bar) is currently visible.
+//
+// Fixed chrome above the main card: MarginTop(1) + topbar box(3) + gap blank(1) = 5 rows.
+// Main card borders: 2 rows.  Total fixed = 7.
+func (m Model) computeMusicHeight() int {
+	const fixedRows = 7 // topbar area (5) + main-card borders (2)
+	footerRows := 2     // blank separator + status bar
+	if m.state.ActiveTab == state.TabMusic && m.musicScreen.ActiveSubTab() != screens.MusicBrowse {
+		footerRows = 0
+	}
+	return max(0, m.state.Height-fixedRows-m.hudRows()-footerRows)
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m Model) View() tea.View {
@@ -2413,13 +2470,17 @@ func (m Model) View() tea.View {
 		)
 		content = m.applyToast(overlay)
 	} else {
-		base := lipgloss.JoinVertical(lipgloss.Left,
-			m.viewTopBar(m.state.Focus == state.FocusSearch),
-			"",
-			m.viewMainCard(),
-			"",
-			m.viewStatusBar(),
-		)
+		// Hide the footer (statusbar + preceding blank line) for music subtabs
+		// other than Browse — they don't need key-hint info and the space is better
+		// used by the queue/library/playlists content.
+		hidingFooter := m.state.ActiveTab == state.TabMusic &&
+			m.musicScreen.ActiveSubTab() != screens.MusicBrowse
+		var parts []string
+		parts = append(parts, m.viewTopBar(m.state.Focus == state.FocusSearch), "", m.viewMainCard(hidingFooter))
+		if !hidingFooter {
+			parts = append(parts, "", m.viewStatusBar())
+		}
+		base := lipgloss.JoinVertical(lipgloss.Left, parts...)
 		content = m.applyToast(base)
 	}
 	v := tea.NewView(content)
@@ -2604,10 +2665,14 @@ func (m Model) viewBufferingOverlay() string {
 	return "\n" + box + "\n"
 }
 
-func (m Model) viewMainCard() string {
+func (m Model) viewMainCard(footerHidden bool) string {
 	focused := m.state.Focus != state.FocusSearch
 	inner := m.viewMain()
-	return theme.T.MainCardStyle(focused).Width(m.state.Width - 2).Render(inner)
+	style := theme.T.MainCardStyle(focused).Width(m.state.Width - 2)
+	if !footerHidden {
+		style = style.MarginBottom(1)
+	}
+	return style.Render(inner)
 }
 
 func (m Model) viewMain() string {

@@ -191,6 +191,10 @@ pub struct RpcMediaItem {
     pub description: Option<String>,
     #[serde(default)]
     pub poster_url: Option<String>,
+    #[serde(default)]
+    pub imdb_id: Option<String>,
+    #[serde(default)]
+    pub tmdb_id: Option<String>,
 }
 
 // ── streams.resolve params / result ──────────────────────────────────────────
@@ -293,11 +297,19 @@ pub struct ActionResponse {
 
 impl ActionResponse {
     pub fn ok(id: impl Into<String>, result: Value) -> Self {
-        ActionResponse { action_id: id.into(), result: Some(result), error: None }
+        ActionResponse {
+            action_id: id.into(),
+            result: Some(result),
+            error: None,
+        }
     }
 
     pub fn err(id: impl Into<String>, message: impl Into<String>) -> Self {
-        ActionResponse { action_id: id.into(), result: None, error: Some(message.into()) }
+        ActionResponse {
+            action_id: id.into(),
+            result: None,
+            error: Some(message.into()),
+        }
     }
 }
 
@@ -319,7 +331,10 @@ mod tests {
         // An RpcResponse line (has "id" but no "action") must NOT parse as ActionRequest
         let rpc_resp_line = r#"{"id":"r1","result":{"items":[]}}"#;
         let result = serde_json::from_str::<ActionRequest>(rpc_resp_line);
-        assert!(result.is_err(), "RpcResponse must not parse as ActionRequest");
+        assert!(
+            result.is_err(),
+            "RpcResponse must not parse as ActionRequest"
+        );
     }
 
     #[test]

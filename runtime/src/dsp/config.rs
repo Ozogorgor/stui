@@ -44,8 +44,12 @@ impl TryFrom<u32> for OutputSampleRate {
 }
 
 /// Upsampling ratios.
+///
+/// TODO: connect to the resample node — pass `UpsampleRatio` through `DspConfig`
+/// into `Resampler::new()` as the target output rate multiplier, then expose
+/// the setting in the audio settings panel. See SCAFFOLD_TODOS.md.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
-#[allow(dead_code)] // For future DSP upsampling configuration
+#[allow(dead_code)]
 pub enum UpsampleRatio {
     Ratio1x = 1,
     Ratio2x = 2,
@@ -240,6 +244,7 @@ impl DspProfileConfig {
     }
 }
 
+#[allow(dead_code)]
 impl DspProfile {
     pub fn apply(&self, config: &mut DspConfig) {
         // Custom profiles are applied via CustomProfileStore::apply_profile.
@@ -348,6 +353,7 @@ pub enum DsdMode {
 }
 
 impl DsdMode {
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Off => 0,

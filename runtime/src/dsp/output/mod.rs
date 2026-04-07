@@ -10,10 +10,13 @@
 pub mod alsa;
 pub mod dsd;
 pub mod pipewire;
+pub mod roon;
 
 pub use alsa::AlsaOutput;
+#[allow(unused_imports)]
 pub use dsd::{dsd_available, DopEncoder, DsdOutputMode};
 pub use pipewire::{PipeWireDsdOutput, PipeWireOutput};
+pub use roon::RoonOutput;
 
 use super::config::{DspConfig, OutputTarget};
 use tracing::warn;
@@ -76,10 +79,12 @@ pub fn open_output(
             Err(e) => Err(e),
         },
         OutputTarget::Alsa => Ok(Box::new(AlsaOutput::new(config)?)),
-        OutputTarget::RoonRaat | OutputTarget::Mpd => Err(OutputError::ConfigError(format!(
-            "output target {:?} is not implemented in the DSP output path",
-            target
-        ))),
+        OutputTarget::RoonRaat => {
+            RoonOutput::new(config.output_sample_rate).map(|o| Box::new(o) as Box<dyn AudioOutput>)
+        }
+        OutputTarget::Mpd => Err(OutputError::ConfigError(
+            "MPD output is not implemented in the DSP output path".into(),
+        )),
     }
 }
 

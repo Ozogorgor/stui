@@ -17,7 +17,7 @@ pub mod ranking;
 
 pub use aggregator::CatalogAggregator;
 #[allow(unused_imports)]
-pub use aggregator::{weighted_median, weighted_rating};
+pub use aggregator::weighted_median;
 #[allow(unused_imports)]
 pub use filters::{Filter, FilterSet};
 #[allow(unused_imports)]

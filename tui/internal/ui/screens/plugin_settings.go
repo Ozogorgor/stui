@@ -90,8 +90,8 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case spinner.TickMsg:
-		m.spinner.Update(msg)
-		return m, nil
+		_, cmd := m.spinner.Update(msg)
+		return m, cmd
 
 	case tea.WindowSizeMsg:
 		m.setWindowSize(msg)

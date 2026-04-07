@@ -18,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -166,7 +167,7 @@ func (s DownloadsScreen) View() tea.View {
 	sb.WriteString("  " + hdr + "\n")
 	sb.WriteString("  " + dim.Render(strings.Repeat("─", w)) + "\n")
 
-	// ── Rows ─────────────────────────────────────────────────────────────
+	// Calculate scrollbar
 	maxRows := s.height - 8
 	if maxRows < 1 {
 		maxRows = 10
@@ -178,6 +179,12 @@ func (s DownloadsScreen) View() tea.View {
 	end := start + maxRows
 	if end > len(s.entries) {
 		end = len(s.entries)
+	}
+
+	var scrollbar string
+	if len(s.entries) > maxRows {
+		vl := components.NewVirtualizedList(len(s.entries), s.cursor, maxRows)
+		scrollbar = vl.VerticalScrollbar(1, dim)
 	}
 
 	for i := start; i < end; i++ {
@@ -226,6 +233,11 @@ func (s DownloadsScreen) View() tea.View {
 			line = bold.Foreground(theme.T.Accent()).Render("> ") + neon.Render(line)
 		} else {
 			line = "  " + line
+		}
+
+		// Add scrollbar for first item if scrolling is active
+		if i == start && scrollbar != "" {
+			line = line + " " + scrollbar
 		}
 		sb.WriteString(line + "\n")
 	}

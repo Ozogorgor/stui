@@ -168,11 +168,17 @@ func (s MusicBrowseScreen) View(w, h int) string {
 		titleW = 10
 	}
 
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(0, 1)
+
 	var sb strings.Builder
 	end := scroll + listHeight
 	if end > len(results) {
 		end = len(results)
 	}
+	var content strings.Builder
 	for i := scroll; i < end; i++ {
 		e := results[i]
 		titleStr := fmt.Sprintf("%-*s", titleW, truncate(e.Title, titleW))
@@ -185,17 +191,21 @@ func (s MusicBrowseScreen) View(w, h int) string {
 		line := "  " + titleStr + "  " + providerStr + "  " + yearStr
 
 		if i == s.cursor {
-			sb.WriteString(accentStyle.Render(line) + "\n")
+			content.WriteString(accentStyle.Render(line) + "\n")
 		} else {
-			sb.WriteString(textStyle.Render(line) + "\n")
+			content.WriteString(textStyle.Render(line) + "\n")
 		}
 	}
 
 	// Pad to listHeight
 	rendered := end - scroll
 	for i := rendered; i < listHeight; i++ {
-		sb.WriteString("\n")
+		content.WriteString("\n")
 	}
+
+	// Wrap in border container
+	borderedContent := borderStyle.Width(w - 2).Render(content.String())
+	sb.WriteString(borderedContent + "\n")
 
 	sb.WriteString(footerLine + "\n")
 	return sb.String()

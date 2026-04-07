@@ -101,7 +101,7 @@ impl WasmHost {
 mod inner_impl {
     use tokio::sync::Mutex;
     use wasmtime::*;
-    use wasmtime_wasi::WasiCtxBuilder;
+    use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
     use wasmtime_wasi::preview1::WasiP1Ctx;
 
     use super::*;
@@ -153,9 +153,6 @@ mod inner_impl {
     struct HostState {
         wasi: WasiP1Ctx,
         ctx: SandboxCtx,
-        /// Reusable buffer for HTTP responses written into plugin memory
-        #[allow(dead_code)]
-        http_buf: Vec<u8>,
         /// Per-plugin KV cache — persists across calls within a session.
         /// Keys starting with "__env:" are pre-populated from plugin.toml [env].
         kv: std::collections::HashMap<String, String>,
@@ -184,9 +181,24 @@ mod inner_impl {
             let module = Module::new(&engine, &wasm_bytes)
                 .map_err(|e| AbiError::Execution(format!("compile wasm: {e}")))?;
 
-            let wasi = WasiCtxBuilder::new()
-                .inherit_stderr()
-                .build_p1();
+            let mut wasi_builder = WasiCtxBuilder::new();
+            wasi_builder.inherit_stderr();
+            // Scope filesystem access to directories declared in plugin.toml [permissions].
+            // A plugin with an empty filesystem list gets no preopens — no FS access at all.
+            for root in ctx.allowed_fs_roots() {
+                if root.exists() {
+                    let guest = root.to_string_lossy();
+                    if let Err(e) = wasi_builder.preopened_dir(
+                        &root,
+                        guest.as_ref(),
+                        DirPerms::all(),
+                        FilePerms::all(),
+                    ) {
+                        warn!(plugin=%ctx.plugin_name, path=%root.display(), err=%e, "failed to preopen fs root — skipping");
+                    }
+                }
+            }
+            let wasi = wasi_builder.build_p1();
 
             // Pre-populate KV with env vars from the manifest [env] table.
             // Priority: actual process env > plugin.toml default value.
@@ -199,7 +211,6 @@ mod inner_impl {
             let host_state = HostState {
                 wasi,
                 ctx: ctx.clone(),
-                http_buf: vec![],
                 kv,
                 limiter: MemoryLimiter {
                     limit_bytes: (max_memory_mb as usize) * 1024 * 1024,
@@ -240,13 +251,20 @@ mod inner_impl {
                 |mut caller: Caller<HostState>, (url_ptr, url_len): (i32, i32)| {
                     Box::new(async move {
                         let url = read_str_from_memory(&mut caller, url_ptr, url_len)?;
+                        // Coarse check: plugin must declare network access.
+                        let net_check = caller.data().ctx.check(&crate::sandbox::Capability::Network);
+                        if let Err(e) = net_check {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked GET: {e}");
+                            return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
+                        }
+                        // Fine-grained check: host must be in network_hosts allowlist (if set).
                         let allowed = {
                             let p = &caller.data().ctx.permissions;
                             let host = extract_host(&url);
                             p.allows_host(&host)
                         };
                         if !allowed {
-                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked: host not in network_hosts");
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked GET: host not in network_hosts");
                             return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
                         }
                         let client = reqwest::Client::builder()
@@ -285,7 +303,13 @@ mod inner_impl {
                         let url = val["url"].as_str().unwrap_or("").to_string();
                         let body = val["body"].as_str().unwrap_or("").to_string();
 
-                        // Permission check
+                        // Coarse check: plugin must declare network access.
+                        let net_check = caller.data().ctx.check(&crate::sandbox::Capability::Network);
+                        if let Err(e) = net_check {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked POST: {e}");
+                            return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
+                        }
+                        // Fine-grained check: host must be in network_hosts allowlist (if set).
                         let allowed = {
                             let p = &caller.data().ctx.permissions;
                             let host = extract_host(&url);
@@ -653,7 +677,6 @@ mod inner_impl {
             let mut state = HostState {
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build_p1(),
                 ctx: make_test_sandbox_ctx(),
-                http_buf: vec![],
                 kv: std::collections::HashMap::new(),
                 limiter: MemoryLimiter { limit_bytes: 128 * 1024 * 1024 },
                 auth_receiver: Some(rx),

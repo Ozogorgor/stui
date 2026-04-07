@@ -217,6 +217,8 @@ mod tests {
             provider: "test".to_string(),
             tab: MediaTab::Movies,
             media_type: MediaType::Movie,
+            imdb_id: None,
+            tmdb_id: None,
         };
         cache.tabs.insert("movies".to_string(), CachedTab {
             tab: "movies".to_string(),

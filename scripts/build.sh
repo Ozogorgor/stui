@@ -30,10 +30,14 @@ done
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "▶ Building stui-runtime (Rust)…"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cd "$ROOT/runtime"
-cargo build --release $FEATURES
+cd "$ROOT"
+if [[ -n "$FEATURES" ]]; then
+    cargo build --release -p stui-runtime $FEATURES
+else
+    cargo build --release -p stui-runtime
+fi
 cp target/release/stui-runtime "$DIST/stui-runtime"
-echo "✓  dist/stui-runtime  ($(du -sh "$DIST/stui-runtime" | cut -f1))"
+echo "✓  dist/stui-runtime  ($(du -h "$DIST/stui-runtime" | cut -f1))"
 
 # ── TUI (Go) ──────────────────────────────────────────────────────────────────
 echo ""
@@ -43,7 +47,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 cd "$ROOT/tui"
 go mod tidy
 go build -ldflags="-s -w" -o "$DIST/stui" ./cmd/stui
-echo "✓  dist/stui  ($(du -sh "$DIST/stui" | cut -f1))"
+echo "✓  dist/stui  ($(du -h "$DIST/stui" | cut -f1))"
 
 # ── Plugins (optional) ────────────────────────────────────────────────────────
 if [[ "$BUILD_PLUGINS" == "true" ]]; then

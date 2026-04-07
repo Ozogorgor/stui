@@ -36,9 +36,34 @@ package ui
 // time as they grow beyond ~100 lines.
 
 import (
+	"strings"
+
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ui/screen"
+	"github.com/stui/stui/pkg/theme"
 )
+
+// overlayPopupSize returns the width and height to give an overlay screen.
+// Overlays render at popup dimensions so they don't fill the whole terminal.
+func overlayPopupSize(termW, termH int) (w, h int) {
+	w = termW - 8
+	if w > 120 {
+		w = 120
+	}
+	if w < 60 {
+		w = 60
+	}
+	h = termH - 6
+	if h > 42 {
+		h = 42
+	}
+	if h < 20 {
+		h = 20
+	}
+	return w, h
+}
 
 // ── RootModel ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +77,7 @@ import (
 type RootModel struct {
 	active  screen.Screen
 	history []screen.Screen // previous screens (stack); ESC pops the top
+	overlay screen.Screen   // non-nil while a popup overlay is open
 	width   int
 	height  int
 }
@@ -79,10 +105,48 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
 		r.width = ws.Width
 		r.height = ws.Height
+		// Forward popup-capped size to overlay if one is open.
+		if r.overlay != nil {
+			pw, ph := overlayPopupSize(r.width, r.height)
+			sized, _ := r.overlay.Update(tea.WindowSizeMsg{Width: pw, Height: ph})
+			r.overlay = sized
+		}
+	}
+
+	// ── Open overlay (from screen.OpenOverlayCmd) ──────────────────────────────
+	if o, ok := msg.(screen.OpenOverlayMsg); ok {
+		r.overlay = o.Screen
+		initCmd := r.overlay.Init()
+		if r.width > 0 {
+			pw, ph := overlayPopupSize(r.width, r.height)
+			sized, sizeCmd := r.overlay.Update(tea.WindowSizeMsg{Width: pw, Height: ph})
+			r.overlay = sized
+			return r, tea.Batch(initCmd, sizeCmd)
+		}
+		return r, initCmd
+	}
+
+	// ── Close overlay ──────────────────────────────────────────────────────────
+	if _, ok := msg.(screen.CloseOverlayMsg); ok {
+		r.overlay = nil
+		return r, nil
 	}
 
 	// ── Screen transition (from screen.TransitionCmd) ──────────────────────────
 	if t, ok := msg.(screen.TransitionMsg); ok {
+		// If a transition fires from within an overlay, replace the overlay
+		// instead of touching the active screen.
+		if r.overlay != nil {
+			r.overlay = t.Next
+			initCmd := r.overlay.Init()
+			if r.width > 0 {
+				pw, ph := overlayPopupSize(r.width, r.height)
+				sized, sizeCmd := r.overlay.Update(tea.WindowSizeMsg{Width: pw, Height: ph})
+				r.overlay = sized
+				return r, tea.Batch(initCmd, sizeCmd)
+			}
+			return r, initCmd
+		}
 		if t.PushBack {
 			r.history = append(r.history, r.active)
 		}
@@ -96,6 +160,35 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return r, tea.Batch(initCmd, sizeCmd)
 		}
 		return r, initCmd
+	}
+
+	// ── When overlay is open, route input there; ESC/PopMsg close it ──────────
+	if r.overlay != nil {
+		// Background tick messages must always reach the active screen so that
+		// spinner animation chains stay alive while a popup is open.
+		if _, ok := msg.(spinner.TickMsg); ok {
+			next, cmd := r.active.Update(msg)
+			r.active = next
+			return r, cmd
+		}
+
+		// ESC closes the overlay.
+		if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "esc" {
+			r.overlay = nil
+			return r, nil
+		}
+		// PopMsg from overlay screen closes it.
+		if _, ok := msg.(screen.PopMsg); ok {
+			r.overlay = nil
+			return r, nil
+		}
+		// ctrl+c still quits even when overlay is up.
+		if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "ctrl+c" {
+			return r, tea.Quit
+		}
+		next, cmd := r.overlay.Update(msg)
+		r.overlay = next
+		return r, cmd
 	}
 
 	// ── Global keys ────────────────────────────────────────────────────
@@ -139,10 +232,25 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View delegates to the active screen, always enforcing alt-screen and mouse
 // mode so subscreens don't need to declare these themselves.
+// When an overlay is open it is composited as a centered popup over the base.
 func (r RootModel) View() tea.View {
 	v := r.active.View()
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+
+	if r.overlay != nil && r.width > 0 && r.height > 0 {
+		ov := r.overlay.View()
+		popup := strings.TrimRight(ov.Content, "\n")
+		// Wrap in a rounded border box with a solid background so underlying
+		// content doesn't bleed through and obscure the popup text.
+		boxed := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(theme.T.Accent()).
+			Background(theme.T.Surface()).
+			Render(popup)
+		v.Content = lipgloss.Place(r.width, r.height, lipgloss.Center, lipgloss.Center, boxed)
+	}
+
 	return v
 }
 

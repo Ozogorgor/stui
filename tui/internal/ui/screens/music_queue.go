@@ -228,29 +228,30 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	return s, nil
 }
 
-// queueArtPlaceholder returns a fixed 9-row art placeholder box (20ch wide).
-func queueArtPlaceholder() string {
+// queueArtPlaceholder returns an art placeholder box that fills innerW columns.
+// Width and Height are outer dimensions (border-inclusive). Height = innerW/2
+// keeps a roughly square appearance given terminal character aspect ratio.
+func queueArtPlaceholder(innerW int) string {
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(theme.T.TextDim()).
-		Width(18).
-		Height(9).
+		Width(innerW).
+		Height(innerW / 2).
 		Align(lipgloss.Center, lipgloss.Center)
 	return boxStyle.Render(dim.Render("♪")) + "\n"
 }
 
 // queueSeekBar returns (barRow, timeRow) for the progress display.
-// barRow is 20 chars of ━/╸/─. timeRow shows elapsed and total, padded to 20ch.
-func queueSeekBar(elapsed, duration float64) (barRow, timeRow string) {
-	const w = 20
+// barRow is w chars of ━/╸/─. timeRow shows elapsed and total, padded to w chars.
+func queueSeekBar(elapsed, duration float64, w int) (barRow, timeRow string) {
 	// When duration == 0, return all dashes (no cursor tip)
 	if duration <= 0 {
 		barRow  = strings.Repeat("─", w)
 		timeRow = "0:00" + strings.Repeat(" ", w-8) + "0:00"
 		return
 	}
-	filled := int(elapsed / duration * w)
+	filled := int(elapsed / duration * float64(w))
 	if filled > w-1 {
 		filled = w - 1
 	}
@@ -277,10 +278,15 @@ func queueSeekBar(elapsed, duration float64) (barRow, timeRow string) {
 	return
 }
 
+// numVolBlocks is the number of ▮/▯ blocks in the volume bar.
+// With innerR=22, 16 blocks + "  100%" = 22 chars, filling the panel exactly.
+const numVolBlocks = 16
+
 // queueVolumeBar returns (barRow, hintRow) for the volume display.
+// Clicking the bar sets volume proportional to the block clicked.
 func queueVolumeBar(volume uint32, muted bool) (barRow, hintRow string) {
-	filled := int(volume / 10)
-	empty  := 10 - filled
+	filled := int(volume) * numVolBlocks / 100
+	empty  := numVolBlocks - filled
 	bar := strings.Repeat("▮", filled) + strings.Repeat("▯", empty)
 	barRow = fmt.Sprintf("%s  %d%%", bar, volume)
 	if muted {
@@ -313,11 +319,12 @@ func (s MusicQueueScreen) View(w, h int) string {
 		return s.viewNarrow(w, h, accentStyle, dimStyle, textStyle, cursorStyle)
 	}
 
-	// Wide layout: two bordered boxes side by side
-	const rightBoxW = 22  // outer width of right box (border + 20 inner + border)
+	// Wide layout: two bordered boxes side by side.
+	// rightBoxW=24 gives innerR=22, which fits the widest hint "0 unmute" (22ch).
+	const rightBoxW = 24  // outer width of right box (border + 22 inner + border)
 	leftBoxW := w - rightBoxW  // outer width of left box
 	innerL   := leftBoxW - 2   // inner content width of left box
-	const innerR = 20           // inner content width of right box
+	const innerR = 22           // inner content width of right box
 
 	vizHeight := 0
 	if s.visualizer != nil && s.visualizer.IsRunning() {
@@ -343,10 +350,10 @@ func (s MusicQueueScreen) View(w, h int) string {
 	// ── Column headers row ────────────────────────────────────────────────
 	var colHeaderRaw string
 	if albumW > 0 {
-		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %-*s %6s",
+		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %-*s %7s",
 			"#", titleW, "Title", artistW, "Artist", albumW, "Album", "Dur")
 	} else {
-		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %6s",
+		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %7s",
 			"#", titleW, "Title", artistW, "Artist", "Dur")
 	}
 	colHeaderStyled := dimStyle.Render(colHeaderRaw)
@@ -370,7 +377,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 			prefix = "▶  "
 		}
 		posStr   := fmt.Sprintf("%3d", tr.Pos+1)
-		durStr   := fmt.Sprintf("%6s", fmtMusicDuration(tr.Duration))
+		durStr   := fmt.Sprintf("%7s", fmtMusicDuration(tr.Duration))
 		titleStr  := truncate(tr.Title,  titleW)
 		artistStr := truncate(tr.Artist, artistW)
 
@@ -423,7 +430,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 	leftLines = append(leftLines, botLeft)
 
 	// ── Build right bordered box ──────────────────────────────────────────
-	rightContent := s.buildRightPanel(innerBoxH, albumW > 0)
+	rightContent := s.buildRightPanel(innerBoxH, albumW > 0, innerR)
 	for len(rightContent) < innerBoxH {
 		rightContent = append(rightContent, "")
 	}
@@ -457,9 +464,10 @@ func (s MusicQueueScreen) View(w, h int) string {
 }
 
 // buildRightPanel builds the right panel lines, truncating from the bottom
-// if availH is less than the full 21 rows. showAlbum controls whether the
+// if availH is less than the full rows. showAlbum controls whether the
 // album value row is rendered (mirrors whether the album column is visible).
-func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool) []string {
+// innerW is the inner width of the right panel box.
+func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int) []string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
@@ -477,13 +485,13 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool) []string {
 		if v == "" {
 			return dimStyle.Render("—")
 		}
-		return textStyle.Render(truncate(v, 20))
+		return textStyle.Render(truncate(v, innerW))
 	}
 
 	var lines []string
 
-	// 1. Art placeholder (9 rows)
-	artLines := strings.Split(strings.TrimRight(queueArtPlaceholder(), "\n"), "\n")
+	// 1. Art placeholder (fills innerW, height = innerW/2 rows)
+	artLines := strings.Split(strings.TrimRight(queueArtPlaceholder(innerW), "\n"), "\n")
 	lines = append(lines, artLines...)
 
 	// 2. Metadata (label+value rows)
@@ -510,7 +518,7 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool) []string {
 	}
 
 	// 3. Seek bar (2 rows)
-	barRow, timeRow := queueSeekBar(s.nowElapsed, s.nowDuration)
+	barRow, timeRow := queueSeekBar(s.nowElapsed, s.nowDuration, innerW)
 	lines = append(lines, accentStyle.Render(barRow))
 	lines = append(lines, dimStyle.Render(timeRow))
 
@@ -641,13 +649,45 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 }
 
 // HandleMouse handles a left-click within the queue's own coordinate space.
-// localY 0 is the header row; localY 1..listHeight are track rows.
+// localY 0 is the top border row of the boxes; localY 1 is the column header.
+// Clicks in the right panel volume bar adjust volume.
 func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
+	// ── Right-panel volume bar click ──────────────────────────────────────
+	// Right panel starts at x = leftBoxW (outer border).  Inner content at
+	// leftBoxW+1 .. leftBoxW+innerR.  localY 0 = top border; content at ≥1.
+	const rightBoxW = 24
+	const innerR    = 22
+	leftBoxW  := s.width - rightBoxW
+	_, _, albumW := queueColWidths(leftBoxW - 2)
+	artRows  := innerR / 2 // = 11 with innerR=22
+	metaRows := 6          // TITLE+ARTIST+DURATION, 2 rows each
+	if albumW > 0 {
+		metaRows = 8 // +ALBUM
+	}
+	// Volume bar is at inner content row (artRows + metaRows + 2 seek rows).
+	volBarInnerRow := artRows + metaRows + 2
+	volBarLocalY   := volBarInnerRow + 1 // +1 for the box top border
+
+	if x > leftBoxW && x <= leftBoxW+innerR+1 && localY == volBarLocalY {
+		blockX := x - leftBoxW - 1 // 0 … innerR-1
+		if blockX >= 0 && blockX < numVolBlocks {
+			newVol := (blockX + 1) * 100 / numVolBlocks
+			if newVol > 100 {
+				newVol = 100
+			}
+			if s.client != nil {
+				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": newVol})
+			}
+			s.nowVolume = uint32(newVol)
+			s.nowMuted = false
+		}
+		return s
+	}
+
+	// ── Track list click ──────────────────────────────────────────────────
 	if localY < 1 {
 		return s
 	}
-	// Queue listHeight = View's h - 2, where h = subH = terminal_height - 2
-	// → listHeight = s.height - 4  (s.height == terminal height from WindowSizeMsg)
 	listHeight := s.height - 4
 	if listHeight < 1 {
 		listHeight = 1
@@ -676,10 +716,11 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 
 // queueColWidths returns (titleW, artistW, albumW) for the track list columns
 // given left-panel width L. albumW == 0 means the Album column is hidden.
-// Fixed overhead: 15ch (no album) or 16ch (with album).
+// Fixed overhead: 17ch (no album) or 18ch (with album). Dur column is %7s,
+// and 1 extra ch reserves the gap between Dur and the right border.
 func queueColWidths(L int) (titleW, artistW, albumW int) {
 	if L >= 120 {
-		R := L - 16
+		R := L - 18
 		if R < 1 {
 			R = 1
 		}
@@ -688,7 +729,7 @@ func queueColWidths(L int) (titleW, artistW, albumW int) {
 		albumW  = R * 25 / 100
 		titleW += R - titleW - artistW - albumW
 	} else {
-		R := L - 15
+		R := L - 17
 		if R < 1 {
 			R = 1
 		}

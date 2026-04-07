@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use crate::catalog::Catalog;
-use crate::engine::{Engine, TraceEmitter};
+use crate::catalog_engine::SortOrder;
+use crate::config::ConfigManager;
+use crate::engine::{Engine, SearchOptions, TraceEmitter};
 use crate::ipc::{self, MediaEntry, Response, SearchRequest, SearchResponse};
 
 /// Handle a `search` IPC request.
@@ -14,9 +16,28 @@ pub async fn run_search(
     engine: &Arc<Engine>,
     catalog: &Arc<Catalog>,
     trace: &Arc<TraceEmitter>,
+    config: &Arc<ConfigManager>,
     r: SearchRequest,
 ) -> Response {
     let t0 = std::time::Instant::now();
+
+    let adult_content_enabled = config.snapshot().await.adult_content_enabled;
+
+    let sort = match r.sort.as_deref() {
+        Some("newest")       => SortOrder::Newest,
+        Some("oldest")       => SortOrder::Oldest,
+        Some("alphabetical") => SortOrder::Alphabetical,
+        Some("relevance")    => SortOrder::Relevance,
+        _                    => SortOrder::Rating,
+    };
+    let options = SearchOptions {
+        sort,
+        genre:      r.genre.clone(),
+        min_rating: r.min_rating,
+        year_from:  r.year_from,
+        year_to:    r.year_to,
+        adult_content_enabled,
+    };
 
     let results = engine.search(
         &r.id,
@@ -25,6 +46,7 @@ pub async fn run_search(
         r.provider.as_deref(),
         r.limit.unwrap_or(50),
         r.offset.unwrap_or(0),
+        options,
     ).await;
 
     let elapsed_ms = t0.elapsed().as_millis() as u64;
@@ -72,6 +94,8 @@ pub async fn catalog_search(
             provider: e.provider, tab: tab.clone(),
             media_type: e.media_type,
             ratings: std::collections::HashMap::new(),
+            imdb_id: None,
+            tmdb_id: None,
         })
         .collect();
     let total = matched.len();

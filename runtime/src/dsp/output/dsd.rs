@@ -78,7 +78,11 @@ impl DopEncoder {
                 }
             }
 
-            let marker = if self.frame_count & 1 == 0 { 0x05u8 } else { 0xFAu8 };
+            let marker = if self.frame_count & 1 == 0 {
+                0x05u8
+            } else {
+                0xFAu8
+            };
             self.frame_count += 1;
 
             // from_be_bytes produces a u32 whose big-endian representation is
@@ -150,7 +154,11 @@ mod tests {
         enc.encode(&vec![1.0f32; 16]).unwrap(); // frame 0 → 0x05
         enc.reset();
         let words = enc.encode(&vec![1.0f32; 16]).unwrap();
-        assert_eq!(words[0].to_be_bytes()[0], 0x05, "after reset, first marker is 0x05");
+        assert_eq!(
+            words[0].to_be_bytes()[0],
+            0x05,
+            "after reset, first marker is 0x05"
+        );
     }
 
     #[test]

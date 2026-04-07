@@ -34,14 +34,14 @@ pub mod nodes;
 pub mod command;
 pub mod profile_store;
 pub mod preset_store;
-pub mod NS_filters;
+pub mod ns_filters;
 pub mod mpd_config;
 
-// Re-export from NS_filters for backwards compatibility
+// Re-export from ns_filters for backwards compatibility
 #[allow(dead_code, unused_imports)]
-pub use NS_filters::dither::{DitherFilter, NoiseShaping};
+pub use ns_filters::dither::{DitherFilter, NoiseShaping};
 #[allow(dead_code, unused_imports)]
-pub use NS_filters::saw::{SawNode, StftProcessor};
+pub use ns_filters::saw::{SawNode, StftProcessor};
 
 #[allow(dead_code, unused_imports)]
 pub use config::{DspConfig, DspProfile, DspStage, FilterType, OutputMode, OutputTarget};
@@ -66,7 +66,7 @@ mod pipeline {
         config::{DspConfig, DspProfileConfig, OutputSampleRate},
         convolution::ConvolutionEngine,
         crossfeed::{CrossfeedFilter, probe_headphones},
-        NS_filters::dither::DitherFilter,
+            ns_filters::dither::DitherFilter,
         dc_offset::DcOffsetFilter,
         dsd::DsdConverter,
         lufs::LufsNormalizer,
@@ -74,11 +74,12 @@ mod pipeline {
         nodes::{DspNode, EqNode, GainNode},
         preset_store,
         profile_store::CustomProfileStore,
-        output::{open_output, open_dsd_output, AudioOutput, DsdAudioOutput},
+        output::{open_output, AudioOutput, DsdAudioOutput},
         resample::Resampler,
     };
 
     /// Main DSP processing pipeline.
+    #[allow(dead_code)]
     pub struct DspPipeline {
         config:        Arc<RwLock<DspConfig>>,
         config_dir:    std::path::PathBuf,
@@ -102,7 +103,7 @@ mod pipeline {
 
     impl DspPipeline {
         fn build_dither(cfg: &DspConfig) -> Option<DitherFilter> {
-            use super::NS_filters::dither::NoiseShaping;
+            use super::ns_filters::dither::NoiseShaping;
             use super::config::OutputTarget;
             let enabled = if cfg.dither_auto {
                 cfg.output_target == OutputTarget::Alsa && cfg.dither_bit_depth == 16
@@ -434,8 +435,7 @@ mod pipeline {
             // Update LUFS normalizer
             let lufs_recreate = old.lufs_enabled != new_cfg.lufs_enabled
                 || old.input_sample_rate != new_cfg.input_sample_rate;
-            let lufs_params_changed = old.lufs_target != new_cfg.lufs_target
-                || old.lufs_max_gain_db != new_cfg.lufs_max_gain_db;
+            // Note: lufs_params_changed was previously used here but not needed with current implementation
             if lufs_recreate {
                 self.lufs = if new_cfg.lufs_enabled {
                     let mut l = super::lufs::LufsNormalizer::new(new_cfg.input_sample_rate);

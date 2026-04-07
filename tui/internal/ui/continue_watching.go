@@ -222,5 +222,17 @@ func renderContinueWatchingRow(entries []watchhistory.Entry, cursor int, focused
 	row := lipgloss.JoinHorizontal(lipgloss.Top, cards...)
 	rowLine := lipgloss.NewStyle().PaddingLeft(2).Render(row)
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, rowLine)
+	content := lipgloss.JoinVertical(lipgloss.Left, header, rowLine)
+
+	// Wrap with rounded border container
+	boxW := termWidth - 4
+	if boxW < 20 {
+		boxW = 20
+	}
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(0, 1).
+		Width(boxW).
+		Render(content)
 }

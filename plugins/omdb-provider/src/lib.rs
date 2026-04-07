@@ -170,6 +170,7 @@ impl SearchResult {
             } else {
                 None
             },
+            duration: None,
         }
     }
 }

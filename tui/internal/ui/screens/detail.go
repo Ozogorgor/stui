@@ -468,7 +468,10 @@ func renderPersonMode(ds *DetailState, w, h int, tab state.Tab) string {
 			ds.PersonCursor,
 			w, availH-lipgloss.Height(personHeader),
 			false,
+			0,
 			"ready",
+			nil,
+			nil,
 		)
 		body = lipgloss.JoinVertical(lipgloss.Left, personHeader, gridStr)
 	}

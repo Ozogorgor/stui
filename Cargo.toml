@@ -19,15 +19,14 @@ thiserror  = "1"
 tracing    = "0.1"
 reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
-# ── Workspace-wide release profile ───────────────────────────────────────────
+# ── Workspace-wide profiles ───────────────────────────────────────────────────
+# Release profile for runtime, sdk, and aria2 (optimized for speed)
 [profile.release]
 opt-level     = 3
 lto           = true
 codegen-units = 1
 strip         = true
 
-# WASM plugin targets need a separate profile — set in each plugin's Cargo.toml
-[profile.wasm-release]
-inherits      = "release"
-opt-level     = "z"
-panic         = "abort"
+# Dev profile for runtime, sdk, and aria2
+[profile.dev]
+opt-level = 1

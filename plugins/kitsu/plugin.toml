@@ -1,0 +1,29 @@
+# kitsu — plugin manifest
+# Install at: ~/.stui/plugins/kitsu/
+
+[plugin]
+name        = "kitsu"
+version     = "0.1.0"
+description = "Kitsu — anime metadata, search, trending"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["anime", "tv", "metadata"]
+
+[env]
+KITSU_API_KEY = ""                    # optional — get at kitsu.io/settings/applications
+
+[[config]]
+key       = "api_key"
+label     = "Kitsu API Key (optional)"
+hint      = "Get free at kitsu.io/settings/applications"
+masked    = true
+required  = false
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true
+anime = true

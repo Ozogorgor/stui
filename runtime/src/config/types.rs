@@ -170,6 +170,11 @@ pub struct RuntimeConfig {
     /// Run built-in self-tests at startup to verify subsystem health.
     #[serde(default)]
     pub tests_enabled: bool,
+
+    /// Allow plugins tagged `"adult"` (18+) to return search results.
+    /// Off by default — must be explicitly enabled by the user.
+    #[serde(default)]
+    pub adult_content_enabled: bool,
 }
 
 /// Storage directory configuration for different media types.
@@ -547,6 +552,7 @@ impl Default for RuntimeConfig {
             dsp: DspConfig::default(),
             debug_mode: false,
             tests_enabled: false,
+            adult_content_enabled: false,
         }
     }
 }

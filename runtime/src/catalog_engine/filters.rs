@@ -12,6 +12,10 @@ pub enum Filter {
     Genre(String),
     /// Keep only entries within this year range (inclusive).
     YearRange(u32, u32),
+    /// Keep only entries from this year onwards.
+    YearFrom(u32),
+    /// Keep only entries up to this year.
+    YearTo(u32),
     /// Keep only entries of this media type.
     MediaType(MediaType),
     /// Keep only entries with a rating at or above this threshold.
@@ -29,6 +33,12 @@ impl Filter {
     }
     pub fn year_range(from: u32, to: u32) -> Self {
         Filter::YearRange(from, to)
+    }
+    pub fn year_from(year: u32) -> Self {
+        Filter::YearFrom(year)
+    }
+    pub fn year_to(year: u32) -> Self {
+        Filter::YearTo(year)
     }
     pub fn media_type(t: MediaType) -> Self {
         Filter::MediaType(t)
@@ -49,13 +59,27 @@ impl Filter {
                 .genre
                 .as_deref()
                 .map(|genre| genre.to_lowercase().contains(&g.to_lowercase()))
-                .unwrap_or(true), // keep if unknown
+                .unwrap_or(false), // exclude if genre is unknown
 
             Filter::YearRange(from, to) => entry
                 .year
                 .as_deref()
                 .and_then(|y| y.parse::<u32>().ok())
                 .map(|year| year >= *from && year <= *to)
+                .unwrap_or(true),
+
+            Filter::YearFrom(year) => entry
+                .year
+                .as_deref()
+                .and_then(|y| y.parse::<u32>().ok())
+                .map(|entry_year| entry_year >= *year)
+                .unwrap_or(true),
+
+            Filter::YearTo(year) => entry
+                .year
+                .as_deref()
+                .and_then(|y| y.parse::<u32>().ok())
+                .map(|entry_year| entry_year <= *year)
                 .unwrap_or(true),
 
             Filter::MediaType(t) => &entry.media_type == t,

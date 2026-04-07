@@ -38,6 +38,7 @@ use crate::config::ConfigManager;
 use crate::providers::{HealthRegistry, ProviderThrottle, CircuitBreaker, StreamBenchmarker, BenchHealthBridge};
 use crate::plugin_rpc::PluginRpcManager;
 use crate::quality::{RankingPolicy, StreamCandidate};
+use crate::roon::RoonClient;
 
 /// The top-level orchestration struct.
 ///
@@ -75,6 +76,10 @@ pub struct Pipeline {
 
     /// Bench health bridge — feeds probe_all results into provider health scoring.
     pub bridge: BenchHealthBridge,
+
+    /// Roon Extension API client — handles mDNS discovery and WebSocket connection.
+    /// `None` until the user enables Roon integration in settings.
+    pub roon: Option<Arc<RoonClient>>,
 }
 
 impl Pipeline {
@@ -105,7 +110,8 @@ impl Pipeline {
 
         Pipeline { engine, catalog, cache, policy, player,
                    rpc: Arc::new(PluginRpcManager::new()),
-                   bus, health, throttle, circuit_breaker, config, bench, bridge }
+                   bus, health, throttle, circuit_breaker, config, bench, bridge,
+                   roon: None }
     }
 
     // ── Stage 1: catalog / search ─────────────────────────────────────────
@@ -128,7 +134,12 @@ impl Pipeline {
             tab:   format!("{tab:?}"),
         });
         let offset = ((page.saturating_sub(1)) as usize) * 50;
-        let response = self.engine.search("", query, tab, None, 50, offset).await;
+        let opts = self.config.snapshot().await;
+        let search_opts = super::SearchOptions {
+            adult_content_enabled: opts.adult_content_enabled,
+            ..Default::default()
+        };
+        let response = self.engine.search("", query, tab, None, 50, offset, search_opts).await;
         if let crate::ipc::Response::SearchResult(sr) = response {
             self.health.record_success("engine", 0);
             self.bus.emit(RuntimeEvent::SearchResultsReady {

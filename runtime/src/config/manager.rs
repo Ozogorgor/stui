@@ -116,8 +116,8 @@ impl ConfigManager {
             value: value.to_string(),
         });
 
-        // Persist API key and plugin config changes immediately so they survive restarts.
-        if key.starts_with("api_keys.") || key.starts_with("plugins.") {
+        // Persist API key, plugin config, and user-preference changes so they survive restarts.
+        if key.starts_with("api_keys.") || key.starts_with("plugins.") || key.starts_with("app.") {
             self.persist().await.map_err(|e| {
                 warn!(key, error = %e, "failed to persist config after plugin config update");
                 e
@@ -304,6 +304,9 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
         }
         "app.tests_enabled" => {
             cfg.tests_enabled = as_bool(key, value)?;
+        }
+        "app.adult_content_enabled" => {
+            cfg.adult_content_enabled = as_bool(key, value)?;
         }
 
         // ── [skipper] ─────────────────────────────────────────────────────

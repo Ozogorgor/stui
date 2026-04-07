@@ -156,9 +156,9 @@ func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case spinner.TickMsg:
-		m.pluginsSpinner.Update(msg)
-		m.registrySpinner.Update(msg)
-		return m, nil
+		_, cmd1 := m.pluginsSpinner.Update(msg)
+		_, cmd2 := m.registrySpinner.Update(msg)
+		return m, tea.Batch(cmd1, cmd2)
 
 	case tea.WindowSizeMsg:
 		m.setWindowSize(msg)

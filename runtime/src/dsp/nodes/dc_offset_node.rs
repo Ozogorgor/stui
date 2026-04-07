@@ -2,14 +2,14 @@ use super::DspNode;
 use crate::dsp::config::DspConfig;
 use crate::dsp::dc_offset::DcOffsetFilter;
 
+#[allow(dead_code)]
 pub struct DcOffsetNode {
     inner: Option<DcOffsetFilter>,
     enabled: bool,
-    /// Last cutoff configured via update_config or new(); used by set_enabled(true)
-    /// so re-enabling the node restores the user's cutoff rather than the default.
     last_cutoff_hz: f32,
 }
 
+#[allow(dead_code)]
 impl DcOffsetNode {
     pub fn new(config: &DspConfig) -> Self {
         let enabled = config.dc_offset_enabled;
@@ -20,7 +20,11 @@ impl DcOffsetNode {
             None
         };
 
-        Self { inner, enabled, last_cutoff_hz: cutoff_hz }
+        Self {
+            inner,
+            enabled,
+            last_cutoff_hz: cutoff_hz,
+        }
     }
 }
 

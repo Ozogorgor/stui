@@ -16,7 +16,6 @@ mod discovery;
 mod engine;
 mod error;
 mod events;
-mod indexer;
 mod ipc;
 mod logging;
 mod media;
@@ -38,6 +37,7 @@ mod watchhistory;
 mod mediacache;
 mod ipc_batcher;
 mod dsp;
+mod roon;
 pub mod storage;
 mod auth;
 
@@ -563,6 +563,8 @@ where
                                 description: e.description.clone(),
                                 poster_url: e.poster_url.clone(), provider: e.provider.clone(),
                                 tab, media_type: e.media_type.clone(),
+                                imdb_id: e.imdb_id.clone(),
+                                tmdb_id: e.tmdb_id.clone(),
                             }
                         }).collect();
 
@@ -720,7 +722,7 @@ async fn handle_line(
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
 
-        Request::Search(r)    => pipeline::search::run_search(engine, catalog, trace, r).await,
+        Request::Search(r)    => pipeline::search::run_search(engine, catalog, trace, config, r).await,
 
         Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 

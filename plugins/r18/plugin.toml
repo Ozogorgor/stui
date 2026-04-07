@@ -1,0 +1,20 @@
+# r18 — plugin manifest
+# Install at: ~/.stui/plugins/r18/
+
+[plugin]
+name        = "r18"
+version     = "0.1.0"
+description = "R18 — adult video metadata"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["adult", "metadata"]
+
+[config]
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true

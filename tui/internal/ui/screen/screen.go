@@ -32,3 +32,22 @@ func TransitionCmd(next Screen, pushBack bool) tea.Cmd {
 func PopCmd() tea.Cmd {
 	return func() tea.Msg { return PopMsg{} }
 }
+
+// OpenOverlayMsg tells RootModel to show a screen as a centered popup overlay
+// without replacing or stacking the active screen.
+type OpenOverlayMsg struct {
+	Screen Screen
+}
+
+// CloseOverlayMsg tells RootModel to dismiss the current overlay.
+type CloseOverlayMsg struct{}
+
+// OpenOverlayCmd returns a Cmd that opens a screen as a popup overlay.
+func OpenOverlayCmd(s Screen) tea.Cmd {
+	return func() tea.Msg { return OpenOverlayMsg{Screen: s} }
+}
+
+// CloseOverlayCmd returns a Cmd that closes the current overlay.
+func CloseOverlayCmd() tea.Cmd {
+	return func() tea.Msg { return CloseOverlayMsg{} }
+}

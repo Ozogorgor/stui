@@ -24,6 +24,7 @@
 //! | audience_score  | 0.15   | Popular appeal, gameable               |
 //! | tmdb            | 0.15   | Decent, smaller sample                 |
 //! | anilist         | —      | N/A                                    |
+//! | kitsu           | —      | N/A                                    |
 //!
 //! ## Series / Episode
 //! | Source          | Weight | Rationale                              |
@@ -33,15 +34,17 @@
 //! | audience_score  | 0.25   | Audience sustains long-running shows   |
 //! | tmdb            | 0.15   | Better TV coverage than for film       |
 //! | anilist         | —      | N/A                                    |
+//! | kitsu           | —      | N/A                                    |
 //!
-//! ## Anime  (genre contains "anime", or anilist score is present)
+//! ## Anime  (genre contains "anime", or anilist/kitsu score is present)
 //! | Source          | Weight | Rationale                              |
 //! |-----------------|--------|----------------------------------------|
-//! | tomatometer     | 0.15   | RT has poor anime coverage             |
+//! | tomatometer     | 0.10   | RT has poor anime coverage             |
 //! | imdb            | 0.20   | Useful but not anime-native            |
-//! | audience_score  | 0.15   | Less meaningful for anime              |
-//! | tmdb            | 0.15   | Reasonable secondary signal            |
-//! | anilist         | 0.35   | Community authority for anime          |
+//! | audience_score  | 0.10   | Less meaningful for anime              |
+//! | tmdb            | 0.10   | Reasonable secondary signal            |
+//! | anilist         | 0.30   | Community authority for anime          |
+//! | kitsu           | 0.20   | Independent anime community; 0–100     |
 //!
 //! ## Documentary
 //! | Source          | Weight | Rationale                              |
@@ -51,6 +54,7 @@
 //! | audience_score  | 0.10   | Less signal for non-entertainment docs |
 //! | tmdb            | 0.15   | Smaller pool                           |
 //! | anilist         | —      | N/A                                    |
+//! | kitsu           | —      | N/A                                    |
 //!
 //! ## Horror
 //! | Source          | Weight | Rationale                              |
@@ -60,6 +64,7 @@
 //! | audience_score  | 0.30   | Audience enjoyment central to horror   |
 //! | tmdb            | 0.15   | Supplementary                          |
 //! | anilist         | —      | N/A                                    |
+//! | kitsu           | —      | N/A                                    |
 //!
 //! ## Music / Album / Track
 //! | Source          | Weight | Rationale                              |
@@ -69,11 +74,14 @@
 //! | audience_score  | 0.35   | Engagement signal strongest            |
 //! | tmdb            | 0.25   | Music data increasingly useful         |
 //! | anilist         | —      | N/A                                    |
+//! | kitsu           | —      | N/A                                    |
 //!
 //! All scores are normalised to 0–10 before weighting.
 //! OMDB is excluded (it mirrors IMDB — would double-count).
+//! Kitsu `averageRating` is 0–100 scale (normalize = 10.0), same as AniList.
 
 use std::collections::HashMap;
+use tracing;
 
 use super::filters::FilterSet;
 use super::ranking::SortOrder;
@@ -120,6 +128,11 @@ pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
         weight: 0.00,
         normalize: 10.0,
     },
+    RatingWeight {
+        key: "kitsu",
+        weight: 0.00,
+        normalize: 10.0,
+    },
 ];
 
 #[allow(dead_code)]
@@ -149,13 +162,18 @@ const WEIGHTS_SERIES: &[RatingWeight] = &[
         weight: 0.00,
         normalize: 10.0,
     },
+    RatingWeight {
+        key: "kitsu",
+        weight: 0.00,
+        normalize: 10.0,
+    },
 ];
 
 #[allow(dead_code)]
 const WEIGHTS_ANIME: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
-        weight: 0.15,
+        weight: 0.10,
         normalize: 10.0,
     },
     RatingWeight {
@@ -165,17 +183,22 @@ const WEIGHTS_ANIME: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "audience_score",
-        weight: 0.15,
+        weight: 0.10,
         normalize: 10.0,
     },
     RatingWeight {
         key: "tmdb",
-        weight: 0.15,
+        weight: 0.10,
         normalize: 1.0,
     },
     RatingWeight {
         key: "anilist",
-        weight: 0.35,
+        weight: 0.30,
+        normalize: 10.0,
+    },
+    RatingWeight {
+        key: "kitsu",
+        weight: 0.20,
         normalize: 10.0,
     },
 ];
@@ -204,6 +227,11 @@ const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     },
     RatingWeight {
         key: "anilist",
+        weight: 0.00,
+        normalize: 10.0,
+    },
+    RatingWeight {
+        key: "kitsu",
         weight: 0.00,
         normalize: 10.0,
     },
@@ -236,6 +264,11 @@ const WEIGHTS_HORROR: &[RatingWeight] = &[
         weight: 0.00,
         normalize: 10.0,
     },
+    RatingWeight {
+        key: "kitsu",
+        weight: 0.00,
+        normalize: 10.0,
+    },
 ];
 
 #[allow(dead_code)]
@@ -265,6 +298,11 @@ const WEIGHTS_MUSIC: &[RatingWeight] = &[
         weight: 0.00,
         normalize: 10.0,
     },
+    RatingWeight {
+        key: "kitsu",
+        weight: 0.00,
+        normalize: 10.0,
+    },
 ];
 
 // ── Profile selection ─────────────────────────────────────────────────────────
@@ -272,7 +310,7 @@ const WEIGHTS_MUSIC: &[RatingWeight] = &[
 /// Select the appropriate weight profile for an entry.
 ///
 /// Priority order:
-/// 1. Anime — genre contains "anime", OR anilist score is present (provider signal).
+/// 1. Anime — genre contains "anime", OR anilist/kitsu score is present (provider signal).
 /// 2. Documentary — genre contains "documentary".
 /// 3. Horror — genre contains "horror".
 /// 4. Music — MediaType is Music, Album, or Track.
@@ -286,8 +324,11 @@ fn weights_for(
 ) -> &'static [RatingWeight] {
     let genre_lc = genre.unwrap_or("").to_ascii_lowercase();
 
-    // Anime: genre hint OR anilist data present from provider.
-    if genre_lc.contains("anime") || ratings.contains_key("anilist") {
+    // Anime: genre hint OR anilist/kitsu data present from provider.
+    if genre_lc.contains("anime")
+        || ratings.contains_key("anilist")
+        || ratings.contains_key("kitsu")
+    {
         return WEIGHTS_ANIME;
     }
 
@@ -307,43 +348,6 @@ fn weights_for(
 }
 
 // ── Core rating functions ─────────────────────────────────────────────────────
-
-/// Compute a weighted composite rating on a 0–10 scale (weighted mean).
-///
-/// Only sources with weight > 0 that are present in `ratings` contribute;
-/// their weights are re-normalised to sum to 1.0.
-///
-/// Returns `None` if `ratings` is empty or no weighted sources are present.
-#[allow(dead_code)]
-pub fn weighted_rating(ratings: &HashMap<String, f64>, weights: &[RatingWeight]) -> Option<f64> {
-    if ratings.is_empty() {
-        return None;
-    }
-
-    let mut weighted_sum = 0.0_f64;
-    let mut weight_total = 0.0_f64;
-
-    for w in weights {
-        if w.weight == 0.0 {
-            continue;
-        }
-        // Guard against zero normalize (division by zero)
-        if w.normalize <= 0.0 {
-            continue;
-        }
-        if let Some(&raw) = ratings.get(w.key) {
-            let normalised = (raw / w.normalize).clamp(0.0, 10.0);
-            weighted_sum += normalised * w.weight;
-            weight_total += w.weight;
-        }
-    }
-
-    if weight_total == 0.0 {
-        return None;
-    }
-
-    Some(weighted_sum / weight_total)
-}
 
 /// Compute the weighted median on a 0–10 scale.
 ///
@@ -408,7 +412,6 @@ pub fn weighted_median(ratings: &HashMap<String, f64>, weights: &[RatingWeight])
 
 /// Returns the number of rating sources present in the ratings map
 /// that match the configured weight keys.
-#[allow(dead_code)]
 pub fn count_active_sources(ratings: &HashMap<String, f64>, weights: &[RatingWeight]) -> usize {
     weights
         .iter()
@@ -417,7 +420,6 @@ pub fn count_active_sources(ratings: &HashMap<String, f64>, weights: &[RatingWei
 }
 
 /// Returns a list of rating source names that are missing (configured but not present).
-#[allow(dead_code)]
 pub fn missing_sources(
     ratings: &HashMap<String, f64>,
     weights: &[RatingWeight],
@@ -431,7 +433,6 @@ pub fn missing_sources(
 
 /// Returns true if there are enough active sources to compute a reliable rating.
 /// Requires at least `min_sources` (default: 1) sources with positive weight.
-#[allow(dead_code)]
 pub fn has_sufficient_sources(
     ratings: &HashMap<String, f64>,
     weights: &[RatingWeight],
@@ -442,14 +443,12 @@ pub fn has_sufficient_sources(
 
 // ── Aggregator ────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub struct CatalogAggregator {
     filters: FilterSet,
     sort_order: SortOrder,
 }
 
 impl CatalogAggregator {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         CatalogAggregator {
             filters: FilterSet::default(),
@@ -469,7 +468,12 @@ impl CatalogAggregator {
         self
     }
 
-    /// Merge, dedup, filter, and sort a raw list of entries.
+    /// Merge, dedup, filter, and sort a raw list of entries in one call.
+    ///
+    /// The engine uses `merge()` + `apply_search_options()` directly so it can
+    /// cache the merged (unfiltered) entries and apply different filter/sort
+    /// combinations without re-merging.  This method remains available for
+    /// callers that want the full pipeline in a single call.
     #[allow(dead_code)]
     pub fn apply(&self, entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         let merged = self.merge(entries);
@@ -565,7 +569,7 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
             base.imdb_id = secondary.imdb_id.clone();
         }
         if base.tmdb_id.is_none() {
-            base.tmdb_id = secondary.tmdb_id;
+            base.tmdb_id = secondary.tmdb_id.clone();
         }
 
         // Merge all per-source ratings (don't overwrite existing keys).
@@ -608,10 +612,27 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 fn apply_weighted_rating(entry: &mut CatalogEntry) {
     let weights = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
 
+    if !has_sufficient_sources(&entry.ratings, weights, 1) {
+        tracing::debug!(
+            title = %entry.title,
+            "no recognised rating sources; preserving provider rating"
+        );
+        return;
+    }
+
+    let missing = missing_sources(&entry.ratings, weights);
+    if !missing.is_empty() {
+        tracing::debug!(
+            title = %entry.title,
+            active = count_active_sources(&entry.ratings, weights),
+            missing = ?missing,
+            "partial rating coverage"
+        );
+    }
+
     if let Some(composite) = weighted_median(&entry.ratings, weights) {
         entry.rating = Some(format!("{:.1}", composite));
     }
-    // No recognised sources — preserve the provider's original rating string.
 }
 
 /// Map a provider name to the canonical ratings key used in the weight tables.
@@ -627,6 +648,7 @@ fn rating_key_for_provider(provider: &str) -> Option<&'static str> {
         "tmdb" => Some("tmdb"),
         "omdb" => Some("imdb"), // OMDB reflects IMDB score
         "anilist" => Some("anilist"),
+        "kitsu" => Some("kitsu"),
         "rottentomatoes" => Some("tomatometer"),
         "rottentomatoes_audience" => Some("audience_score"),
         _ => None,
@@ -635,6 +657,21 @@ fn rating_key_for_provider(provider: &str) -> Option<&'static str> {
 
 /// Parse a rating string to f64.
 /// Handles "8.4", "8.4/10", "84%", "84".
+///
+/// # Scale contract
+///
+/// The returned value preserves the *raw* numeric value in the string — no
+/// scale conversion is performed here.  The caller is responsible for
+/// pairing the result with the correct `RatingWeight::normalize` divisor:
+///
+/// | Provider string example | Raw value | `normalize` | Normalised (0–10) |
+/// |-------------------------|-----------|-------------|-------------------|
+/// | `"8.4"` (IMDB)          | 8.4       | 1.0         | 8.4               |
+/// | `"84%"` (RT)            | 84.0      | 10.0        | 8.4               |
+/// | `"84"` (AniList 0–100)  | 84.0      | 10.0        | 8.4               |
+///
+/// Storing RT/AniList values without dividing by 10 would produce composite
+/// scores an order of magnitude too high.
 #[allow(dead_code)]
 fn parse_rating_str(s: &str) -> Option<f64> {
     let s = s.trim();
@@ -698,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_anime_weights_prefer_anilist() {
-        // Note: Anilist is on 100-scale, so we use 92.0 (which normalizes to 9.2)
+        // AniList is on 100-scale, so 92.0 normalises to 9.2
         let entries = vec![make_entry(
             "Attack on Titan",
             "tt12345678",
@@ -709,11 +746,71 @@ mod tests {
         let aggregator = CatalogAggregator::new();
         let result = aggregator.merge(entries);
         assert_eq!(result.len(), 1);
-        // Anilist has highest weight (0.35) for anime, should influence result
-        // With anilist normalized to 9.2 and imdb at 8.5, weighted median should be 9.2
+        // anilist (9.2, w=0.30) outweighs imdb (8.5, w=0.20); median should be 9.2
         let rating = result[0].rating.as_ref().unwrap();
         let parsed: f64 = rating.parse().unwrap();
         assert!(parsed >= 9.0, "Expected rating >= 9.0, got {}", parsed);
+    }
+
+    #[test]
+    fn test_kitsu_triggers_anime_profile() {
+        // A kitsu score alone (no anilist, no "anime" genre) should select the anime profile.
+        let entries = vec![make_entry(
+            "Fullmetal Alchemist",
+            "tt0421955",
+            None,
+            &[("imdb", 9.1), ("kitsu", 88.0)],
+            MediaType::Series,
+        )];
+        let aggregator = CatalogAggregator::new();
+        let result = aggregator.merge(entries);
+        assert_eq!(result.len(), 1);
+        // kitsu (8.8, w=0.20) and imdb (9.1, w=0.20): sorted [(8.8,0.20),(9.1,0.20)]
+        // cumulative at 8.8 = 0.20 = 0.20 (half of 0.40), so median is 8.8
+        let rating = result[0].rating.as_ref().unwrap();
+        let parsed: f64 = rating.parse().unwrap();
+        assert!(
+            parsed > 8.5,
+            "Expected anime-weighted rating > 8.5, got {}",
+            parsed
+        );
+    }
+
+    #[test]
+    fn test_kitsu_anilist_combined() {
+        // Both kitsu and anilist present — their combined weight (0.50) dominates imdb (0.20).
+        let entries = vec![make_entry(
+            "Spirited Away",
+            "tt0245429",
+            None,
+            &[("imdb", 8.6), ("anilist", 90.0), ("kitsu", 92.0)],
+            MediaType::Movie,
+        )];
+        let aggregator = CatalogAggregator::new();
+        let result = aggregator.merge(entries);
+        assert_eq!(result.len(), 1);
+        // Sorted by score: imdb=8.6(w=0.20), anilist=9.0(w=0.30), kitsu=9.2(w=0.20)
+        // cumulative: 8.6→0.20, 9.0→0.50 — reaches half at anilist score
+        let rating = result[0].rating.as_ref().unwrap();
+        let parsed: f64 = rating.parse().unwrap();
+        assert!(
+            (parsed - 9.0).abs() < 0.2,
+            "Expected rating around 9.0, got {}",
+            parsed
+        );
+    }
+
+    #[test]
+    fn test_kitsu_not_used_for_movies_without_anime_signal() {
+        // kitsu key absent, no anime genre → movie profile; kitsu weight is 0.00 anyway
+        let ratings: HashMap<String, f64> =
+            [("imdb".to_string(), 8.0), ("tmdb".to_string(), 7.8)].into();
+        let weights = weights_for(&MediaType::Movie, None, &ratings);
+        let kitsu_entry = weights.iter().find(|w| w.key == "kitsu").unwrap();
+        assert_eq!(
+            kitsu_entry.weight, 0.00,
+            "kitsu must have 0 weight in movie profile"
+        );
     }
 
     #[test]

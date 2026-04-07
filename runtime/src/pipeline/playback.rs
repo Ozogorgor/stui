@@ -6,7 +6,23 @@
 use std::sync::Arc;
 
 use serde_json::json;
+use percent_encoding::percent_decode_str;
 use tracing::warn;
+
+fn display_title_from_url(url: &str) -> String {
+    if let Some(pos) = url.rfind('/') {
+        let segment = &url[pos + 1..];
+        if !segment.is_empty() {
+            if let Ok(decoded) = percent_decode_str(segment).decode_utf8() {
+                let name = decoded.trim();
+                if !name.is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+    }
+    url.to_string()
+}
 
 use crate::engine::Engine;
 use crate::ipc::{MediaTab, MediaType, MpdOutputInfo, MpdOutputsResponse, PlayerCmd, PlayerCommandRequest, Response, ErrorCode};
@@ -84,20 +100,108 @@ pub async fn run_player_command(player: &PlayerBridge, r: PlayerCommandRequest) 
 /// Translates each `PlayerCmd` variant into the appropriate mpv or MPD call.
 /// All commands go through `PlayerBridge::send_command` → mpv IPC socket.
 pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd: PlayerCmd) -> Response {
+    let via_mpd = player.is_mpd_active();
     match cmd {
-        // ── Parameterised mpv commands ────────────────────────────────────
+        // ── Shared commands — routed to MPD or mpv depending on active player ──
+
+        PlayerCmd::Pause => {
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.pause().await { warn!("mpd pause failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("set_property", &[json!("pause"), json!(true)]).await;
+            }
+        }
+        PlayerCmd::Resume => {
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.resume().await { warn!("mpd resume failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("set_property", &[json!("pause"), json!(false)]).await;
+            }
+        }
+        PlayerCmd::TogglePause => {
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.toggle_pause().await { warn!("mpd toggle_pause failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("cycle", &[json!("pause")]).await;
+            }
+        }
+        PlayerCmd::Stop => {
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.stop().await { warn!("mpd stop failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("quit", &[]).await;
+            }
+        }
         PlayerCmd::Seek { seconds } => {
-            player.send_command("seek", &[json!(seconds), json!("relative")]).await;
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.seek_relative(seconds).await { warn!("mpd seek_relative failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("seek", &[json!(seconds), json!("relative")]).await;
+            }
         }
         PlayerCmd::SeekAbsolute { seconds } => {
-            player.send_command("seek", &[json!(seconds), json!("absolute")]).await;
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.seek(seconds).await { warn!("mpd seek failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("seek", &[json!(seconds), json!("absolute")]).await;
+            }
         }
         PlayerCmd::SetVolume { level } => {
-            player.send_command("set_property", &[json!("volume"), json!(level)]).await;
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.set_volume(level.clamp(0.0, 100.0) as u32).await { warn!("mpd set_volume failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("set_property", &[json!("volume"), json!(level)]).await;
+            }
         }
         PlayerCmd::AdjustVolume { delta } => {
-            player.send_command("add", &[json!("volume"), json!(delta)]).await;
+            if via_mpd {
+                if let Some(m) = mpd {
+                    if let Err(e) = m.adjust_volume(delta.clamp(-100.0, 100.0) as i32).await { warn!("mpd adjust_volume failed: {e}"); }
+                } else {
+                    warn!("mpd flagged active but bridge unavailable");
+                }
+            } else {
+                player.send_command("add", &[json!("volume"), json!(delta)]).await;
+            }
         }
+        PlayerCmd::SwitchStream { url } => {
+            if via_mpd {
+                let title = display_title_from_url(&url);
+                player.switch_stream_mpd(&url, &title).await;
+            } else {
+                player.send_command("loadfile", &[json!(url), json!("replace")]).await;
+            }
+        }
+
+        // ── mpv-only parameterised commands ──────────────────────────────
         PlayerCmd::SetSubtitleTrack { id } => {
             player.send_command("set_property", &[json!("sid"), json!(id)]).await;
         }
@@ -113,15 +217,8 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::AdjustAudioDelay { delta } => {
             player.send_command("add", &[json!("audio-delay"), json!(delta)]).await;
         }
-        PlayerCmd::SwitchStream { url } => {
-            player.send_command("loadfile", &[json!(url), json!("replace")]).await;
-        }
 
-        // ── Simple mpv commands ───────────────────────────────────────────
-        PlayerCmd::Pause              => player.send_command("cycle",        &[json!("pause")]).await,
-        PlayerCmd::Resume             => player.send_command("set_property", &[json!("pause"), json!(false)]).await,
-        PlayerCmd::TogglePause        => player.send_command("cycle",        &[json!("pause")]).await,
-        PlayerCmd::Stop               => player.send_command("quit",         &[]).await,
+        // ── Simple mpv-only commands ──────────────────────────────────────
         PlayerCmd::ToggleMute         => player.send_command("cycle",        &[json!("mute")]).await,
         PlayerCmd::DisableSubtitles   => player.send_command("set_property", &[json!("sid"), json!("no")]).await,
         PlayerCmd::CycleSubtitles     => player.send_command("cycle",        &[json!("sub")]).await,

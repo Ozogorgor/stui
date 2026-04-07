@@ -1,0 +1,5 @@
+# Suppress "profiles for the non root package will be ignored" warnings
+# These appear because plugins define their own profiles which differ from workspace
+# The workspace profiles will still be applied, this just silences the warning
+[env]
+RUSTFLAGS = { value = "-Awarnings", force = true }

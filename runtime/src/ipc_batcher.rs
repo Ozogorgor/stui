@@ -108,15 +108,6 @@ impl IpcBatcher {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.buffer.len()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
-    }
 }
 
 #[cfg(test)]

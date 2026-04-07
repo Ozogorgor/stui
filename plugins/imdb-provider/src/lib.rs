@@ -1,7 +1,7 @@
 //! imdb-provider — stui plugin that scrapes IMDB chart pages for trending content.
 
 use scraper::{Html, Selector};
-use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{plugin_warn, prelude::*, PluginType, StuiPlugin};
 
 const MOVIE_METER_URL: &str = "https://www.imdb.com/chart/moviemeter/";
 const TV_METER_URL: &str = "https://www.imdb.com/chart/tvmeter/";
@@ -81,20 +81,54 @@ fn parse_chart(html: &str) -> Vec<PluginEntry> {
     let mut entries = vec![];
 
     // IMDB chart rows — try multiple selector patterns for resilience
-    let row_sel = Selector::parse(
+    let row_sel = match Selector::parse(
         "li.ipc-metadata-list-summary-item, \
          .lister-list tr, \
          .chart tbody tr",
-    )
-    .unwrap();
+    ) {
+        Ok(sel) => sel,
+        Err(e) => {
+            plugin_warn!("imdb: failed to parse row selector: {}", e);
+            return entries;
+        }
+    };
 
-    let title_sel =
-        Selector::parse("h3.ipc-title__text, .titleColumn a, td.titleColumn a").unwrap();
+    let title_sel = match Selector::parse("h3.ipc-title__text, .titleColumn a, td.titleColumn a") {
+        Ok(sel) => sel,
+        Err(e) => {
+            plugin_warn!("imdb: failed to parse title selector: {}", e);
+            return entries;
+        }
+    };
     let year_sel =
-        Selector::parse("span.cli-title-metadata-item, .titleColumn span, .secondaryInfo").unwrap();
-    let rating_sel = Selector::parse("span.ipc-rating-star--imdb, td.ratingColumn strong").unwrap();
-    let poster_sel = Selector::parse("img.ipc-image, td.posterColumn img").unwrap();
-    let link_sel = Selector::parse("a.ipc-title-link-wrapper, .titleColumn a").unwrap();
+        match Selector::parse("span.cli-title-metadata-item, .titleColumn span, .secondaryInfo") {
+            Ok(sel) => sel,
+            Err(e) => {
+                plugin_warn!("imdb: failed to parse year selector: {}", e);
+                return entries;
+            }
+        };
+    let rating_sel = match Selector::parse("span.ipc-rating-star--imdb, td.ratingColumn strong") {
+        Ok(sel) => sel,
+        Err(e) => {
+            plugin_warn!("imdb: failed to parse rating selector: {}", e);
+            return entries;
+        }
+    };
+    let poster_sel = match Selector::parse("img.ipc-image, td.posterColumn img") {
+        Ok(sel) => sel,
+        Err(e) => {
+            plugin_warn!("imdb: failed to parse poster selector: {}", e);
+            return entries;
+        }
+    };
+    let link_sel = match Selector::parse("a.ipc-title-link-wrapper, .titleColumn a") {
+        Ok(sel) => sel,
+        Err(e) => {
+            plugin_warn!("imdb: failed to parse link selector: {}", e);
+            return entries;
+        }
+    };
 
     let document = Html::parse_document(html);
 
@@ -167,6 +201,7 @@ fn parse_chart(html: &str) -> Vec<PluginEntry> {
             description: None,
             poster_url,
             imdb_id,
+            duration: None,
         });
     }
 

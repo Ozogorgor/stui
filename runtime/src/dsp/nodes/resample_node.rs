@@ -5,12 +5,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
 
+#[allow(dead_code)]
 pub struct ResampleNode {
     inner: Option<Resampler>,
     enabled: bool,
     last_config: Option<DspConfig>,
 }
 
+#[allow(dead_code)]
 impl ResampleNode {
     pub fn new(config: DspConfig) -> Self {
         let mut enabled = config.resample_enabled;
@@ -25,7 +27,11 @@ impl ResampleNode {
             }
         };
 
-        Self { inner, enabled, last_config }
+        Self {
+            inner,
+            enabled,
+            last_config,
+        }
     }
 
     pub fn output_rate(&self) -> Option<u32> {
@@ -60,9 +66,14 @@ impl DspNode for ResampleNode {
             if let Some(cfg) = &self.last_config {
                 let config_arc = Arc::new(RwLock::new(cfg.clone()));
                 match Resampler::new(config_arc) {
-                    Ok(r) => { self.inner = Some(r); }
+                    Ok(r) => {
+                        self.inner = Some(r);
+                    }
                     Err(e) => {
-                        warn!("Failed to lazily initialize resampler in set_enabled: {}", e);
+                        warn!(
+                            "Failed to lazily initialize resampler in set_enabled: {}",
+                            e
+                        );
                         self.enabled = false;
                     }
                 }
@@ -76,9 +87,7 @@ impl DspNode for ResampleNode {
         self.last_config = Some(config.clone());
         self.enabled = config.resample_enabled;
         if config.resample_enabled {
-            if let Some(ref mut inner) = self.inner {
-                inner.set_output_rate(config.output_sample_rate);
-            } else {
+            if self.inner.is_none() {
                 // Lazily construct the resampler when enabled but not yet initialized
                 // (mirrors CrossfeedNode/DitherNode lazy re-enable pattern).
                 let config_arc = Arc::new(RwLock::new(config.clone()));

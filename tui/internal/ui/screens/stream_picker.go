@@ -226,8 +226,8 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return s, nil
 
 	case spinner.TickMsg:
-		s.spinner.Update(m)
-		return s, nil
+		_, cmd := s.spinner.Update(m)
+		return s, cmd
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
@@ -493,6 +493,15 @@ func (s StreamPickerScreen) viewManualMode() string {
 		return sb.String()
 	}
 
+	// Virtualized list for scrollbar
+	listHeight := s.height - 20
+	if listHeight < 5 {
+		listHeight = 5
+	}
+	vl := components.NewVirtualizedList(len(s.streams), s.cursor, listHeight)
+	scrollbar := vl.VerticalScrollbar(1, dim)
+	start, end := vl.VisibleRange()
+
 	// ── Sort header ───────────────────────────────────────────────────────
 	arrow := "\u2193"
 	if !s.sortDesc {
@@ -531,10 +540,12 @@ func (s StreamPickerScreen) viewManualMode() string {
 	}
 	sortIndicator := fmt.Sprintf("  sorted by %s %s", s.sortCol.label(), arrow)
 	sb.WriteString(dim.Render(header) + "\n")
-	sb.WriteString(dim.Render(sortIndicator) + benchStatus + "\n\n")
+	sb.WriteString(dim.Render(sortIndicator) + benchStatus + "\n")
 
 	// ── Stream rows ───────────────────────────────────────────────────────
-	for i, st := range s.streams {
+	var rowLines []string
+	for i := start; i < end; i++ {
+		st := s.streams[i]
 		isSelected := i == s.cursor
 		prefix := "  "
 		rowStyle := normal
@@ -585,7 +596,30 @@ func (s StreamPickerScreen) viewManualMode() string {
 		}
 
 		line := prefix + qualCol + "  " + provCol + "  " + sizeCol + hdrBadge + speedCol + "  " + seedCol
-		sb.WriteString("  " + line + "\n")
+		rowLines = append(rowLines, line)
+	}
+
+	// Add scrollbar characters to each row
+	if scrollbar != "" && len(rowLines) > 0 {
+		scrollRunes := []rune(scrollbar)
+		for i := range rowLines {
+			scrollChar := " "
+			if i < len(scrollRunes) {
+				scrollChar = string(scrollRunes[i])
+			}
+			rowLines[i] = rowLines[i] + " " + scrollChar
+		}
+	}
+
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(0, 1)
+
+	// Join all rows and wrap with single border
+	content := strings.Join(rowLines, "\n")
+	if content != "" {
+		sb.WriteString(borderStyle.Render(content) + "\n")
 	}
 
 	// ── Stream info panel for selected stream ────────────────────────────

@@ -220,6 +220,7 @@ impl MovieItem {
             description: self.overview,
             poster_url,
             imdb_id: None,
+            duration: None,
         }
     }
 }
@@ -247,6 +248,7 @@ impl TvItem {
             description: self.overview,
             poster_url,
             imdb_id: None,
+            duration: None,
         }
     }
 }

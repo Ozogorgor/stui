@@ -46,14 +46,8 @@ type SharedAuthPhase = Arc<tokio::sync::Mutex<AuthPhase>>;
 /// requests are multiplexed over the single stdin/stdout channel.
 #[allow(clippy::type_complexity)]
 pub struct PluginProcess {
-    /// Resolved plugin ID (UUID assigned at load time).
-    #[allow(dead_code)]
-    pub id:        String,
     /// Handshake info: name, version, capabilities.
     pub info:      PluginHandshake,
-    /// Path to the plugin executable.
-    #[allow(dead_code)]
-    pub bin:       PathBuf,
     /// Notified when the plugin process exits (stdout EOF).
     /// The supervisor awaits this to trigger restart logic.
     pub death_notify: Arc<Notify>,
@@ -134,14 +128,12 @@ impl PluginProcess {
         });
 
         let mut proc = PluginProcess {
-            id:           Uuid::new_v4().to_string(),
             info:         PluginHandshake {
                 name:         "unknown".into(),
                 version:      "0.0.0".into(),
                 capabilities: vec![],
                 description:  None,
             },
-            bin,
             death_notify,
             pid,
             stdin_tx,

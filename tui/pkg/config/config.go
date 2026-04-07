@@ -2,12 +2,25 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 )
 
 // ── Sub-structs ───────────────────────────────────────────────────────────────
+
+// VisualizerSettings holds the persisted audio-visualizer preferences.
+type VisualizerSettings struct {
+	Backend     string `toml:"backend"`      // "off" | "cava" | "chroma"
+	Bars        int    `toml:"bars"`         // number of frequency bars
+	Height      int    `toml:"height"`       // rows in terminal
+	Framerate   int    `toml:"framerate"`    // fps
+	Mode        string `toml:"mode"`         // "bars" | "mirror" | "filled" | "led"
+	Gradient    bool   `toml:"gradient"`
+	PeakHold    bool   `toml:"peak_hold"`
+	InputMethod string `toml:"input_method"` // "pulse" | "pipewire" | "alsa"
+}
 
 type InterfaceConfig struct {
 	Theme        string `toml:"theme"`
@@ -78,6 +91,20 @@ type SkipperConfig struct {
 
 // Config is the full set of user preferences.
 // Always construct via Default() — never use a zero-value Config directly,
+// detectVisualizerBackend returns "cava" or "chroma" if either is installed,
+// otherwise "off". This is used only for the first-run default.
+func detectVisualizerBackend() string {
+	if _, err := exec.LookPath("cava"); err == nil {
+		return "cava"
+	}
+	if _, err := exec.LookPath("chroma"); err == nil {
+		return "chroma"
+	}
+	return "off"
+}
+
+// Config is the full set of user preferences.
+// Always construct via Default() — never use a zero-value Config directly,
 // as many defaults are non-zero (e.g. DefaultVolume=100, PreferHTTP=true).
 type Config struct {
 	Interface     InterfaceConfig     `toml:"interface"`
@@ -88,6 +115,7 @@ type Config struct {
 	Providers     ProvidersConfig     `toml:"providers"`
 	Notifications NotificationsConfig `toml:"notifications"`
 	Skipper       SkipperConfig       `toml:"skipper"`
+	Visualizer    VisualizerSettings  `toml:"visualizer"`
 }
 
 // ConfigReloadMsg is sent to the bubbletea program when config.toml or the
@@ -147,6 +175,16 @@ func Default() Config {
 			MaxIntroSecs:        120,
 			SimilarityThreshold: 0.85,
 			MinEpisodes:         2,
+		},
+		Visualizer: VisualizerSettings{
+			Backend:     detectVisualizerBackend(),
+			Bars:        20,
+			Height:      8,
+			Framerate:   20,
+			Mode:        "bars",
+			Gradient:    true,
+			PeakHold:    true,
+			InputMethod: "pulse",
 		},
 	}
 }

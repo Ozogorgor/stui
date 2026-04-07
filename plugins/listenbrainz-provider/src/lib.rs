@@ -245,34 +245,12 @@ impl Release {
             description: Some(format!("Artist: {}", artist)),
             poster_url,
             imdb_id: None,
+            duration: None,
         }
     }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-fn url_encode(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
-            ' ' => vec!['%', '2', '0'],
-            c => {
-                let mut buf = [0u8; 4];
-                let bytes = c.encode_utf8(&mut buf);
-                bytes
-                    .bytes()
-                    .flat_map(|b| {
-                        vec![
-                            '%',
-                            char::from_digit((b >> 4) as u32, 16).unwrap_or('0'),
-                            char::from_digit((b & 0xf) as u32, 16).unwrap_or('0'),
-                        ]
-                    })
-                    .collect()
-            }
-        })
-        .collect()
-}
 
 // ── WASM Exports ───────────────────────────────────────────────────────────────
 

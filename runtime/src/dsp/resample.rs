@@ -49,6 +49,7 @@ pub struct Resampler {
 }
 
 impl Resampler {
+    #[allow(dead_code)]
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let cfg = config.blocking_read();
         let input_rate = cfg.input_sample_rate;
@@ -235,17 +236,6 @@ impl Resampler {
 
     pub fn output_rate(&self) -> u32 {
         self.output_rate
-    }
-
-    #[allow(dead_code)]
-    pub fn set_output_rate(&mut self, rate: u32) -> Result<(), String> {
-        Self::validate_rates(self.input_rate, rate)?;
-        let cfg = self.config.blocking_read();
-        let filter_type = cfg.filter_type;
-        drop(cfg);
-        self.kind = Self::build_kind(filter_type, self.input_rate, rate, self.chunk_size)?;
-        self.output_rate = rate;
-        Ok(())
     }
 
     /// Reset the resampler state to clear any buffered data.

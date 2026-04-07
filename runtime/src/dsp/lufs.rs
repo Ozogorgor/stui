@@ -113,7 +113,6 @@ impl KWeighting {
         self.s2[ch].process(self.s1[ch].process(sample))
     }
 
-    #[allow(dead_code)]
     fn reset(&mut self) {
         for ch in 0..2 {
             self.s1[ch].reset();
@@ -179,16 +178,6 @@ impl LufsMeter {
             lufs_offset: 0.0,
             target_lufs: -14.0,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn set_target_lufs(&mut self, target: f32) {
-        self.target_lufs = target.clamp(-70.0, 0.0);
-    }
-
-    #[allow(dead_code)]
-    pub fn set_channel_weights(&mut self, left: f32, right: f32) {
-        self.channel_weights = [left, right];
     }
 
     pub fn process(&mut self, samples: &[f32]) {
@@ -320,6 +309,15 @@ impl LufsMeter {
 
     pub fn gain_db(&self) -> f32 {
         self.lufs_offset
+    }
+
+    pub fn set_target_lufs(&mut self, target: f32) {
+        let valid_target = if !target.is_finite() {
+            -23.0
+        } else {
+            target.clamp(-70.0, 0.0)
+        };
+        self.target_lufs = valid_target;
     }
 
     #[allow(dead_code)]

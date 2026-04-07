@@ -11,103 +11,10 @@
 //! RankingPolicy::fastest_start()  # weight seeders heavily (test-only stub)
 //! ```
 //!
-//! # Rating weights
-//!
-//! Rating aggregation uses `RatingWeight` to combine scores from multiple
-//! sources (TMDB, IMDB, etc.) into a single weighted value.
-//! See `catalog_engine::aggregator::weighted_rating` and `weighted_median`.
+//! Rating aggregation is handled by `catalog_engine::aggregator` — see
+//! `weighted_median` function and the public `WEIGHTS_MOVIE` constant there.
 
 use serde::{Deserialize, Serialize};
-
-/// A source + weight pair used for aggregating ratings from multiple sources.
-/// Used by `catalog_engine::aggregator::weighted_rating` and `weighted_median`.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct RatingWeight {
-    /// Key matching the source name in the ratings HashMap (e.g., "tmdb", "imdb").
-    pub key: &'static str,
-    /// Weight for this source in the aggregation.
-    pub weight: f64,
-    /// Normalization factor (e.g., 10.0 for sources on 0-10 scale).
-    pub normalize: f64,
-}
-
-/// Default rating weights for weighted rating aggregation.
-/// TMDB and IMDB ratings are weighted higher as they tend to be most reliable.
-#[allow(dead_code)]
-pub fn default_rating_weights() -> Vec<RatingWeight> {
-    vec![
-        RatingWeight {
-            key: "tmdb",
-            weight: 3.0,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "imdb",
-            weight: 2.5,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "rotten_tomatoes",
-            weight: 2.0,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "metacritic",
-            weight: 1.5,
-            normalize: 10.0,
-        },
-    ]
-}
-
-/// Rating weights optimized for series/TV content.
-#[allow(dead_code)]
-pub fn series_rating_weights() -> Vec<RatingWeight> {
-    vec![
-        RatingWeight {
-            key: "imdb",
-            weight: 3.0,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "tmdb",
-            weight: 2.5,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "metacritic",
-            weight: 2.0,
-            normalize: 100.0,
-        },
-    ]
-}
-
-/// Rating weights optimized for anime content.
-#[allow(dead_code)]
-pub fn anime_rating_weights() -> Vec<RatingWeight> {
-    vec![
-        RatingWeight {
-            key: "myanimelist",
-            weight: 3.0,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "anilist",
-            weight: 2.5,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "imdb",
-            weight: 1.5,
-            normalize: 10.0,
-        },
-        RatingWeight {
-            key: "tmdb",
-            weight: 1.0,
-            normalize: 10.0,
-        },
-    ]
-}
 
 /// User-configurable preferences for stream selection.
 /// These complement the built-in ranking policies.

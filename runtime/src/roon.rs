@@ -14,17 +14,21 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock, Mutex as TokioMutex};
 use tokio_tungstenite::{connect_async, tungstenite::{Message, Utf8Bytes}};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use futures_util::{SinkExt, StreamExt};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 const ROON_SERVICE_TYPE: &str = "_roon._tcp.local.";
+#[allow(dead_code)]
 const ROON_SERVICE_PORT: u16 = 9330;
+#[allow(dead_code)]
 const ROON_APP_ID: &str = "stui_roon";
+#[allow(dead_code)]
 const ROON_APP_NAME: &str = "stui";
 
 // ── Data Structures ───────────────────────────────────────────────────────────
@@ -54,6 +58,7 @@ impl Default for RoonConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum RoonEvent {
     ZoneChanged(String),
     PlaybackStateChanged(String),
@@ -65,7 +70,8 @@ pub enum RoonEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method")]
-enum RoonRequest {
+#[allow(dead_code)]
+pub enum RoonRequest {
     #[serde(rename = "subscribe_zones")]
     SubscribeZones { },
     
@@ -121,13 +127,25 @@ enum RoonRequest {
     },
 }
 
+impl RoonRequest {
+    #[allow(dead_code)]
+    fn service(&self) -> &'static str {
+        match self {
+            RoonRequest::Browse { .. } | RoonRequest::DeepSearch { .. } => "com.roonlabs.browse:1",
+            _ => "com.roonlabs.transport:2",
+        }
+    }
+}
+
 // ── Roon Client ─────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct RoonClient {
     config: Arc<RwLock<RoonConfig>>,
     event_tx: broadcast::Sender<RoonEvent>,
     ws_sender: Arc<RwLock<Option<mpsc::Sender<String>>>>,
-    shutdown_tx: Arc<RwLock<Option<mpsc::Sender<String>>>>,
+    shutdown_tx: Arc<RwLock<Option<mpsc::Sender<()>>>>,
+    pending: Arc<TokioMutex<HashMap<u32, oneshot::Sender<serde_json::Value>>>>,
 }
 
 impl RoonClient {
@@ -138,6 +156,7 @@ impl RoonClient {
             event_tx,
             ws_sender: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(RwLock::new(None)),
+            pending: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 
@@ -231,58 +250,111 @@ impl RoonClient {
         Ok(servers)
     }
 
-    /// Connect to a Roon server and authenticate
+    /// Connect to a Roon server and authenticate via the Roon Extension API.
     pub async fn connect(&self, server: &RoonServer) -> Result<()> {
         info!(host = %server.host, "Connecting to Roon server...");
-        
+
         let url = format!("ws://{}:{}", server.host, server.port);
-        
         let (ws_stream, _) = connect_async(&url).await?;
         let (mut write, mut read) = ws_stream.split();
-        
+
         let (tx, mut rx) = mpsc::channel::<String>(100);
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<String>(100);
-        
-        {
-            let mut sender = self.ws_sender.write().await;
-            *sender = Some(tx.clone());
-        }
-        {
-            let mut shutdown = self.shutdown_tx.write().await;
-            *shutdown = Some(shutdown_tx);
-        }
-        
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+        // Roon Extension API registration (com.roonlabs.registry:1/register)
         let handshake = serde_json::json!({
-            "method": "register",
-            "protocol": [
-                {
-                    "name": " antiquated",
-                    "version": "1.0"
-                }
-            ],
-            "softname": format!("{} {}", ROON_APP_NAME, env!("CARGO_PKG_VERSION")),
-            "device_id": "stui",
-            "client_id": ROON_APP_ID,
-            "core_id": server.core_id,
+            "verb": "REQUEST",
+            "service": "com.roonlabs.registry:1",
+            "name": "register",
+            "request_id": rand_u32(),
+            "body": {
+                "extension_id": ROON_APP_ID,
+                "display_name": ROON_APP_NAME,
+                "display_version": env!("CARGO_PKG_VERSION"),
+                "publisher": "stui",
+                "email": "stui@localhost",
+                "provided_services": [],
+                "required_services": ["com.roonlabs.transport:2", "com.roonlabs.browse:1"],
+            }
         });
-        
+
         write.send(Message::Text(Utf8Bytes::from(handshake.to_string()))).await?;
-        
-        let write_tx = tx.clone();
+
+        // Await registration response before proceeding
+        let reg_response = match tokio::time::timeout(
+            Duration::from_secs(5),
+            async {
+                while let Some(msg) = read.next().await {
+                    if let Ok(Message::Text(text)) = msg {
+                        if let Ok(resp) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if resp.get("name").and_then(|n| n.as_str()) == Some("Registered") {
+                                return Ok(resp);
+                            }
+                            // Log unexpected messages during registration handshake
+                            debug!(registration_handshake_msg = ?resp, "received non-registration message during handshake");
+                        }
+                    }
+                }
+                Err(anyhow!("Connection closed during registration"))
+            },
+        )
+        .await
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(anyhow!("Registration timeout")),
+        };
+
+        info!(registration = ?reg_response, "Roon registration successful");
+
+        // Only set state after successful registration
+        {
+            *self.ws_sender.write().await = Some(tx);
+        }
+        {
+            *self.shutdown_tx.write().await = Some(shutdown_tx);
+        }
+
+        // Write task — drains the outbound channel; exits on shutdown signal or send error.
         tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                if write.send(Message::Text(Utf8Bytes::from(msg))).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    msg = rx.recv() => {
+                        match msg {
+                            Some(m) => {
+                                if write.send(Message::Text(Utf8Bytes::from(m))).await.is_err() {
+                                    break;
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        while let Ok(m) = rx.try_recv() {
+                            if write.send(Message::Text(Utf8Bytes::from(m))).await.is_err() {
+                                break;
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         });
-        
+
+        // Read task — routes responses to pending oneshots and broadcasts events.
         let event_tx = self.event_tx.clone();
+        let pending = Arc::clone(&self.pending);
         tokio::spawn(async move {
             while let Some(msg) = read.next().await {
                 match msg {
                     Ok(Message::Text(text)) => {
                         if let Ok(response) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(id) = response.get("request_id").and_then(|v| v.as_u64()) {
+                                let mut map = pending.lock().await;
+                                if let Some(resp_tx) = map.remove(&(id as u32)) {
+                                    let _ = resp_tx.send(response.clone());
+                                }
+                            }
                             Self::handle_message(response, &event_tx);
                         }
                     }
@@ -299,10 +371,10 @@ impl RoonClient {
                 }
             }
         });
-        
+
         let _ = self.event_tx.send(RoonEvent::Connected);
         info!(host = %server.host, "Connected to Roon server");
-        
+
         Ok(())
     }
     
@@ -332,40 +404,52 @@ impl RoonClient {
 
     pub async fn disconnect(&self) {
         if let Some(tx) = self.shutdown_tx.write().await.take() {
-            let _ = tx.send("shutdown".to_string()).await;
+            let _ = tx.send(()).await;
         }
         *self.ws_sender.write().await = None;
         let _ = self.event_tx.send(RoonEvent::Disconnected);
     }
 
-    /// Send a request over the WebSocket connection.
+    /// Send a request over the WebSocket connection and await the response.
     ///
-    /// **Limitation**: This is currently fire-and-forget. The Roon API is
-    /// asynchronous — responses arrive on the read loop as independent messages
-    /// keyed by `request_id`. A proper implementation would maintain a
-    /// `HashMap<u32, oneshot::Sender<Value>>` and match incoming responses by
-    /// `request_id`. Until that correlation map is added, callers that need a
-    /// response (e.g. `search()`, `get_zones()`) must subscribe via `subscribe()`
-    /// and wait for the appropriate `RoonEvent` instead of relying on the return
-    /// value here.
+    /// Inserts a oneshot sender into the `pending` map keyed by `request_id`.
+    /// The read task routes the matching response back here. Times out after 10 s.
     pub async fn request(&self, method: RoonRequest) -> Result<serde_json::Value> {
-        let sender = self.ws_sender.read().await;
-        let sender = sender.as_ref()
-            .ok_or_else(|| anyhow!("Not connected to Roon server"))?;
-
         let request_id = rand_u32();
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        let sender = {
+            let sender_guard = self.ws_sender.read().await;
+            sender_guard.clone().ok_or_else(|| anyhow!("Not connected to Roon server"))?
+        };
+
+        self.pending.lock().await.insert(request_id, resp_tx);
+
         let msg = serde_json::json!({
+            "verb": "REQUEST",
+            "service": method.service(),
             "request_id": request_id,
-            "method": method,
+            "body": method,
         });
 
-        let msg_str = msg.to_string();
-        sender.send(msg_str).await
-            .map_err(|e| anyhow!("Failed to send: {}", e))?;
+        if let Err(e) = sender.send(msg.to_string()).await {
+            self.pending.lock().await.remove(&request_id);
+            return Err(anyhow!("Failed to send: {}", e));
+        }
 
-        // Response will arrive asynchronously on the read loop. Callers that
-        // need the result must listen on the broadcast channel from subscribe().
-        Ok(serde_json::json!({}))
+        let result = tokio::time::timeout(Duration::from_secs(10), resp_rx).await;
+
+        match result {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&request_id);
+                Err(anyhow!("Response channel dropped"))
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&request_id);
+                Err(anyhow!("Roon request timed out"))
+            }
+        }
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<RoonSearchResult>> {
@@ -511,6 +595,7 @@ impl Default for RoonClient {
     }
 }
 
+#[allow(dead_code)]
 fn rand_u32() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -521,6 +606,7 @@ fn rand_u32() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct RoonSearchResult {
     pub id: String,
     pub title: String,

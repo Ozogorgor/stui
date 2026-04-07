@@ -1,0 +1,20 @@
+# javdb — plugin manifest
+# Install at: ~/.stui/plugins/javdb/
+
+[plugin]
+name        = "javdb"
+version     = "0.1.0"
+description = "JAVDatabase — Japanese adult video metadata"
+author      = "stui"
+abi_version = 1
+type        = "metadata"
+tags        = ["adult", "jav", "japanese", "metadata"]
+
+[config]
+
+[permissions]
+network = true
+
+[capabilities]
+catalog = true
+metadata = true

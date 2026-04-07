@@ -114,7 +114,7 @@ impl From<CatalogEntry> for MediaItem {
             poster_url: e.poster_url,
             poster_art: e.poster_art,
             imdb_id: e.imdb_id,
-            tmdb_id: e.tmdb_id,
+            tmdb_id: e.tmdb_id.and_then(|s| s.parse().ok()),
             episode: None,
             track: None,
             provider: e.provider,
@@ -138,7 +138,7 @@ impl From<MediaItem> for CatalogEntry {
             provider: m.provider,
             tab: m.tab,
             imdb_id: m.imdb_id,
-            tmdb_id: m.tmdb_id,
+            tmdb_id: m.tmdb_id.map(|id| id.to_string()),
             media_type: m.media_type,
         }
     }

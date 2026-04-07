@@ -5,11 +5,15 @@ pub mod eq_node;
 pub mod gain_node;
 pub mod resample_node;
 
+#[allow(unused_imports)]
 pub use crossfeed_node::CrossfeedNode;
+#[allow(unused_imports)]
 pub use dc_offset_node::DcOffsetNode;
+#[allow(unused_imports)]
 pub use dither_node::DitherNode;
 pub use eq_node::EqNode;
 pub use gain_node::GainNode;
+#[allow(unused_imports)]
 pub use resample_node::ResampleNode;
 
 use crate::dsp::config::DspConfig;
@@ -23,6 +27,7 @@ pub trait DspNode: Send {
     fn flush(&mut self);
 }
 
+#[allow(dead_code)]
 pub struct DspChain {
     nodes: Vec<Box<dyn DspNode>>,
 }

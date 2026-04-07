@@ -182,11 +182,9 @@ impl Skipper {
 
             // Use audio profile for validation (if available)
             if let Some(ref profile) = video_analysis.1 {
-                if let Some(ref intro) = det_intro {
-                    // Check for low silence ratio in intro (indicates active content, not black screen)
-                    if profile.silence_ratio < 0.3 {
-                        debug!(silence_ratio = profile.silence_ratio, "intro has active audio");
-                    }
+                // Check for low silence ratio in intro (indicates active content, not black screen)
+                if det_intro.is_some() && profile.silence_ratio < 0.3 {
+                    debug!(silence_ratio = profile.silence_ratio, "intro has active audio");
                 }
             }
             

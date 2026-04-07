@@ -66,12 +66,6 @@ impl EventBus {
         self.sender.subscribe()
     }
 
-    /// Number of active subscribers.
-    #[allow(dead_code)]
-    pub fn subscriber_count(&self) -> usize {
-        self.sender.receiver_count()
-    }
-
     #[allow(dead_code)]
     /// Spawn a background task that logs every event at TRACE level.
     ///

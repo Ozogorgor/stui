@@ -21,16 +21,36 @@ func receiveWithTimeout(ch <-chan RawResponse) RawResponse {
 
 // Search sends a search request and dispatches a SearchResultMsg to the
 // Bubble Tea program when the response arrives.
-func (c *Client) Search(reqID, query string, tab MediaTab, limit, offset int) {
+// opts is optional; pass SearchOptions{} or omit for default (rating-sorted, no filters).
+func (c *Client) Search(reqID, query string, tab MediaTab, limit, offset int, opts ...SearchOptions) {
 	go func() {
-		ch := c.sendWithID(reqID, map[string]any{
+		req := map[string]any{
 			"type":   "search",
 			"id":     reqID,
 			"query":  query,
 			"tab":    string(tab),
 			"limit":  limit,
 			"offset": offset,
-		})
+		}
+		if len(opts) > 0 {
+			o := opts[0]
+			if o.Sort != "" {
+				req["sort"] = o.Sort
+			}
+			if o.Genre != "" {
+				req["genre"] = o.Genre
+			}
+			if o.MinRating > 0 {
+				req["min_rating"] = o.MinRating
+			}
+			if o.YearFrom > 0 {
+				req["year_from"] = o.YearFrom
+			}
+			if o.YearTo > 0 {
+				req["year_to"] = o.YearTo
+			}
+		}
+		ch := c.sendWithID(reqID, req)
 		raw := receiveWithTimeout(ch)
 		msg := decodeSearchResult(reqID, raw)
 		c.send(msg)

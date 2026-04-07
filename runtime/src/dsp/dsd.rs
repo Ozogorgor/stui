@@ -87,19 +87,14 @@ impl DsdConverter {
         self.output_rate
     }
 
-    /// Set a new output rate.
-    #[allow(dead_code)]
-    pub fn set_output_rate(&mut self, rate: u32) -> Result<(), String> {
-        if rate != 176400 && rate != 352800 && rate != 705600 {
-            return Err("Invalid DSD output rate".to_string());
-        }
-        self.output_rate = rate;
-        Ok(())
-    }
 }
 
 /// DSD format variants.
-#[allow(dead_code)] // For future DSD format handling
+///
+/// TODO: detect DSD format from audio file metadata (SACD ISO, DSF, DFF headers)
+/// and wire into `DsdConverter` so the correct input rate is used rather than the
+/// hardcoded DSD64 assumption in `infer_dsd_rate`. See SCAFFOLD_TODOS.md.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DsdFormat {
     Dsd64,

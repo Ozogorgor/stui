@@ -83,8 +83,8 @@ func (s SearchScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch m := msg.(type) {
 
 	case spinner.TickMsg:
-		s.spinner.Update(m)
-		return s, nil
+		_, cmd := s.spinner.Update(m)
+		return s, cmd
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)

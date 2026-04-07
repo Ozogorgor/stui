@@ -40,20 +40,20 @@ const CHANNEL_CAPACITY: usize = 4;
 // ── PCM output ────────────────────────────────────────────────────────────────
 
 pub struct PipeWireOutput {
-    sender:      CbSender<Vec<f32>>,
+    sender: CbSender<Vec<f32>>,
     sample_rate: u32,
-    quit_tx:     pw::channel::Sender<()>,
-    thread:      Option<std::thread::JoinHandle<()>>,
+    quit_tx: pw::channel::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl PipeWireOutput {
     pub fn new(config: &DspConfig) -> Result<Self, OutputError> {
         let sample_rate = config.output_sample_rate;
-        let role        = config.pipewire_role.clone();
+        let role = config.pipewire_role.clone();
 
         let (audio_tx, audio_rx) = bounded::<Vec<f32>>(CHANNEL_CAPACITY);
-        let (quit_tx,  quit_rx)  = pw::channel::channel::<()>();
-        let (init_tx,  init_rx)  = std::sync::mpsc::channel::<Result<(), String>>();
+        let (quit_tx, quit_rx) = pw::channel::channel::<()>();
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
         let thread = std::thread::spawn(move || {
             run_pipewire_thread(sample_rate, role, audio_rx, quit_rx, init_tx);
@@ -61,13 +61,22 @@ impl PipeWireOutput {
 
         let thread = recv_init(init_rx, thread)?;
         info!(rate = sample_rate, "PipeWire output ready");
-        Ok(Self { sender: audio_tx, sample_rate, quit_tx, thread: Some(thread) })
+        Ok(Self {
+            sender: audio_tx,
+            sample_rate,
+            quit_tx,
+            thread: Some(thread),
+        })
     }
 }
 
 impl AudioOutput for PipeWireOutput {
-    fn sample_rate(&self) -> u32 { self.sample_rate }
-    fn channels(&self)    -> u16 { 2 }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    fn channels(&self) -> u16 {
+        2
+    }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), OutputError> {
         match self.sender.try_send(samples.to_vec()) {
@@ -79,68 +88,87 @@ impl AudioOutput for PipeWireOutput {
                 warn!("PipeWire channel full — dropping frame (RT thread behind)");
                 Ok(())
             }
-            Err(TrySendError::Disconnected(_)) => {
-                Err(OutputError::WriteError("PipeWire channel disconnected".into()))
-            }
+            Err(TrySendError::Disconnected(_)) => Err(OutputError::WriteError(
+                "PipeWire channel disconnected".into(),
+            )),
         }
     }
 
     fn close(mut self: Box<Self>) {
         let _ = self.quit_tx.send(());
-        if let Some(t) = self.thread.take() { let _ = t.join(); }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
         info!("PipeWire output closed");
     }
 }
 
 fn run_pipewire_thread(
     sample_rate: u32,
-    role:        String,
-    audio_rx:    CbReceiver<Vec<f32>>,
-    quit_rx:     pw::channel::Receiver<()>,
-    init_tx:     std::sync::mpsc::Sender<Result<(), String>>,
+    role: String,
+    audio_rx: CbReceiver<Vec<f32>>,
+    quit_rx: pw::channel::Receiver<()>,
+    init_tx: std::sync::mpsc::Sender<Result<(), String>>,
 ) {
     pw::init();
 
     macro_rules! try_init {
         ($expr:expr, $label:expr) => {
             match $expr {
-                Ok(v)  => v,
-                Err(e) => { let _ = init_tx.send(Err(format!("{}: {e}", $label))); return; }
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = init_tx.send(Err(format!("{}: {e}", $label)));
+                    return;
+                }
             }
         };
         ($expr:expr, $label:expr, opt) => {
             match $expr {
                 Some(v) => v,
-                None    => { let _ = init_tx.send(Err($label.to_string())); return; }
+                None => {
+                    let _ = init_tx.send(Err($label.to_string()));
+                    return;
+                }
             }
         };
     }
 
-    let mainloop = try_init!(pw::main_loop::MainLoopRc::new(None),            "MainLoop");
-    let context  = try_init!(pw::context::ContextRc::new(&mainloop, None),    "Context");
-    let core     = try_init!(context.connect_rc(None),                         "PipeWire connect");
+    let mainloop = try_init!(pw::main_loop::MainLoopRc::new(None), "MainLoop");
+    let context = try_init!(pw::context::ContextRc::new(&mainloop, None), "Context");
+    let core = try_init!(context.connect_rc(None), "PipeWire connect");
 
     let props = properties! {
         *pw::keys::MEDIA_TYPE     => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
         *pw::keys::MEDIA_ROLE     => role.as_str(),
     };
-    let stream = try_init!(pw::stream::StreamBox::new(&core, "stui-dsp", props), "Stream");
+    let stream = try_init!(
+        pw::stream::StreamBox::new(&core, "stui-dsp", props),
+        "Stream"
+    );
 
     let mainloop_quit = mainloop.clone();
-    let _quit_recv = quit_rx.attach(mainloop.loop_(), move |_| { mainloop_quit.quit(); });
+    let _quit_recv = quit_rx.attach(mainloop.loop_(), move |_| {
+        mainloop_quit.quit();
+    });
 
     // Register the RT process callback before connecting the stream.
     let registration = stream
         .add_local_listener_with_user_data(audio_rx)
         .process(|stream_ref, rx| {
-            let Some(mut buf)  = stream_ref.dequeue_buffer()  else { return; };
-            let Some(data)     = buf.datas_mut().first_mut()  else { return; };
-            let Some(bytes)    = data.data()                  else { return; };
+            let Some(mut buf) = stream_ref.dequeue_buffer() else {
+                return;
+            };
+            let Some(data) = buf.datas_mut().first_mut() else {
+                return;
+            };
+            let Some(bytes) = data.data() else {
+                return;
+            };
 
             // PipeWire allocated this buffer as F32LE; bytemuck validates alignment.
             let floats: &mut [f32] = match bytemuck::try_cast_slice_mut(bytes) {
-                Ok(s)  => s,
+                Ok(s) => s,
                 Err(_) => return,
             };
 
@@ -189,11 +217,11 @@ fn run_pipewire_thread(
 // ── DoP output ────────────────────────────────────────────────────────────────
 
 pub struct PipeWireDsdOutput {
-    sender:   CbSender<Vec<u32>>, // DoP words encoded as S32LE
-    encoder:  DopEncoder,
+    sender: CbSender<Vec<u32>>, // DoP words encoded as S32LE
+    encoder: DopEncoder,
     dsd_rate: u32,
-    quit_tx:  pw::channel::Sender<()>,
-    thread:   Option<std::thread::JoinHandle<()>>,
+    quit_tx: pw::channel::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl PipeWireDsdOutput {
@@ -204,17 +232,19 @@ impl PipeWireDsdOutput {
     pub fn new(dsd_rate: u32, role: String) -> Result<Self, OutputError> {
         match dsd_rate {
             2_822_400 | 5_644_800 | 11_289_600 | 22_579_200 => {}
-            _ => return Err(OutputError::ConfigError(format!(
+            _ => {
+                return Err(OutputError::ConfigError(format!(
                 "invalid DSD rate {dsd_rate} — expected 2822400, 5644800, 11289600, or 22579200"
-            ))),
+            )))
+            }
         }
 
         // DoP carries 16 DSD bits (8 per channel) per S32LE PCM frame.
         let pcm_rate = dsd_rate / 16;
 
         let (audio_tx, audio_rx) = bounded::<Vec<u32>>(CHANNEL_CAPACITY);
-        let (quit_tx,  quit_rx)  = pw::channel::channel::<()>();
-        let (init_tx,  init_rx)  = std::sync::mpsc::channel::<Result<(), String>>();
+        let (quit_tx, quit_rx) = pw::channel::channel::<()>();
+        let (init_tx, init_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
         let thread = std::thread::spawn(move || {
             run_pipewire_dsd_thread(pcm_rate, audio_rx, quit_rx, init_tx, role);
@@ -223,8 +253,8 @@ impl PipeWireDsdOutput {
         let thread = recv_init(init_rx, thread)?;
         info!(dsd_rate, pcm_rate, "PipeWire DoP output ready");
         Ok(Self {
-            sender:   audio_tx,
-            encoder:  DopEncoder::new(),
+            sender: audio_tx,
+            encoder: DopEncoder::new(),
             dsd_rate,
             quit_tx,
             thread: Some(thread),
@@ -233,7 +263,9 @@ impl PipeWireDsdOutput {
 }
 
 impl DsdAudioOutput for PipeWireDsdOutput {
-    fn dsd_rate(&self) -> u32 { self.dsd_rate }
+    fn dsd_rate(&self) -> u32 {
+        self.dsd_rate
+    }
 
     /// Encode `samples` as DoP and enqueue for the RT thread.
     ///
@@ -247,15 +279,17 @@ impl DsdAudioOutput for PipeWireDsdOutput {
                 warn!("PipeWire DoP channel full — dropping frame");
                 Ok(())
             }
-            Err(TrySendError::Disconnected(_)) => {
-                Err(OutputError::WriteError("PipeWire DoP channel disconnected".into()))
-            }
+            Err(TrySendError::Disconnected(_)) => Err(OutputError::WriteError(
+                "PipeWire DoP channel disconnected".into(),
+            )),
         }
     }
 
     fn close(mut self: Box<Self>) {
         let _ = self.quit_tx.send(());
-        if let Some(t) = self.thread.take() { let _ = t.join(); }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
         info!("PipeWire DoP output closed");
     }
 }
@@ -263,30 +297,36 @@ impl DsdAudioOutput for PipeWireDsdOutput {
 fn run_pipewire_dsd_thread(
     pcm_rate: u32,
     audio_rx: CbReceiver<Vec<u32>>,
-    quit_rx:  pw::channel::Receiver<()>,
-    init_tx:  std::sync::mpsc::Sender<Result<(), String>>,
-    role:     String,
+    quit_rx: pw::channel::Receiver<()>,
+    init_tx: std::sync::mpsc::Sender<Result<(), String>>,
+    role: String,
 ) {
     pw::init();
 
     macro_rules! try_init {
         ($expr:expr, $label:expr) => {
             match $expr {
-                Ok(v)  => v,
-                Err(e) => { let _ = init_tx.send(Err(format!("{}: {e}", $label))); return; }
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = init_tx.send(Err(format!("{}: {e}", $label)));
+                    return;
+                }
             }
         };
         ($expr:expr, $label:expr, opt) => {
             match $expr {
                 Some(v) => v,
-                None    => { let _ = init_tx.send(Err($label.to_string())); return; }
+                None => {
+                    let _ = init_tx.send(Err($label.to_string()));
+                    return;
+                }
             }
         };
     }
 
-    let mainloop = try_init!(pw::main_loop::MainLoopRc::new(None),            "MainLoop");
-    let context  = try_init!(pw::context::ContextRc::new(&mainloop, None),    "Context");
-    let core     = try_init!(context.connect_rc(None),                         "PipeWire connect");
+    let mainloop = try_init!(pw::main_loop::MainLoopRc::new(None), "MainLoop");
+    let context = try_init!(pw::context::ContextRc::new(&mainloop, None), "Context");
+    let core = try_init!(context.connect_rc(None), "PipeWire connect");
 
     let props = properties! {
         *pw::keys::MEDIA_TYPE     => "Audio",
@@ -299,19 +339,27 @@ fn run_pipewire_dsd_thread(
     );
 
     let mainloop_quit = mainloop.clone();
-    let _quit_recv = quit_rx.attach(mainloop.loop_(), move |_| { mainloop_quit.quit(); });
+    let _quit_recv = quit_rx.attach(mainloop.loop_(), move |_| {
+        mainloop_quit.quit();
+    });
 
     let registration = stream
         .add_local_listener_with_user_data(audio_rx)
         .process(|stream_ref, rx| {
-            let Some(mut buf) = stream_ref.dequeue_buffer()  else { return; };
-            let Some(data)    = buf.datas_mut().first_mut()  else { return; };
-            let Some(bytes)   = data.data()                  else { return; };
+            let Some(mut buf) = stream_ref.dequeue_buffer() else {
+                return;
+            };
+            let Some(data) = buf.datas_mut().first_mut() else {
+                return;
+            };
+            let Some(bytes) = data.data() else {
+                return;
+            };
 
             // Cast the S32LE buffer as u32 words (bytemuck validates 4-byte alignment).
             // Each u32 is one DoP frame: [marker | L_bits | R_bits | 0x00] big-endian.
             let ints: &mut [u32] = match bytemuck::try_cast_slice_mut(bytes) {
-                Ok(s)  => s,
+                Ok(s) => s,
                 Err(_) => return,
             };
 
@@ -367,18 +415,15 @@ fn run_pipewire_dsd_thread(
 ///
 /// Returns the raw pod bytes suitable for `Pod::from_bytes` and
 /// `stream.connect(&mut params)`.
-fn build_format_pod(
-    format: spa::param::audio::AudioFormat,
-    rate:   u32,
-) -> Result<Vec<u8>, String> {
+fn build_format_pod(format: spa::param::audio::AudioFormat, rate: u32) -> Result<Vec<u8>, String> {
     let mut info = spa::param::audio::AudioInfoRaw::new();
     info.set_format(format);
     info.set_rate(rate);
     info.set_channels(2);
 
     let obj = pw::spa::pod::Object {
-        type_:      pw::spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
-        id:         pw::spa::param::ParamType::EnumFormat.as_raw(),
+        type_: pw::spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
+        id: pw::spa::param::ParamType::EnumFormat.as_raw(),
         properties: info.into(),
     };
 
@@ -396,7 +441,7 @@ fn build_format_pod(
 /// on close.  Joins and drops the thread on any error.
 fn recv_init(
     init_rx: std::sync::mpsc::Receiver<Result<(), String>>,
-    thread:  std::thread::JoinHandle<()>,
+    thread: std::thread::JoinHandle<()>,
 ) -> Result<std::thread::JoinHandle<()>, OutputError> {
     match init_rx.recv() {
         Ok(Ok(())) => Ok(thread),

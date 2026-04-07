@@ -3,6 +3,7 @@ module github.com/stui/stui
 go 1.25.5
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/madelynnblue/go-dsp v1.0.0
 	github.com/mattn/go-runewidth v0.0.21
@@ -21,7 +22,6 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
