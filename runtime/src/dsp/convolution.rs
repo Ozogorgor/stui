@@ -466,7 +466,7 @@ mod tests {
         // but exact timing depends on hardware. Use 50ms as reasonable upper bound.
         assert!(
             elapsed.as_millis() < 50,
-            "process() took {}ms — should be < 50ms for 4k filter",
+            "process() took {}ms — must be < 50ms",
             elapsed.as_millis()
         );
     }

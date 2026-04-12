@@ -365,6 +365,47 @@ impl DsdMode {
     }
 }
 
+/// Filter types for parametric EQ bands.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EqFilterType {
+    Peak,
+    LowShelf,
+    HighShelf,
+    LowPass,
+    HighPass,
+    Notch,
+}
+
+impl Default for EqFilterType {
+    fn default() -> Self { Self::Peak }
+}
+
+/// A single parametric EQ band.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EqBand {
+    pub enabled:     bool,
+    pub filter_type: EqFilterType,
+    /// Center/corner frequency in Hz (clamped 20.0–20000.0).
+    pub freq:        f32,
+    /// Gain in dB (clamped ±20.0). Ignored for LowPass, HighPass, Notch.
+    pub gain_db:     f32,
+    /// Q factor (clamped 0.1–10.0).
+    pub q:           f32,
+}
+
+impl Default for EqBand {
+    fn default() -> Self {
+        Self {
+            enabled:     true,
+            filter_type: EqFilterType::Peak,
+            freq:        1000.0,
+            gain_db:     0.0,
+            q:           1.0,
+        }
+    }
+}
+
 /// Main DSP configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DspConfig {
@@ -423,6 +464,12 @@ pub struct DspConfig {
     pub dither_noise_shaping: String,
     /// EQ preset name (flat, bass_boost, treble_boost, vocal, loudness).
     pub eq_preset: String,
+    /// Enable the parametric EQ stage.
+    pub eq_enabled: bool,
+    /// Bypass all EQ bands (pass-through).
+    pub eq_bypass: bool,
+    /// Parametric EQ band definitions (max 10).
+    pub eq_bands: Vec<EqBand>,
     /// Master gain in dB (-20 to +20).
     pub gain_db: f32,
     /// Enable Mid/Side processing.
@@ -475,6 +522,9 @@ impl Default for DspConfig {
             dither_bit_depth: 16,
             dither_noise_shaping: "none".to_string(),
             eq_preset: "flat".to_string(),
+            eq_enabled: false,
+            eq_bypass: false,
+            eq_bands: Vec::new(),
             gain_db: 0.0,
             ms_enabled: false,
             ms_width: 1.0,
@@ -486,6 +536,35 @@ impl Default for DspConfig {
             lufs_target: -14.0,
             lufs_max_gain_db: 12.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod eq_config_tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn eq_band_roundtrip() {
+        let band = EqBand {
+            enabled:     true,
+            filter_type: EqFilterType::Peak,
+            freq:        1000.0,
+            gain_db:     3.0,
+            q:           1.0,
+        };
+        let json = serde_json::to_string(&band).unwrap();
+        let back: EqBand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.freq, 1000.0);
+        assert_eq!(back.gain_db, 3.0);
+    }
+
+    #[test]
+    fn dsp_config_eq_defaults() {
+        let cfg = DspConfig::default();
+        assert!(!cfg.eq_enabled);
+        assert!(!cfg.eq_bypass);
+        assert!(cfg.eq_bands.is_empty());
     }
 }
 

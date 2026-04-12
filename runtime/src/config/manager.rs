@@ -507,6 +507,21 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 ))),
             }
         },
+        "eq_enabled" => cfg.dsp.eq_enabled = as_bool(key, value)?,
+        "eq_bypass"  => cfg.dsp.eq_bypass  = as_bool(key, value)?,
+        "eq_bands"   => {
+            let s = as_string(key, value)?;
+            let bands: Vec<crate::dsp::config::EqBand> =
+                serde_json::from_str(&s).map_err(|e| {
+                    StuidError::config(format!("dsp.eq_bands invalid JSON: {e}"))
+                })?;
+            cfg.dsp.eq_bands = bands.into_iter().map(|b| crate::dsp::config::EqBand {
+                freq:    b.freq.clamp(20.0_f32, 20000.0_f32),
+                gain_db: b.gain_db.clamp(-20.0_f32, 20.0_f32),
+                q:       b.q.clamp(0.1_f32, 10.0_f32),
+                ..b
+            }).collect();
+        }
         "dc_offset_enabled"   => cfg.dsp.dc_offset_enabled   = as_bool(key, value)?,
         "dc_offset_cutoff_hz" => cfg.dsp.dc_offset_cutoff_hz =
             (as_f64(key, value)? as f32).clamp(1.0_f32, 100.0_f32),
@@ -708,34 +723,28 @@ mod tests {
 
         let mut cfg = RuntimeConfig::default();
 
-        // bool keys
         apply_dsp_key(&mut cfg, "dsp.crossfeed_enabled", &serde_json::Value::Bool(true)).unwrap();
         assert!(cfg.dsp.crossfeed_enabled);
 
         apply_dsp_key(&mut cfg, "dsp.crossfeed_auto", &serde_json::Value::Bool(true)).unwrap();
         assert!(cfg.dsp.crossfeed_auto);
 
-        // feed_level: valid value
         apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
             &serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap())).unwrap();
         assert!((cfg.dsp.crossfeed_feed_level - 0.5_f32).abs() < 1e-5);
 
-        // feed_level: clamp low (-0.1 → 0.0)
         apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
             &serde_json::Value::Number(serde_json::Number::from_f64(-0.1).unwrap())).unwrap();
         assert_eq!(cfg.dsp.crossfeed_feed_level, 0.0_f32);
 
-        // feed_level: clamp high (1.5 → 0.9)
         apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
             &serde_json::Value::Number(serde_json::Number::from_f64(1.5).unwrap())).unwrap();
         assert_eq!(cfg.dsp.crossfeed_feed_level, 0.9_f32);
 
-        // cutoff_hz: clamp low (250.0 → 300.0)
         apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
             &serde_json::Value::Number(serde_json::Number::from_f64(250.0).unwrap())).unwrap();
         assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 300.0_f32);
 
-        // cutoff_hz: clamp high (800.0 → 700.0)
         apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
             &serde_json::Value::Number(serde_json::Number::from_f64(800.0).unwrap())).unwrap();
         assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 700.0_f32);
@@ -746,7 +755,6 @@ mod tests {
         use crate::config::RuntimeConfig;
         let mut cfg = RuntimeConfig::default();
 
-        // bool keys
         apply_dsp_key(&mut cfg, "dsp.dither_enabled",
             &serde_json::Value::Bool(true)).unwrap();
         assert!(cfg.dsp.dither_enabled);
@@ -755,29 +763,42 @@ mod tests {
             &serde_json::Value::Bool(true)).unwrap();
         assert!(cfg.dsp.dither_auto);
 
-        // bit_depth: valid
         apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
             &serde_json::Value::Number(serde_json::Number::from(16u32))).unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 16);
 
-        // bit_depth: clamp low (4 → 8)
         apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
             &serde_json::Value::Number(serde_json::Number::from(4u32))).unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 8);
 
-        // bit_depth: clamp high (64 → 32)
         apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
             &serde_json::Value::Number(serde_json::Number::from(64u32))).unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 32);
 
-        // noise_shaping: valid
         apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
             &serde_json::Value::String("shibata".into())).unwrap();
         assert_eq!(cfg.dsp.dither_noise_shaping, "shibata");
 
-        // noise_shaping: unknown value returns error
         let result = apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
             &serde_json::Value::String("bogus".into()));
         assert!(result.is_err(), "unknown noise_shaping must error");
+    }
+
+    #[test]
+    fn dsp_eq_keys() {
+        use crate::dsp::config::EqFilterType;
+        let mut cfg = RuntimeConfig::default();
+
+        apply_key(&mut cfg, "dsp.eq_enabled", &Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.eq_enabled);
+
+        apply_key(&mut cfg, "dsp.eq_bypass", &Value::Bool(true)).unwrap();
+        assert!(cfg.dsp.eq_bypass);
+
+        let bands_json = r#"[{"enabled":true,"filter_type":"peak","freq":1000.0,"gain_db":3.0,"q":1.0}]"#;
+        apply_key(&mut cfg, "dsp.eq_bands", &Value::String(bands_json.to_string())).unwrap();
+        assert_eq!(cfg.dsp.eq_bands.len(), 1);
+        assert_eq!(cfg.dsp.eq_bands[0].filter_type, EqFilterType::Peak);
+        assert!((cfg.dsp.eq_bands[0].freq - 1000.0).abs() < 0.01);
     }
 }

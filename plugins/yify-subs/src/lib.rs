@@ -31,7 +31,7 @@ fn is_trusted_url(url_str: &str) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    if host.contains('@') || host.contains('%40') {
+    if host.contains('@') || host.contains("%40") {
         return false;
     }
     let host_lower = host.to_lowercase();

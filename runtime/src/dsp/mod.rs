@@ -28,6 +28,7 @@ pub mod crossfeed;
 pub mod dc_offset;
 pub mod lufs;
 pub mod mid_side;
+pub mod eq;
 pub mod raat;
 pub mod output;
 pub mod nodes;
@@ -56,6 +57,8 @@ pub use command::DspCommand;
 pub use profile_store::CustomProfileStore;
 #[allow(dead_code, unused_imports)]
 pub use preset_store::PresetStore;
+#[allow(dead_code, unused_imports)]
+pub use eq::ParametricEq;
 
 mod pipeline {
     use std::sync::Arc;
@@ -75,6 +78,7 @@ mod pipeline {
         preset_store,
         profile_store::CustomProfileStore,
         output::{open_output, AudioOutput, DsdAudioOutput},
+        eq::ParametricEq,
         resample::Resampler,
     };
 
@@ -92,10 +96,11 @@ mod pipeline {
         dc_offset:     Option<DcOffsetFilter>,
         lufs:          Option<LufsNormalizer>,
         mid_side:      MidSideProcessor,
+        eq:            Option<ParametricEq>,
         output:        Option<Box<dyn AudioOutput>>,
         dsd_output:    Option<Box<dyn DsdAudioOutput>>,
         gain:          Option<GainNode>,
-        eq:            Option<EqNode>,
+        eq_node:       Option<EqNode>,
         profile_store: CustomProfileStore,
         preset_store:  preset_store::PresetStore,
         pcm_to_dsd_warned: bool,
@@ -134,6 +139,14 @@ mod pipeline {
             let resampler     = Resampler::new(config.clone()).ok();
             let dsd_converter = DsdConverter::new(config.clone()).ok();
             let convolution   = ConvolutionEngine::new(config.clone()).ok();
+
+            let eq = if config_snap.eq_enabled && !config_snap.eq_bands.is_empty() {
+                let mut peq = ParametricEq::new(&config_snap.eq_bands);
+                peq.set_bypass(config_snap.eq_bypass);
+                Some(peq)
+            } else {
+                None
+            };
 
             let output = if config_snap.enabled {
                 match open_output(config_snap.output_target, &config_snap) {
@@ -193,6 +206,7 @@ mod pipeline {
                 dither      = dither.is_some(),
                 dc_offset   = dc_offset.is_some(),
                 lufs        = lufs.is_some(),
+                eq          = eq.is_some(),
                 output      = output.is_some(),
                 "DSP pipeline initialized"
             );
@@ -209,7 +223,7 @@ mod pipeline {
 
             // Real-time adjustable nodes - EQ before gain per audio engineering standards
             let gain = Some(GainNode::new());
-            let eq = Some(EqNode::new());
+            let eq_node = Some(EqNode::new());
 
             Self {
                 config,
@@ -223,10 +237,11 @@ mod pipeline {
                 dc_offset,
                 lufs,
                 mid_side,
+                eq,
                 output,
                 dsd_output,
                 gain,
-                eq,
+                eq_node,
                 profile_store,
                 preset_store,
                 pcm_to_dsd_warned: false,
@@ -239,10 +254,25 @@ mod pipeline {
         pub fn process(&mut self, samples: &mut [f32], sample_rate: u32) -> (Vec<f32>, u32) {
             let mut input = samples.to_vec();
             let mut output_rate = sample_rate;
-
-            // Snapshot config once so all stages see a consistent view even if
-            // update_config() is called concurrently from another task.
             let config = self.config.blocking_read();
+
+            let eq_after_conv = config.convolution_enabled;
+            let eq_before_resamp = !eq_after_conv && config.resample_enabled;
+            let eq_after_dsd = !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
+            // If none of the above, EQ is the only stage (runs at the end / start)
+
+            macro_rules! run_eq {
+                () => {
+                    if let Some(ref mut eq) = self.eq {
+                        if eq.is_enabled() {
+                            input = eq.process(&input, output_rate);
+                            debug!("eq applied");
+                        }
+                    }
+                }
+            }
+
+            if eq_before_resamp { run_eq!(); }
 
             // DC offset filter - apply early to remove DC before other processing
             if let Some(ref mut dc) = self.dc_offset {
@@ -270,6 +300,8 @@ mod pipeline {
                 }
             }
 
+            if eq_after_dsd { run_eq!(); }
+
             if let Some(ref mut convolution) = self.convolution {
                 if convolution.is_enabled() {
                     input = convolution.process(&input);
@@ -294,10 +326,10 @@ mod pipeline {
                 debug!(width = self.mid_side.width(), mid_gain = self.mid_side.mid_gain(), side_gain = self.mid_side.side_gain(), "M/S applied");
             }
 
-            // EQ - placed after convolution (room correction) per audio engineering standards
-            if let Some(ref mut eq) = self.eq {
+            // EQ node (preset-based) — placed after convolution per audio engineering standards
+            if let Some(ref mut eq) = self.eq_node {
                 input = eq.process(&mut input, output_rate);
-                debug!("EQ applied");
+                debug!("EQ node applied");
             }
 
             // Gain - placed after EQ and before dither per audio engineering standards
@@ -330,6 +362,70 @@ mod pipeline {
                     warn!(error = %e, "audio output write failed");
                 }
             }
+
+            (input, output_rate)
+        }
+
+        /// Test-only: like process() but appends stage names to `log` in execution order.
+        #[cfg(test)]
+        pub fn process_with_log(
+            &mut self,
+            samples: &mut [f32],
+            sample_rate: u32,
+            log: &pipeline_eq_tests::StageLog,
+        ) -> (Vec<f32>, u32) {
+            let mut input = samples.to_vec();
+            let mut output_rate = sample_rate;
+            let config = self.config.blocking_read();
+
+            let eq_after_conv   = config.convolution_enabled;
+            let eq_before_resamp = !eq_after_conv && config.resample_enabled;
+            let eq_after_dsd    = !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
+
+            macro_rules! log_eq {
+                () => {
+                    if let Some(ref mut eq) = self.eq {
+                        if eq.is_enabled() {
+                            log.record("eq");
+                            input = eq.process(&input, output_rate);
+                        }
+                    }
+                }
+            }
+
+            if eq_before_resamp { log_eq!(); }
+
+            if let Some(ref mut resampler) = self.resampler {
+                if config.resample_enabled {
+                    log.record("resample");
+                    input = resampler.process(&input, sample_rate);
+                    if !input.is_empty() { output_rate = resampler.output_rate(); }
+                }
+            }
+
+            if let Some(ref mut dsd) = self.dsd_converter {
+                if config.dsd_to_pcm_enabled {
+                    log.record("dsd");
+                    input = dsd.convert(&input);
+                }
+            }
+
+            if eq_after_dsd { log_eq!(); }
+
+            if let Some(ref mut conv) = self.convolution {
+                // Record "convolution" whenever the config says it's enabled, even if the
+                // engine has no filter loaded yet — this lets tests verify EQ ordering relative
+                // to the convolution stage without requiring a real filter file.
+                if config.convolution_enabled {
+                    log.record("convolution");
+                    if conv.is_enabled() {
+                        input = conv.process(&input);
+                    }
+                }
+            }
+
+            if eq_after_conv { log_eq!(); }
+            if !eq_before_resamp && !eq_after_dsd && !eq_after_conv { log_eq!(); }
 
             (input, output_rate)
         }
@@ -451,8 +547,8 @@ mod pipeline {
                 l.set_max_gain(new_cfg.lufs_max_gain_db);
             }
 
-            // Update EQ based on profile
-            if let Some(ref mut eq) = self.eq {
+            // Update EQ preset node based on profile
+            if let Some(ref mut eq) = self.eq_node {
                 use super::command::EqPreset;
                 let preset = match new_cfg.profile {
                     super::config::DspProfile::MusicRock => EqPreset::BassBoost,
@@ -497,6 +593,17 @@ mod pipeline {
                         Err(e)  => { warn!(error = %e, "failed to re-open audio output"); }
                     }
                 }
+            }
+
+            // Update EQ state
+            if let Some(ref mut eq) = self.eq {
+                eq.set_enabled(new_cfg.eq_enabled);
+                eq.set_bypass(new_cfg.eq_bypass);
+                eq.update_bands(&new_cfg.eq_bands);
+            } else if new_cfg.eq_enabled && !new_cfg.eq_bands.is_empty() {
+                let mut peq = ParametricEq::new(&new_cfg.eq_bands);
+                peq.set_bypass(new_cfg.eq_bypass);
+                self.eq = Some(peq);
             }
 
             // Recreate crossfeed when enable state, auto flag, or output device changes.
@@ -691,7 +798,7 @@ mod pipeline {
                     "Gain node not available".to_string()
                 }
                 Some(DspCommand::Eq(eq_cmd)) => {
-                    if let Some(ref mut eq) = self.eq {
+                    if let Some(ref mut eq) = self.eq_node {
                         match eq_cmd {
                             EqPreset::Flat => eq.set_preset(EqPreset::Flat),
                             EqPreset::BassBoost => eq.set_preset(EqPreset::BassBoost),
@@ -721,8 +828,8 @@ mod pipeline {
                         "crossfeed" => { new_cfg.crossfeed_enabled = true; }
                         "resample" => { new_cfg.resample_enabled = true; }
                         "dc_offset" | "dc" => { new_cfg.dc_offset_enabled = true; }
-                        "eq" => { 
-                            if let Some(ref mut eq) = self.eq { eq.set_enabled(true); }
+                        "eq" => {
+                            if let Some(ref mut eq) = self.eq_node { eq.set_enabled(true); }
                             new_cfg.eq_preset = "flat".to_string(); // Mark as custom/active
                         }
                         "gain" => { 
@@ -750,8 +857,8 @@ mod pipeline {
                         "crossfeed" => { new_cfg.crossfeed_enabled = false; }
                         "resample" => { new_cfg.resample_enabled = false; }
                         "dc_offset" | "dc" => { new_cfg.dc_offset_enabled = false; }
-                        "eq" => { 
-                            if let Some(ref mut eq) = self.eq { eq.set_enabled(false); }
+                        "eq" => {
+                            if let Some(ref mut eq) = self.eq_node { eq.set_enabled(false); }
                         }
                         "gain" => { 
                             if let Some(ref mut g) = self.gain { g.set_enabled(false); }
@@ -947,8 +1054,73 @@ mod pipeline {
                 assert_eq!(a, b, "no dither should not modify samples");
             }
         }
+
+    mod pipeline_eq_tests {
+        use super::*;
+        use crate::dsp::config::{DspConfig, EqBand, EqFilterType};
+        use std::sync::{Arc, Mutex};
+
+        /// Test helper: records which stages ran in order.
+        #[derive(Clone, Default)]
+        pub struct StageLog(pub Arc<Mutex<Vec<String>>>);
+
+        impl StageLog {
+            pub fn record(&self, name: &str) {
+                self.0.lock().unwrap().push(name.to_string());
+            }
+            pub fn entries(&self) -> Vec<String> {
+                self.0.lock().unwrap().clone()
+            }
+        }
+
+        fn eq_band() -> EqBand {
+            EqBand { enabled: true, filter_type: EqFilterType::Peak,
+                     freq: 1000.0, gain_db: 6.0, q: 1.0 }
+        }
+
+        #[test]
+        fn eq_runs_before_resample_when_convolution_disabled() {
+            let cfg = DspConfig {
+                enabled: true,
+                eq_enabled: true,
+                eq_bands: vec![eq_band()],
+                resample_enabled: true,
+                convolution_enabled: false,
+                ..DspConfig::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            let log = StageLog::default();
+            let samples = vec![0.0f32; 256];
+            pipeline.process_with_log(&mut samples.clone(), 44100, &log);
+            let entries = log.entries();
+            let eq_pos    = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
+            let resamp_pos = entries.iter().position(|s| s == "resample").unwrap_or(usize::MAX);
+            assert!(eq_pos < resamp_pos,
+                "eq must run before resample; log={entries:?}");
+        }
+
+        #[test]
+        fn eq_runs_after_convolution_when_enabled() {
+            let cfg = DspConfig {
+                enabled: true,
+                eq_enabled: true,
+                eq_bands: vec![eq_band()],
+                convolution_enabled: true,
+                ..DspConfig::default()
+            };
+            let mut pipeline = DspPipeline::new(cfg);
+            let log = StageLog::default();
+            let mut samples = vec![0.0f32; 256];
+            pipeline.process_with_log(&mut samples, 44100, &log);
+            let entries = log.entries();
+            let conv_pos = entries.iter().position(|s| s == "convolution").unwrap_or(usize::MAX);
+            let eq_pos   = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
+            assert!(conv_pos < eq_pos,
+                "eq must run after convolution; log={entries:?}");
+        }
     }
 }
+} // mod pipeline
 
 // ── mpv DSP bridge ────────────────────────────────────────────────────────────
 
