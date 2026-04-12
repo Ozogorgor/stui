@@ -104,6 +104,111 @@ type settingItem struct {
 	minVal        int      // lower bound for settingInt; 0 = no lower bound
 	maxVal        int      // upper bound for settingInt; 0 = no upper bound
 	choiceDisplay []string // optional display names for choice values (if nil, use choiceVals)
+	hidden        bool    // if true, item is not rendered and skipped during navigation
+}
+
+// ── Visualizer visibility helpers ────────────────────────────────────────────
+
+// isClassicVizMode returns true for the cava/chroma bar-style modes.
+func isClassicVizMode(mode string) bool {
+	switch mode {
+	case "bars", "mirror", "filled", "led":
+		return true
+	}
+	return false
+}
+
+// updateVizVisibility hides or shows visualizer items in cat based on
+// the currently selected backend and mode. Call whenever either changes.
+func updateVizVisibility(cat *settingCategory) {
+	var backend, mode string
+	for _, item := range cat.items {
+		switch item.key {
+		case "visualizer.backend":
+			if item.choiceIdx < len(item.choiceVals) {
+				backend = item.choiceVals[item.choiceIdx]
+			}
+		case "visualizer.mode":
+			if item.choiceIdx < len(item.choiceVals) {
+				mode = item.choiceVals[item.choiceIdx]
+			}
+		}
+	}
+	isOff := backend == "off"
+	isChroma := backend == "chroma"
+	isCliamp := !isClassicVizMode(mode)
+	for _, item := range cat.items {
+		switch item.key {
+		case "visualizer.backend":
+			item.hidden = false
+		case "visualizer.bars":
+			item.hidden = isOff || isCliamp
+		case "visualizer.height":
+			item.hidden = isOff
+		case "visualizer.framerate":
+			item.hidden = isOff
+		case "visualizer.mode":
+			item.hidden = isOff
+		case "visualizer.peak_hold":
+			item.hidden = isOff || isCliamp
+		case "visualizer.gradient":
+			item.hidden = isOff
+		case "visualizer.input_method":
+			item.hidden = isOff || isChroma
+		}
+	}
+}
+
+// firstVisibleIdx returns the index of the first non-hidden item.
+func firstVisibleIdx(items []*settingItem) int {
+	for i, item := range items {
+		if !item.hidden {
+			return i
+		}
+	}
+	return 0
+}
+
+// nextVisibleIdx returns the nearest non-hidden index from from+delta direction.
+func nextVisibleIdx(items []*settingItem, from, delta int) int {
+	n := len(items)
+	for idx := from + delta; idx >= 0 && idx < n; idx += delta {
+		if !items[idx].hidden {
+			return idx
+		}
+	}
+	return from
+}
+
+// nearestVisibleIdx returns from if visible, otherwise the closest non-hidden neighbour.
+func nearestVisibleIdx(items []*settingItem, from int) int {
+	if from < len(items) && !items[from].hidden {
+		return from
+	}
+	for delta := 1; delta < len(items); delta++ {
+		if i := from + delta; i < len(items) && !items[i].hidden {
+			return i
+		}
+		if i := from - delta; i >= 0 && !items[i].hidden {
+			return i
+		}
+	}
+	return firstVisibleIdx(items)
+}
+
+// visibleItemAt maps a rendered row (skipping hidden items) to the slice index.
+func visibleItemAt(items []*settingItem, row int) (int, bool) {
+	count := 0
+	for i, item := range items {
+		if item.hidden {
+			continue
+		}
+		if count == row {
+			return i, true
+		}
+		count++
+	}
+	return 0, false
 }
 
 func (s *settingItem) displayValue() string {
@@ -216,7 +321,8 @@ func NewSettingsModel(client *ipc.Client, cfg config.Config) SettingsModel {
 
 // populateFromConfig sets each settingItem's value from cfg.
 func (m *SettingsModel) populateFromConfig(cfg config.Config) {
-	for _, cat := range m.categories {
+	for ci := range m.categories {
+		cat := &m.categories[ci]
 		for _, item := range cat.items {
 			switch item.key {
 			case "interface.theme":
@@ -373,6 +479,13 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 				}
 			}
 		}
+		// After values are set, update visibility for visualizer items.
+		for _, item := range cat.items {
+			if item.key == "visualizer.backend" {
+				updateVizVisibility(cat)
+				break
+			}
+		}
 	}
 }
 
@@ -472,9 +585,9 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					itemRow := bodyRow - 2
 					if itemRow >= 0 {
 						cat := m.categories[m.catCursor]
-						if itemRow < len(cat.items) {
+						if idx, ok := visibleItemAt(cat.items, itemRow); ok {
 							m.inCategory = true
-							m.itemCursor = itemRow
+							m.itemCursor = idx
 						}
 					}
 				}
@@ -490,37 +603,34 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			if !m.inCategory {
 				if m.catCursor > 0 {
 					m.catCursor--
-					m.itemCursor = 0
+					m.itemCursor = firstVisibleIdx(m.categories[m.catCursor].items)
 				}
 			} else {
-				if m.itemCursor > 0 {
-					m.itemCursor--
-				}
+				cat := m.categories[m.catCursor]
+				m.itemCursor = nextVisibleIdx(cat.items, m.itemCursor, -1)
 			}
 
 		case "down", "j":
 			if !m.inCategory {
 				if m.catCursor < len(m.categories)-1 {
 					m.catCursor++
-					m.itemCursor = 0
+					m.itemCursor = firstVisibleIdx(m.categories[m.catCursor].items)
 				}
 			} else {
 				cat := m.categories[m.catCursor]
-				if m.itemCursor < len(cat.items)-1 {
-					m.itemCursor++
-				}
+				m.itemCursor = nextVisibleIdx(cat.items, m.itemCursor, +1)
 			}
 
 		case "right", "l":
 			if !m.inCategory && len(m.categories[m.catCursor].items) > 0 {
 				m.inCategory = true
-				m.itemCursor = 0
+				m.itemCursor = firstVisibleIdx(m.categories[m.catCursor].items)
 			}
 
 		case "enter":
 			if !m.inCategory && len(m.categories[m.catCursor].items) > 0 {
 				m.inCategory = true
-				m.itemCursor = 0
+				m.itemCursor = firstVisibleIdx(m.categories[m.catCursor].items)
 			} else if m.inCategory {
 				cat := m.categories[m.catCursor]
 				if m.itemCursor < len(cat.items) {
@@ -574,6 +684,11 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 						}
 					}
 					item.toggle()
+					if strings.HasPrefix(item.key, "visualizer.") {
+						cat := &m.categories[m.catCursor]
+						updateVizVisibility(cat)
+						m.itemCursor = nearestVisibleIdx(cat.items, m.itemCursor)
+					}
 					return m, settingChangedCmd(item)
 				}
 			}
@@ -586,18 +701,26 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 		case "+", "=":
 			if m.inCategory {
-				cat := m.categories[m.catCursor]
+				cat := &m.categories[m.catCursor]
 				if m.itemCursor < len(cat.items) {
 					cat.items[m.itemCursor].adjust(+1)
+					if strings.HasPrefix(cat.items[m.itemCursor].key, "visualizer.") {
+						updateVizVisibility(cat)
+						m.itemCursor = nearestVisibleIdx(cat.items, m.itemCursor)
+					}
 					return m, settingChangedCmd(cat.items[m.itemCursor])
 				}
 			}
 
 		case "-", "_":
 			if m.inCategory {
-				cat := m.categories[m.catCursor]
+				cat := &m.categories[m.catCursor]
 				if m.itemCursor < len(cat.items) {
 					cat.items[m.itemCursor].adjust(-1)
+					if strings.HasPrefix(cat.items[m.itemCursor].key, "visualizer.") {
+						updateVizVisibility(cat)
+						m.itemCursor = nearestVisibleIdx(cat.items, m.itemCursor)
+					}
 					return m, settingChangedCmd(cat.items[m.itemCursor])
 				}
 			}
@@ -700,6 +823,9 @@ func (m SettingsModel) View() tea.View {
 	itemLines = append(itemLines, "")
 
 	for i, item := range cat.items {
+		if item.hidden {
+			continue
+		}
 		prefix := "  "
 		if m.inCategory && i == m.itemCursor {
 			prefix = "▶ "
