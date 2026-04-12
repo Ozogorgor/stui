@@ -158,7 +158,7 @@ impl StreamBenchmarker {
                 let bench = bench.clone();
 
                 tokio::spawn(async move {
-                    let _permit = sem.acquire().await.unwrap();
+                    let _permit = sem.acquire().await.expect("benchmark semaphore closed unexpectedly");
                     let result = bench.probe(&stream.url).await;
 
                     let mut probed = stream.clone();
