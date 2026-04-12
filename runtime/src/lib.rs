@@ -14,8 +14,6 @@
 //! |------|-------------|
 //! | `wasm-host` | Enable full WASM plugin execution via wasmtime |
 
-#![allow(dead_code)]
-
 pub mod abi;
 pub mod aria2_bridge;
 pub mod cache;

@@ -56,6 +56,7 @@ pub struct RaatProcessor {
     format: RaatFormat,
 }
 
+#[allow(dead_code)] // planned: Roon RAAT output integration, wired in when roon feature is enabled
 impl RaatProcessor {
     /// Create a new RAAT processor.
     /// Pass a shared `RoonClient` to enable endpoint discovery and connection.
@@ -164,6 +165,7 @@ impl RaatProcessor {
     }
 }
 
+#[allow(dead_code)] // planned: used by RaatProcessor::discover_endpoints
 fn server_to_endpoint(s: RoonServer) -> RaatEndpoint {
     RaatEndpoint {
         name: s.display_name,

@@ -48,6 +48,7 @@ pub struct PluginRpcManager {
     config:  SupervisorConfig,
 }
 
+#[allow(dead_code)] // planned: plugin RPC pub API, will be wired into Engine when plugin-rpc feature is used
 impl PluginRpcManager {
     pub fn new() -> Self {
         PluginRpcManager {

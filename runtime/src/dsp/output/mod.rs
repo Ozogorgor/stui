@@ -89,6 +89,7 @@ pub fn open_output(
 }
 
 /// Open a native DSD output backend for the given target.
+#[allow(dead_code)] // planned: DSD output support, called when DSD content is detected
 #[allow(clippy::type_complexity)]
 pub fn open_dsd_output(
     target: OutputTarget,

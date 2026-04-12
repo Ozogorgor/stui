@@ -115,6 +115,7 @@ pub struct TnsNode {
     /// Flux gain G: higher values suppress more shaping on rapidly-changing bins.
     pub flux_gain: f32,
     /// Base warp depth α (centre of the RMS-adaptive range).
+    #[allow(dead_code)] // planned: exposed for TNS parameter tuning UI
     pub base_alpha: f32,
     min_alpha: f32,
     max_alpha: f32,
@@ -229,11 +230,13 @@ impl SpectralNode for TnsNode {
 ///
 /// [`process_frame`]: StereoTnsProcessor::process_frame
 /// [`process_interleaved`]: StereoTnsProcessor::process_interleaved
+#[allow(dead_code)] // planned: stereo noise-shaping via TNS, integrated into DitherNode
 pub struct StereoTnsProcessor {
     left: StftProcessor,
     right: StftProcessor,
 }
 
+#[allow(dead_code)] // planned: stereo noise-shaping via TNS, integrated into DitherNode
 impl StereoTnsProcessor {
     /// Create a stereo TNS processor.
     ///

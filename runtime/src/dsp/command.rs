@@ -48,6 +48,7 @@ pub enum DspProfileCmd {
     Custom,
 }
 
+#[allow(dead_code)] // planned: DSP command parser, called from IPC/REPL layer
 impl DspCommand {
     pub fn parse(input: &str) -> Option<Self> {
         let input = input.trim();

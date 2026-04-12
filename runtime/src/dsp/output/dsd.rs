@@ -24,11 +24,13 @@ use crate::dsp::output::OutputError;
 ///
 /// Converts raw 1-bit DSD samples (represented as ±1.0 `f32`) into 32-bit
 /// DoP words ready to be written to an S32LE PipeWire stream.
+#[allow(dead_code)] // planned: DSD output support via DoP protocol
 pub struct DopEncoder {
     /// Counts emitted frames; even → 0x05 marker, odd → 0xFA marker.
     frame_count: u64,
 }
 
+#[allow(dead_code)] // planned: DSD output support via DoP protocol
 impl DopEncoder {
     pub fn new() -> Self {
         Self { frame_count: 0 }
@@ -102,6 +104,7 @@ impl Default for DopEncoder {
 }
 
 /// DSD output mode configuration.
+#[allow(dead_code)] // planned: DSD output support
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DsdOutputMode {
     /// No DSD output — use PCM.
@@ -126,6 +129,7 @@ impl From<DsdMode> for DsdOutputMode {
 /// This is a lightweight proxy for "DSD output might be available".
 /// Whether the connected DAC actually supports DoP is determined by
 /// `PipeWireDsdOutput::new` when the stream is opened.
+#[allow(dead_code)] // planned: queried before opening DSD output path
 pub fn dsd_available() -> bool {
     let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") else {
         return false;

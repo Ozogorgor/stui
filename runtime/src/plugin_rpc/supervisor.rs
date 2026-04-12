@@ -121,6 +121,7 @@ pub struct PluginSupervisor {
     failed:   Arc<AtomicBool>,
 }
 
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 impl PluginSupervisor {
     /// Spawn the plugin and start supervising it.
     #[allow(dead_code)]

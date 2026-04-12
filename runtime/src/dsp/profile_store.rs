@@ -15,6 +15,7 @@ pub struct CustomProfileStore {
     config_dir: Option<PathBuf>,
 }
 
+#[allow(dead_code)] // planned: custom DSP profile persistence
 impl CustomProfileStore {
     pub fn new() -> Self {
         Self::default()

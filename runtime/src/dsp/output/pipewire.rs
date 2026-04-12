@@ -41,6 +41,7 @@ const CHANNEL_CAPACITY: usize = 4;
 
 pub struct PipeWireOutput {
     sender: CbSender<Vec<f32>>,
+    #[allow(dead_code)] // planned: exposed for format negotiation with downstream consumers
     sample_rate: u32,
     quit_tx: pw::channel::Sender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -216,6 +217,7 @@ fn run_pipewire_thread(
 
 // ── DoP output ────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)] // planned: DSD output support via DoP over PipeWire
 pub struct PipeWireDsdOutput {
     sender: CbSender<Vec<u32>>, // DoP words encoded as S32LE
     encoder: DopEncoder,
@@ -224,6 +226,7 @@ pub struct PipeWireDsdOutput {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+#[allow(dead_code)] // planned: DSD output support via DoP over PipeWire
 impl PipeWireDsdOutput {
     /// Open a DoP output stream.
     ///
@@ -294,6 +297,7 @@ impl DsdAudioOutput for PipeWireDsdOutput {
     }
 }
 
+#[allow(dead_code)] // planned: DSD thread spawned by PipeWireDsdOutput::new
 fn run_pipewire_dsd_thread(
     pcm_rate: u32,
     audio_rx: CbReceiver<Vec<u32>>,

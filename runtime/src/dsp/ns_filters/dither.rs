@@ -295,6 +295,7 @@ impl DitherFilter {
         }
     }
 
+    #[allow(dead_code)] // planned: called when DSP config changes dither bit depth or noise shaping
     pub fn set_params(&mut self, bit_depth: u32, noise_shaping: NoiseShaping) {
         self.bit_depth = bit_depth.max(2).min(32);
         self.noise_shaping = noise_shaping;
@@ -456,6 +457,7 @@ mod tests {
             .collect()
     }
 
+    #[allow(dead_code)] // planned: used by future dither quality tests
     fn rms(samples: &[f32]) -> f32 {
         let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
         (sum_sq / samples.len() as f32).sqrt()

@@ -67,6 +67,7 @@ pub struct PlayerManager {
     bus:     Arc<EventBus>,
 }
 
+#[allow(dead_code)] // planned: PlayerManager pub API, fields read when manager is wired in
 struct ManagerState {
     queue:      VecDeque<QueueEntry>,
     current:    Option<QueueEntry>,
@@ -79,6 +80,7 @@ struct ManagerState {
     state:      PlaybackState,
 }
 
+#[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 impl PlayerManager {
     #[allow(dead_code)]
     pub fn new(bridge: PlayerBridge, ipc_tx: mpsc::Sender<String>, bus: Arc<EventBus>) -> Self {

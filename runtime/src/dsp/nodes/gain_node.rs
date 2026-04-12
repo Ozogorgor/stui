@@ -7,6 +7,7 @@ pub struct GainNode {
     muted: bool,
 }
 
+#[allow(dead_code)] // planned: DSP gain/mute control, called from DspPipeline handle_command
 impl GainNode {
     pub fn new() -> Self {
         Self {

@@ -148,6 +148,7 @@ pub struct RoonClient {
     pending: Arc<TokioMutex<HashMap<u32, oneshot::Sender<serde_json::Value>>>>,
 }
 
+#[allow(dead_code)] // planned: Roon integration pub API, wired in when roon feature is enabled
 impl RoonClient {
     pub fn new() -> Self {
         let (event_tx, _) = broadcast::channel(100);

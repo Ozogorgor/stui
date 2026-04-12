@@ -240,6 +240,7 @@ impl Resampler {
 
     /// Reset the resampler state to clear any buffered data.
     /// Should be called on seeks or stream discontinuities.
+    #[allow(dead_code)] // planned: called on seek events when DSP pipeline handles seeks
     pub fn reset(&mut self) {
         match &mut self.kind {
             ResamplerKind::PolyOut(resampler) => resampler.reset(),

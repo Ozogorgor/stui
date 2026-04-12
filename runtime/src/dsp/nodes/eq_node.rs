@@ -6,6 +6,7 @@ pub struct EqNode {
     enabled: bool,
     bands: Vec<EqBandState>,
     sample_rate: u32,
+    #[allow(dead_code)] // planned: exposed for EQ preset display in UI
     current_preset: String,
 }
 
@@ -41,6 +42,7 @@ impl EqNode {
         }
     }
 
+    #[allow(dead_code)] // planned: called when user selects an EQ preset
     pub fn set_preset(&mut self, preset: EqPreset) {
         let sr = self.sample_rate;
         self.bands = match preset {
@@ -72,6 +74,7 @@ impl EqNode {
         };
     }
 
+    #[allow(dead_code)] // planned: called by set_preset to construct biquad band coefficients
     fn make_band(frequency: f32, gain_db: f32, q: f32, sample_rate: u32) -> EqBandState {
         let sr = sample_rate as f32;
         // Guard against frequencies at or above Nyquist (sample_rate/2)

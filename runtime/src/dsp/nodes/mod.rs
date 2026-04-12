@@ -18,6 +18,7 @@ pub use resample_node::ResampleNode;
 
 use crate::dsp::config::DspConfig;
 
+#[allow(dead_code)] // planned: DSP node trait, implemented by all DSP node types
 pub trait DspNode: Send {
     fn name(&self) -> &str;
     fn process(&mut self, samples: &mut [f32], sample_rate: u32) -> Vec<f32>;
@@ -32,6 +33,7 @@ pub struct DspChain {
     nodes: Vec<Box<dyn DspNode>>,
 }
 
+#[allow(dead_code)] // planned: DSP chain pub API, wired in by DspPipeline
 impl DspChain {
     pub fn new() -> Self {
         Self { nodes: Vec::new() }

@@ -101,6 +101,7 @@ mod pipeline {
         pcm_to_dsd_warned: bool,
     }
 
+    #[allow(dead_code)] // planned: DspPipeline pub API, called from main.rs IPC command handler
     impl DspPipeline {
         fn build_dither(cfg: &DspConfig) -> Option<DitherFilter> {
             use super::ns_filters::dither::NoiseShaping;

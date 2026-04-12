@@ -135,8 +135,10 @@ pub struct TransientDetector {
     history_idx: usize,
     threshold_db: f32,
     /// Attack time in milliseconds (stored for inspection / future reconfiguration).
+    #[allow(dead_code)] // planned: exposed for transient detector UI/debug inspection
     pub attack_time_ms: f32,
     /// Release time in milliseconds.
+    #[allow(dead_code)] // planned: exposed for transient detector UI/debug inspection
     pub release_time_ms: f32,
     /// One-pole attack coefficient, derived from `attack_time_ms` and the hop rate.
     attack_alpha: f32,
@@ -453,6 +455,7 @@ impl StftProcessor {
     ///
     /// The pipeline should compensate for this delay when synchronising audio
     /// with video frames, lyrics, or other timed events.
+    #[allow(dead_code)] // planned: used for A/V sync compensation in pipeline
     pub fn latency_samples() -> usize {
         FFT_SIZE - HOP_SIZE
     }
@@ -557,11 +560,13 @@ impl StftProcessor {
 ///
 /// Use this when integrating with the DSP pipeline, which operates on
 /// interleaved stereo `&[f32]` slices.
+#[allow(dead_code)] // planned: stereo noise-shaping via SAW, integrated into DitherNode
 pub struct StereoStftProcessor {
     left: StftProcessor,
     right: StftProcessor,
 }
 
+#[allow(dead_code)] // planned: stereo noise-shaping via SAW, integrated into DitherNode
 impl StereoStftProcessor {
     /// Create a stereo processor with a default [`SawNode`] (α = 0.6) on each channel.
     pub fn new(sample_rate: f32) -> Self {

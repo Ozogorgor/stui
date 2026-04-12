@@ -26,9 +26,11 @@ pub struct PresetStore {
     pub presets: HashMap<String, DspProfileConfig>,
     /// User-defined customizations. This is the only data persisted to disk.
     user_customizations: HashMap<String, DspProfileConfig>,
+    #[allow(dead_code)] // planned: used when saving user presets to disk
     config_dir: Option<PathBuf>,
 }
 
+#[allow(dead_code)] // planned: DSP preset management pub API, called from DspPipeline
 impl PresetStore {
     pub fn new() -> Self {
         Self::default()

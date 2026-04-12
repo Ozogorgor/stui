@@ -70,6 +70,7 @@ impl CrossfeedFilter {
         self.recompute(self.sample_rate);
     }
 
+    #[allow(dead_code)] // planned: called on seek events when DSP pipeline handles seeks
     pub fn reset(&mut self) {
         self.z_l = 0.0;
         self.z_r = 0.0;

@@ -23,6 +23,7 @@ use std::f32::consts::PI;
 impl DcOffsetFilter {
     /// Default cutoff frequency in Hz for DC offset removal.
     /// Typical values: 5-20 Hz for DC removal, 80 Hz also removes rumble.
+    #[allow(dead_code)] // planned: DSP configuration helper
     pub fn default_cutoff_hz() -> f32 {
         10.0 // Standard for DC offset removal
     }
@@ -105,6 +106,7 @@ impl DcOffsetFilter {
     }
 
     /// Reset filter state to prevent audio artifacts at track boundaries.
+    #[allow(dead_code)] // planned: called on seek events when DSP pipeline handles seeks
     pub fn reset(&mut self) {
         self.z_l = 0.0;
         self.z_r = 0.0;

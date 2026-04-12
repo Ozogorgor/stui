@@ -9,6 +9,7 @@ use tracing::debug;
 
 /// No-op `AudioOutput` for the Roon RAAT target.
 pub struct RoonOutput {
+    #[allow(dead_code)] // planned: used when RAAT TCP framing layer is implemented
     sample_rate: u32,
 }
 
