@@ -74,27 +74,30 @@ build_plugin() {
     echo "▶ Building $crate_name → $TARGET"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+    # Build from workspace root so output lands in $ROOT/target/ (not per-crate target/).
+    # Try nightly -Z flags first; fall back to plain stable build.
     (
-        cd "$plugin_dir"
+        cd "$ROOT"
         cargo build \
             --release \
             --target "$TARGET" \
+            -p "$crate_name" \
             -Z build-std=std,panic_abort \
             -Z build-std-features=panic_immediate_abort \
-            2>&1 || \
+            2>/dev/null || \
         cargo build \
             --release \
-            --target "$TARGET"
-        # ↑ Fallback without -Z flags if nightly features aren't available
+            --target "$TARGET" \
+            -p "$crate_name"
     )
 
-    # Locate the .wasm output
-    local wasm_file
-    wasm_file=$(find "$plugin_dir/target/$TARGET/release" \
-        -name "*.wasm" -not -name "*.d" | head -1)
+    # Workspace builds output to $ROOT/target/, not the plugin's own target/.
+    # Cargo converts hyphens to underscores in the filename.
+    local wasm_name="${crate_name//-/_}.wasm"
+    local wasm_file="$ROOT/target/$TARGET/release/$wasm_name"
 
-    if [[ -z "$wasm_file" ]]; then
-        echo "✗ Build succeeded but no .wasm file found!" >&2
+    if [[ ! -f "$wasm_file" ]]; then
+        echo "✗ Build succeeded but $wasm_name not found in target/$TARGET/release/" >&2
         return 1
     fi
 
@@ -130,7 +133,11 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✓ Done — $built plugin(s) built${INSTALL:+ and installed to $PLUGIN_DIR}"
+if [[ "$INSTALL" == "true" ]]; then
+    echo "✓ Done — $built plugin(s) built and installed to $PLUGIN_DIR"
+else
+    echo "✓ Done — $built plugin(s) built (not installed)"
+fi
 echo ""
 
 if [[ "$INSTALL" == "true" ]]; then
