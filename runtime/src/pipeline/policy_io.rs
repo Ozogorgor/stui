@@ -24,7 +24,7 @@ pub fn load_stream_policy() -> StreamPreferences {
 
 pub fn save_stream_policy(prefs: &StreamPreferences) -> std::io::Result<()> {
     let path = policy_path();
-    std::fs::create_dir_all(path.parent().unwrap())?;
+    std::fs::create_dir_all(path.parent().expect("policy_io: output path has no parent directory"))?;
     let data = serde_json::to_vec_pretty(prefs).expect("serialize StreamPreferences");
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &data)?;
