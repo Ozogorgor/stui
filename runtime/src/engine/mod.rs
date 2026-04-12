@@ -303,6 +303,11 @@ impl Engine {
 
     // ── Search ────────────────────────────────────────────────────────────
 
+    #[tracing::instrument(
+        name = "engine.search",
+        skip(self, tab, options),
+        fields(query = %query, req_id = %req_id),
+    )]
     pub async fn search(
         &self,
         req_id: &str,
