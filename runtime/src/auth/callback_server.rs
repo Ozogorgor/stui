@@ -33,14 +33,16 @@ fn get_tls_config() -> &'static Arc<ServerConfig> {
         
         let cert_der = CertificateDer::pem_slice_iter(cert_pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
-            .unwrap()
+            .expect("auth TLS: failed to parse certificate PEM")
             .pop()
-            .unwrap();
-        let key_der = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).unwrap();
-        
+            .expect("auth TLS: failed to generate self-signed cert");
+        let key_der = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())
+            .expect("auth TLS: failed to parse private key PEM");
+
         let config = ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(vec![cert_der], key_der).unwrap();
+            .with_single_cert(vec![cert_der], key_der)
+            .expect("auth TLS: failed to configure TLS acceptor");
         
         Arc::new(config)
     })
