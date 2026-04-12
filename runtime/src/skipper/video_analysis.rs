@@ -195,7 +195,7 @@ pub async fn extract_audio_profile(url: &str, start_secs: f64, duration_secs: f6
 /// Check if a timestamp is likely an intro/credits boundary based on scene changes.
 /// Intros typically start with a scene cut at the beginning.
 /// Credits often have few/no scene changes in the last 30-60 seconds.
-#[allow(dead_code)] // Available for future use
+#[allow(dead_code)] // planned: available for future use
 pub fn estimate_boundaries(scene_info: &SceneInfo, duration: f64) -> (Option<f64>, Option<f64>) {
     let intro_boundary = scene_info.cuts.first();
     let credits_start = scene_info.cuts

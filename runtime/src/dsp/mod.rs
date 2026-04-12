@@ -235,7 +235,7 @@ mod pipeline {
 
         /// Process audio samples through the DSP pipeline.
         /// Input and output are interleaved stereo samples as f32.
-        #[allow(dead_code)] // Called by audio engine
+        #[allow(dead_code)] // internal: called by audio engine
         pub fn process(&mut self, samples: &mut [f32], sample_rate: u32) -> (Vec<f32>, u32) {
             let mut input = samples.to_vec();
             let mut output_rate = sample_rate;
@@ -650,7 +650,7 @@ mod pipeline {
         }
 
         /// Bypass convolution filter.
-        #[allow(dead_code)] // For runtime control
+        #[allow(dead_code)] // planned: for runtime control
         pub fn set_convolution_bypass(&mut self, bypass: bool) {
             if let Some(ref mut conv) = self.convolution {
                 conv.set_bypass(bypass);

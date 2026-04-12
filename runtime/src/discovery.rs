@@ -70,7 +70,7 @@ impl Discovery {
     }
 
     /// Subscribe to plugin toast notifications.
-    #[allow(dead_code)] // pub API: used by TUI plugin discovery
+    #[allow(dead_code)] // planned: will be called by TUI plugin discovery panel
     pub fn subscribe(&self) -> broadcast::Receiver<PluginToast> {
         self.toast_tx.subscribe()
     }

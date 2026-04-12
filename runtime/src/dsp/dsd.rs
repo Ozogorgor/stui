@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::config::DspConfig;
 
 /// DSD to PCM converter.
-#[allow(dead_code)] // Used by DspPipeline internally
+#[allow(dead_code)] // internal: used by DspPipeline
 pub struct DsdConverter {
     config: Arc<RwLock<DspConfig>>,
     output_rate: u32,

@@ -490,7 +490,7 @@ impl Default for DspConfig {
 }
 
 /// Trait for DSP stages that can process audio.
-#[allow(dead_code)] // For future DSP pipeline construction
+#[allow(dead_code)] // planned: for future DSP pipeline construction
 pub trait DspStage {
     /// Process audio samples.
     /// Returns processed samples and potentially new sample rate.

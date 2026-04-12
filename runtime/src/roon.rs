@@ -22,13 +22,13 @@ use futures_util::{SinkExt, StreamExt};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 const ROON_SERVICE_TYPE: &str = "_roon._tcp.local.";
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 const ROON_SERVICE_PORT: u16 = 9330;
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 const ROON_APP_ID: &str = "stui_roon";
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 const ROON_APP_NAME: &str = "stui";
 
 // ── Data Structures ───────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ impl Default for RoonConfig {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 pub enum RoonEvent {
     ZoneChanged(String),
     PlaybackStateChanged(String),
@@ -70,7 +70,7 @@ pub enum RoonEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "method")]
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 pub enum RoonRequest {
     #[serde(rename = "subscribe_zones")]
     SubscribeZones { },
@@ -128,7 +128,7 @@ pub enum RoonRequest {
 }
 
 impl RoonRequest {
-    #[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+    #[allow(dead_code)] // planned: wired in when Roon integration is activated
     fn service(&self) -> &'static str {
         match self {
             RoonRequest::Browse { .. } | RoonRequest::DeepSearch { .. } => "com.roonlabs.browse:1",
@@ -139,7 +139,7 @@ impl RoonRequest {
 
 // ── Roon Client ─────────────────────────────────────────────────────────────
 
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 pub struct RoonClient {
     config: Arc<RwLock<RoonConfig>>,
     event_tx: broadcast::Sender<RoonEvent>,
@@ -148,7 +148,7 @@ pub struct RoonClient {
     pending: Arc<TokioMutex<HashMap<u32, oneshot::Sender<serde_json::Value>>>>,
 }
 
-#[allow(dead_code)] // planned: Roon integration pub API, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 impl RoonClient {
     pub fn new() -> Self {
         let (event_tx, _) = broadcast::channel(100);
@@ -596,7 +596,7 @@ impl Default for RoonClient {
     }
 }
 
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 fn rand_u32() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -607,7 +607,7 @@ fn rand_u32() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)] // planned: Roon integration, wired in when roon feature is enabled
+#[allow(dead_code)] // planned: wired in when Roon integration is activated
 pub struct RoonSearchResult {
     pub id: String,
     pub title: String,

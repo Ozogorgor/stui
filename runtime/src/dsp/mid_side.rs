@@ -14,7 +14,7 @@
 /// Process audio from L/R to Mid/Side representation.
 ///
 /// Input must be interleaved stereo: [L0, R0, L1, R1, ...]
-#[allow(dead_code)] // Used by MidSideProcessor internally
+#[allow(dead_code)] // internal: used by MidSideProcessor
 pub fn encode(samples: &[f32]) -> Vec<f32> {
     debug_assert!(
         samples.len() % 2 == 0,
@@ -31,7 +31,7 @@ pub fn encode(samples: &[f32]) -> Vec<f32> {
 /// Process audio from Mid/Side back to L/R representation.
 ///
 /// Input must be interleaved M/S: [M0, S0, M1, S1, ...]
-#[allow(dead_code)] // Used by MidSideProcessor internally
+#[allow(dead_code)] // internal: used by MidSideProcessor
 pub fn decode(samples: &[f32]) -> Vec<f32> {
     debug_assert!(
         samples.len() % 2 == 0,
@@ -50,7 +50,7 @@ pub fn decode(samples: &[f32]) -> Vec<f32> {
 /// - `width = 1.0`: unchanged
 /// - `width > 1.0`: wider stereo image
 /// - `width < 1.0`: narrower (0.0 = mono)
-#[allow(dead_code)] // Available for future use
+#[allow(dead_code)] // planned: available for future use
 pub fn apply_width(samples: &[f32], width: f32) -> Vec<f32> {
     debug_assert!(
         samples.len() % 2 == 0,
@@ -75,7 +75,7 @@ pub struct MidSideProcessor {
     enabled: bool,
 }
 
-#[allow(dead_code)] // MidSideProcessor for future use
+#[allow(dead_code)] // planned: available for future use
 impl MidSideProcessor {
     /// Create a new M/S processor with default settings.
     pub fn new() -> Self {

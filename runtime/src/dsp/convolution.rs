@@ -22,7 +22,7 @@ use super::config::DspConfig;
 const MAX_FILTER_FILE_BYTES: u64 = 64 * 1024 * 1024; // 64 MB cap
 
 /// Convolution engine for room correction filters.
-#[allow(dead_code)] // Used by DspPipeline internally
+#[allow(dead_code)] // internal: used by DspPipeline
 #[allow(clippy::type_complexity)]
 pub struct ConvolutionEngine {
     config: Arc<RwLock<DspConfig>>,

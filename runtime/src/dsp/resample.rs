@@ -38,7 +38,7 @@ enum ResamplerKind {
 }
 
 /// High-quality audio resampler. Stereo interleaved f32 input and output.
-#[allow(dead_code)] // Used by DspPipeline internally
+#[allow(dead_code)] // internal: used by DspPipeline
 #[allow(clippy::type_complexity)]
 pub struct Resampler {
     config: Arc<RwLock<DspConfig>>,
