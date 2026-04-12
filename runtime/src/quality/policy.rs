@@ -117,7 +117,6 @@ impl RankingPolicy {
     /// Maximise seeder count — minimises buffering at the cost of quality.
     /// Note: Currently a stub. To integrate with production pipeline, add a caller
     /// from pipeline.rs similar to how bandwidth_saver() is used.
-    #[cfg(test)]
     pub fn fastest_start() -> Self {
         RankingPolicy {
             resolution_weights: [100, 150, 200, 220],
