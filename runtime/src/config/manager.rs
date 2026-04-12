@@ -206,8 +206,30 @@ impl ConfigManager {
 // ── Key application logic ─────────────────────────────────────────────────────
 
 /// Apply a dot-separated key path to a mutable `RuntimeConfig`.
+/// Apply a single dot-separated config key to a [`RuntimeConfig`] in place.
 ///
-/// Returns an error if the key is unknown or the value is the wrong type.
+/// # Hot-reloadable keys
+///
+/// All keys in the table below take effect **immediately** for the next
+/// request — no runtime restart required. Exceptions are noted.
+///
+/// | Section | Keys | Notes |
+/// |---------|------|-------|
+/// | `[player]` | `default_volume`, `hwdec`, `cache_secs`, `demuxer_max_mb`, `keep_open`, `min_preroll_secs`, `terminal_vo` | — |
+/// | `[streaming]` | `prefer_http`, `prefer_torrent`, `max_candidates`, `auto_fallback`, `benchmark_streams` | — |
+/// | `[subtitles]` | `auto_download`, `preferred_language`, `default_delay` | — |
+/// | `[providers]` | `enable_tmdb`, `enable_omdb`, `enable_imdb`, `enable_torrentio`, `enable_prowlarr`, `enable_opensubtitles` | — |
+/// | `[api_keys]` | `tmdb`, `omdb` | — |
+/// | `[app]` | `theme_mode`, `log_level`, `debug_mode`, `tests_enabled`, `adult_content_enabled` | `log_level` takes effect on **next restart** only |
+/// | `[skipper]` | `enabled`, `auto_skip_intro`, `auto_skip_credits`, `similarity_threshold`, `min_episodes`, `intro_scan_secs`, `min_intro_secs`, `max_intro_secs` | — |
+/// | `[storage]` | `movies`, `series`, `music`, `anime`, `podcasts` | In-flight downloads use the **old** path |
+/// | `[plugins.*]` | dynamic per-plugin keys | — |
+/// | `[dsp.*]` | all DSP keys | — |
+/// | `[mpd.*]` | all MPD keys | — |
+///
+/// # Errors
+///
+/// Returns [`StuidError::Config`] if the key is unknown or the value is the wrong type.
 fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
     match key {
         // ── [player] ──────────────────────────────────────────────────────
