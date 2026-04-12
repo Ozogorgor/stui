@@ -257,7 +257,7 @@ impl MpdBridge {
                 config.password.as_deref(),
             ).await?);
         }
-        Ok(slot.as_mut().unwrap())
+        Ok(slot.as_mut().expect("mpd_bridge: connection slot populated above"))
     }
 
     /// Background task: maintain an idle connection and push `mpd_status`
