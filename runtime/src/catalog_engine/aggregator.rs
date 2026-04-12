@@ -90,7 +90,7 @@ use crate::ipc::MediaType;
 
 // ── Weight table ─────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 pub struct RatingWeight {
     pub key: &'static str,
     pub weight: f64,
@@ -101,7 +101,7 @@ pub struct RatingWeight {
 }
 
 /// Default rating weights for movies.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -135,7 +135,7 @@ pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
     },
 ];
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 const WEIGHTS_SERIES: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -169,7 +169,7 @@ const WEIGHTS_SERIES: &[RatingWeight] = &[
     },
 ];
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 const WEIGHTS_ANIME: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -203,7 +203,7 @@ const WEIGHTS_ANIME: &[RatingWeight] = &[
     },
 ];
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -237,7 +237,7 @@ const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     },
 ];
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 const WEIGHTS_HORROR: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -271,7 +271,7 @@ const WEIGHTS_HORROR: &[RatingWeight] = &[
     },
 ];
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 const WEIGHTS_MUSIC: &[RatingWeight] = &[
     RatingWeight {
         key: "tomatometer",
@@ -316,7 +316,7 @@ const WEIGHTS_MUSIC: &[RatingWeight] = &[
 /// 4. Music — MediaType is Music, Album, or Track.
 /// 5. Series — MediaType is Series or Episode.
 /// 6. Movie — default.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn weights_for(
     media_type: &MediaType,
     genre: Option<&str>,
@@ -358,7 +358,7 @@ fn weights_for(
 ///
 /// With only one source present the median equals that source's value.
 /// Returns `None` when no weighted sources are present.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 pub fn weighted_median(ratings: &HashMap<String, f64>, weights: &[RatingWeight]) -> Option<f64> {
     if ratings.is_empty() {
         return None;
@@ -456,13 +456,13 @@ impl CatalogAggregator {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
     pub fn with_filter(mut self, filter: super::filters::Filter) -> Self {
         self.filters.add(filter);
         self
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
     pub fn with_sort(mut self, order: SortOrder) -> Self {
         self.sort_order = order;
         self
@@ -474,7 +474,7 @@ impl CatalogAggregator {
     /// cache the merged (unfiltered) entries and apply different filter/sort
     /// combinations without re-merging.  This method remains available for
     /// callers that want the full pipeline in a single call.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
     pub fn apply(&self, entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         let merged = self.merge(entries);
         let filtered = self.filters.apply(merged);
@@ -501,7 +501,7 @@ impl Default for CatalogAggregator {
 }
 
 /// Merge a group of entries for the same title into one enriched entry.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
     if group.len() == 1 {
         let mut entry = group.remove(0);
@@ -590,7 +590,7 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
 /// try to parse the string and insert it under the provider's canonical key.
 /// Skipped for unrecognised providers — storing their values under a wrong key
 /// with an incorrect normalization divisor would corrupt the composite score.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn promote_rating_to_map(entry: &mut CatalogEntry) {
     if entry.ratings.is_empty() {
         if let Some(ref r) = entry.rating.clone() {
@@ -608,7 +608,7 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 /// If no recognised sources are present, the original `entry.rating` string
 /// (set by the provider) is preserved unchanged. The raw ratings map may contain
 /// values on unknown scales so they are never used as a direct fallback.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn apply_weighted_rating(entry: &mut CatalogEntry) {
     let weights = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
 
@@ -639,7 +639,7 @@ fn apply_weighted_rating(entry: &mut CatalogEntry) {
 ///
 /// Returns `None` for unrecognised providers so callers can skip promotion
 /// rather than storing values under the wrong key with the wrong normalization.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn rating_key_for_provider(provider: &str) -> Option<&'static str> {
     // Provider names can be comma-joined (e.g. "tmdb,imdb") — take first.
     let first = provider.split(',').next().unwrap_or(provider).trim();
@@ -672,7 +672,7 @@ fn rating_key_for_provider(provider: &str) -> Option<&'static str> {
 ///
 /// Storing RT/AniList values without dividing by 10 would produce composite
 /// scores an order of magnitude too high.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: catalog rating aggregator, wired in by CatalogEngine
 fn parse_rating_str(s: &str) -> Option<f64> {
     let s = s.trim();
     // Strip trailing "/10", "%", etc.

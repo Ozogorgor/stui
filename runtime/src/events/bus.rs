@@ -61,12 +61,12 @@ impl EventBus {
     ///
     /// Subscribers created *after* an event is emitted will not receive
     /// that event (broadcast semantics).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI and IPC subscribers
     pub fn subscribe(&self) -> broadcast::Receiver<RuntimeEvent> {
         self.sender.subscribe()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI and IPC subscribers
     /// Spawn a background task that logs every event at TRACE level.
     ///
     /// Returns immediately; the task runs until the bus is dropped.

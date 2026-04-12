@@ -237,7 +237,7 @@ impl ConvolutionEngine {
         debug!(bypass, "convolution bypass changed");
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline convolution engine
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         debug!(enabled, "convolution enabled changed");

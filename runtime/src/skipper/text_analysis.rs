@@ -11,7 +11,7 @@ use tokio::time::timeout;
 use tracing::{debug, warn};
 
 /// Subtitle cue with timestamp.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: skip-segment text analysis structs
 #[derive(Debug, Clone)]
 pub struct SubtitleCue {
     pub start: f64,

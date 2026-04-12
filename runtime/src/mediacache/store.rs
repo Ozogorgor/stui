@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::ipc::MediaEntry;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine and IPC layer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedTab {
     pub tab: String,
@@ -16,7 +16,7 @@ pub struct CachedTab {
     pub updated_at: i64,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine and IPC layer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
 pub struct MediaCache {
@@ -26,12 +26,12 @@ pub struct MediaCache {
 
 
 impl MediaCache {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine and IPC layer
     pub fn new() -> Self {
         Self::default()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine and IPC layer
     pub fn load(path: &PathBuf) -> Self {
         let mut cache = Self::default();
         if let Err(e) = cache.load_from_file(path) {
@@ -74,7 +74,7 @@ impl MediaCache {
         });
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine and IPC layer
     pub fn save_tab(&mut self, tab: String, entries: Vec<MediaEntry>, path: &PathBuf) {
         self.update_tab(tab, entries);
         if let Err(e) = self.save(path) {
@@ -100,7 +100,7 @@ impl MediaCache {
         self.tabs.values().map(|ct| ct.entries.len()).sum()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine and IPC layer
     pub fn clear(&mut self, path: &PathBuf) {
         self.tabs.clear();
         let _ = std::fs::remove_file(path);
@@ -115,7 +115,7 @@ impl MediaCache {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine and IPC layer
 #[derive(Clone)]
 pub struct MediaCacheStore {
     inner: Arc<RwLock<MediaCache>>,

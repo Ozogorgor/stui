@@ -116,7 +116,7 @@ impl FilterSet {
         self.filters.push(f);
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by CatalogAggregator
     pub fn apply(&self, entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         if self.filters.is_empty() {
             return entries;
@@ -127,7 +127,7 @@ impl FilterSet {
             .collect()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by CatalogAggregator
     pub fn is_empty(&self) -> bool {
         self.filters.is_empty()
     }

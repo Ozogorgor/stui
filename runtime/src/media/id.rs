@@ -46,7 +46,7 @@ impl MediaId {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by IPC layer
     /// Serialize to the canonical `"namespace:key"` wire form.
     pub fn to_string_id(&self) -> String {
         format!("{}:{}", self.namespace, self.key)

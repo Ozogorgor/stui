@@ -21,7 +21,7 @@ pub struct MediaStorage {
     base_music: PathBuf,
     base_podcasts: PathBuf,
     /// Maps aria2 original paths → user-visible organized paths (not persisted)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // internal: field retained for future path translation
     path_translator: Arc<RwLock<HashMap<PathBuf, PathBuf>>>,
 }
 

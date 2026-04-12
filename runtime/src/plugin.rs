@@ -271,7 +271,7 @@ pub struct AuthorMeta {
 // ── Loaded plugin record ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine and registry
 pub struct LoadedPlugin {
     pub id: String, // uuid assigned at load time
     pub manifest: PluginManifest,
@@ -301,7 +301,7 @@ impl LoadedPlugin {
             .contains(&cap)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine and registry
     /// All capabilities this plugin advertises.
     pub fn capabilities(&self) -> Vec<PluginCapability> {
         self.manifest.plugin.plugin_type.capabilities()

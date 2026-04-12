@@ -73,7 +73,7 @@ pub struct MediaItem {
 }
 
 impl MediaItem {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI and IPC layer
     /// Deduplication key: prefer IMDB id, fall back to normalised title+year.
     pub fn dedup_key(&self) -> String {
         if let Some(ref id) = self.imdb_id {
@@ -88,7 +88,7 @@ impl MediaItem {
         )
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI and IPC layer
     /// True if this item has enough data to display in the grid.
     pub fn is_displayable(&self) -> bool {
         !self.title.is_empty()

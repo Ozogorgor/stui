@@ -2,7 +2,7 @@ use super::DspNode;
 use crate::dsp::config::DspConfig;
 use crate::dsp::ns_filters::dither::{DitherFilter, NoiseShaping};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 pub struct DitherNode {
     inner: Option<DitherFilter>,
     enabled: bool,
@@ -11,7 +11,7 @@ pub struct DitherNode {
     sample_rate: u32,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 impl DitherNode {
     pub fn new(config: &DspConfig) -> Self {
         let enabled = config.dither_enabled || config.dither_auto;

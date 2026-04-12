@@ -29,7 +29,7 @@ use crate::auth::OAuthReceiver;
 
 // Variants are constructed inside handle_action — dead_code fires only for
 // the binary target which doesn't use the RPC subsystem directly.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
 pub enum AuthPhase {
     Idle,
     /// Port allocated; receiver handed to `open_and_wait` in the next action.
@@ -55,7 +55,7 @@ pub struct PluginProcess {
     pub pid:          Option<u32>,
 
     stdin_tx:      mpsc::UnboundedSender<String>,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     auth_phase:    SharedAuthPhase,
     /// Pending calls: correlation-id → response sender.
     pending:       Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
@@ -65,7 +65,7 @@ pub struct PluginProcess {
 impl PluginProcess {
     /// Spawn `bin` as a child process, perform the handshake, and return a
     /// ready-to-use `PluginProcess`.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub async fn spawn(bin: PathBuf) -> Result<Self> {
         let mut child = Command::new(&bin)
             .stdin(std::process::Stdio::piped())
@@ -191,14 +191,14 @@ impl PluginProcess {
     }
 
     /// True if this plugin advertises the given capability string.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub fn has_capability(&self, cap: &str) -> bool {
         self.info.capabilities.iter().any(|c| c == cap)
     }
 
     // ── High-level typed methods ──────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub async fn catalog_search(
         &self,
         query: &str,
@@ -214,14 +214,14 @@ impl PluginProcess {
         Ok(serde_json::from_value(val)?)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub async fn streams_resolve(&self, id: &str) -> Result<Vec<RpcStream>> {
         let params = serde_json::to_value(StreamsResolveParams { id: id.to_string() })?;
         let val = self.call("streams.resolve", params).await?;
         Ok(serde_json::from_value(val)?)
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub async fn subtitles_fetch(&self, id: &str) -> Result<Vec<RpcSubtitleTrack>> {
         let params = serde_json::to_value(SubtitlesFetchParams { id: id.to_string() })?;
         let val = self.call("subtitles.fetch", params).await?;
@@ -229,13 +229,13 @@ impl PluginProcess {
     }
 
     /// Send a graceful shutdown request then kill the process.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
     pub async fn shutdown(&self) {
         let _ = self.call("shutdown", serde_json::json!({})).await;
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
 async fn handle_action(
     req: ActionRequest,
     stdin_tx: mpsc::UnboundedSender<String>,
@@ -328,7 +328,7 @@ async fn handle_action(
     send_response(&stdin_tx, response);
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
 fn send_response(
     stdin_tx: &mpsc::UnboundedSender<String>,
     resp: ActionResponse,

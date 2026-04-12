@@ -79,7 +79,7 @@ mod pipeline {
     };
 
     /// Main DSP processing pipeline.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: DSP pipeline, wired in by audio output subsystem
     pub struct DspPipeline {
         config:        Arc<RwLock<DspConfig>>,
         config_dir:    std::path::PathBuf,

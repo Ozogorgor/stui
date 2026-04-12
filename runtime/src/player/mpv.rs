@@ -48,7 +48,7 @@ pub struct PlayerStartedEvent {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by TUI / IPC layer
 pub struct PlayerProgressEvent {
     pub position:       f64,
     pub duration:       f64,
@@ -116,7 +116,7 @@ impl MpvPlayer {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub fn subscribe(&self) -> broadcast::Receiver<MpvEvent> {
         self.inner.event_tx.subscribe()
     }
@@ -243,110 +243,110 @@ impl MpvPlayer {
 
     // ── High-level typed commands ────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_pause(&self, paused: bool) -> Result<(), String> {
         self.send_command(&json!(["set_property", "pause", paused])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn toggle_pause(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "pause"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn seek_relative(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["seek", delta, "relative"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn seek_absolute(&self, pos: f64) -> Result<(), String> {
         self.send_command(&json!(["seek", pos, "absolute"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_volume(&self, level: f64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "volume", level])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn adjust_volume(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "volume", delta])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn toggle_mute(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "mute"])).await
     }
 
     // ── Subtitle control ──────────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_subtitle_track(&self, id: i64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sid", id])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn disable_subtitles(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sid", "no"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn cycle_subtitles(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "sub"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn adjust_sub_delay(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "sub-delay", delta])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn reset_sub_delay(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "sub-delay", 0.0])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn load_subtitle(&self, path: &str) -> Result<(), String> {
         self.send_command(&json!(["sub-add", path, "select"])).await
     }
 
     // ── Audio track control ───────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_audio_track(&self, id: i64) -> Result<(), String> {
         self.send_command(&json!(["set_property", "aid", id])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn cycle_audio_tracks(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "audio"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn adjust_audio_delay(&self, delta: f64) -> Result<(), String> {
         self.send_command(&json!(["add", "audio-delay", delta])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn reset_audio_delay(&self) -> Result<(), String> {
         self.send_command(&json!(["set_property", "audio-delay", 0.0])).await
     }
 
     // ── Stream switching ──────────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn loadfile_replace(&self, url: &str) -> Result<(), String> {
         self.send_command(&json!(["loadfile", url, "replace"])).await
     }
 
     // ── Display ───────────────────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn toggle_fullscreen(&self) -> Result<(), String> {
         self.send_command(&json!(["cycle", "fullscreen"])).await
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn screenshot(&self) -> Result<(), String> {
         self.send_command(&json!(["screenshot"])).await
     }

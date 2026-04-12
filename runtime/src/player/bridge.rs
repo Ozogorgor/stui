@@ -130,7 +130,7 @@ impl PlayerBridge {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by PlayerManager
     /// Access the underlying `MpvPlayer` for typed command dispatch.
     pub fn mpv(&self) -> &MpvPlayer {
         &self.mpv

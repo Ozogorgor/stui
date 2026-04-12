@@ -82,7 +82,7 @@ impl DsdConverter {
     }
 
     /// Get the output sample rate.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline DSD output
     pub fn output_rate(&self) -> u32 {
         self.output_rate
     }
@@ -94,7 +94,7 @@ impl DsdConverter {
 /// TODO: detect DSD format from audio file metadata (SACD ISO, DSF, DFF headers)
 /// and wire into `DsdConverter` so the correct input rate is used rather than the
 /// hardcoded DSD64 assumption in `infer_dsd_rate`. See SCAFFOLD_TODOS.md.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline DSD output
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DsdFormat {
     Dsd64,
@@ -104,7 +104,7 @@ pub enum DsdFormat {
 }
 
 impl DsdFormat {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline DSD output
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Dsd64 => 2822400,
@@ -114,7 +114,7 @@ impl DsdFormat {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline DSD output
     pub fn pcm_output(&self) -> u32 {
         match self {
             Self::Dsd64 => 176400,

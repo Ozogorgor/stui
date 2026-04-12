@@ -38,7 +38,7 @@ pub struct WatchHistoryEntry {
 }
 
 impl WatchHistoryEntry {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub fn progress(&self) -> f64 {
         if self.duration <= 0.0 {
             return 0.0;
@@ -372,7 +372,7 @@ impl WatchHistoryStore {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn in_progress(&self) -> Vec<WatchHistoryEntry> {
         let backend = self.backend.clone();
         
@@ -383,7 +383,7 @@ impl WatchHistoryStore {
         .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn in_progress_for_tab(&self, tab: &str) -> Vec<WatchHistoryEntry> {
         let backend = self.backend.clone();
         let tab_owned = tab.to_string();

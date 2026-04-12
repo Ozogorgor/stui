@@ -123,7 +123,7 @@ impl KWeighting {
 
 // ─── LufsMeter ──────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
 pub struct LufsMeter {
     /// Stereo-frame count per 400ms block.
     block_samples: usize,
@@ -271,7 +271,7 @@ impl LufsMeter {
 
     /// Momentary loudness: mean-sq energy of the current 400ms sliding window.
     /// Returns `ABSOLUTE_GATE` (−70 LUFS) until the window is fully populated.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn momentary(&self) -> f32 {
         if self.sliding_buf.len() < self.block_samples {
             return ABSOLUTE_GATE;
@@ -281,7 +281,7 @@ impl LufsMeter {
 
     /// Short-term loudness: mean energy of the last 30 × 100ms non-overlapping hops
     /// (3s window). Returns `ABSOLUTE_GATE` when no hop data is available yet.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn short_term(&self) -> f32 {
         if self.short_term_energies.is_empty() {
             return ABSOLUTE_GATE;
@@ -291,14 +291,14 @@ impl LufsMeter {
         )
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn integrated(&self) -> f32 {
         self.integrated_loudness
     }
 
     /// Sample-peak in dBFS. **Not** BS.1770-4 true-peak (which requires 4×
     /// oversampled interpolation); this is the maximum absolute sample value seen.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn true_peak_db(&self) -> f32 {
         if self.sample_peak > 0.0 {
             20.0 * self.sample_peak.log10()
@@ -320,7 +320,7 @@ impl LufsMeter {
         self.target_lufs = valid_target;
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn reset(&mut self) {
         self.sliding_buf.clear();
         self.hop_energy_acc = 0.0;
@@ -389,22 +389,22 @@ impl LufsNormalizer {
         samples
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn momentary(&self) -> f32 {
         self.meter.momentary()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn short_term(&self) -> f32 {
         self.meter.short_term()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn integrated(&self) -> f32 {
         self.meter.integrated()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn true_peak_db(&self) -> f32 {
         self.meter.true_peak_db()
     }
@@ -413,7 +413,7 @@ impl LufsNormalizer {
         20.0 * self.current_gain.log10()
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline and TUI loudness meters
     pub fn reset(&mut self) {
         self.meter.reset();
         self.current_gain = 1.0;

@@ -18,11 +18,11 @@ use tracing::debug;
 use crate::cache::Ttl;
 use crate::providers::Stream;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine stream resolution cache
 const TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Thread-safe resolved-stream cache.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine stream resolution cache
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct StreamCache {
@@ -30,12 +30,12 @@ pub struct StreamCache {
 }
 
 impl StreamCache {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine stream resolution cache
     pub fn new() -> Self {
         StreamCache { inner: Arc::new(RwLock::new(HashMap::new())) }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine stream resolution cache
     /// Return cached streams if present and not expired.
     pub async fn get(&self, id: &str) -> Option<Vec<Stream>> {
         let map = self.inner.read().await;
@@ -49,7 +49,7 @@ impl StreamCache {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine stream resolution cache
     /// Cache streams for an entry_id, replacing any previous value.
     pub async fn insert(&self, id: impl Into<String>, streams: Vec<Stream>) {
         let key = id.into();
@@ -57,12 +57,12 @@ impl StreamCache {
         self.inner.write().await.insert(key, Ttl::new(streams, TTL));
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine stream resolution cache
     pub async fn evict_expired(&self) {
         self.inner.write().await.retain(|_, v| v.is_valid());
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine stream resolution cache
     pub async fn clear(&self) {
         self.inner.write().await.clear();
     }

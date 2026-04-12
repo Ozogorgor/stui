@@ -28,7 +28,7 @@ pub trait DspNode: Send {
     fn flush(&mut self);
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: DSP chain pub API, wired in by DspPipeline
 pub struct DspChain {
     nodes: Vec<Box<dyn DspNode>>,
 }

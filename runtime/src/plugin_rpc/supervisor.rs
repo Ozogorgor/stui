@@ -42,7 +42,7 @@ use super::protocol::{PluginHandshake, RpcMediaItem, RpcStream, RpcSubtitleTrack
 
 /// Tunable parameters for a single plugin supervisor instance.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 pub struct SupervisorConfig {
     /// Maximum number of restarts allowed within `crash_window_secs`.
     pub max_restarts: u32,
@@ -63,7 +63,7 @@ pub struct SupervisorConfig {
     pub cpu_nice_value: u32,
     /// Timeout for individual RPC calls in milliseconds.
     /// If a call takes longer, it returns an error.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub request_timeout_ms: u64,
 }
 
@@ -85,7 +85,7 @@ impl Default for SupervisorConfig {
 
 /// Live health snapshot for a supervised plugin.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 pub struct SupervisorStats {
     /// Number of times the plugin has crashed since load.
     pub crash_count: u32,
@@ -124,7 +124,7 @@ pub struct PluginSupervisor {
 #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 impl PluginSupervisor {
     /// Spawn the plugin and start supervising it.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
         let proc = PluginProcess::spawn(bin.clone()).await?;
         
@@ -158,25 +158,25 @@ impl PluginSupervisor {
     }
 
     /// Snapshot of the current health metrics.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub async fn stats(&self) -> SupervisorStats {
         self.stats.lock().await.clone()
     }
 
     /// `true` if the supervisor has permanently given up on this plugin.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub fn is_failed(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
     }
 
     /// `true` if the plugin advertises the given capability.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub async fn has_capability(&self, cap: &str) -> bool {
         self.info.read().await.capabilities.iter().any(|c| c == cap)
     }
 
     /// Gracefully shut down the plugin and stop the supervisor.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub async fn shutdown(&self) {
         self.failed.store(true, Ordering::Relaxed); // prevent restart after shutdown
         if let Some(proc) = self.process.read().await.as_ref().cloned() {
@@ -361,7 +361,7 @@ impl PluginSupervisor {
 /// Returns `true` if the process was killed for exceeding `max_memory_mb`.
 /// Updates `memory_mb` in stats on each poll.
 /// Returns `false` if the memory limit is not set (future: process died normally).
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 async fn poll_memory_loop(
     process: &Arc<RwLock<Option<Arc<PluginProcess>>>>,
     stats: &Arc<Mutex<SupervisorStats>>,
@@ -398,7 +398,7 @@ async fn poll_memory_loop(
 }
 
 /// Read the resident set size in MB from `/proc/{pid}/status` (Linux only).
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 #[cfg(target_os = "linux")]
 fn read_proc_rss_mb(pid: u32) -> Option<u64> {
     let content = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -412,12 +412,12 @@ fn read_proc_rss_mb(pid: u32) -> Option<u64> {
     None
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 #[cfg(not(target_os = "linux"))]
 fn read_proc_rss_mb(_pid: u32) -> Option<u64> { None }
 
 /// Send SIGKILL to a process by PID.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 fn nix_kill(pid: u32) -> std::io::Result<()> {
     // Safety: we only send SIGKILL (9) which is always safe.
     let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
@@ -428,7 +428,7 @@ fn nix_kill(pid: u32) -> std::io::Result<()> {
 // Adjusts the OS scheduling nice value — lowers priority so the plugin yields
 // CPU time to other processes. Does NOT enforce a hard CPU cap.
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 #[cfg(target_os = "linux")]
 fn apply_nice_priority(pid: u32, cpu_nice_value: u32) -> Result<()> {
     use std::process::Command;
@@ -469,7 +469,7 @@ fn apply_nice_priority(pid: u32, cpu_nice_value: u32) -> Result<()> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 #[cfg(not(target_os = "linux"))]
 fn apply_nice_priority(_pid: u32, _cpu_nice_value: u32) -> Result<()> {
     Ok(())

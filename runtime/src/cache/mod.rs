@@ -23,7 +23,7 @@ pub use metadata::MetadataCache;
 pub use streams::StreamCache;
 
 /// Grouped handle — clone freely, all fields share the underlying Arc storage.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine cache layer
 #[derive(Clone)]
 pub struct RuntimeCache {
     pub search:   SearchCache,
@@ -50,7 +50,7 @@ impl Default for RuntimeCache {
 use std::time::{Duration, Instant};
 
 /// A single cache entry wrapping a value with an expiry timestamp.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine cache layer
 #[derive(Clone)]
 pub(crate) struct Ttl<V> {
     pub value:      V,
@@ -58,12 +58,12 @@ pub(crate) struct Ttl<V> {
 }
 
 impl<V: Clone> Ttl<V> {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine cache layer
     pub fn new(value: V, ttl: Duration) -> Self {
         Ttl { value, expires_at: Instant::now() + ttl }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine cache layer
     pub fn is_valid(&self) -> bool {
         Instant::now() < self.expires_at
     }
@@ -72,7 +72,7 @@ impl<V: Clone> Ttl<V> {
 // ── CachePolicy ───────────────────────────────────────────────────────────────
 
 /// TTL configuration for each cache tier.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by engine cache layer
 #[derive(Debug, Clone)]
 pub struct CachePolicy {
     /// How long to cache full-text search results.
@@ -98,7 +98,7 @@ impl Default for CachePolicy {
 
 impl CachePolicy {
     /// Very short TTLs suitable for integration tests (everything expires in 1s).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine cache layer
     pub fn for_testing() -> Self {
         CachePolicy {
             search_ttl:   Duration::from_secs(1),
@@ -109,7 +109,7 @@ impl CachePolicy {
     }
 
     /// Aggressive caching for low-bandwidth / offline scenarios.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by engine cache layer
     pub fn offline() -> Self {
         CachePolicy {
             search_ttl:   Duration::from_secs(60 * 60),       // 1 hour

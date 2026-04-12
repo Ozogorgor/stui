@@ -33,7 +33,7 @@ use super::state::PlaybackState;
 
 // ── Queue entry ───────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
     pub item:     MediaItem,
@@ -46,7 +46,7 @@ pub struct QueueEntry {
 
 // ── Playback record ───────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 #[derive(Debug, Clone)]
 pub struct PlaybackRecord {
     pub item:       MediaItem,
@@ -59,7 +59,7 @@ pub struct PlaybackRecord {
 
 // ── PlayerManager ─────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 pub struct PlayerManager {
     bridge:  PlayerBridge,
     inner:   Arc<Mutex<ManagerState>>,
@@ -82,7 +82,7 @@ struct ManagerState {
 
 #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 impl PlayerManager {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
     pub fn new(bridge: PlayerBridge, ipc_tx: mpsc::Sender<String>, bus: Arc<EventBus>) -> Self {
         PlayerManager {
             bridge,
@@ -101,7 +101,7 @@ impl PlayerManager {
 
     /// Set the ranked stream candidates for the current item.
     /// Called by the pipeline after resolving streams.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
     pub async fn set_candidates(&self, candidates: Vec<StreamCandidate>) {
         let mut s = self.inner.lock().await;
         s.active_idx = 0;
@@ -112,7 +112,7 @@ impl PlayerManager {
     }
 
     /// Get a snapshot of the current playback state.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
     pub async fn playback_state(&self) -> PlaybackState {
         self.inner.lock().await.state.clone()
     }

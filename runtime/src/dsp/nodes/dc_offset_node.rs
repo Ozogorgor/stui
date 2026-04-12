@@ -2,14 +2,14 @@ use super::DspNode;
 use crate::dsp::config::DspConfig;
 use crate::dsp::dc_offset::DcOffsetFilter;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 pub struct DcOffsetNode {
     inner: Option<DcOffsetFilter>,
     enabled: bool,
     last_cutoff_hz: f32,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 impl DcOffsetNode {
     pub fn new(config: &DspConfig) -> Self {
         let enabled = config.dc_offset_enabled;

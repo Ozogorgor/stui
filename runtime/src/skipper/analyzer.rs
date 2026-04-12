@@ -12,7 +12,7 @@ pub struct Segment {
 }
 
 impl Segment {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by skip-segment analyzer
     pub fn duration(&self) -> f64 {
         self.end - self.start
     }

@@ -20,7 +20,7 @@ pub enum SortOrder {
 }
 
 impl SortOrder {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by CatalogAggregator
     pub fn apply(&self, mut entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
         match self {
             SortOrder::Rating => {

@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A single audio or subtitle track as reported by mpv's `track-list` property.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by TUI and IPC layer
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrackInfo {
     /// mpv's internal track ID (used for `sid` / `aid` commands).
@@ -31,7 +31,7 @@ pub struct TrackInfo {
 ///
 /// All fields have sensible defaults so the struct is valid before mpv connects.
 /// The TUI renders directly from this; no additional mpv queries needed.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by TUI and IPC layer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaybackState {
     // ── Transport ──────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ impl Default for PlaybackState {
 
 impl PlaybackState {
     /// Progress as a fraction 0.0–1.0 (for drawing a progress bar).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI and IPC layer
     pub fn progress_fraction(&self) -> f64 {
         if self.duration > 0.0 {
             (self.position / self.duration).clamp(0.0, 1.0)

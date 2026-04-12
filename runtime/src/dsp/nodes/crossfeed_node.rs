@@ -2,7 +2,7 @@ use super::DspNode;
 use crate::dsp::config::DspConfig;
 use crate::dsp::crossfeed::CrossfeedFilter;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 pub struct CrossfeedNode {
     inner: Option<CrossfeedFilter>,
     enabled: bool,
@@ -10,7 +10,7 @@ pub struct CrossfeedNode {
     cutoff_hz: f32,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 impl CrossfeedNode {
     pub fn new(config: &DspConfig) -> Self {
         let enabled = config.crossfeed_enabled || config.crossfeed_auto;

@@ -10,7 +10,7 @@ use crate::providers::{Provider, Stream, StreamQuality};
 use super::client::StremioClient;
 use super::manifest::StremioManifest;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio provider adapter
 pub struct StremioAddon {
     client:   StremioClient,
     manifest: StremioManifest,
@@ -45,7 +45,7 @@ impl StremioAddon {
         addons
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: Stremio provider adapter
     fn stremio_type_for_tab(tab: &MediaTab) -> &'static str {
         match tab {
             MediaTab::Movies   => "movie",
@@ -56,7 +56,7 @@ impl StremioAddon {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: Stremio provider adapter
     fn supports_type(&self, t: &str) -> bool {
         self.manifest.types.iter().any(|mt| mt == t)
     }
@@ -135,7 +135,7 @@ impl Provider for StremioAddon {
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio provider adapter
 fn meta_to_entry(m: super::manifest::StremioMeta, tab: &MediaTab, provider: &str) -> CatalogEntry {
     let year = m.year.as_ref().and_then(|v| {
         v.as_u64().map(|n| n.to_string())

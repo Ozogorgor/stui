@@ -74,7 +74,7 @@ impl Skipper {
         })
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: called by IPC SetConfig handler
     /// Hot-update config (called by SetConfig IPC handler).
     pub async fn update_config(&self, cfg: SkipperConfig) {
         *self.config.write().await = cfg;

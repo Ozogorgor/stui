@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioManifest {
     pub id: String,
@@ -52,7 +52,7 @@ pub struct BehaviorHints {
 
 // ── Stremio resource response types ──────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioMeta {
     pub id: String,
@@ -71,13 +71,13 @@ pub struct StremioMeta {
     pub imdb_id: Option<String>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioCatalogResponse {
     pub metas: Vec<StremioMeta>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioStream {
     /// Direct URL, magnet, or infoHash
@@ -91,7 +91,7 @@ pub struct StremioStream {
     pub behavior_hints: Option<StreamBehaviorHints>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamBehaviorHints {
     #[serde(rename = "bingeGroup")]
@@ -105,7 +105,7 @@ pub struct StremioStreamResponse {
     pub streams: Vec<StremioStream>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioSubtitle {
     pub id: String,
@@ -113,7 +113,7 @@ pub struct StremioSubtitle {
     pub lang: String,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon manifest and response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StremioSubtitleResponse {
     pub subtitles: Vec<StremioSubtitle>,

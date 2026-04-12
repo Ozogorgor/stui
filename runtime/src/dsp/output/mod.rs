@@ -33,7 +33,7 @@ pub enum OutputError {
 }
 
 /// Trait implemented by all audio output backends.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline output backends
 pub trait AudioOutput: Send {
     fn sample_rate(&self) -> u32;
     fn channels(&self) -> u16;
@@ -44,7 +44,7 @@ pub trait AudioOutput: Send {
 }
 
 /// Trait for native DSD output via DoP (DSD over PCM) protocol.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline output backends
 pub trait DsdAudioOutput: Send {
     /// DSD clock rate in Hz (2 822 400 for DSD64, 5 644 800 for DSD128, etc.)
     fn dsd_rate(&self) -> u32;

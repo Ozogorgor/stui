@@ -42,7 +42,7 @@ use crate::providers::Stream;
 type PluginSupervisorList = Arc<RwLock<Vec<Arc<PluginSupervisor>>>>;
 
 /// Manages all external plugin processes for the runtime.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
 pub struct PluginRpcManager {
     plugins: PluginSupervisorList,
     config:  SupervisorConfig,
@@ -58,7 +58,7 @@ impl PluginRpcManager {
     }
 
     /// Create with custom supervisor config (e.g. different memory limit).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
     pub fn with_config(config: SupervisorConfig) -> Self {
         PluginRpcManager {
             plugins: Arc::new(RwLock::new(vec![])),
@@ -73,7 +73,7 @@ impl PluginRpcManager {
     /// Each subdirectory is checked for an executable named `plugin`,
     /// `plugin.py`, `plugin.js`, `plugin.rb`, or any file matching the
     /// executable bit.  The first match is spawned.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
     pub async fn discover_and_load(&self, plugin_dir: &Path) {
         let Ok(mut entries) = tokio::fs::read_dir(plugin_dir).await else {
             warn!(path = %plugin_dir.display(), "plugin directory not found or not accessible");
@@ -276,7 +276,7 @@ impl Default for PluginRpcManager {
 
 // ── Type conversions ──────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
 fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
     use crate::ipc::MediaType;
     CatalogEntry {
@@ -297,7 +297,7 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
 fn rpc_stream_to_stream(s: RpcStream) -> Stream {
     use crate::providers::StreamQuality;
 

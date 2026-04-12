@@ -17,7 +17,7 @@ pub enum OutputSampleRate {
 }
 
 impl OutputSampleRate {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline
     pub fn value(&self) -> u32 {
         *self as u32
     }
@@ -49,7 +49,7 @@ impl TryFrom<u32> for OutputSampleRate {
 /// into `Resampler::new()` as the target output rate multiplier, then expose
 /// the setting in the audio settings panel. See SCAFFOLD_TODOS.md.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline
 pub enum UpsampleRatio {
     Ratio1x = 1,
     Ratio2x = 2,
@@ -60,7 +60,7 @@ pub enum UpsampleRatio {
 }
 
 impl UpsampleRatio {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline
     pub fn value(&self) -> u32 {
         *self as u32
     }
@@ -244,7 +244,7 @@ impl DspProfileConfig {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP pipeline
 impl DspProfile {
     pub fn apply(&self, config: &mut DspConfig) {
         // Custom profiles are applied via CustomProfileStore::apply_profile.
@@ -353,7 +353,7 @@ pub enum DsdMode {
 }
 
 impl DsdMode {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Off => 0,

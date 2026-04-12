@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 
 /// Scene change information from video analysis.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: skip-segment video analysis structs
 pub struct SceneInfo {
     /// Timestamps of scene cuts (in seconds).
     pub cuts: Vec<f64>,
@@ -22,7 +22,7 @@ pub struct SceneInfo {
 
 /// Audio energy profile for a segment.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: skip-segment video analysis structs
 pub struct AudioProfile {
     /// RMS energy per analysis window (0.1s windows).
     pub energy: Vec<f64>,

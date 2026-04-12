@@ -246,7 +246,7 @@ impl PreRollPlan {
 // ── StreamerState ─────────────────────────────────────────────────────────────
 
 /// Tracks live state shared between the pre-roll waiter and the stall-guard loop.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by playback pipeline
 pub struct StreamerState {
     pub plan:             Option<PreRollPlan>,
     pub speed:            SpeedEstimator,
@@ -261,7 +261,7 @@ pub struct StreamerState {
 }
 
 impl StreamerState {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by playback pipeline
     pub fn new() -> Self {
         StreamerState {
             plan:         None,

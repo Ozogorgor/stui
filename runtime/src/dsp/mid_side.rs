@@ -67,7 +67,7 @@ pub fn apply_width(samples: &[f32], width: f32) -> Vec<f32> {
 }
 
 /// M/S processor with configurable width and independent mid/side gains.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: M/S stereo processor, wired in by DSP pipeline
 pub struct MidSideProcessor {
     width: f32,
     mid_gain: f32,
@@ -88,7 +88,7 @@ impl MidSideProcessor {
     }
 
     /// Process stereo samples through the M/S chain in a single pass.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: M/S stereo processor, wired in by DSP pipeline
     pub fn process(&mut self, samples: &[f32]) -> Vec<f32> {
         if !self.enabled {
             return samples.to_vec();

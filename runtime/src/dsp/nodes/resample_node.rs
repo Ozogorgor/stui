@@ -5,14 +5,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 pub struct ResampleNode {
     inner: Option<Resampler>,
     enabled: bool,
     last_config: Option<DspConfig>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by DSP chain
 impl ResampleNode {
     pub fn new(config: DspConfig) -> Self {
         let mut enabled = config.resample_enabled;

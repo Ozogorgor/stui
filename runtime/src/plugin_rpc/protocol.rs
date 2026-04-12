@@ -31,7 +31,7 @@ use serde_json::Value;
 // ── Outbound: runtime → plugin ────────────────────────────────────────────────
 
 /// A request sent from the runtime to a plugin process.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RpcRequest {
     /// Correlation ID echoed back in the response so concurrent calls match.
@@ -44,7 +44,7 @@ pub struct RpcRequest {
 }
 
 /// All methods the runtime can call on a plugin.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RpcMethod {
     /// Initial handshake — plugin replies with its name, version, capabilities.
@@ -62,7 +62,7 @@ pub enum RpcMethod {
 }
 
 impl RpcMethod {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
     pub fn as_str(&self) -> &'static str {
         match self {
             RpcMethod::Handshake => "handshake",
@@ -74,7 +74,7 @@ impl RpcMethod {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "handshake" => Some(RpcMethod::Handshake),
@@ -91,7 +91,7 @@ impl RpcMethod {
 // ── Inbound: plugin → runtime ─────────────────────────────────────────────────
 
 /// A response sent from a plugin process back to the runtime.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RpcResponse {
     /// Matches the `id` from the corresponding `RpcRequest`.
@@ -104,7 +104,7 @@ pub struct RpcResponse {
     pub error: Option<RpcError>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RpcError {
     pub code: i32,
@@ -112,7 +112,7 @@ pub struct RpcError {
 }
 
 impl RpcResponse {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
     pub fn ok(id: impl Into<String>, result: Value) -> Self {
         RpcResponse {
             id: id.into(),
@@ -121,7 +121,7 @@ impl RpcResponse {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
     pub fn err(id: impl Into<String>, code: i32, message: impl Into<String>) -> Self {
         RpcResponse {
             id: id.into(),
@@ -133,7 +133,7 @@ impl RpcResponse {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
     pub fn is_ok(&self) -> bool {
         self.error.is_none()
     }
@@ -145,7 +145,7 @@ impl RpcResponse {
 ///
 /// The runtime uses `capabilities` to register the plugin for automatic
 /// dispatch — no manual routing code needed.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PluginHandshake {
     /// Plugin display name, e.g. `"Torrentio"`.
@@ -162,7 +162,7 @@ pub struct PluginHandshake {
 
 // ── catalog.search params / result ───────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CatalogSearchParams {
     pub query: String,
@@ -171,7 +171,7 @@ pub struct CatalogSearchParams {
     pub page: u32,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 fn default_page() -> u32 {
     1
 }
@@ -199,7 +199,7 @@ pub struct RpcMediaItem {
 
 // ── streams.resolve params / result ──────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamsResolveParams {
     /// The media entry ID to resolve (e.g. `"tt0816692"`).
@@ -248,13 +248,13 @@ pub struct RpcStream {
 
 // ── subtitles.fetch params / result ──────────────────────────────────────────
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SubtitlesFetchParams {
     pub id: String,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RpcSubtitleTrack {
     pub language: String,
@@ -273,7 +273,7 @@ pub struct RpcSubtitleTrack {
 /// IMPORTANT: `action` must NOT have `#[serde(default)]`. The demultiplexing
 /// invariant depends on `ActionRequest` deserialization failing for
 /// `RpcResponse` lines (which have "id" but no "action" field).
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Deserialize, Clone)]
 pub struct ActionRequest {
     pub action: String,
@@ -285,7 +285,7 @@ pub struct ActionRequest {
 ///
 /// Distinguished from `RpcResponse` by `action_id` (not `id`).
 /// `error` is a flat string (not structured RpcError) to keep the schema simple.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin RPC wire types, used by process/supervisor
 #[derive(Debug, Serialize)]
 pub struct ActionResponse {
     pub action_id: String,

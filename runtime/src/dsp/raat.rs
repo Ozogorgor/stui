@@ -12,7 +12,7 @@ use super::config::DspConfig;
 use crate::roon::{RoonClient, RoonServer};
 
 /// RAAT endpoint information.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
 #[derive(Debug, Clone)]
 pub struct RaatEndpoint {
     pub name: String,
@@ -26,7 +26,7 @@ pub struct RaatEndpoint {
 }
 
 /// RAAT audio format.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
 #[derive(Debug, Clone)]
 pub struct RaatFormat {
     pub sample_rate: u32,
@@ -47,7 +47,7 @@ impl Default for RaatFormat {
 }
 
 /// RAAT processor for streaming audio to Roon endpoints.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
 pub struct RaatProcessor {
     config: Arc<RwLock<DspConfig>>,
     roon_client: Option<Arc<RoonClient>>,
@@ -181,7 +181,7 @@ fn server_to_endpoint(s: RoonServer) -> RaatEndpoint {
 }
 
 /// RAAT protocol encoding types.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RaatEncoding {
     PCM,
@@ -190,7 +190,7 @@ pub enum RaatEncoding {
 }
 
 impl RaatEncoding {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
     pub fn as_str(&self) -> &str {
         match self {
             Self::PCM => "PCM",
@@ -201,7 +201,7 @@ impl RaatEncoding {
 }
 
 /// Roon/RAAT integration status.
-#[allow(dead_code)]
+#[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(Default)]
 pub enum RaatStatus {

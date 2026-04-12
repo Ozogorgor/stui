@@ -82,7 +82,7 @@ impl DcOffsetFilter {
         out
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DcOffsetNode
     pub fn process_mono(&mut self, samples: &[f32], sample_rate: u32) -> Vec<f32> {
         if sample_rate != self.sample_rate {
             self.recompute(sample_rate);

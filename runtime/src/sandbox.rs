@@ -15,7 +15,7 @@ use crate::plugin::{ExecutionMode, LoadedPlugin, Permissions};
 // ── Capability types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin sandbox capability checks
 pub enum Capability {
     Network,
     FilesystemRead(PathBuf),
@@ -26,7 +26,7 @@ pub enum Capability {
 
 /// A per-plugin sandbox context. Constructed when the plugin is loaded.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: plugin sandbox capability checks
 pub struct SandboxCtx {
     pub plugin_id: String,
     pub plugin_name: String,
@@ -134,7 +134,7 @@ impl SandboxCtx {
         roots
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: plugin sandbox capability checks
     pub fn http_client(&self) -> Result<reqwest::Client> {
         self.check(&Capability::Network)?;
         let client = reqwest::Client::builder()

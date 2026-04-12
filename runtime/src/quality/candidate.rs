@@ -3,7 +3,7 @@
 use super::QualityScore;
 use crate::providers::{HdrFormat, Stream};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by stream ranking and TUI
 #[derive(Debug, Clone)]
 pub struct StreamCandidate {
     pub stream: Stream,
@@ -11,7 +11,7 @@ pub struct StreamCandidate {
 }
 
 impl StreamCandidate {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by stream ranking and TUI
     /// Human-readable badge string for the UI, e.g. "1080p HEVC WEB-DL HDR10 ★ 847"
     ///
     /// Uses explicit metadata fields when available, falls back to name parsing.
@@ -65,7 +65,7 @@ impl StreamCandidate {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by stream ranking and TUI
 fn extract_codec(name: &str) -> Option<String> {
     let n = name.to_uppercase();
     if n.contains("AV1") {
@@ -80,7 +80,7 @@ fn extract_codec(name: &str) -> Option<String> {
     None
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: used by stream ranking and TUI
 fn extract_source(name: &str) -> Option<String> {
     let n = name.to_uppercase();
     if n.contains("BLURAY") || n.contains("BLU-RAY") || n.contains("BDREMUX") {

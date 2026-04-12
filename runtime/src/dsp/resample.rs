@@ -49,7 +49,7 @@ pub struct Resampler {
 }
 
 impl Resampler {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by DSP pipeline resampler
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let cfg = config.blocking_read();
         let input_rate = cfg.input_sample_rate;

@@ -10,7 +10,7 @@ use super::manifest::{
 };
 
 /// HTTP client bound to one addon's base URL.
-#[allow(dead_code)]
+#[allow(dead_code)] // pub API: Stremio addon HTTP client
 #[derive(Clone)]
 pub struct StremioClient {
     http:     Client,
@@ -34,7 +34,7 @@ impl StremioClient {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: Stremio addon HTTP client
     pub fn base_url(&self) -> &str { &self.base_url }
 
     // ── Manifest ──────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ impl StremioClient {
     // ── Catalog ───────────────────────────────────────────────────────────
 
     /// Fetch a catalog listing: `/catalog/{type}/{id}.json`
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: Stremio addon HTTP client
     pub async fn catalog(
         &self,
         media_type: &str, // "movie" | "series"
@@ -96,7 +96,7 @@ impl StremioClient {
     // ── Subtitles ─────────────────────────────────────────────────────────
 
     /// Fetch subtitle tracks: `/subtitles/{type}/{id}.json`
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: Stremio addon HTTP client
     pub async fn subtitles(
         &self,
         media_type: &str,

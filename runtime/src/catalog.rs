@@ -176,7 +176,7 @@ impl Catalog {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pub API: used by TUI catalog grid
     pub fn subscribe(&self) -> broadcast::Receiver<GridUpdate> {
         self.tx.subscribe()
     }
