@@ -65,7 +65,7 @@ impl SqliteBackend {
     }
 
     fn init_schema(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         conn.execute(
             "CREATE TABLE IF NOT EXISTS watch_history (
                 id          TEXT PRIMARY KEY,
@@ -93,7 +93,7 @@ impl SqliteBackend {
     }
 
     fn upsert(&self, entry: &WatchHistoryEntry) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         conn.execute(
             "INSERT INTO watch_history 
              (id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path)
@@ -131,7 +131,7 @@ impl SqliteBackend {
     }
 
     fn get(&self, id: &str) -> Result<Option<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history WHERE id = ?1",
@@ -145,7 +145,7 @@ impl SqliteBackend {
     }
 
     fn remove(&self, id: &str) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "DELETE FROM watch_history WHERE id = ?1",
             params![id],
@@ -154,7 +154,7 @@ impl SqliteBackend {
     }
 
     fn mark_completed(&self, id: &str, last_watched: i64) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "UPDATE watch_history SET completed = 1, last_watched = ?2 WHERE id = ?1",
             params![id, last_watched],
@@ -174,10 +174,10 @@ impl SqliteBackend {
         } else {
             0
         };
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
-            "UPDATE watch_history 
-             SET position = ?2, duration = ?3, completed = ?4, last_watched = ?5 
+            "UPDATE watch_history
+             SET position = ?2, duration = ?3, completed = ?4, last_watched = ?5
              WHERE id = ?1",
             params![id, position, duration, completed, last_watched],
         )?;
@@ -185,7 +185,7 @@ impl SqliteBackend {
     }
 
     fn update_file_path(&self, id: &str, file_path: &str) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "UPDATE watch_history SET file_path = ?2 WHERE id = ?1",
             params![id, file_path],
@@ -194,7 +194,7 @@ impl SqliteBackend {
     }
 
     fn in_progress(&self) -> Result<Vec<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history
@@ -209,7 +209,7 @@ impl SqliteBackend {
     }
 
     fn in_progress_for_tab(&self, tab: &str) -> Result<Vec<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().unwrap();
+        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history
