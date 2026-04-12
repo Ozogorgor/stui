@@ -95,7 +95,7 @@ mod tests {
         struct BufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
         impl Write for BufWriter {
             fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(data);
+                self.0.lock().expect("trace buffer mutex poisoned").extend_from_slice(data);
                 Ok(data.len())
             }
             fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
@@ -105,7 +105,8 @@ mod tests {
     }
 
     fn read_buf(buf: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+        String::from_utf8(buf.lock().expect("trace buffer mutex poisoned").clone())
+            .expect("trace buffer contains non-UTF-8 bytes")
     }
 
     #[test]
