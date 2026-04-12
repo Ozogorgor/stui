@@ -495,6 +495,11 @@ impl Engine {
 
     // ── Resolve ───────────────────────────────────────────────────────────
 
+    #[tracing::instrument(
+        name = "engine.resolve_stream",
+        skip(self),
+        fields(entry_id = %entry_id, provider = %provider_name, req_id = %req_id),
+    )]
     pub async fn resolve(
         &self,
         req_id: &str,
