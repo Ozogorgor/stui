@@ -36,6 +36,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
+use tokio::time::timeout;
 use tracing::{debug, error, info};
 
 // ── Public event types ────────────────────────────────────────────────────────
@@ -235,7 +236,9 @@ impl MpvPlayer {
         if let Some(tx) = guard.as_mut() {
             let mut line = msg;
             line.push('\n');
-            tx.write_all(line.as_bytes()).await
+            timeout(Duration::from_secs(5), tx.write_all(line.as_bytes()))
+                .await
+                .map_err(|_| "mpv IPC write timed out after 5s".to_string())?
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
