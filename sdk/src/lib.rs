@@ -582,8 +582,20 @@ macro_rules! stui_export_plugin {
     };
 }
 
-/// Internal helper — serialises a result to WASM memory and returns packed ptr/len.
-/// Not part of the public API; used by the `stui_export_plugin!` macro.
+/// Write a serialised result into WASM linear memory and return a fat pointer.
+///
+/// # Memory model
+///
+/// The returned value encodes `(ptr << 32) | len` so the host can call
+/// `memory.read(ptr, len)` to retrieve the bytes.
+///
+/// **The allocation is intentionally leaked** (`std::mem::forget`).
+/// WASM modules cannot free memory that was allocated for the host to read —
+/// the host calls `__dealloc(ptr, len)` via the exported dealloc function after
+/// it has finished reading. Freeing here would be a double-free.
+///
+/// Do not remove the `forget` call. If you need to add pooling for large
+/// responses, implement it in the host's dealloc import handler, not here.
 #[doc(hidden)]
 pub fn __write_result<T: serde::Serialize>(result: &T) -> i64 {
     let json = serde_json::to_vec(result).unwrap_or_else(|e| {
