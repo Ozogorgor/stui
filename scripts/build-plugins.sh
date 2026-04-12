@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/build-plugins.sh                  # build all, install to ~/.stui/plugins/
-#   ./scripts/build-plugins.sh prowlarr          # build only prowlarr-provider
+#   ./scripts/build-plugins.sh kitsunekko        # build only kitsunekko
 #   ./scripts/build-plugins.sh --no-install      # build only, don't copy to ~/.stui/
 #   PLUGIN_DIR=/custom/path ./scripts/build-plugins.sh
 #
@@ -28,8 +28,16 @@ for arg in "$@"; do
             echo "Usage: $0 [plugin-name] [--no-install]"
             echo ""
             echo "Available plugins:"
-            echo "  prowlarr          Search torrents via Prowlarr"
-            echo "  opensubtitles     Subtitle search/download via OpenSubtitles.com"
+            echo "  anilist           Anime/manga metadata (AniList)"
+            echo "  discogs           Music metadata (Discogs)"
+            echo "  imdb              Movie/TV metadata (IMDB)"
+            echo "  javdb             Japanese adult video metadata"
+            echo "  kitsu             Anime metadata (Kitsu)"
+            echo "  lastfm            Music scrobbling metadata (Last.fm)"
+            echo "  listenbrainz      Music listen metadata (ListenBrainz)"
+            echo "  omdb              Movie/TV metadata (OMDb)"
+            echo "  r18               Japanese adult video metadata (R18)"
+            echo "  tmdb              Movie/TV metadata (TMDB)"
             exit 0
             ;;
         *) FILTER="$arg" ;;
@@ -44,8 +52,16 @@ fi
 
 # ── Plugin definitions ────────────────────────────────────────────────────────
 declare -A PLUGINS=(
-    ["prowlarr"]="prowlarr-provider"
-    ["opensubtitles"]="opensubtitles-provider"
+    ["anilist"]="anilist-provider"
+    ["discogs"]="discogs-provider"
+    ["imdb"]="imdb-provider"
+    ["javdb"]="javdb"
+    ["kitsu"]="kitsu"
+    ["lastfm"]="lastfm-provider"
+    ["listenbrainz"]="listenbrainz-provider"
+    ["omdb"]="omdb-provider"
+    ["r18"]="r18"
+    ["tmdb"]="tmdb-provider"
 )
 
 build_plugin() {
@@ -119,17 +135,10 @@ echo ""
 
 if [[ "$INSTALL" == "true" ]]; then
     echo "Next steps:"
-    echo "  1. Set your API keys:"
-    echo "     export PROWLARR_API_KEY=<from Prowlarr → Settings → General>"
-    echo "     export PROWLARR_URL=http://localhost:9696"
-    echo "     export OS_API_KEY=<from opensubtitles.com/en/consumers>"
-    echo "     export OS_USERNAME=<your username>   # for download quota"
-    echo "     export OS_PASSWORD=<your password>"
-    echo ""
-    echo "  2. Start aria2c (for download/stream):"
+    echo "  1. Start aria2c (for download/stream):"
     echo "     aria2c --enable-rpc --rpc-secret=mystui --daemon"
     echo "     export ARIA2_SECRET=mystui"
     echo ""
-    echo "  3. Launch stui:"
+    echo "  2. Launch stui:"
     echo "     ./dist/stui"
 fi
