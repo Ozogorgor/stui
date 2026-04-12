@@ -201,6 +201,11 @@ impl PlayerManager {
     // ── Playback control ──────────────────────────────────────────────────
 
     /// Start playing `entry` immediately, replacing whatever is currently playing.
+    #[tracing::instrument(
+        name = "player.start",
+        skip(self, entry),
+        fields(entry_id = %entry.item.id.to_string_id(), provider = %entry.provider),
+    )]
     pub async fn play_item(&self, entry: QueueEntry) {
         info!("manager: play {:?}", entry.item.title);
         {
