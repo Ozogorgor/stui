@@ -1253,12 +1253,17 @@ func defaultCategories() []settingCategory {
 					description: "Target animation framerate in fps (10–60)",
 				},
 				{
-					label:       "Viz mode",
-					key:         "visualizer.mode",
-					kind:        settingChoice,
-					choiceVals:  []string{"bars", "mirror", "filled", "led"},
+					label: "Viz mode",
+					key:   "visualizer.mode",
+					kind:  settingChoice,
+					choiceVals: []string{
+						"wave", "scope", "retro", "matrix", "flame", "pulse",
+						"binary", "butterfly", "terrain", "sakura", "firework",
+						"glitch", "lightning", "rain", "scatter", "columns", "bricks",
+						"bars", "mirror", "filled", "led",
+					},
 					choiceIdx:   0,
-					description: "Visualization style: bars, mirror, filled, or led",
+					description: "Visualization style — cliamp modes (waveâ¦bricks) need no extra binary; classic modes (barsâ¦led) use the backend subprocess",
 				},
 				{
 					label:       "Viz peak hold",

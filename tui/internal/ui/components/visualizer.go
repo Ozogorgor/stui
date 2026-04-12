@@ -647,6 +647,45 @@ func (v *Visualizer) IsCliampMode() bool {
 	return mode >= VisualizerModeWave
 }
 
+// Render dispatches to RenderBars or RenderCliampStyle depending on the active
+// mode. Callers should use this instead of calling RenderBars directly.
+func (v *Visualizer) Render(width int) string {
+	if v.IsCliampMode() {
+		return v.RenderCliampStyle(v.barsToBands())
+	}
+	return v.RenderBars(width)
+}
+
+// barsToBands maps the raw bar amplitudes from the backend subprocess into the
+// 10-band array expected by the FFT visualizer renderers.
+func (v *Visualizer) barsToBands() [visNumBands]float64 {
+	v.mu.RLock()
+	bars := v.bars
+	v.mu.RUnlock()
+
+	var out [visNumBands]float64
+	n := len(bars)
+	if n == 0 {
+		return out
+	}
+	for i := range out {
+		lo := i * n / visNumBands
+		hi := (i + 1) * n / visNumBands
+		if hi <= lo {
+			hi = lo + 1
+		}
+		if hi > n {
+			hi = n
+		}
+		var sum float64
+		for _, b := range bars[lo:hi] {
+			sum += b
+		}
+		out[i] = sum / float64(hi-lo)
+	}
+	return out
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func clampInt(v, lo, hi int) int {

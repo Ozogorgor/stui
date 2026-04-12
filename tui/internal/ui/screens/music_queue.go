@@ -457,7 +457,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 	}
 
 	if s.visualizer != nil && s.visualizer.IsRunning() {
-		sb.WriteString(s.visualizer.RenderBars(w))
+		sb.WriteString(s.visualizer.Render(w))
 	}
 
 	return sb.String()

@@ -16,7 +16,7 @@ type VisualizerSettings struct {
 	Bars        int    `toml:"bars"`         // number of frequency bars
 	Height      int    `toml:"height"`       // rows in terminal
 	Framerate   int    `toml:"framerate"`    // fps
-	Mode        string `toml:"mode"`         // "bars" | "mirror" | "filled" | "led"
+	Mode        string `toml:"mode"`         // cliamp: "wave"|"scope"|"retro"|"matrix"|"flame"|"pulse"|"binary"|"butterfly"|"terrain"|"sakura"|"firework"|"glitch"|"lightning"|"rain"|"scatter"|"columns"|"bricks" — classic: "bars"|"mirror"|"filled"|"led"
 	Gradient    bool   `toml:"gradient"`
 	PeakHold    bool   `toml:"peak_hold"`
 	InputMethod string `toml:"input_method"` // "pulse" | "pipewire" | "alsa"
@@ -181,7 +181,7 @@ func Default() Config {
 			Bars:        20,
 			Height:      8,
 			Framerate:   20,
-			Mode:        "bars",
+			Mode:        "wave",
 			Gradient:    true,
 			PeakHold:    true,
 			InputMethod: "pulse",
@@ -419,6 +419,38 @@ func ApplyChange(cfg Config, key string, value interface{}) Config {
 	case "skipper.min_episodes":
 		if v, ok := value.(int); ok {
 			cfg.Skipper.MinEpisodes = v
+		}
+	case "visualizer.backend":
+		if v, ok := value.(string); ok {
+			cfg.Visualizer.Backend = v
+		}
+	case "visualizer.bars":
+		if v, ok := value.(int); ok {
+			cfg.Visualizer.Bars = v
+		}
+	case "visualizer.height":
+		if v, ok := value.(int); ok {
+			cfg.Visualizer.Height = v
+		}
+	case "visualizer.framerate":
+		if v, ok := value.(int); ok {
+			cfg.Visualizer.Framerate = v
+		}
+	case "visualizer.mode":
+		if v, ok := value.(string); ok {
+			cfg.Visualizer.Mode = v
+		}
+	case "visualizer.peak_hold":
+		if v, ok := value.(bool); ok {
+			cfg.Visualizer.PeakHold = v
+		}
+	case "visualizer.gradient":
+		if v, ok := value.(bool); ok {
+			cfg.Visualizer.Gradient = v
+		}
+	case "visualizer.input_method":
+		if v, ok := value.(string); ok {
+			cfg.Visualizer.InputMethod = v
 		}
 	}
 	return cfg
