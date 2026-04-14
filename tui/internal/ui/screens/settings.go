@@ -409,10 +409,6 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 				item.boolVal = cfg.Streaming.AutoDeleteVideo
 			case "streaming.auto_delete_audio":
 				item.boolVal = cfg.Streaming.AutoDeleteAudio
-			case "downloads.video_dir":
-				item.strVal = cfg.Downloads.VideoDir
-			case "downloads.music_dir":
-				item.strVal = cfg.Downloads.MusicDir
 			case "storage.movies":
 				item.strVal = cfg.Storage.Movies
 			case "storage.series":
@@ -1773,21 +1769,8 @@ func defaultCategories() []settingCategory {
 					strVal:      filepath.Join(settingsHomeDir, "Music", "Podcasts"),
 					description: "Where podcast episodes are stored",
 				},
-				// ── Download targets (where new files land before organising) ─
-				{
-					label:       "Video download directory",
-					key:         "downloads.video_dir",
-					kind:        settingPath,
-					strVal:      filepath.Join(settingsHomeDir, "Videos"),
-					description: "Directory for movie and series downloads (enter to edit)",
-				},
-				{
-					label:       "Music download directory",
-					key:         "downloads.music_dir",
-					kind:        settingPath,
-					strVal:      filepath.Join(settingsHomeDir, "Music"),
-					description: "Directory for music and audio downloads (enter to edit)",
-				},
+				// Download targets are derived from the library directories
+				// above — no separate "downloads.*" keys (they were redundant).
 			},
 		},
 		{

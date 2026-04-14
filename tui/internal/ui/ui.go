@@ -239,6 +239,16 @@ func New(opts Options, cfg config.Config) Model {
 	if sess.LastTab != "" {
 		appState.ActiveTab = state.TabFromString(sess.LastTab)
 	}
+	// Seed legacy download dirs from the storage config so any downstream
+	// reader sees the real library paths instead of the bare default. The
+	// download-dir keys are gone from settings; the storage roots act as
+	// download targets too.
+	if cfg.Storage.Music != "" {
+		appState.Settings.MusicDownloadDir = cfg.Storage.Music
+	}
+	if cfg.Storage.Movies != "" {
+		appState.Settings.VideoDownloadDir = cfg.Storage.Movies
+	}
 
 	ms := screens.NewMusicScreen(nil)
 	if sess.LastMusicSubTab >= 0 && sess.LastMusicSubTab <= 3 {
@@ -977,12 +987,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					switch msg.Key {
 					case "storage.movies":
 						m.cfg.Storage.Movies = v
+						// Use the movies dir as the legacy video download
+						// target so downloads land in the library root.
+						m.state.Settings.VideoDownloadDir = v
+						m.cfg.Downloads.VideoDir = v
 					case "storage.series":
 						m.cfg.Storage.Series = v
 					case "storage.anime":
 						m.cfg.Storage.Anime = v
 					case "storage.music":
 						m.cfg.Storage.Music = v
+						// Mirror onto the legacy MusicDownloadDir slot so
+						// downstream code (status messages, downloads logic)
+						// picks up the new path without a separate setting.
+						m.state.Settings.MusicDownloadDir = v
+						m.cfg.Downloads.MusicDir = v
 						// When the primary music folder changes, ask MPD
 						// to rescan and reload the artist list.
 						m.client.MpdCmd("mpd_update", nil)
@@ -1063,14 +1082,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "notifications.on_streams":
 			if v, ok := msg.Value.(bool); ok {
 				m.notifyCfg.OnStreams = v
-			}
-		case "downloads.video_dir":
-			if v, ok := msg.Value.(string); ok {
-				m.state.Settings.VideoDownloadDir = v
-			}
-		case "downloads.music_dir":
-			if v, ok := msg.Value.(string); ok {
-				m.state.Settings.MusicDownloadDir = v
 			}
 		case "app.debug_mode":
 			if v, ok := msg.Value.(bool); ok && m.client != nil {
