@@ -969,16 +969,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.client != nil {
 			// Handle storage path changes via SetStoragePaths
 			switch {
-			case msg.Key == "storage.extra_music_dirs":
-				// Multi-path value: persist to config, push the list to
-				// the runtime, and trigger an MPD rescan so the library
-				// picks up the added/removed music roots immediately.
-				if paths, ok := msg.Value.([]string); ok {
-					m.cfg.Storage.ExtraMusicDirs = paths
-					m.client.SetConfig(msg.Key, paths)
-					m.client.MpdCmd("mpd_update", nil)
-					m.client.MpdListArtists()
-				}
 			case strings.HasPrefix(msg.Key, "storage."):
 				if v, ok := msg.Value.(string); ok {
 					m.client.SetStoragePaths(ipc.SetStoragePathsRequest{

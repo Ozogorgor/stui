@@ -699,7 +699,17 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		listH = 1
 	}
 
-	paneW := w / 3
+	// Track Info is the optional 4th column. It appears whenever the
+	// Tracks pane is focused AND a track is selected — gives the user
+	// a metadata sidebar without permanently squeezing the other panes.
+	showInfo := s.activePane == LibPaneTracks &&
+		s.songCursor < len(s.songs) && len(s.songs) > 0
+	cols := 3
+	if showInfo {
+		cols = 4
+	}
+
+	paneW := w / cols
 	if paneW < 10 {
 		paneW = 10
 	}
@@ -712,7 +722,7 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	var sb strings.Builder
 
 	// Header
-	headerStr := s.tagHeader(accentStyle, dimStyle, paneW)
+	headerStr := s.tagHeader(accentStyle, dimStyle, paneW, showInfo)
 	sb.WriteString(headerStr + "\n")
 
 	// Build each column
@@ -735,6 +745,10 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		s.activePane == LibPaneTracks, s.loadingSongs, "Loading…", "No tracks",
 		paneW, accentStyle, dimStyle, textStyle,
 	)
+	var infoLines []string
+	if showInfo {
+		infoLines = s.buildTrackInfoLines(listH, paneW, accentStyle, dimStyle, textStyle)
+	}
 
 	sep := dimStyle.Render("│")
 	var paneContent strings.Builder
@@ -742,6 +756,7 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		al := ""
 		bl := ""
 		sl := ""
+		il := ""
 		if i < len(artistLines) {
 			al = artistLines[i]
 		}
@@ -751,7 +766,14 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		if i < len(songLines) {
 			sl = songLines[i]
 		}
-		paneContent.WriteString(al + sep + bl + sep + sl + "\n")
+		if showInfo {
+			if i < len(infoLines) {
+				il = infoLines[i]
+			}
+			paneContent.WriteString(al + sep + bl + sep + sl + sep + il + "\n")
+		} else {
+			paneContent.WriteString(al + sep + bl + sep + sl + "\n")
+		}
 	}
 
 	// Wrap in border container
@@ -761,8 +783,10 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	return sb.String()
 }
 
-// tagHeader builds the three-column header row.
-func (s MusicLibraryScreen) tagHeader(accentStyle, dimStyle lipgloss.Style, paneW int) string {
+// tagHeader builds the column-header row. The fourth "Track Info" column
+// is only included when withInfo is true (i.e. the Tracks pane is focused
+// and a track is selected).
+func (s MusicLibraryScreen) tagHeader(accentStyle, dimStyle lipgloss.Style, paneW int, withInfo bool) string {
 	render := func(label string, active bool) string {
 		padded := fmt.Sprintf("%-*s", paneW, label)
 		if active {
@@ -771,11 +795,82 @@ func (s MusicLibraryScreen) tagHeader(accentStyle, dimStyle lipgloss.Style, pane
 		return dimStyle.Render(padded)
 	}
 	sep := dimStyle.Render("│")
-	return render("Artists", s.activePane == LibPaneArtists) +
+	out := render("Artists", s.activePane == LibPaneArtists) +
 		sep +
 		render("Albums", s.activePane == LibPaneAlbums) +
 		sep +
 		render("Tracks", s.activePane == LibPaneTracks)
+	if withInfo {
+		// Track Info is informational; never "active" itself.
+		out += sep + render("Track Info", false)
+	}
+	return out
+}
+
+// buildTrackInfoLines renders the right-hand metadata column for the
+// currently selected track. Fields shown today are limited to what
+// MpdSong carries (Title/Artist/Album/Duration/File). Bitrate, sample
+// rate, codec, MusicBrainz/ListenBrainz/Last.fm/Discogs IDs, and play
+// count will appear here once the runtime exposes them via extended
+// IPC + the corresponding metadata plugins are enabled.
+func (s MusicLibraryScreen) buildTrackInfoLines(
+	listH, paneW int,
+	accentStyle, dimStyle, textStyle lipgloss.Style,
+) []string {
+	if s.songCursor < 0 || s.songCursor >= len(s.songs) {
+		return nil
+	}
+	song := s.songs[s.songCursor]
+
+	// Year is sourced from the album row currently selected (cursor on
+	// album maps to album cursor — same album as the one whose songs are
+	// listed). Falls back to empty if the album row has no parsable year.
+	year := ""
+	if s.albumCursor < len(s.albums) {
+		year = extractYear(s.albums[s.albumCursor].Year)
+	}
+
+	innerW := paneW - 2 // 1ch padding either side
+
+	row := func(label, value string) []string {
+		labelLine := dimStyle.Render(fmt.Sprintf(" %s", label))
+		val := value
+		if val == "" {
+			val = "—"
+		}
+		valLine := textStyle.Render(" " + truncate(val, innerW-1))
+		return []string{labelLine, valLine}
+	}
+
+	var lines []string
+	lines = append(lines, accentStyle.Render(" Track Info"))
+	lines = append(lines, "")
+	lines = append(lines, row("TITLE", song.Title)...)
+	lines = append(lines, row("ARTIST", song.Artist)...)
+	lines = append(lines, row("ALBUM", song.Album)...)
+	lines = append(lines, row("YEAR", year)...)
+	lines = append(lines, row("DURATION", fmtMusicDuration(song.Duration))...)
+	lines = append(lines, row("FILE", song.File)...)
+
+	// Footer hint about extended metadata pending plugin support.
+	lines = append(lines, "")
+	lines = append(lines,
+		dimStyle.Render(truncate(" plugin metadata coming soon", innerW)))
+
+	// Pad/truncate to listH so adjacent columns line up.
+	if len(lines) > listH {
+		lines = lines[:listH]
+	}
+	for len(lines) < listH {
+		lines = append(lines, "")
+	}
+	// Ensure each line is paneW visible chars (so `│` separators line up).
+	for i, ln := range lines {
+		if vis := lipgloss.Width(ln); vis < paneW {
+			lines[i] = ln + strings.Repeat(" ", paneW-vis)
+		}
+	}
+	return lines
 }
 
 // buildPaneLines renders one column of the tag browser.

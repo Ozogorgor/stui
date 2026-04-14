@@ -46,7 +46,7 @@ func (c *Client) MpdGetQueue() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "mpd_get_queue", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdQueueResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -98,7 +98,7 @@ func (c *Client) MpdBrowseDir(path string) {
 			"id":   id,
 			"path": path,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdDirResultMsg
 		msg.Path = path
 		if raw.Err != nil {
@@ -164,7 +164,7 @@ func (c *Client) MpdListArtists() {
 			"id":   id,
 			"what": "artists",
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdLibraryResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -197,7 +197,7 @@ func (c *Client) MpdListAlbums(artist string) {
 			"what":   "albums",
 			"artist": artist,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdLibraryResultMsg
 		msg.ForArtist = artist
 		if raw.Err != nil {
@@ -232,7 +232,7 @@ func (c *Client) MpdListSongs(artist, album string) {
 			"artist": artist,
 			"album":  album,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdLibraryResultMsg
 		msg.ForArtist = artist
 		msg.ForAlbum = album
@@ -282,7 +282,7 @@ func (c *Client) MpdGetPlaylists() {
 	go func() {
 		id := c.nextID()
 		ch := c.sendWithID(id, map[string]any{"type": "mpd_get_playlists", "id": id})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdPlaylistsResultMsg
 		if raw.Err != nil {
 			msg.Err = raw.Err
@@ -313,7 +313,7 @@ func (c *Client) MpdGetPlaylistTracks(name string) {
 			"id":   id,
 			"name": name,
 		})
-		raw := <-ch
+		raw := receiveWithTimeout(ch)
 		var msg MpdPlaylistTracksResultMsg
 		msg.Name = name
 		if raw.Err != nil {
