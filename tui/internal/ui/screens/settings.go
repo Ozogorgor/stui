@@ -952,10 +952,17 @@ func (m SettingsModel) View() tea.View {
 		Render(leftContent)
 
 	// ── Right panel layout ──────────────────────────────────────────────
+	// The right panel has a fixed maximum width so long values (paths,
+	// URLs, outputs) can't stretch the page horizontally. Anything that
+	// doesn't fit is truncated with an ellipsis (see rendering below).
+	const rightOuterMax = 72
 	leftOuterW := leftInnerW + 2 // +2 for border
 	rightOuterW := m.width - leftOuterW - 4
 	if rightOuterW < 24 {
 		rightOuterW = 24
+	}
+	if rightOuterW > rightOuterMax {
+		rightOuterW = rightOuterMax
 	}
 	rightInnerW := rightOuterW - 2 // -2 for border
 	// Reserve 1 col for scrollbar and 1 col of gap before it.
@@ -1018,18 +1025,33 @@ func (m SettingsModel) View() tea.View {
 			if selected {
 				prefix = "▶ "
 			}
-			labelPad := fmt.Sprintf("%-*s", labelW, item.label)
+			// Label is fixed-width, truncated if somehow longer.
+			labelTrunc := item.label
+			if len(labelTrunc) > labelW {
+				labelTrunc = truncate(labelTrunc, labelW)
+			}
+			labelPad := fmt.Sprintf("%-*s", labelW, labelTrunc)
 			var style lipgloss.Style
 			if selected {
 				style = itemActiveStyle
 			} else {
 				style = itemNormalStyle
 			}
+			// Value gets whatever space is left after the prefix (2) + label.
+			valW := rightListW - 2 - labelW
+			if valW < 3 {
+				valW = 3
+			}
 			var val string
 			if m.editing && selected && item.kind == settingPath {
+				// Textinput already sizes itself to its configured width.
 				val = m.editInput.View()
 			} else {
-				val = valStyle.Render(item.displayValue())
+				raw := item.displayValue()
+				if len(raw) > valW {
+					raw = truncate(raw, valW)
+				}
+				val = valStyle.Render(raw)
 			}
 			rowText = style.Render(prefix+labelPad) + val
 		}
@@ -1048,6 +1070,11 @@ func (m SettingsModel) View() tea.View {
 	if m.inCategory && m.itemCursor < len(cat.items) {
 		desc := cat.items[m.itemCursor].description
 		if desc != "" {
+			// Reserve "  " prefix, leave the rest for the text itself.
+			maxDescW := rightInnerW - 2
+			if maxDescW > 0 && len(desc) > maxDescW {
+				desc = truncate(desc, maxDescW)
+			}
 			descLine = valStyle.Render("  " + desc)
 		}
 	}
@@ -1115,6 +1142,9 @@ func currentExtraMusicDirs(cats []settingCategory) []string {
 }
 
 func padOrTruncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
 	vis := lipgloss.Width(s)
 	if vis == w {
 		return s
@@ -1122,10 +1152,34 @@ func padOrTruncate(s string, w int) string {
 	if vis < w {
 		return s + strings.Repeat(" ", w-vis)
 	}
-	// Overflow — let lipgloss decide by truncating the rendered width.
-	// A hard-truncate on bytes would break ANSI sequences, so fall back
-	// to returning s (upstream is responsible for fitting it).
-	return s
+	// Overflow — truncate ANSI-aware by walking runes and skipping escape
+	// sequences when counting width. A trailing reset closes any open SGR.
+	var out strings.Builder
+	visible := 0
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			out.WriteRune(r)
+			continue
+		}
+		if inEscape {
+			out.WriteRune(r)
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		if visible >= w-1 {
+			out.WriteRune('…')
+			visible++
+			break
+		}
+		out.WriteRune(r)
+		visible++
+	}
+	out.WriteString("\x1b[0m")
+	return out.String()
 }
 
 // ── Default categories ────────────────────────────────────────────────────────
