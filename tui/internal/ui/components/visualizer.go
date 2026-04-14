@@ -157,6 +157,7 @@ type VisualizerBackend int
 
 const (
 	VisualizerOff    VisualizerBackend = iota // no visualizer
+	VisualizerCliamp                          // built-in CLI FFT renderer
 	VisualizerCava                            // cava --raw mode
 	VisualizerChroma                          // chroma --output raw
 )
@@ -191,12 +192,14 @@ func DefaultVisualizerConfig() VisualizerConfig {
 // BackendFromString parses a backend name (as stored in settings).
 func BackendFromString(s string) VisualizerBackend {
 	switch strings.ToLower(s) {
+	case "cliamp":
+		return VisualizerCliamp
 	case "cava":
 		return VisualizerCava
 	case "chroma":
 		return VisualizerChroma
 	default:
-		return VisualizerOff
+		return VisualizerCliamp // default to cliamp
 	}
 }
 
@@ -216,14 +219,15 @@ type VisualizerErrMsg struct{ Err error }
 const peakHoldFrames = 30 // frames to hold peak before decaying
 
 type Visualizer struct {
-	mu      sync.RWMutex
-	cfg     VisualizerConfig
-	bars    []float64 // normalized amplitudes 0.0–1.0, len = cfg.Bars
-	peaks   []float64 // peak hold values (decay over time)
-	peakAge []int     // frames since last peak update
-	cancel  context.CancelFunc
-	done    chan struct{}  // closed when the reader goroutine exits
-	fftViz  *FftVisualizer // persistent FFT visualizer for CLIAMP modes
+	mu            sync.RWMutex
+	cfg           VisualizerConfig
+	bars          []float64 // normalized amplitudes 0.0–1.0, len = cfg.Bars
+	peaks         []float64 // peak hold values (decay over time)
+	peakAge       []int     // frames since last peak update
+	cancel        context.CancelFunc
+	done          chan struct{}  // closed when the reader goroutine exits
+	fftViz        *FftVisualizer // persistent FFT visualizer for CLIAMP modes
+	runningCliamp bool           // true when cliamp backend is active
 }
 
 // NewVisualizer creates a Visualizer in the stopped state.
@@ -255,6 +259,11 @@ func (v *Visualizer) Reconfigure(cfg VisualizerConfig) tea.Cmd {
 	v.mu.Unlock()
 	if cfg.Backend == VisualizerOff {
 		return nil
+	}
+	if cfg.Backend == VisualizerCliamp {
+		// Built-in renderer: no subprocess needed
+		v.runningCliamp = true
+		return v.TickCmd()
 	}
 	if err := v.Start(); err != nil {
 		return func() tea.Msg { return VisualizerErrMsg{Err: err} }
@@ -336,6 +345,7 @@ func (v *Visualizer) Stop() {
 		v.cancel()
 		v.cancel = nil
 	}
+	v.runningCliamp = false
 	<-v.done // wait for goroutine
 	// Reset bar heights so the display goes quiet immediately
 	v.mu.Lock()
@@ -352,7 +362,7 @@ func (v *Visualizer) Stop() {
 
 // IsRunning reports whether the subprocess is currently active.
 func (v *Visualizer) IsRunning() bool {
-	return v.cancel != nil
+	return v.cancel != nil || v.runningCliamp
 }
 
 // Config returns the current config (read-safe).

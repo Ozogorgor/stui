@@ -217,6 +217,19 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			}
 		case "c":
 			s.client.MpdCmd("mpd_clear", nil)
+		case "D":
+			// Remove duplicate tracks (same file path) from the queue,
+			// keeping the first occurrence of each.
+			if s.client != nil && len(s.tracks) > 0 {
+				seen := make(map[string]struct{}, len(s.tracks))
+				for _, t := range s.tracks {
+					if _, dup := seen[t.File]; dup {
+						s.client.MpdCmd("mpd_remove", map[string]any{"id": t.ID})
+					} else {
+						seen[t.File] = struct{}{}
+					}
+				}
+			}
 		case "enter":
 			if len(s.tracks) > 0 && s.cursor < len(s.tracks) {
 				trackID := s.tracks[s.cursor].ID
@@ -651,60 +664,111 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 // HandleMouse handles a left-click within the queue's own coordinate space.
 // localY 0 is the top border row of the boxes; localY 1 is the column header.
 // Clicks in the right panel volume bar adjust volume.
+// HandleMouse handles a left-click within the queue's own coordinate space.
+//
+// Wide layout (>80 cols) — the View produces:
+//
+//	localY 0 = top border of left/right box
+//	localY 1 = column header row
+//	localY 2..2+TH-1 = track rows
+//	localY 2+TH = bottom border
+//
+// Narrow layout (≤80 cols):
+//
+//	localY 0 = queue header row
+//	localY 1..listH = track rows
 func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
-	// ── Right-panel volume bar click ──────────────────────────────────────
-	// Right panel starts at x = leftBoxW (outer border).  Inner content at
-	// leftBoxW+1 .. leftBoxW+innerR.  localY 0 = top border; content at ≥1.
 	const rightBoxW = 24
-	const innerR    = 22
-	leftBoxW  := s.width - rightBoxW
-	_, _, albumW := queueColWidths(leftBoxW - 2)
-	artRows  := innerR / 2 // = 11 with innerR=22
-	metaRows := 6          // TITLE+ARTIST+DURATION, 2 rows each
-	if albumW > 0 {
-		metaRows = 8 // +ALBUM
-	}
-	// Volume bar is at inner content row (artRows + metaRows + 2 seek rows).
-	volBarInnerRow := artRows + metaRows + 2
-	volBarLocalY   := volBarInnerRow + 1 // +1 for the box top border
+	const innerR = 22
+	isWide := s.width > 80
+	leftBoxW := s.width - rightBoxW
 
-	if x > leftBoxW && x <= leftBoxW+innerR+1 && localY == volBarLocalY {
-		blockX := x - leftBoxW - 1 // 0 … innerR-1
-		if blockX >= 0 && blockX < numVolBlocks {
-			newVol := (blockX + 1) * 100 / numVolBlocks
-			if newVol > 100 {
-				newVol = 100
-			}
-			if s.client != nil {
-				s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": newVol})
-			}
-			s.nowVolume = uint32(newVol)
-			s.nowMuted = false
+	// Match View's vizHeight calculation exactly (no +2 for border).
+	vizHeight := 0
+	if s.visualizer != nil && s.visualizer.IsRunning() {
+		vizHeight = s.visualizer.Config().Height
+	}
+
+	// Track list height — mirror View's TH/listHeight calculation.
+	var trackListH int
+	if isWide {
+		boxH := s.height - vizHeight
+		if boxH < 3 {
+			boxH = 3
 		}
-		return s
+		innerBoxH := boxH - 2
+		trackListH = innerBoxH - 1 // first inner row is column header
+		if trackListH < 1 {
+			trackListH = 1
+		}
+	} else {
+		trackListH = s.height - 1
+		if trackListH < 1 {
+			trackListH = 1
+		}
+	}
+
+	// ── Right-panel volume bar click (wide only) ──────────────────────────
+	// buildRightPanel(innerBoxH, ..., innerR) renders:
+	//   art placeholder : innerR/2 + 2 lines (inner content + top/bottom border)
+	//   metadata        : 6 or 8 lines (3 or 4 label+value pairs)
+	//   seek bar        : 2 lines
+	//   volume bar      : 2 lines
+	if isWide {
+		_, _, albumW := queueColWidths(leftBoxW - 2)
+		artRows := innerR/2 + 2
+		metaRows := 6
+		if albumW > 0 {
+			metaRows = 8
+		}
+		volBarInnerRow := artRows + metaRows + 2 // after art+meta+seek
+		volBarLocalY := volBarInnerRow + 1        // +1 for right-box top border
+
+		if x > leftBoxW && x <= leftBoxW+innerR+1 && localY == volBarLocalY {
+			blockX := x - leftBoxW - 1
+			if blockX >= 0 && blockX < numVolBlocks {
+				newVol := (blockX + 1) * 100 / numVolBlocks
+				if newVol > 100 {
+					newVol = 100
+				}
+				if s.client != nil {
+					s.client.MpdCmd("mpd_set_volume", map[string]any{"volume": newVol})
+				}
+				s.nowVolume = uint32(newVol)
+				s.nowMuted = false
+			}
+			return s
+		}
 	}
 
 	// ── Track list click ──────────────────────────────────────────────────
-	if localY < 1 {
+	var trackRow int
+	if isWide {
+		// localY 0 = top border, localY 1 = column header, localY 2+ = tracks.
+		if localY < 2 {
+			return s
+		}
+		trackRow = localY - 2
+	} else {
+		// localY 0 = queue header, localY 1+ = tracks.
+		if localY < 1 {
+			return s
+		}
+		trackRow = localY - 1
+	}
+	if trackRow >= trackListH {
 		return s
 	}
-	listHeight := s.height - 4
-	if listHeight < 1 {
-		listHeight = 1
-	}
-	trackRow := localY - 1 // 0-based within the visible list
-	if trackRow >= listHeight {
-		return s
-	}
-	// Recompute scroll the same way View does.
+
+	// Recompute scroll the same way VirtualizedList (ScrollModeCenter) does.
 	scroll := 0
-	if len(s.tracks) > listHeight {
-		scroll = s.cursor - listHeight/2
+	if len(s.tracks) > trackListH {
+		scroll = s.cursor - trackListH/2
 		if scroll < 0 {
 			scroll = 0
 		}
-		if scroll > len(s.tracks)-listHeight {
-			scroll = len(s.tracks) - listHeight
+		if scroll > len(s.tracks)-trackListH {
+			scroll = len(s.tracks) - trackListH
 		}
 	}
 	idx := scroll + trackRow

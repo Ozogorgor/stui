@@ -14,7 +14,6 @@ package screens
 
 import (
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -98,12 +97,20 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
-		// Fan out to all sub-screens.
+		// Fan out to sub-screens with the tab-bar rows subtracted so that
+		// s.queue.height (etc.) matches the h passed to View(), keeping
+		// HandleMouse height calculations in sync with the rendered layout.
+		const tabBarRows = 3
+		subH := m.Height - tabBarRows
+		if subH < 0 {
+			subH = 0
+		}
+		subMsg := tea.WindowSizeMsg{Width: m.Width, Height: subH}
 		var b1, b2, b3, b4 tea.Cmd
-		s.browse, b1 = s.browse.Update(m)
-		s.queue, b2 = s.queue.Update(m)
-		s.library, b3 = s.library.Update(m)
-		s.playlists, b4 = s.playlists.Update(m)
+		s.browse, b1 = s.browse.Update(subMsg)
+		s.queue, b2 = s.queue.Update(subMsg)
+		s.library, b3 = s.library.Update(subMsg)
+		s.playlists, b4 = s.playlists.Update(subMsg)
 		return s, tea.Batch(b1, b2, b3, b4)
 
 	case tea.KeyPressMsg:
@@ -165,9 +172,9 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 // View renders the sub-tab bar followed by the active sub-screen.
 func (s MusicScreen) View() tea.View {
 	tabBar := s.renderSubTabBar()
-	// s.height is set by computeMusicHeight() in ui.go, which already accounts
-	// for whether the footer is shown. Simply subtract the 2-row subtab bar.
-	subH := s.height - 2
+	// Tab bar is 3 rows: top border + label row + bottom border/underline.
+	const tabBarRows = 3
+	subH := s.height - tabBarRows
 	if subH < 0 {
 		subH = 0
 	}
@@ -187,11 +194,8 @@ func (s MusicScreen) View() tea.View {
 
 // renderSubTabBar builds the two-line sub-tab header.
 func (s MusicScreen) renderSubTabBar() string {
-	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-
 	tabs := []MusicSubTab{MusicBrowse, MusicQueue, MusicLibrary, MusicPlaylists}
-	var parts []string
+	var options []components.TabOption
 	for _, t := range tabs {
 		var label string
 		if t == MusicQueue && len(s.queue.tracks) > 0 {
@@ -199,41 +203,29 @@ func (s MusicScreen) renderSubTabBar() string {
 		} else {
 			label = t.String()
 		}
-
-		if t == s.active {
-			parts = append(parts, accentStyle.Render("[ "+label+" ]"))
-		} else {
-			parts = append(parts, dimStyle.Render(label))
-		}
+		options = append(options, components.TabOption{
+			Label:    label,
+			IsActive: t == s.active,
+		})
 	}
-
-	tabLine := "  " + strings.Join(parts, "  ")
-	sepW := s.width
-	if sepW < 1 {
-		sepW = 1
-	}
-	sep := dimStyle.Render(strings.Repeat("─", sepW))
-	return tabLine + "\n" + sep
+	return components.RenderTabs(options, theme.T.Border(), theme.T.Accent(), s.width)
 }
 
 // HandleMouse routes a left-click to the correct sub-screen given a Y
 // coordinate relative to the music section's own top row (i.e. after the
 // app-level top bar and any overlay rows have been subtracted).
 //
-//	relY == 0      → sub-tab bar row (hit-test by X)
-//	relY == 1      → separator line (ignored)
-//	relY >= 2      → body; passed as localY = relY-2 to the active sub-screen
+// The tab bar spans 3 rows (top border + label + bottom border/underline).
+// Any click within those rows hit-tests the tabs; clicks below are body.
 func (s MusicScreen) HandleMouse(x, relY int) (MusicScreen, tea.Cmd) {
-	if relY == 0 {
+	const tabBarRows = 3
+	if relY < tabBarRows {
 		if tab, ok := s.hitTestSubTabBar(x); ok {
 			s.active = tab
 		}
 		return s, nil
 	}
-	if relY == 1 {
-		return s, nil // separator
-	}
-	bodyY := relY - 2
+	bodyY := relY - tabBarRows
 	var cmd tea.Cmd
 	switch s.active {
 	case MusicBrowse:
@@ -249,10 +241,22 @@ func (s MusicScreen) HandleMouse(x, relY int) (MusicScreen, tea.Cmd) {
 }
 
 // hitTestSubTabBar returns the sub-tab at horizontal position x, or false if
-// x falls outside all tab labels.
+// x falls outside all tab areas. Widths are computed by rendering each tab
+// with the same style RenderTabs uses, so hit-boxes exactly match the view.
 func (s MusicScreen) hitTestSubTabBar(x int) (MusicSubTab, bool) {
 	tabs := []MusicSubTab{MusicBrowse, MusicQueue, MusicLibrary, MusicPlaylists}
-	pos := 2 // "  " prefix (MainCardStyle left offset already subtracted by caller)
+
+	// Mirror RenderTabs's border shape so lipgloss.Width gives matching columns.
+	activeBorder := lipgloss.Border{
+		Top: "─", Bottom: " ", Left: "│", Right: "│",
+		TopLeft: "╭", TopRight: "╮", BottomLeft: "┘", BottomRight: "└",
+	}
+	inactiveBorder := lipgloss.Border{
+		Top: "─", Bottom: "─", Left: "│", Right: "│",
+		TopLeft: "╭", TopRight: "╮", BottomLeft: "┴", BottomRight: "┴",
+	}
+
+	pos := 0
 	for _, t := range tabs {
 		var label string
 		if t == MusicQueue && len(s.queue.tracks) > 0 {
@@ -260,16 +264,24 @@ func (s MusicScreen) hitTestSubTabBar(x int) (MusicSubTab, bool) {
 		} else {
 			label = t.String()
 		}
-		var width int
+		var style lipgloss.Style
 		if t == s.active {
-			width = len("[ " + label + " ]")
+			style = lipgloss.NewStyle().
+				Border(activeBorder, true).
+				BorderForeground(theme.T.Accent()).
+				Padding(0, 1).
+				Bold(true)
 		} else {
-			width = len(label)
+			style = lipgloss.NewStyle().
+				Border(inactiveBorder, true).
+				BorderForeground(theme.T.Border()).
+				Padding(0, 1)
 		}
+		width := lipgloss.Width(style.Render(label))
 		if x >= pos && x < pos+width {
 			return t, true
 		}
-		pos += width + 2 // two-space separator
+		pos += width // RenderTabs uses JoinHorizontal with no gap
 	}
 	return 0, false
 }

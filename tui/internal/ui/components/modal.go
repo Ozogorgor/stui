@@ -166,6 +166,131 @@ func (d *ConfirmDialog) IsFocused() bool {
 	return d.focused
 }
 
+// Dialog is an immutable value-type pop-up with a message and selectable
+// buttons. Navigate with h/l or ←/→, confirm with enter, cancel with esc.
+//
+// Usage:
+//
+//	d := components.NewDialog("Add 'Song Title'?",
+//	    []string{"Add to queue", "Replace queue", "Cancel"})
+//
+//	// In Update:
+//	d, chosen, dismissed = d.Update(key)
+//
+//	// In View — overlay centered in the available area:
+//	if dialogOpen {
+//	    return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, d.Render())
+//	}
+type Dialog struct {
+	Message string
+	Options []string
+	Cursor  int
+}
+
+// NewDialog creates a Dialog with the cursor on the first option.
+func NewDialog(message string, options []string) Dialog {
+	return Dialog{Message: message, Options: options}
+}
+
+// Update handles a key string. Returns the updated dialog, the chosen option
+// index (or -1 on esc/cancel), and whether the dialog was dismissed.
+func (d Dialog) Update(key string) (out Dialog, chosen int, dismissed bool) {
+	out = d
+	switch key {
+	case "h", "left":
+		if out.Cursor > 0 {
+			out.Cursor--
+		}
+	case "l", "right", "tab":
+		if out.Cursor < len(out.Options)-1 {
+			out.Cursor++
+		}
+	case "enter":
+		return out, out.Cursor, true
+	case "esc":
+		return out, -1, true
+	}
+	return out, -1, false
+}
+
+// Render returns the styled dialog box string. Center it with lipgloss.Place.
+func (d Dialog) Render() string {
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+
+	// Message.
+	const msgMaxW = 38
+	wrapped := dialogWrapText(d.Message, msgMaxW)
+	msgLines := make([]string, len(wrapped))
+	for i, l := range wrapped {
+		msgLines[i] = textStyle.Render(l)
+	}
+	msgBlock := strings.Join(msgLines, "\n")
+
+	// Buttons: selected = solid accent fill; unselected = rounded border.
+	var btnParts []string
+	for i, label := range d.Options {
+		if i == d.Cursor {
+			btn := lipgloss.NewStyle().
+				Background(theme.T.Accent()).
+				Foreground(theme.T.Bg()).
+				Bold(true).
+				Padding(0, 2).
+				Render(label)
+			btnParts = append(btnParts, btn)
+		} else {
+			btn := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(theme.T.Border()).
+				Foreground(theme.T.TextDim()).
+				Padding(0, 1).
+				Render(label)
+			btnParts = append(btnParts, btn)
+		}
+	}
+	buttonRow := lipgloss.JoinHorizontal(lipgloss.Center, btnParts...)
+
+	hint := dimStyle.Render("← → navigate · enter · esc cancel")
+
+	inner := lipgloss.JoinVertical(lipgloss.Center,
+		msgBlock,
+		"",
+		buttonRow,
+		"",
+		hint,
+	)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Padding(1, 3).
+		Render(inner)
+}
+
+// dialogWrapText wraps s into lines of at most maxW visible characters.
+func dialogWrapText(s string, maxW int) []string {
+	var lines []string
+	words := strings.Fields(s)
+	cur := ""
+	for _, w := range words {
+		if cur == "" {
+			cur = w
+		} else if len(cur)+1+len(w) <= maxW {
+			cur += " " + w
+		} else {
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
+}
+
 func wrapDialogText(text string, maxWidth int) []string {
 	var lines []string
 	words := strings.Fields(text)

@@ -71,6 +71,17 @@ type MusicLibraryScreen struct {
 	dirScroll  int
 	loadingDir bool
 
+	// Footer status message (e.g. "Added 'Track' to queue").
+	statusMsg string
+
+	// queueFiles tracks file paths currently in the MPD queue for dedup checks.
+	queueFiles map[string]struct{}
+
+	// Track-action dialog (shown when Enter is pressed on a track).
+	dialogOpen bool
+	dialog     components.Dialog
+	dialogSong ipc.MpdSong
+
 	spinner      components.Spinner
 	loadingStart time.Time
 }
@@ -152,6 +163,14 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 			}
 		}
 
+	case ipc.MpdQueueResultMsg:
+		if m.Err == nil {
+			s.queueFiles = make(map[string]struct{}, len(m.Tracks))
+			for _, t := range m.Tracks {
+				s.queueFiles[t.File] = struct{}{}
+			}
+		}
+
 	case ipc.MpdDirResultMsg:
 		if m.Err == nil {
 			s.dirEntries = m.Entries
@@ -171,6 +190,32 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 
 // handleTagKey processes key events in tag-browser mode.
 func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
+	// Dialog intercepts all keys when open.
+	if s.dialogOpen {
+		var chosen int
+		var dismissed bool
+		s.dialog, chosen, dismissed = s.dialog.Update(key)
+		if dismissed {
+			s.dialogOpen = false
+			if s.client != nil {
+				switch chosen {
+				case 0: // Add to queue
+					if _, exists := s.queueFiles[s.dialogSong.File]; exists {
+						s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
+					} else {
+						s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+						s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
+					}
+				case 1: // Replace queue
+					s.client.MpdCmd("mpd_clear", nil)
+					s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+					s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
+				}
+			}
+		}
+		return s
+	}
+
 	switch key {
 	case "j", "down":
 		switch s.activePane {
@@ -260,9 +305,15 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				s.client.MpdListSongs(s.artists[s.artistCursor].Name, s.albums[s.albumCursor].Title)
 			}
 		case LibPaneTracks:
-			// Add the selected song to the queue
-			if len(s.songs) > 0 && s.songCursor < len(s.songs) && s.client != nil {
-				s.client.MpdCmd("mpd_add", map[string]any{"uri": s.songs[s.songCursor].File})
+			// Open the track-action dialog instead of adding immediately.
+			if len(s.songs) > 0 && s.songCursor < len(s.songs) {
+				song := s.songs[s.songCursor]
+				s.dialogSong = song
+				s.dialog = components.NewDialog(
+					"What to do with '"+truncate(song.Title, 28)+"'?",
+					[]string{"Add to queue", "Replace queue", "Cancel"},
+				)
+				s.dialogOpen = true
 			}
 		}
 
@@ -285,7 +336,13 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				}
 			case LibPaneTracks:
 				if len(s.songs) > 0 && s.songCursor < len(s.songs) {
-					s.client.MpdCmd("mpd_add", map[string]any{"uri": s.songs[s.songCursor].File})
+					song := s.songs[s.songCursor]
+					if _, exists := s.queueFiles[song.File]; exists {
+						s.statusMsg = "'" + song.Title + "' is already in the queue"
+					} else {
+						s.client.MpdCmd("mpd_add", map[string]any{"uri": song.File})
+						s.statusMsg = "Added '" + song.Title + "' to queue"
+					}
 				}
 			}
 		}
@@ -671,11 +728,22 @@ func (s MusicLibraryScreen) artistNames() []string {
 	return names
 }
 
-// albumNames returns the list of album titles for rendering.
+// albumNames returns album display strings. When a release year is present,
+// albums are prefixed as "[YYYY] Title" so same-titled releases can be
+// distinguished. Any date longer than 4 chars (e.g. "1996-11-01") is
+// trimmed to just the year.
 func (s MusicLibraryScreen) albumNames() []string {
 	names := make([]string, len(s.albums))
 	for i, a := range s.albums {
-		names[i] = a.Title
+		if a.Year != "" {
+			year := a.Year
+			if len(year) > 4 {
+				year = year[:4]
+			}
+			names[i] = "[" + year + "] " + a.Title
+		} else {
+			names[i] = a.Title
+		}
 	}
 	return names
 }
