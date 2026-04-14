@@ -606,14 +606,15 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
 
-	// Find current track
-	var curTrack *ipc.MpdTrack
-	for i := range s.tracks {
-		if s.isCurrentTrack(s.tracks[i]) {
-			curTrack = &s.tracks[i]
-			break
-		}
+	// The right panel follows the CURSOR track so users can preview metadata
+	// and duration while browsing. If the cursor is on the currently playing
+	// track, the seek bar shows real elapsed/duration; otherwise it shows
+	// 0:00 / track-duration with an empty progress channel.
+	var selTrack *ipc.MpdTrack
+	if s.cursor >= 0 && s.cursor < len(s.tracks) {
+		selTrack = &s.tracks[s.cursor]
 	}
+	selIsPlaying := selTrack != nil && s.isCurrentTrack(*selTrack)
 
 	valStr := func(v string) string {
 		if v == "" {
@@ -628,17 +629,17 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	artLines := strings.Split(strings.TrimRight(queueArtPlaceholder(innerW), "\n"), "\n")
 	lines = append(lines, artLines...)
 
-	// 2. Metadata (label+value rows)
+	// 2. Metadata (label+value rows), pulled from the selected track.
 	type metaField struct{ label, value string }
 	var fields []metaField
-	if curTrack != nil {
+	if selTrack != nil {
 		fields = []metaField{
-			{"TITLE",    curTrack.Title},
-			{"ARTIST",   curTrack.Artist},
-			{"DURATION", fmtMusicDuration(curTrack.Duration)},
+			{"TITLE", selTrack.Title},
+			{"ARTIST", selTrack.Artist},
+			{"DURATION", fmtMusicDuration(selTrack.Duration)},
 		}
 		if showAlbum {
-			fields = append(fields, metaField{"ALBUM", curTrack.Album})
+			fields = append(fields, metaField{"ALBUM", selTrack.Album})
 		}
 	} else {
 		fields = []metaField{{"TITLE", ""}, {"ARTIST", ""}, {"DURATION", ""}}
@@ -651,8 +652,17 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 		lines = append(lines, valStr(f.value))
 	}
 
-	// 3. Seek bar (2 rows)
-	barRow, timeRow := queueSeekBar(s.nowElapsed, s.nowDuration, innerW)
+	// 3. Seek bar (2 rows). If the cursor is on the playing track use the
+	// live elapsed; otherwise show 0:00 against the selected track's
+	// duration with an empty bar.
+	var elapsed, duration float64
+	if selIsPlaying {
+		elapsed = s.nowElapsed
+		duration = s.nowDuration
+	} else if selTrack != nil {
+		duration = selTrack.Duration
+	}
+	barRow, timeRow := queueSeekBar(elapsed, duration, innerW)
 	lines = append(lines, accentStyle.Render(barRow))
 	lines = append(lines, dimStyle.Render(timeRow))
 
