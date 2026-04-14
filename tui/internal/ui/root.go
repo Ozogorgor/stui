@@ -42,6 +42,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ui/screen"
+	"github.com/stui/stui/internal/ui/screens"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -216,6 +217,17 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mm, ok := msg.(tea.MouseMsg); ok {
 			msg = r.translateOverlayMouse(mm)
 		}
+		// App-level messages emitted by the overlay (e.g. SettingsChangedMsg)
+		// must also reach the active screen — that's where persistence and
+		// runtime IPC live. Without this fan-out the active screen never
+		// sees them because the overlay branch returns early.
+		if shouldFanOutToActive(msg) {
+			activeNext, activeCmd := r.active.Update(msg)
+			r.active = activeNext
+			overlayNext, overlayCmd := r.overlay.Update(msg)
+			r.overlay = overlayNext
+			return r, tea.Batch(activeCmd, overlayCmd)
+		}
 		next, cmd := r.overlay.Update(msg)
 		r.overlay = next
 		return r, cmd
@@ -258,6 +270,18 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := r.active.Update(msg)
 	r.active = next
 	return r, cmd
+}
+
+// shouldFanOutToActive returns true for messages that an overlay-emitted
+// command sends but that need to be processed by the underlying active
+// screen as well (for persistence, IPC, etc.). Currently this covers the
+// settings-change message family.
+func shouldFanOutToActive(msg tea.Msg) bool {
+	switch msg.(type) {
+	case screens.SettingsChangedMsg:
+		return true
+	}
+	return false
 }
 
 // translateOverlayMouse converts a raw terminal mouse event into one whose
