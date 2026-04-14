@@ -43,6 +43,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/config"
 	"github.com/stui/stui/pkg/theme"
@@ -757,7 +758,7 @@ func (m SettingsModel) View() tea.View {
 		return tea.NewView("  ⚙  Settings\n")
 	}
 
-	// Styles
+	// ── Styles ─────────────────────────────────────────────────────────────
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.T.Accent()).
@@ -765,13 +766,19 @@ func (m SettingsModel) View() tea.View {
 
 	catActiveStyle := lipgloss.NewStyle().
 		Foreground(theme.T.Accent()).
+		Background(theme.T.Surface()).
 		Bold(true)
 
 	catNormalStyle := lipgloss.NewStyle().
-		Foreground(theme.T.Text())
+		Foreground(theme.T.Text()).
+		Background(theme.T.Surface())
 
 	catDimStyle := lipgloss.NewStyle().
-		Foreground(theme.T.TextDim())
+		Foreground(theme.T.TextDim()).
+		Background(theme.T.Surface())
+
+	leftBgStyle := lipgloss.NewStyle().
+		Background(theme.T.Surface())
 
 	itemActiveStyle := lipgloss.NewStyle().
 		Foreground(theme.T.Accent()).
@@ -783,94 +790,169 @@ func (m SettingsModel) View() tea.View {
 	valStyle := lipgloss.NewStyle().
 		Foreground(theme.T.TextDim())
 
-	// ── Header ──────────────────────────────────────────────────────────
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+
+	// ── Header ─────────────────────────────────────────────────────────────
 	header := headerStyle.Render("⚙  Settings")
 
-	// ── Left: categories ─────────────────────────────────────────────────
-	leftW := 18
-	var catLines []string
-	for i, cat := range m.categories {
-		prefix := "  "
-		if i == m.catCursor {
-			prefix = "▶ "
-		}
-		label := cat.icon + " " + cat.name
-		var style lipgloss.Style
-		switch {
-		case i == m.catCursor && !m.inCategory:
-			style = catActiveStyle
-		case i == m.catCursor:
-			style = catNormalStyle
-		default:
-			style = catDimStyle
-		}
-		catLines = append(catLines, style.Render(prefix+label))
+	// ── Left panel layout: width + box height driven by category count ────
+	const leftInnerW = 20 // inner content width of the categories box
+	leftInnerH := len(m.categories)
+	if leftInnerH < 4 {
+		leftInnerH = 4 // keep a minimal body even with few categories
 	}
+	boxInnerH := leftInnerH // both panels share this inner height (baseline)
+
+	// ── Left panel: categories with dim Surface background ───────────────
+	catLines := make([]string, boxInnerH)
+	for i := 0; i < boxInnerH; i++ {
+		if i < len(m.categories) {
+			cat := m.categories[i]
+			prefix := "  "
+			if i == m.catCursor {
+				prefix = "▶ "
+			}
+			label := cat.icon + " " + cat.name
+			raw := prefix + label
+			var style lipgloss.Style
+			switch {
+			case i == m.catCursor && !m.inCategory:
+				style = catActiveStyle
+			case i == m.catCursor:
+				style = catNormalStyle
+			default:
+				style = catDimStyle
+			}
+			catLines[i] = style.Width(leftInnerW).Render(raw)
+		} else {
+			catLines[i] = leftBgStyle.Width(leftInnerW).Render(" ")
+		}
+	}
+	leftContent := strings.Join(catLines, "\n")
 	leftPanel := lipgloss.NewStyle().
-		Width(leftW).
-		PaddingLeft(1).
-		Render(strings.Join(catLines, "\n"))
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Render(leftContent)
 
-	// ── Right: items ──────────────────────────────────────────────────────
-	rightW := m.width - leftW - 6
-	if rightW < 20 {
-		rightW = 20
+	// ── Right panel layout ──────────────────────────────────────────────
+	leftOuterW := leftInnerW + 2 // +2 for border
+	rightOuterW := m.width - leftOuterW - 4
+	if rightOuterW < 24 {
+		rightOuterW = 24
+	}
+	rightInnerW := rightOuterW - 2 // -2 for border
+	// Reserve 1 col for scrollbar and 1 col of gap before it.
+	rightListW := rightInnerW - 2
+	if rightListW < 10 {
+		rightListW = 10
 	}
 
+	// Header row (category name) + blank spacer consume 2 rows inside the
+	// right box; items + optional description footer fill the rest. Always
+	// reserve space for the scrollbar column.
 	cat := m.categories[m.catCursor]
-	var itemLines []string
-	itemLines = append(itemLines, catActiveStyle.Render("  "+cat.icon+" "+cat.name))
-	itemLines = append(itemLines, "")
-
-	for i, item := range cat.items {
-		if item.hidden {
-			continue
+	visibleItems := make([]*settingItem, 0, len(cat.items))
+	for i := range cat.items {
+		if !cat.items[i].hidden {
+			visibleItems = append(visibleItems, cat.items[i])
 		}
-		prefix := "  "
-		if m.inCategory && i == m.itemCursor {
-			prefix = "▶ "
-		}
-
-		labelW := rightW - 14
-		if labelW < 10 {
-			labelW = 10
-		}
-		labelPad := fmt.Sprintf("%-*s", labelW, item.label)
-
-		var style lipgloss.Style
-		if m.inCategory && i == m.itemCursor {
-			style = itemActiveStyle
-		} else {
-			style = itemNormalStyle
-		}
-
-		var val string
-		if m.editing && i == m.itemCursor && item.kind == settingPath {
-			// Render the live textinput instead of the plain value.
-			val = m.editInput.View()
-		} else {
-			val = valStyle.Render(item.displayValue())
-		}
-		line := style.Render(prefix+labelPad) + val
-		itemLines = append(itemLines, line)
 	}
 
-	// Footer hint for focused item
+	// Reserve 1 row for category title, 1 blank, 2 for description footer
+	// (label + its own blank above it). Remaining rows = item viewport.
+	const rightHeaderRows = 2 // title + blank
+	const rightFooterRows = 2 // blank + description line
+	itemsViewH := boxInnerH - rightHeaderRows - rightFooterRows
+	if itemsViewH < 1 {
+		itemsViewH = 1
+	}
+
+	// Scroll so the focused item is visible (center where possible).
+	scroll := 0
+	if len(visibleItems) > itemsViewH {
+		scroll = m.itemCursor - itemsViewH/2
+		if scroll < 0 {
+			scroll = 0
+		}
+		if scroll > len(visibleItems)-itemsViewH {
+			scroll = len(visibleItems) - itemsViewH
+		}
+	}
+	barChars := components.ScrollbarChars(scroll, itemsViewH, len(visibleItems), dimStyle)
+
+	// Build right column content rows.
+	rightLines := make([]string, 0, boxInnerH)
+	rightLines = append(rightLines, padOrTruncate(catActiveStyle.Render("  "+cat.icon+" "+cat.name), rightInnerW))
+	rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+
+	labelW := rightListW - 14
+	if labelW < 10 {
+		labelW = 10
+	}
+	for r := 0; r < itemsViewH; r++ {
+		idx := scroll + r
+		var rowText string
+		if idx < len(visibleItems) {
+			item := visibleItems[idx]
+			// itemCursor indexes into the original (non-filtered) cat.items slice;
+			// match on pointer equality.
+			selected := m.inCategory && m.itemCursor < len(cat.items) && cat.items[m.itemCursor] == item
+			prefix := "  "
+			if selected {
+				prefix = "▶ "
+			}
+			labelPad := fmt.Sprintf("%-*s", labelW, item.label)
+			var style lipgloss.Style
+			if selected {
+				style = itemActiveStyle
+			} else {
+				style = itemNormalStyle
+			}
+			var val string
+			if m.editing && selected && item.kind == settingPath {
+				val = m.editInput.View()
+			} else {
+				val = valStyle.Render(item.displayValue())
+			}
+			rowText = style.Render(prefix+labelPad) + val
+		}
+		rowText = padOrTruncate(rowText, rightListW)
+		// Append gap + scrollbar cell.
+		if r < len(barChars) {
+			rowText = rowText + " " + barChars[r]
+		} else {
+			rowText = rowText + "  "
+		}
+		rightLines = append(rightLines, padOrTruncate(rowText, rightInnerW))
+	}
+
+	// Description footer (2 rows) aligned to the selected item.
+	var descLine string
 	if m.inCategory && m.itemCursor < len(cat.items) {
-		item := cat.items[m.itemCursor]
-		if item.description != "" {
-			itemLines = append(itemLines, "")
-			itemLines = append(itemLines, valStyle.Render("  "+item.description))
+		desc := cat.items[m.itemCursor].description
+		if desc != "" {
+			descLine = valStyle.Render("  " + desc)
 		}
 	}
+	rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+	rightLines = append(rightLines, padOrTruncate(descLine, rightInnerW))
 
+	// Pad or truncate to boxInnerH so both columns align.
+	if len(rightLines) > boxInnerH {
+		rightLines = rightLines[:boxInnerH]
+	}
+	for len(rightLines) < boxInnerH {
+		rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+	}
+
+	rightContent := strings.Join(rightLines, "\n")
 	rightPanel := lipgloss.NewStyle().
-		Width(rightW).
-		PaddingLeft(2).
-		Render(strings.Join(itemLines, "\n"))
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Render(rightContent)
 
 	// ── Join panels ───────────────────────────────────────────────────────
-	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel)
 
 	// ── Footer ────────────────────────────────────────────────────────────
 	var footer string
@@ -881,6 +963,22 @@ func (m SettingsModel) View() tea.View {
 	}
 
 	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
+}
+
+// padOrTruncate ensures s has an exact visible width of w, padding with
+// spaces on the right or truncating (ANSI-aware via lipgloss.Width).
+func padOrTruncate(s string, w int) string {
+	vis := lipgloss.Width(s)
+	if vis == w {
+		return s
+	}
+	if vis < w {
+		return s + strings.Repeat(" ", w-vis)
+	}
+	// Overflow — let lipgloss decide by truncating the rendered width.
+	// A hard-truncate on bytes would break ANSI sequences, so fall back
+	// to returning s (upstream is responsible for fitting it).
+	return s
 }
 
 // ── Default categories ────────────────────────────────────────────────────────
