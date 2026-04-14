@@ -371,6 +371,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.client.SetTrace(true)
 		}
 		m.client.ListPlugins()
+		// Trigger an MPD database update on connect so the library reflects
+		// any music files added since the runtime last scanned.
+		m.client.MpdCmd("mpd_update", nil)
 		var musicInitCmd tea.Cmd
 		m.musicScreen, musicInitCmd = m.musicScreen.SetClient(m.client)
 		m.historyStore = watchhistory.NewIPCStore(msg.client)
@@ -930,6 +933,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Music:    getIfKey(msg.Key, "storage.music", v),
 						Podcasts: getIfKey(msg.Key, "storage.podcasts", v),
 					})
+					// When the music folder changes, ask MPD to rescan and
+					// reload the artist list so the library reflects the
+					// new folder's content immediately.
+					if msg.Key == "storage.music" {
+						m.client.MpdCmd("mpd_update", nil)
+						m.client.MpdListArtists()
+					}
 				}
 			} else {
 				m.client.SetConfig(msg.Key, msg.Value)
