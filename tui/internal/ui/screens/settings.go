@@ -565,30 +565,72 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				}
 			}
 		case mouse.Button == tea.MouseLeft:
-			// Handle click events
+			// Layout (matches View()):
+			//   row 0   header
+			//   row 1   blank
+			//   row 2   left/right box top border
+			//   row 3+  inner content (boxInnerH rows)
+			//
+			// Columns:
+			//   left box  : outer X=0..leftOuterW-1   (leftInnerW=20, +2 border)
+			//   1-col gap : X=leftOuterW
+			//   right box : outer X=leftOuterW+1..end (border around)
 			if clickMsg, ok := msg.(tea.MouseClickMsg); ok && clickMsg.Button == tea.MouseLeft {
-				// Layout: header at row 0, blank at row 1, body at row 2+.
-				// Left panel is leftW=18 wide with PaddingLeft(1).
-				const leftPanelW = 19 // 18 width + 1 padding
-				bodyRow := mouse.Y - 2
-				if bodyRow < 0 {
+				const leftInnerW = 20
+				const leftOuterW = leftInnerW + 2 // +2 for border
+
+				// Inner-row index (skip header, blank, top-border).
+				innerRow := mouse.Y - 3
+				if innerRow < 0 {
 					break
 				}
-				if mouse.X < leftPanelW+2 {
-					// Left panel: category click.
-					if bodyRow < len(m.categories) {
-						m.catCursor = bodyRow
+
+				inLeftContent := mouse.X >= 1 && mouse.X <= leftInnerW
+				inRightContent := mouse.X >= leftOuterW+1+1 // +1 gap, +1 right-box border
+
+				if inLeftContent {
+					if innerRow < len(m.categories) {
+						m.catCursor = innerRow
 						m.inCategory = false
 						m.itemCursor = 0
 					}
-				} else {
-					// Right panel: rows 0=cat header, 1=blank, 2+=items.
-					itemRow := bodyRow - 2
+				} else if inRightContent {
+					// Right inner rows: 0=cat header, 1=blank, 2..2+itemsViewH-1=items.
+					itemRow := innerRow - 2
 					if itemRow >= 0 {
 						cat := m.categories[m.catCursor]
-						if idx, ok := visibleItemAt(cat.items, itemRow); ok {
+						// Build the same visible list View() uses, then apply
+						// the same center-mode scroll to translate the row to
+						// an index.
+						visible := make([]int, 0, len(cat.items))
+						for i := range cat.items {
+							if !cat.items[i].hidden {
+								visible = append(visible, i)
+							}
+						}
+						boxInnerH := len(m.categories)
+						if boxInnerH < 4 {
+							boxInnerH = 4
+						}
+						const rightHeaderRows = 2
+						const rightFooterRows = 2
+						itemsViewH := boxInnerH - rightHeaderRows - rightFooterRows
+						if itemsViewH < 1 {
+							itemsViewH = 1
+						}
+						scroll := 0
+						if len(visible) > itemsViewH {
+							scroll = m.itemCursor - itemsViewH/2
+							if scroll < 0 {
+								scroll = 0
+							}
+							if scroll > len(visible)-itemsViewH {
+								scroll = len(visible) - itemsViewH
+							}
+						}
+						if itemRow < itemsViewH && scroll+itemRow < len(visible) {
 							m.inCategory = true
-							m.itemCursor = idx
+							m.itemCursor = visible[scroll+itemRow]
 						}
 					}
 				}
@@ -1123,26 +1165,6 @@ func defaultCategories() []settingCategory {
 			},
 		},
 		{
-			name: "Downloads",
-			icon: "⬇",
-			items: []*settingItem{
-				{
-					label:       "Video download dir",
-					key:         "downloads.video_dir",
-					kind:        settingPath,
-					strVal:      filepath.Join(settingsHomeDir, "Videos"),
-					description: "Directory for movie and series downloads (enter to edit)",
-				},
-				{
-					label:       "Music download dir",
-					key:         "downloads.music_dir",
-					kind:        settingPath,
-					strVal:      filepath.Join(settingsHomeDir, "Music"),
-					description: "Directory for music and audio downloads (enter to edit)",
-				},
-			},
-		},
-		{
 			name: "Subtitles",
 			icon: "💬",
 			items: []*settingItem{
@@ -1446,38 +1468,43 @@ func defaultCategories() []settingCategory {
 					kind:        settingInfo,
 					description: "MPD connection status (connected/disconnected)",
 				},
-				// ── Visualizer ───────────────────────────────────────────────
+			},
+		},
+		{
+			name: "Visualizer",
+			icon: "\U0001f308", // 🌈
+			items: []*settingItem{
 				{
-					label:       "Viz backend",
+					label:       "Backend",
 					key:         "visualizer.backend",
 					kind:        settingChoice,
-					choiceVals:  []string{"off", "cava", "chroma"},
-					choiceIdx:   0,
-					description: "Frequency visualizer: off/cava/chroma (install with: cargo install chroma --features audio)",
+					choiceVals:  []string{"off", "cliamp", "cava", "chroma"},
+					choiceIdx:   1,
+					description: "Visualizer engine — cliamp is built-in (no deps); cava/chroma need external binaries",
 				},
 				{
-					label:       "Viz bars",
+					label:       "Bars",
 					key:         "visualizer.bars",
 					kind:        settingInt,
 					intVal:      20,
 					description: "Number of frequency bars to display (10–60)",
 				},
 				{
-					label:       "Viz height",
+					label:       "Height",
 					key:         "visualizer.height",
 					kind:        settingInt,
 					intVal:      8,
 					description: "Visualizer height in terminal rows (4–20)",
 				},
 				{
-					label:       "Viz framerate",
+					label:       "Framerate",
 					key:         "visualizer.framerate",
 					kind:        settingInt,
 					intVal:      20,
 					description: "Target animation framerate in fps (10–60)",
 				},
 				{
-					label: "Viz mode",
+					label: "Mode",
 					key:   "visualizer.mode",
 					kind:  settingChoice,
 					choiceVals: []string{
@@ -1487,24 +1514,24 @@ func defaultCategories() []settingCategory {
 						"bars", "mirror", "filled", "led",
 					},
 					choiceIdx:   0,
-					description: "Visualization style — cliamp modes (waveâ¦bricks) need no extra binary; classic modes (barsâ¦led) use the backend subprocess",
+					description: "Visualization style — cliamp modes (wave…bricks) need no extra binary; classic modes (bars…led) use the backend subprocess",
 				},
 				{
-					label:       "Viz peak hold",
+					label:       "Peak hold",
 					key:         "visualizer.peak_hold",
 					kind:        settingBool,
 					boolVal:     true,
 					description: "Show peak hold indicators on bars",
 				},
 				{
-					label:       "Viz gradient",
+					label:       "Gradient",
 					key:         "visualizer.gradient",
 					kind:        settingBool,
 					boolVal:     true,
 					description: "Shade bars from accent colour (top) to dim (bottom)",
 				},
 				{
-					label:       "Viz input",
+					label:       "Input method",
 					key:         "visualizer.input_method",
 					kind:        settingChoice,
 					choiceVals:  []string{"pulse", "pipewire", "alsa"},
@@ -1644,43 +1671,71 @@ func defaultCategories() []settingCategory {
 			},
 		},
 		{
-			name: "Storage",
-			icon: "💾",
+			name: "Library",
+			icon: "📚",
 			items: []*settingItem{
+				// ── Library roots (where organised media lives) ─────────────
 				{
-					label:       "Movies folder",
+					label:       "Movies directory",
 					key:         "storage.movies",
 					kind:        settingPath,
 					strVal:      filepath.Join(settingsHomeDir, "Videos", "Movies"),
-					description: "Where organized movie files are stored",
+					description: "Where organised movie files are stored",
 				},
 				{
-					label:       "Series folder",
+					label:       "Series directory",
 					key:         "storage.series",
 					kind:        settingPath,
 					strVal:      filepath.Join(settingsHomeDir, "Videos", "Series"),
-					description: "Where organized TV series files are stored",
+					description: "Where organised TV series files are stored",
 				},
 				{
-					label:       "Anime folder",
+					label:       "Anime directory",
 					key:         "storage.anime",
 					kind:        settingPath,
 					strVal:      filepath.Join(settingsHomeDir, "Videos", "Anime"),
-					description: "Where organized anime files are stored",
+					description: "Where organised anime files are stored",
 				},
 				{
-					label:       "Music folder",
+					label:       "Music directory",
 					key:         "storage.music",
 					kind:        settingPath,
 					strVal:      filepath.Join(settingsHomeDir, "Music"),
-					description: "Where organized music files are stored",
+					description: "Primary music root — scanned by MPD for the Library tab",
 				},
 				{
-					label:       "Podcasts folder",
+					label:       "Add music directory",
+					key:         "storage.music_extra.add",
+					kind:        settingAction,
+					description: "Add an additional music root (multiple music libraries supported)",
+				},
+				{
+					label:       "Extra music directories",
+					key:         "storage.music_extra",
+					kind:        settingInfo,
+					description: "Configured extra music roots (edit stui.toml under [storage] extra_music_dirs = [...])",
+				},
+				{
+					label:       "Podcasts directory",
 					key:         "storage.podcasts",
 					kind:        settingPath,
 					strVal:      filepath.Join(settingsHomeDir, "Music", "Podcasts"),
 					description: "Where podcast episodes are stored",
+				},
+				// ── Download targets (where new files land before organising) ─
+				{
+					label:       "Video download directory",
+					key:         "downloads.video_dir",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Videos"),
+					description: "Directory for movie and series downloads (enter to edit)",
+				},
+				{
+					label:       "Music download directory",
+					key:         "downloads.music_dir",
+					kind:        settingPath,
+					strVal:      filepath.Join(settingsHomeDir, "Music"),
+					description: "Directory for music and audio downloads (enter to edit)",
 				},
 			},
 		},

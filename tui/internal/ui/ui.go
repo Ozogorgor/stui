@@ -1654,7 +1654,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.client.MpdCmd("mpd_pause", nil)
 			}
 			return m, nil
-		case "S":
+		case "z":
+			// Shuffle the MPD queue. 'S' now opens global settings instead.
 			m.client.MpdCmd("mpd_shuffle", nil)
 			return m, nil
 		case "+", "=":
