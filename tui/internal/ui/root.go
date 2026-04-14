@@ -186,6 +186,14 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "ctrl+c" {
 			return r, tea.Quit
 		}
+		// Mouse events come in raw terminal coordinates, but the overlay's
+		// View() doesn't know it's been centered + wrapped in an extra
+		// border by the View composite below. Translate the mouse to
+		// popup-local coordinates before forwarding so click hit-tests
+		// line up with what the user sees.
+		if mm, ok := msg.(tea.MouseMsg); ok {
+			msg = r.translateOverlayMouse(mm)
+		}
 		next, cmd := r.overlay.Update(msg)
 		r.overlay = next
 		return r, cmd
@@ -228,6 +236,46 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := r.active.Update(msg)
 	r.active = next
 	return r, cmd
+}
+
+// translateOverlayMouse converts a raw terminal mouse event into one whose
+// X/Y are local to the overlay's content area. The composite View centers a
+// boxed popup of size (popupW+2, popupH+2) inside the terminal — so the
+// content origin is at (centerX+1, centerY+1).
+func (r RootModel) translateOverlayMouse(msg tea.MouseMsg) tea.MouseMsg {
+	if r.width <= 0 || r.height <= 0 {
+		return msg
+	}
+	pw, ph := overlayPopupSize(r.width, r.height)
+	boxedW := pw + 2 // +2 for the wrapper RoundedBorder
+	boxedH := ph + 2
+	leftX := (r.width - boxedW) / 2
+	if leftX < 0 {
+		leftX = 0
+	}
+	topY := (r.height - boxedH) / 2
+	if topY < 0 {
+		topY = 0
+	}
+	// +1 for the wrapper border so (0,0) maps to first content cell.
+	dx := leftX + 1
+	dy := topY + 1
+
+	m := msg.Mouse()
+	m.X -= dx
+	m.Y -= dy
+
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		return tea.MouseClickMsg(m)
+	case tea.MouseReleaseMsg:
+		return tea.MouseReleaseMsg(m)
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg(m)
+	case tea.MouseMotionMsg:
+		return tea.MouseMotionMsg(m)
+	}
+	return msg
 }
 
 // View delegates to the active screen, always enforcing alt-screen and mouse
