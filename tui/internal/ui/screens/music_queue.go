@@ -584,7 +584,10 @@ func rightPanelContentHeight(innerW int, showAlbum bool) int {
 	if innerW < 1 {
 		innerW = 1
 	}
-	artRows := innerW/2 + 2 // art box = Height(innerW/2) content + 2 border rows
+	// queueArtPlaceholder uses Height(innerW/2) which lipgloss treats as
+	// OUTER height (border-inclusive), so the rendered art is innerW/2 rows
+	// total — not innerW/2 + 2. See queueArtPlaceholder's doc comment.
+	artRows := innerW / 2
 	metaRows := 6           // TITLE + ARTIST + DURATION, each label + value
 	if showAlbum {
 		metaRows = 8
@@ -862,7 +865,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 
 	// ── Right-panel volume bar click (wide only) ──────────────────────────
 	// buildRightPanel(innerBoxH, ..., innerR) renders:
-	//   art placeholder : innerR/2 + 2 lines (inner content + top/bottom border)
+	//   art placeholder : innerR/2 lines (Height is outer/border-inclusive)
 	//   metadata        : 6 or 8 lines (3 or 4 label+value pairs)
 	//   seek bar        : 2 lines
 	//   volume bar      : 2 lines
@@ -872,7 +875,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 			innerLForCols = 10
 		}
 		_, _, albumW := queueColWidths(innerLForCols)
-		artRows := innerR/2 + 2
+		artRows := innerR / 2
 		metaRows := 6
 		if albumW > 0 {
 			metaRows = 8
