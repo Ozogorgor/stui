@@ -312,12 +312,17 @@ func (t *Theme) SearchFocusedStyle() lipgloss.Style {
 		PaddingLeft(1).PaddingRight(1)
 }
 
+// GearStyle uses the theme's primary accent so the settings gear stays
+// recognisably "the main color" — yellow in high-contrast, purple in
+// default, etc. Padding matches the focused variant for layout stability.
 func (t *Theme) GearStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(t.P().TextMuted).PaddingLeft(2).PaddingRight(1)
+	return lipgloss.NewStyle().Foreground(t.P().Accent).PaddingLeft(2).PaddingRight(1)
 }
 
+// GearFocusedStyle uses the same accent but bolds it to indicate the
+// runtime is ready/active.
 func (t *Theme) GearFocusedStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(t.P().Neon).PaddingLeft(2).PaddingRight(1)
+	return lipgloss.NewStyle().Foreground(t.P().Accent).Bold(true).PaddingLeft(2).PaddingRight(1)
 }
 
 // StatusBarStyle returns the chrome style for the bottom status bar.
