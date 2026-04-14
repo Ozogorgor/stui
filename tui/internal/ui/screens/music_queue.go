@@ -563,12 +563,34 @@ func (s MusicQueueScreen) renderVizPanel(w, contentH int, dimStyle, accentStyle 
 		inner = strings.Split(strings.TrimRight(raw, "\n"), "\n")
 	}
 
+	// Compute a single horizontal offset that centers the visualizer inside
+	// the panel. Cliamp modes have a hard-coded internal width and ignore
+	// the requested width, so they'd otherwise hug the left edge. Use the
+	// widest rendered line as the reference width; bars-mode (which honours
+	// width) will already match innerW so its offset becomes zero.
+	leftPad := 0
+	if len(inner) > 0 {
+		maxW := 0
+		for _, ln := range inner {
+			if w := lipgloss.Width(ln); w > maxW {
+				maxW = w
+			}
+		}
+		if maxW < innerW {
+			leftPad = (innerW - maxW) / 2
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString(topViz + "\n")
 	for i := 0; i < contentH; i++ {
 		var line string
 		if i < len(inner) {
-			line = inner[i]
+			if leftPad > 0 {
+				line = strings.Repeat(" ", leftPad) + inner[i]
+			} else {
+				line = inner[i]
+			}
 		}
 		sb.WriteString(dimStyle.Render("│") + padRightANSI(line, innerW) + dimStyle.Render("│") + "\n")
 	}
