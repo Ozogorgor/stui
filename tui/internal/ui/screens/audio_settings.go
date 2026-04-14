@@ -81,6 +81,7 @@ type AudioSettingsModel struct {
 	Dims
 	tab            audioTab
 	selectedIdx    int
+	inCategory     bool // false = focus on tabs (left), true = focus on items (right)
 	editing        bool
 	editInput      textinput.Model
 	settingItems   map[audioTab][]*settingItem
@@ -534,37 +535,60 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "left", "h":
-			if m.tab > 0 {
-				m.tab--
+		case "up", "k":
+			if !m.inCategory {
+				// Tabs (left column).
+				if m.tab > 0 {
+					m.tab--
+					m.selectedIdx = firstSelectableIdx(m.settingItems[m.tab])
+				}
+			} else {
+				// Items (right column).
 				items := m.settingItems[m.tab]
-				m.selectedIdx = firstSelectableIdx(items)
+				next := m.selectedIdx - 1
+				for next >= 0 && items[next].kind == settingInfo {
+					next--
+				}
+				if next >= 0 {
+					m.selectedIdx = next
+				}
+			}
+		case "left", "h":
+			// Mirror Settings: left/h returns from items to tabs.
+			if m.inCategory {
+				m.inCategory = false
 			}
 		case "right", "l":
-			if m.tab < audioTab(len(audioTabNames)-1) {
-				m.tab++
-				items := m.settingItems[m.tab]
-				m.selectedIdx = firstSelectableIdx(items)
-			}
-		case "up", "k":
-			items := m.settingItems[m.tab]
-			next := m.selectedIdx - 1
-			for next >= 0 && items[next].kind == settingInfo {
-				next--
-			}
-			if next >= 0 {
-				m.selectedIdx = next
+			// Mirror Settings: right/l enters items from tabs.
+			if !m.inCategory && len(m.settingItems[m.tab]) > 0 {
+				m.inCategory = true
+				m.selectedIdx = firstSelectableIdx(m.settingItems[m.tab])
 			}
 		case "down", "j":
-			items := m.settingItems[m.tab]
-			next := m.selectedIdx + 1
-			for next < len(items) && items[next].kind == settingInfo {
-				next++
-			}
-			if next < len(items) {
-				m.selectedIdx = next
+			if !m.inCategory {
+				if m.tab < audioTab(len(audioTabNames)-1) {
+					m.tab++
+					m.selectedIdx = firstSelectableIdx(m.settingItems[m.tab])
+				}
+			} else {
+				items := m.settingItems[m.tab]
+				next := m.selectedIdx + 1
+				for next < len(items) && items[next].kind == settingInfo {
+					next++
+				}
+				if next < len(items) {
+					m.selectedIdx = next
+				}
 			}
 		case "enter":
+			// On a tab (not in category), enter drills in.
+			if !m.inCategory {
+				if len(m.settingItems[m.tab]) > 0 {
+					m.inCategory = true
+					m.selectedIdx = firstSelectableIdx(m.settingItems[m.tab])
+				}
+				return m, nil
+			}
 			item := m.getCurrentItem()
 			if item == nil || item.kind == settingInfo {
 				return m, nil
@@ -651,7 +675,11 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			// Note: m.profileLoaded is set in DspProfilesListedMsg handler
 			return m, nil
 		case "esc", "backspace":
-			// Both pop back to Settings (the previous screen on the stack).
+			// Mirror Settings: in items → leave items; on tabs → pop back.
+			if m.inCategory {
+				m.inCategory = false
+				return m, nil
+			}
 			return m, screen.PopCmd()
 		}
 	}
@@ -680,6 +708,9 @@ func (m AudioSettingsModel) View() tea.View {
 		Foreground(theme.T.Accent()).
 		Background(theme.T.Surface()).
 		Bold(true)
+	catNormalStyle := lipgloss.NewStyle().
+		Foreground(theme.T.Text()).
+		Background(theme.T.Surface())
 	catDimStyle := lipgloss.NewStyle().
 		Foreground(theme.T.TextDim()).
 		Background(theme.T.Surface())
@@ -710,10 +741,15 @@ func (m AudioSettingsModel) View() tea.View {
 				prefix = "▶ "
 			}
 			label := audioTabNames[i]
+			// Match Settings: full accent only when focus is on the tab
+			// column; otherwise dim the active tab so the right column
+			// reads as the focused area.
 			var style lipgloss.Style
 			switch {
-			case i == int(m.tab):
+			case i == int(m.tab) && !m.inCategory:
 				style = catActiveStyle
+			case i == int(m.tab):
+				style = catNormalStyle
 			default:
 				style = catDimStyle
 			}
@@ -811,7 +847,7 @@ func (m AudioSettingsModel) View() tea.View {
 		if idx < len(visIndices) {
 			itemIdx := visIndices[idx]
 			it := items[itemIdx]
-			selected := itemIdx == m.selectedIdx
+			selected := m.inCategory && itemIdx == m.selectedIdx
 			prefix := "  "
 			style := itemNormalStyle
 			if selected {
