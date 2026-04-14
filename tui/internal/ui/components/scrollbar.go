@@ -5,19 +5,25 @@ import (
 )
 
 // ScrollbarChars returns scrollbar characters for a list view.
-// Returns a slice of maxH single-character strings forming a vertical scrollbar track.
+// Returns a slice of viewH single-character strings forming a vertical
+// scrollbar track. The track channel (░) is ALWAYS rendered — when all
+// items fit, the thumb (█) fills the full height so the user sees a solid
+// bar, keeping the column visually reserved and layout stable.
 func ScrollbarChars(scroll, viewH, totalItems int, style lipgloss.Style) []string {
+	if viewH <= 0 {
+		return nil
+	}
+	chars := make([]string, viewH)
+
 	if totalItems <= viewH {
-		// No scrolling needed - all items fit
-		chars := make([]string, viewH)
+		// All items visible — thumb fills the whole track.
 		for i := range chars {
-			chars[i] = style.Render(" ")
+			chars[i] = style.Render("█")
 		}
 		return chars
 	}
 
-	chars := make([]string, viewH)
-	// Thumb size proportional to viewport/total ratio, min 1
+	// Thumb size proportional to viewport/total ratio, min 1.
 	thumbH := viewH * viewH / totalItems
 	if thumbH < 1 {
 		thumbH = 1
