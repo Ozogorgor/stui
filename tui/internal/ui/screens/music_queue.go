@@ -339,13 +339,23 @@ func (s MusicQueueScreen) View(w, h int) string {
 	innerL   := leftBoxW - 2   // inner content width of left box
 	const innerR = 22           // inner content width of right box
 
-	vizHeight := 0
-	if s.visualizer != nil && s.visualizer.IsRunning() {
-		vizHeight = s.visualizer.Config().Height
+	// Visualizer panel is reserved whenever the backend is not "off", even if
+	// it's not currently running — the container stays visible (idle) so the
+	// layout doesn't jump when playback starts/stops.
+	vizEnabled := s.visualizer != nil &&
+		s.visualizer.Config().Backend != components.VisualizerOff
+	vizContentH := 0
+	vizPanelH := 0
+	if vizEnabled {
+		vizContentH = s.visualizer.Config().Height
+		if vizContentH < 1 {
+			vizContentH = 8
+		}
+		vizPanelH = vizContentH + 2 // +2 for top/bottom border
 	}
 
-	// Box outer height: all rows minus visualizer
-	boxH := h - vizHeight
+	// Box outer height: all rows minus the (possibly reserved) viz panel.
+	boxH := h - vizPanelH
 	if boxH < 3 {
 		boxH = 3
 	}
@@ -469,10 +479,59 @@ func (s MusicQueueScreen) View(w, h int) string {
 		sb.WriteString(ll + rl + "\n")
 	}
 
-	if s.visualizer != nil && s.visualizer.IsRunning() {
-		sb.WriteString(s.visualizer.Render(w))
+	if vizEnabled {
+		sb.WriteString(s.renderVizPanel(w, vizContentH, dimStyle, accentStyle))
 	}
 
+	return sb.String()
+}
+
+// renderVizPanel returns a bordered container of width `w` and total height
+// `contentH + 2`. When the visualizer is running, its output is rendered
+// inside the container; otherwise the inner rows are blank (idle state) so
+// the layout stays stable.
+func (s MusicQueueScreen) renderVizPanel(w, contentH int, dimStyle, accentStyle lipgloss.Style) string {
+	if contentH < 1 {
+		contentH = 1
+	}
+	innerW := w - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	// Top border with a short label on the left.
+	label := "Visualizer"
+	if s.visualizer != nil {
+		cfg := s.visualizer.Config()
+		if name := cfg.Mode.String(); name != "" {
+			label = "Visualizer · " + name
+		}
+	}
+	labelRunes := len([]rune(label))
+	dashCt := innerW - 3 - labelRunes
+	if dashCt < 0 {
+		dashCt = 0
+	}
+	topViz := dimStyle.Render("╭─ ") + accentStyle.Render(label) +
+		dimStyle.Render(" "+strings.Repeat("─", dashCt)+"╮")
+	botViz := dimStyle.Render("╰" + strings.Repeat("─", innerW) + "╯")
+
+	var inner []string
+	if s.visualizer != nil && s.visualizer.IsRunning() {
+		raw := s.visualizer.Render(innerW)
+		inner = strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(topViz + "\n")
+	for i := 0; i < contentH; i++ {
+		var line string
+		if i < len(inner) {
+			line = inner[i]
+		}
+		sb.WriteString(dimStyle.Render("│") + padRightANSI(line, innerW) + dimStyle.Render("│") + "\n")
+	}
+	sb.WriteString(botViz + "\n")
 	return sb.String()
 }
 
@@ -554,8 +613,21 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 func (s MusicQueueScreen) viewNarrow(w, h int,
 	accentStyle, dimStyle, textStyle, cursorStyle lipgloss.Style,
 ) string {
+	// Reserve viz panel if enabled so the layout doesn't jump on play/stop.
+	vizEnabled := s.visualizer != nil &&
+		s.visualizer.Config().Backend != components.VisualizerOff
+	vizContentH := 0
+	vizPanelH := 0
+	if vizEnabled {
+		vizContentH = s.visualizer.Config().Height
+		if vizContentH < 1 {
+			vizContentH = 8
+		}
+		vizPanelH = vizContentH + 2
+	}
+
 	// Reserve 1 row: 1 header
-	listHeight := h - 1
+	listHeight := h - 1 - vizPanelH
 	if listHeight < 1 {
 		listHeight = 1
 	}
@@ -658,6 +730,10 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 
 	sb.WriteString(strings.Join(listLines, "\n"))
 	sb.WriteString("\n")
+
+	if vizEnabled {
+		sb.WriteString(s.renderVizPanel(w, vizContentH, dimStyle, accentStyle))
+	}
 	return sb.String()
 }
 
@@ -683,16 +759,23 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 	isWide := s.width > 80
 	leftBoxW := s.width - rightBoxW
 
-	// Match View's vizHeight calculation exactly (no +2 for border).
-	vizHeight := 0
-	if s.visualizer != nil && s.visualizer.IsRunning() {
-		vizHeight = s.visualizer.Config().Height
+	// Match View's viz layout exactly. The panel is reserved whenever the
+	// backend is not Off (idle state renders an empty bordered container).
+	vizEnabled := s.visualizer != nil &&
+		s.visualizer.Config().Backend != components.VisualizerOff
+	vizPanelH := 0
+	if vizEnabled {
+		vizContentH := s.visualizer.Config().Height
+		if vizContentH < 1 {
+			vizContentH = 8
+		}
+		vizPanelH = vizContentH + 2 // +2 for top/bottom border
 	}
 
 	// Track list height — mirror View's TH/listHeight calculation.
 	var trackListH int
 	if isWide {
-		boxH := s.height - vizHeight
+		boxH := s.height - vizPanelH
 		if boxH < 3 {
 			boxH = 3
 		}
@@ -702,7 +785,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 			trackListH = 1
 		}
 	} else {
-		trackListH = s.height - 1
+		trackListH = s.height - 1 - vizPanelH
 		if trackListH < 1 {
 			trackListH = 1
 		}
