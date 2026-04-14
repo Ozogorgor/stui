@@ -198,6 +198,29 @@ func NewAudioSettingsModel(client *ipc.Client) AudioSettingsModel {
 					strVal:      "hw:0,0",
 					description: "ALSA hardware device string (e.g. hw:0,0) — only used when output target is alsa",
 				},
+				{
+					label:       "Output Mode",
+					key:         "dsp.output_mode",
+					kind:        settingChoice,
+					choiceVals:  []string{"pcm", "dsd", "dsd_to_pcm"},
+					choiceIdx:   0,
+					description: "Output format: PCM, native DSD, or DSD → PCM",
+				},
+				{
+					label:       "PipeWire Role",
+					key:         "dsp.pipewire_role",
+					kind:        settingChoice,
+					choiceVals:  []string{"Music", "Production"},
+					choiceIdx:   0,
+					description: "PipeWire stream role — Production bypasses WirePlumber resampling",
+				},
+				{
+					label:       "DSD → PCM",
+					key:         "dsp.dsd_to_pcm_enabled",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Convert DSD input to PCM (required for most DACs)",
+				},
 			},
 
 			// ── Signal ──────────────────────────────────────────────────────────
