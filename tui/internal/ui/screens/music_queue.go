@@ -59,6 +59,12 @@ type MusicQueueScreen struct {
 
 	// Visualizer reference — set by MusicScreen.SetVisualizer
 	visualizer *components.Visualizer
+
+	// IDs we've already asked MPD to delete via auto-dedup but which
+	// still appear in the latest queue refresh (MPD hasn't applied yet).
+	// Prevents a fast-refresh loop from re-firing deleteid for the same
+	// ID, which produces "No such song" warnings in runtime.log.
+	removalsInFlight map[uint32]struct{}
 }
 
 // NewMusicQueueScreen creates a new queue screen and triggers the initial fetch.
@@ -125,13 +131,33 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	case ipc.MpdQueueResultMsg:
 		if m.Err == nil {
 			s.tracks = m.Tracks
-			// Auto-dedup: whenever the queue refreshes, silently drop any
-			// duplicate tracks (same file path), keeping the first ID.
+			// Auto-dedup: drop duplicate tracks (same file path), keeping
+			// the first ID. Track which IDs we've recently asked MPD to
+			// remove so successive refreshes don't re-fire deleteid for
+			// the same ID — that race produced "No such song" spam in
+			// runtime.log.
 			if s.client != nil && len(s.tracks) > 0 {
+				if s.removalsInFlight == nil {
+					s.removalsInFlight = make(map[uint32]struct{})
+				}
+				// Drop entries from the in-flight set whose IDs are no
+				// longer in the queue (MPD finished removing them).
+				stillThere := make(map[uint32]struct{}, len(s.tracks))
+				for _, t := range s.tracks {
+					stillThere[t.ID] = struct{}{}
+				}
+				for id := range s.removalsInFlight {
+					if _, ok := stillThere[id]; !ok {
+						delete(s.removalsInFlight, id)
+					}
+				}
 				seen := make(map[string]struct{}, len(s.tracks))
 				for _, t := range s.tracks {
 					if _, dup := seen[t.File]; dup {
-						s.client.MpdCmd("mpd_remove", map[string]any{"id": t.ID})
+						if _, pending := s.removalsInFlight[t.ID]; !pending {
+							s.client.MpdCmd("mpd_remove", map[string]any{"id": t.ID})
+							s.removalsInFlight[t.ID] = struct{}{}
+						}
 					} else {
 						seen[t.File] = struct{}{}
 					}
