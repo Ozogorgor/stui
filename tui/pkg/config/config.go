@@ -92,7 +92,8 @@ type SkipperConfig struct {
 // Config is the full set of user preferences.
 // Always construct via Default() — never use a zero-value Config directly,
 // detectVisualizerBackend returns "cava" or "chroma" if either is installed,
-// otherwise "off". This is used only for the first-run default.
+// otherwise falls back to the built-in "cliamp" backend (no external deps).
+// Used only for the first-run default.
 func detectVisualizerBackend() string {
 	if _, err := exec.LookPath("cava"); err == nil {
 		return "cava"
@@ -100,7 +101,7 @@ func detectVisualizerBackend() string {
 	if _, err := exec.LookPath("chroma"); err == nil {
 		return "chroma"
 	}
-	return "off"
+	return "cliamp"
 }
 
 // Config is the full set of user preferences.
