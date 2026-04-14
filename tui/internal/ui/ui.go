@@ -900,6 +900,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			backendName = "chroma"
 		}
 		m.cfg.Visualizer.Backend = backendName
+		if err := config.Save(m.cfgPath, m.cfg); err != nil {
+			log.Warn("config save failed", "key", "visualizer.backend", "error", err)
+		}
 		return m, m.visualizer.Reconfigure(cfg)
 
 	case screens.VizCycleModeMsg:
@@ -908,6 +911,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		const numModes = 21 // Bars..Bricks (must match visualizer.go enum)
 		cfg.Mode = components.VisualizerMode((int(cfg.Mode) + 1) % numModes)
 		m.cfg.Visualizer.Mode = cfg.Mode.String()
+		if err := config.Save(m.cfgPath, m.cfg); err != nil {
+			log.Warn("config save failed", "key", "visualizer.mode", "error", err)
+		}
 		return m, m.visualizer.Reconfigure(cfg)
 
 	// ── Settings changes ─────────────────────────────────────────────────
@@ -1247,8 +1253,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.switchTab(tab)
 				return m, nil
 			}
-			if cmd := m.hitTestTopBarWidgets(x); cmd != nil {
-				return m, cmd
+			if next, cmd, hit := m.hitTestTopBarWidgets(x); hit {
+				return next, cmd
 			}
 			return m, nil
 		}
@@ -1341,9 +1347,11 @@ func (m Model) hitTestTopTabBar(x int) (state.Tab, bool) {
 	return 0, false
 }
 
-// hitTestTopBarWidgets returns a command if the click hit the search box or
-// gear icon in the top bar. Returns nil if no widget was clicked.
-func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
+// hitTestTopBarWidgets returns the (possibly updated) Model, a command,
+// and whether the click landed on a top-bar widget. The Model must be
+// returned because focusing the search bar mutates state that needs to
+// propagate back to the Bubble Tea program.
+func (m Model) hitTestTopBarWidgets(x int) (Model, tea.Cmd, bool) {
 	w := m.state.Width
 	// Compute tab strip width (same logic as viewTopBar / hitTestTopTabBar).
 	tabsW := 0
@@ -1394,11 +1402,11 @@ func (m Model) hitTestTopBarWidgets(x int) tea.Cmd {
 	case x >= searchStart && x < searchEnd:
 		m.state.Focus = state.FocusSearch
 		m.state.SearchActive = true
-		return m.search.Focus()
+		return m, m.search.Focus(), true
 	case x >= gearStart && x < gearEnd:
-		return screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
+		return m, screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg)), true
 	}
-	return nil
+	return m, nil, false
 }
 
 // ── Player helpers ────────────────────────────────────────────────────────────
@@ -1761,35 +1769,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Music tab owns all navigation while active
-	if m.state.ActiveTab == state.TabMusic {
-		prev := m.musicScreen.ActiveSubTab()
-		var cmd tea.Cmd
-		m.musicScreen, cmd = m.musicScreen.Update(msg)
-		if m.musicScreen.ActiveSubTab() != prev {
-			// Footer visibility may have changed (Browse shows footer; others hide it).
-			// Resend height so the music screen fills the newly available space.
-			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
-			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
-			// Sub-tab changed — persist the new preference asynchronously.
-			return m, tea.Batch(cmd, m.sessionSaveCmd())
-		}
-		return m, cmd
-	}
-
-	// Collections tab owns all navigation while active (unless detail is open)
-	if m.state.ActiveTab == state.TabCollections && !(m.screen == screenDetail && m.detail != nil) {
-		var cmd tea.Cmd
-		m.collectionsScreen, cmd = m.collectionsScreen.Update(msg)
-		return m, cmd
-	}
-
-	// Detail overlay captures everything while open
-	if m.screen == screenDetail && m.detail != nil {
-		return m.handleDetailKey(key)
-	}
-
-	// Search input captures keys while focused
+	// Search input captures keys while focused — must come BEFORE the
+	// Music/Collections tab routing, otherwise those screens consume every
+	// keystroke and the search bar appears frozen (no typing, no esc).
 	if m.state.Focus == state.FocusSearch {
 		switch key {
 		case "esc":
@@ -1816,6 +1798,31 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	}
+
+	// Music tab owns all navigation while active
+	if m.state.ActiveTab == state.TabMusic {
+		prev := m.musicScreen.ActiveSubTab()
+		var cmd tea.Cmd
+		m.musicScreen, cmd = m.musicScreen.Update(msg)
+		if m.musicScreen.ActiveSubTab() != prev {
+			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
+			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
+			return m, tea.Batch(cmd, m.sessionSaveCmd())
+		}
+		return m, cmd
+	}
+
+	// Collections tab owns all navigation while active (unless detail is open)
+	if m.state.ActiveTab == state.TabCollections && !(m.screen == screenDetail && m.detail != nil) {
+		var cmd tea.Cmd
+		m.collectionsScreen, cmd = m.collectionsScreen.Update(msg)
+		return m, cmd
+	}
+
+	// Detail overlay captures everything while open
+	if m.screen == screenDetail && m.detail != nil {
+		return m.handleDetailKey(key)
 	}
 
 	// Grid navigation
