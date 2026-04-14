@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -667,113 +668,228 @@ func (m AudioSettingsModel) getCurrentItem() *settingItem {
 
 func (m AudioSettingsModel) View() tea.View {
 	if m.width == 0 {
-		return tea.NewView("Audio Settings\n")
+		return tea.NewView("DSP Settings\n")
 	}
 
+	// Styles — match the main Settings screen for visual consistency.
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.T.Accent()).
 		PaddingLeft(2)
-
-	header := headerStyle.Render("🎧 Audio Settings")
-
-	var tabLines []string
-	for i, name := range audioTabNames {
-		style := theme.T.TabStyle()
-		if i == int(m.tab) {
-			style = theme.T.TabActiveStyle()
-		}
-		tabLines = append(tabLines, style.Render(" "+name+" "))
-	}
-	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, tabLines...)
-
-	items := m.settingItems[m.tab]
-
-	rightW := m.width - 24
-	if rightW < 30 {
-		rightW = 30
-	}
-
-	normalStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+	catActiveStyle := lipgloss.NewStyle().
+		Foreground(theme.T.Accent()).
+		Background(theme.T.Surface()).
+		Bold(true)
+	catDimStyle := lipgloss.NewStyle().
+		Foreground(theme.T.TextDim()).
+		Background(theme.T.Surface())
+	leftBgStyle := lipgloss.NewStyle().Background(theme.T.Surface())
+	itemActiveStyle := lipgloss.NewStyle().
+		Foreground(theme.T.Accent()).
+		Bold(true)
+	itemNormalStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 	valStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	sectionStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
 
-	var itemLines []string
-	lineIdxOfSelected := -1
+	header := headerStyle.Render("🎧 DSP Settings")
 
-	for i, item := range items {
-		if item.kind == settingInfo {
-			itemLines = append(itemLines, "")
-			itemLines = append(itemLines, sectionStyle.Render("  "+item.label))
-			continue
-		}
-
-		if i == m.selectedIdx {
-			lineIdxOfSelected = len(itemLines)
-		}
-
-		prefix := "  "
-		if i == m.selectedIdx {
-			prefix = accentStyle.Render("► ")
-		}
-
-		labelW := rightW - 14
-		if labelW < 10 {
-			labelW = 10
-		}
-		labelPad := strings.TrimRight(fmt.Sprintf("%-*s", labelW, item.label), " ")
-
-		val := valStyle.Render(item.displayValue())
-		line := normalStyle.Render(prefix+labelPad) + val
-		itemLines = append(itemLines, line)
+	// ── Left panel: tabs as a vertical category list ─────────────────────
+	const leftInnerW = 20
+	leftInnerH := len(audioTabNames)
+	if leftInnerH < 4 {
+		leftInnerH = 4
 	}
+	boxInnerH := leftInnerH
 
-	if m.editing && lineIdxOfSelected >= 0 {
-		item := m.getCurrentItem()
-		if item != nil && item.kind == settingPath {
-			itemLines[lineIdxOfSelected] = normalStyle.Render("  "+item.label+" ") + m.editInput.View()
+	catLines := make([]string, boxInnerH)
+	for i := 0; i < boxInnerH; i++ {
+		if i < len(audioTabNames) {
+			prefix := "  "
+			if i == int(m.tab) {
+				prefix = "▶ "
+			}
+			label := audioTabNames[i]
+			var style lipgloss.Style
+			switch {
+			case i == int(m.tab):
+				style = catActiveStyle
+			default:
+				style = catDimStyle
+			}
+			catLines[i] = style.Width(leftInnerW).Render(prefix + label)
+		} else {
+			catLines[i] = leftBgStyle.Width(leftInnerW).Render(" ")
 		}
 	}
+	leftContent := strings.Join(catLines, "\n")
+	leftPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Render(leftContent)
 
-	itemsPanel := lipgloss.NewStyle().
-		Width(rightW).
-		PaddingLeft(2).
-		Render(strings.Join(itemLines, "\n"))
+	// ── Right panel: items for the active tab ─────────────────────────────
+	const rightOuterMax = 72
+	leftOuterW := leftInnerW + 2
+	rightOuterW := m.width - leftOuterW - 4
+	if rightOuterW < 24 {
+		rightOuterW = 24
+	}
+	if rightOuterW > rightOuterMax {
+		rightOuterW = rightOuterMax
+	}
+	rightInnerW := rightOuterW - 2
+	rightListW := rightInnerW - 2 // gap + scrollbar
+	if rightListW < 10 {
+		rightListW = 10
+	}
 
-	// Description of the currently selected item shown as a help line.
+	items := m.settingItems[m.tab]
+	visibleCount := 0
+	for _, it := range items {
+		if it.kind != settingInfo {
+			visibleCount++
+		}
+	}
+
+	const rightHeaderRows = 2 // tab title + blank
+	const rightFooterRows = 2 // blank + description
+	itemsViewH := boxInnerH - rightHeaderRows - rightFooterRows
+	if itemsViewH < 1 {
+		itemsViewH = 1
+	}
+
+	// Compute scroll so the selected item is visible (center mode).
+	selVisIdx := 0
+	{
+		seen := 0
+		for i, it := range items {
+			if it.kind == settingInfo {
+				continue
+			}
+			if i == m.selectedIdx {
+				selVisIdx = seen
+				break
+			}
+			seen++
+		}
+	}
+	scroll := 0
+	if visibleCount > itemsViewH {
+		scroll = selVisIdx - itemsViewH/2
+		if scroll < 0 {
+			scroll = 0
+		}
+		if scroll > visibleCount-itemsViewH {
+			scroll = visibleCount - itemsViewH
+		}
+	}
+	barChars := components.ScrollbarChars(scroll, itemsViewH, visibleCount, dimStyle)
+
+	// Map each visible (non-info) item to its index in items[] so we can
+	// render starting from `scroll` in display order.
+	visIndices := make([]int, 0, visibleCount)
+	for i, it := range items {
+		if it.kind != settingInfo {
+			visIndices = append(visIndices, i)
+		}
+	}
+
+	rightLines := make([]string, 0, boxInnerH)
+	tabName := audioTabNames[m.tab]
+	rightLines = append(rightLines,
+		padOrTruncate(catActiveStyle.Render("  "+tabName), rightInnerW))
+	rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+
+	labelW := rightListW - 14
+	if labelW < 10 {
+		labelW = 10
+	}
+	for r := 0; r < itemsViewH; r++ {
+		var rowText string
+		idx := scroll + r
+		if idx < len(visIndices) {
+			itemIdx := visIndices[idx]
+			it := items[itemIdx]
+			selected := itemIdx == m.selectedIdx
+			prefix := "  "
+			style := itemNormalStyle
+			if selected {
+				prefix = "▶ "
+				style = itemActiveStyle
+			}
+			labelTrunc := it.label
+			if len(labelTrunc) > labelW {
+				labelTrunc = truncate(labelTrunc, labelW)
+			}
+			labelPad := fmt.Sprintf("%-*s", labelW, labelTrunc)
+			valW := rightListW - 2 - labelW
+			if valW < 3 {
+				valW = 3
+			}
+			var val string
+			if m.editing && selected && it.kind == settingPath {
+				val = m.editInput.View()
+			} else {
+				raw := it.displayValue()
+				if len(raw) > valW {
+					raw = truncate(raw, valW)
+				}
+				val = valStyle.Render(raw)
+			}
+			rowText = style.Render(prefix+labelPad) + val
+		}
+		rowText = padOrTruncate(rowText, rightListW)
+		if r < len(barChars) {
+			rowText = rowText + " " + barChars[r]
+		} else {
+			rowText = rowText + "  "
+		}
+		rightLines = append(rightLines, padOrTruncate(rowText, rightInnerW))
+	}
+
+	// Footer rows: blank + description of the focused item.
 	descLine := ""
-	if item := m.getCurrentItem(); item != nil && item.description != "" {
-		desc := item.description
-		maxDescW := m.width - 4
+	if it := m.getCurrentItem(); it != nil && it.description != "" {
+		desc := it.description
+		maxDescW := rightInnerW - 2
 		if maxDescW > 0 && len(desc) > maxDescW {
-			desc = desc[:maxDescW-1] + "…"
+			desc = truncate(desc, maxDescW)
 		}
-		descLine = lipgloss.NewStyle().
-			Foreground(theme.T.TextDim()).
-			PaddingLeft(2).
-			Render(desc) + "\n"
+		descLine = valStyle.Render("  " + desc)
 	}
+	rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+	rightLines = append(rightLines, padOrTruncate(descLine, rightInnerW))
 
-	// Profile footer - persistent across all tabs
-	// Shows the current profile, custom profile count, and save/refresh shortcuts
-	profileStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
-	profileLabel := profileStyle.Render("Profile: ")
-	profileValue := profileStyle.Render(m.currentProfile)
+	if len(rightLines) > boxInnerH {
+		rightLines = rightLines[:boxInnerH]
+	}
+	for len(rightLines) < boxInnerH {
+		rightLines = append(rightLines, strings.Repeat(" ", rightInnerW))
+	}
+	rightContent := strings.Join(rightLines, "\n")
+	rightPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Border()).
+		Render(rightContent)
 
-	// Show custom profile count if any loaded
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel)
+
+	// Profile footer (DSP-specific).
+	profileLabel := sectionStyle.Render("Profile: ")
+	profileValue := lipgloss.NewStyle().Foreground(theme.T.Accent()).Render(m.currentProfile)
 	customHint := ""
 	if len(m.customProfiles) > 0 {
-		customHint = lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render(fmt.Sprintf(" (+%d custom)", len(m.customProfiles)))
+		customHint = dimStyle.Render(fmt.Sprintf(" (+%d custom)", len(m.customProfiles)))
 	}
 	saveHint := ""
 	if m.client != nil {
-		saveHint = lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render(" [S]ave | [R]efresh")
+		saveHint = dimStyle.Render(" [S]ave | [R]efresh")
 	}
+	profileFooter := "  " + profileLabel + profileValue + customHint + saveHint
 
-	profileFooter := profileLabel + profileValue + customHint + saveHint
+	footer := hintBar("↑↓ navigate", "←→ tabs", "enter toggle", "+/- adjust",
+		"L cycle | D reset", "backspace back")
 
-	footer := hintBar("←→ tabs", "↑↓ navigate", "enter toggle", "+/- adjust", "L cycle | D reset", "esc back")
-
-	return tea.NewView(header + "\n\n" + tabBar + "\n\n" + itemsPanel + "\n\n" + descLine + profileFooter + "\n" + footer + "\n")
+	return tea.NewView(header + "\n\n" + body + "\n\n" + profileFooter + "\n" + footer + "\n")
 }
