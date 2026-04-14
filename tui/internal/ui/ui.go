@@ -1676,8 +1676,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.client.MpdCmd("mpd_pause", nil)
 			}
 			return m, nil
-		case "z":
-			// Shuffle the MPD queue. 'S' now opens global settings instead.
+		case "S":
+			// Shuffle the MPD queue. Settings moved to `/~ (console-style).
 			m.client.MpdCmd("mpd_shuffle", nil)
 			return m, nil
 		case "+", "=":
@@ -1993,7 +1993,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.switchTab(state.TabLibrary)
 	case "5":
 		m.switchTab(state.TabCollections)
-	case "S":
+	case "`", "~":
+		// Console-quake-style hotkey for settings — familiar from games.
 		return m, screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
 	case "esc":
 		if m.cwFocused {
