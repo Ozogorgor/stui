@@ -31,6 +31,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
+	"github.com/stui/stui/pkg/log"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -153,6 +154,10 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		s.setWindowSize(m)
 
 	case ipc.MpdLibraryResultMsg:
+		log.Info("library: MpdLibraryResultMsg",
+			"forArtist", m.ForArtist, "forAlbum", m.ForAlbum,
+			"artists", len(m.Artists), "albums", len(m.Albums),
+			"songs", len(m.Songs), "err", m.Err)
 		if m.Err != nil {
 			// Surface the error in the right scope so the UI can show a
 			// useful message instead of just freezing on the spinner.
@@ -220,6 +225,14 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		}
 	}
 
+	// If a key handler queued a status message, surface it via the global
+	// stui footer (m.state.StatusMsg) and clear the local field so we
+	// don't re-emit on every subsequent Update.
+	if s.statusMsg != "" {
+		text := s.statusMsg
+		s.statusMsg = ""
+		return s, func() tea.Msg { return ipc.StatusMsg{Text: text} }
+	}
 	return s, nil
 }
 
@@ -693,8 +706,10 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		return CenteredMsg(w, h, msg)
 	}
 
-	// Reserve 1 row: header line
-	listH := h - 1
+	// Total height budget = h. Subtract: 1 header row + 2 border rows
+	// (top + bottom of the bordered container). What's left is the visible
+	// data rows inside the panes.
+	listH := h - 3
 	if listH < 1 {
 		listH = 1
 	}
@@ -776,9 +791,13 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		}
 	}
 
-	// Wrap in border container
-	borderedContent := borderStyle.Width(w - 2).Render(paneContent.String())
-	sb.WriteString(borderedContent + "\n")
+	// Wrap in border container. TrimRight the trailing "\n" so lipgloss
+	// doesn't add an extra empty content row inside the box (which would
+	// push our footer off-screen). Also don't append "\n" after the
+	// bordered block — the global footer follows directly.
+	body := strings.TrimRight(paneContent.String(), "\n")
+	borderedContent := borderStyle.Width(w - 2).Render(body)
+	sb.WriteString(borderedContent)
 
 	return sb.String()
 }

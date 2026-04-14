@@ -2541,7 +2541,11 @@ func (m Model) hudRows() int {
 func (m Model) computeMusicHeight() int {
 	const fixedRows = 7 // topbar area (5) + main-card borders (2)
 	footerRows := 2     // blank separator + status bar
-	if m.state.ActiveTab == state.TabMusic && m.musicScreen.ActiveSubTab() != screens.MusicBrowse {
+	// Only Queue suppresses the footer (it uses every row for the
+	// tracklist + visualizer panel). Library/Browse/Playlists keep the
+	// global footer visible — that's where status messages and key hints
+	// live.
+	if m.state.ActiveTab == state.TabMusic && m.musicScreen.ActiveSubTab() == screens.MusicQueue {
 		footerRows = 0
 	}
 	return max(0, m.state.Height-fixedRows-m.hudRows()-footerRows)

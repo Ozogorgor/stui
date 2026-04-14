@@ -16,6 +16,8 @@ package ipc
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/stui/stui/pkg/log"
 )
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
@@ -159,6 +161,7 @@ type MpdLibraryResultMsg struct {
 func (c *Client) MpdListArtists() {
 	go func() {
 		id := c.nextID()
+		log.Info("ipc: MpdListArtists send", "id", id)
 		ch := c.sendWithID(id, map[string]any{
 			"type": "mpd_list",
 			"id":   id,
@@ -167,23 +170,37 @@ func (c *Client) MpdListArtists() {
 		raw := receiveWithTimeout(ch)
 		var msg MpdLibraryResultMsg
 		if raw.Err != nil {
+			log.Warn("ipc: MpdListArtists transport error", "id", id, "err", raw.Err)
 			msg.Err = raw.Err
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
+			log.Warn("ipc: MpdListArtists runtime error", "id", id, "code", ep.Code, "msg", ep.Message)
 			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
 		} else {
 			var payload struct {
 				Artists []MpdArtist `json:"artists"`
 			}
 			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				log.Warn("ipc: MpdListArtists decode error", "id", id, "err", err,
+					"rawType", raw.Type, "rawSnippet", snippet(raw.Raw))
 				msg.Err = err
 			} else {
+				log.Info("ipc: MpdListArtists ok", "id", id, "artists", len(payload.Artists))
 				msg.Artists = payload.Artists
 			}
 		}
 		c.send(msg)
 	}()
+}
+
+// snippet returns a short preview of a JSON payload for log lines.
+func snippet(b []byte) string {
+	const max = 200
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "…"
 }
 
 // MpdListAlbums requests albums from the MPD database, filtered by artist.
