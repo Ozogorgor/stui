@@ -1,5 +1,10 @@
 package components
 
+// splash.go — Opening splash: a braille-dot play-button diamond that matches
+// the assets/stui_logo_braille_play.svg shape. Dots dance through random
+// rainbow colors, then gradually lock to tyrian purple (#9B5DE5) before the
+// "STUI" wordmark types in below.
+
 import (
 	"math/rand"
 	"strings"
@@ -14,121 +19,118 @@ import (
 type SplashState int
 
 const (
-	SplashStateReveal SplashState = iota
-	SplashStateHold
-	SplashStateColorCycle
-	SplashStateWordmark
+	SplashStateReveal      SplashState = iota // dots dance through random colors
+	SplashStateColorCycle                     // gradually lock dots to tyrian purple
+	SplashStateWordmark                       // type STUI wordmark
 	SplashStateDone
 )
 
+// Play-button diamond pattern, extracted from
+// assets/stui_logo_braille_play.svg (cx columns 282..390 step 18,
+// cy rows 152..296 step 18 — the 9×7 diamond of tyrian-purple circles).
+var splashPattern = [9][7]int{
+	{0, 0, 0, 1, 0, 0, 0}, // row 0 (y=152): tip
+	{0, 0, 1, 1, 1, 0, 0}, // row 1 (y=170)
+	{0, 1, 1, 1, 1, 1, 0}, // row 2 (y=188)
+	{1, 1, 1, 1, 1, 1, 1}, // row 3 (y=206) widest
+	{1, 1, 1, 1, 1, 1, 1}, // row 4 (y=224) widest
+	{1, 1, 1, 1, 1, 1, 1}, // row 5 (y=242) widest
+	{0, 1, 1, 1, 1, 1, 0}, // row 6 (y=260)
+	{0, 0, 1, 1, 1, 0, 0}, // row 7 (y=278)
+	{0, 0, 0, 1, 0, 0, 0}, // row 8 (y=296) tip
+}
+
+const (
+	tyrianPurple = "#9B5DE5" // target color, matches the SVG's rgb(155,93,229)
+
+	splashTickMs       = 80 // animation tick
+	splashRevealFrames = 18 // ~1.4s of dancing colors
+	splashCycleFrames  = 28 // ~2.2s of lock-in to tyrian purple
+	splashWordmarkHold = 22 // ~1.8s after the wordmark finishes
+)
+
+// danceColors are the palette that dots randomly flip through during the
+// dancing (Reveal) phase before locking to tyrian purple.
+var danceColors = []string{
+	"#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
+	"#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
+	"#BB8FCE", "#85C1E9", "#F8B500", "#00CED1",
+	"#9B5DE5", // include purple in the mix so transitions feel natural
+}
+
 type Splash struct {
-	frame      int
 	state      SplashState
+	frame      int
 	charIndex  int
 	wordmark   string
 	width      int
 	height     int
 	done       bool
 	onComplete func()
-	dotColors  []string // Current colors for each dot
-	dotOrder   []int    // Order in which dots transition to final color
-	seed       int64    // Random seed for consistent animation
+
+	rng       *rand.Rand
+	dotColors []string // current color for each lit dot (len = number of 1s)
+	locked    []bool   // true once the dot has settled on tyrian purple
+	lockOrder []int    // order in which dots lock during ColorCycle
 }
 
 func NewSplash(width, height int) *Splash {
-	seed := time.Now().UnixNano()
-
-	s := &Splash{
-		frame:    0,
-		state:    SplashStateReveal,
-		wordmark: "STUI",
-		width:    width,
-		height:   height,
-		seed:     seed,
-	}
-	s.initDotColors()
-	return s
+	return newSplash(width, height, nil)
 }
 
 func NewSplashWithCallback(width, height int, onComplete func()) *Splash {
-	seed := time.Now().UnixNano()
+	return newSplash(width, height, onComplete)
+}
 
+func newSplash(width, height int, onComplete func()) *Splash {
 	s := &Splash{
-		frame:      0,
 		state:      SplashStateReveal,
 		wordmark:   "STUI",
 		width:      width,
 		height:     height,
 		onComplete: onComplete,
-		seed:       seed,
+		rng:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	s.initDotColors()
+	s.initDots()
 	return s
 }
 
-// initDotColors initializes the color state for each dot.
-func (s *Splash) initDotColors() {
-	r := rand.New(rand.NewSource(s.seed))
-
-	// Final pattern (triangle / play-button shape).
-	finalPattern := [][]bool{
-		{false, false, false, true, false, false, false}, // row 1: tip
-		{false, false, true, true, true, false, false},   // row 2
-		{false, true, true, true, true, true, false},     // row 3
-		{true, true, true, true, true, true, true},       // row 4: widest
-		{true, true, true, true, true, true, true},       // row 5: widest
-		{true, true, true, true, true, true, true},       // row 6
-		{false, true, true, true, true, true, false},     // row 7
-		{false, false, true, true, true, false, false},   // row 8
-		{false, false, false, true, false, false, false}, // row 9: bottom tip
-	}
-
+func (s *Splash) initDots() {
 	dotCount := 0
-	for _, row := range finalPattern {
-		for _, b := range row {
-			if b {
+	for _, row := range splashPattern {
+		for _, v := range row {
+			if v == 1 {
 				dotCount++
 			}
 		}
 	}
 
-	colors := []string{
-		"#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
-		"#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
-		"#BB8FCE", "#85C1E9", "#F8B500", "#00CED1",
-	}
-
 	s.dotColors = make([]string, dotCount)
-	s.dotOrder = make([]int, dotCount)
-
-	order := r.Perm(dotCount)
-	for i := 0; i < dotCount; i++ {
-		s.dotColors[i] = colors[r.Intn(len(colors))]
-		s.dotOrder[i] = order[i]
+	s.locked = make([]bool, dotCount)
+	s.lockOrder = make([]int, dotCount)
+	for i := range s.dotColors {
+		s.dotColors[i] = danceColors[s.rng.Intn(len(danceColors))]
+		s.lockOrder[i] = i
 	}
-
-	r.Shuffle(len(s.dotOrder), func(i, j int) {
-		s.dotOrder[i], s.dotOrder[j] = s.dotOrder[j], s.dotOrder[i]
+	s.rng.Shuffle(len(s.lockOrder), func(i, j int) {
+		s.lockOrder[i], s.lockOrder[j] = s.lockOrder[j], s.lockOrder[i]
 	})
 }
 
 type splashTickMsg struct{}
 
 func SplashTickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(splashTickMs*time.Millisecond, func(time.Time) tea.Msg {
 		return splashTickMsg{}
 	})
 }
 
-func (s *Splash) Init() tea.Cmd {
-	return SplashTickCmd()
-}
+func (s *Splash) Init() tea.Cmd { return SplashTickCmd() }
 
 func (s *Splash) Update(msg tea.Msg) (tea.Msg, tea.Cmd) {
 	if s.done {
 		return msg, nil
 	}
-
 	switch msg := msg.(type) {
 	case splashTickMsg:
 		s.advance()
@@ -147,47 +149,60 @@ func (s *Splash) Update(msg tea.Msg) (tea.Msg, tea.Cmd) {
 	return msg, nil
 }
 
+// advance runs one animation frame.
 func (s *Splash) advance() {
 	s.frame++
 
+	// During Reveal and early ColorCycle, re-shuffle the colors on every dot
+	// that isn't locked — this is the "dancing" rainbow effect.
+	if s.state == SplashStateReveal || s.state == SplashStateColorCycle {
+		for i := range s.dotColors {
+			if s.locked[i] {
+				continue
+			}
+			s.dotColors[i] = danceColors[s.rng.Intn(len(danceColors))]
+		}
+	}
+
 	switch s.state {
 	case SplashStateReveal:
-		if s.frame >= 12 {
-			s.state = SplashStateHold
-			s.frame = 0
-		}
-	case SplashStateHold:
-		if s.frame >= 6 {
+		if s.frame >= splashRevealFrames {
 			s.state = SplashStateColorCycle
 			s.frame = 0
 		}
 	case SplashStateColorCycle:
-		// Gradually transition dots to tyrian purple over 24 frames.
-		if s.frame >= 24 {
+		// Progressively lock dots to tyrian purple based on frame progress.
+		progress := float64(s.frame) / float64(splashCycleFrames)
+		if progress > 1 {
+			progress = 1
+		}
+		target := int(float64(len(s.dotColors)) * progress)
+		for i := 0; i < target && i < len(s.lockOrder); i++ {
+			idx := s.lockOrder[i]
+			s.locked[idx] = true
+			s.dotColors[idx] = tyrianPurple
+		}
+		if s.frame >= splashCycleFrames {
+			// Force every remaining dot to purple.
+			for i := range s.dotColors {
+				s.locked[i] = true
+				s.dotColors[i] = tyrianPurple
+			}
 			s.state = SplashStateWordmark
 			s.frame = 0
 			s.charIndex = 0
-			for i := range s.dotColors {
-				s.dotColors[i] = "#9B5DE5" // tyrian purple
-			}
-		} else {
-			progress := float64(s.frame) / 24.0
-			targetCount := int(float64(len(s.dotColors)) * progress)
-			for i := 0; i < targetCount && i < len(s.dotColors); i++ {
-				dotIdx := s.dotOrder[i]
-				s.dotColors[dotIdx] = "#9B5DE5"
-			}
 		}
 	case SplashStateWordmark:
-		if s.charIndex < len(s.wordmark) {
+		if s.charIndex < len(s.wordmark) && s.frame%3 == 0 {
 			s.charIndex++
 		}
-		if s.charIndex >= len(s.wordmark) && s.frame >= 20 {
+		if s.charIndex >= len(s.wordmark) && s.frame >= splashWordmarkHold {
 			s.done = true
 		}
 	}
 }
 
+// View renders the splash screen centered in the available area.
 func (s *Splash) View() tea.View {
 	if s.done {
 		return tea.NewView("")
@@ -195,33 +210,55 @@ func (s *Splash) View() tea.View {
 
 	bg := lipgloss.NewStyle().Background(theme.T.Bg())
 
-	lines := s.buildBrailleLogo()
+	logoLines := s.buildBrailleLogo()
 
+	// Reserve 2 blank lines + wordmark line below the logo.
+	totalH := len(logoLines) + 2
+	var wordmarkLine string
 	if s.state >= SplashStateWordmark && s.charIndex > 0 {
-		wordmark := s.wordmark[:s.charIndex]
-		wordmarkStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-		wordmarkLine := wordmarkStyle.Render("  " + wordmark)
-		lines = append(lines, wordmarkLine)
+		wmStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(tyrianPurple)).
+			Bold(true)
+		letters := s.wordmark[:s.charIndex]
+		// Pad out to the logo's visual width (7 cols × 2 = 14).
+		spaced := strings.Join(strings.Split(letters, ""), " ")
+		wordmarkLine = wmStyle.Render(spaced)
 	}
 
-	centerY := (s.height - len(lines)) / 2
+	centerY := (s.height - totalH) / 2
 	if centerY < 0 {
 		centerY = 0
 	}
+
+	logoVisualW := 14 // 7 cols × 2 braille chars per col
 
 	var sb strings.Builder
 	for i := 0; i < centerY; i++ {
 		sb.WriteString(bg.Render(strings.Repeat(" ", s.width)) + "\n")
 	}
-
-	for _, line := range lines {
-		padding := (s.width - len(stripANSI(line))) / 2
-		if padding < 0 {
-			padding = 0
+	for _, line := range logoLines {
+		pad := (s.width - logoVisualW) / 2
+		if pad < 0 {
+			pad = 0
 		}
-		sb.WriteString(bg.Render(strings.Repeat(" ", padding)))
+		sb.WriteString(bg.Render(strings.Repeat(" ", pad)))
 		sb.WriteString(line)
 		sb.WriteString("\n")
+	}
+	// Blank spacer line under the logo.
+	sb.WriteString(bg.Render(strings.Repeat(" ", s.width)) + "\n")
+	// Wordmark line (centered).
+	if wordmarkLine != "" {
+		wmW := stripANSIWidth(wordmarkLine)
+		pad := (s.width - wmW) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		sb.WriteString(bg.Render(strings.Repeat(" ", pad)))
+		sb.WriteString(wordmarkLine)
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString(bg.Render(strings.Repeat(" ", s.width)) + "\n")
 	}
 
 	v := tea.NewView(sb.String())
@@ -229,59 +266,51 @@ func (s *Splash) View() tea.View {
 	return v
 }
 
+// buildBrailleLogo renders the diamond pattern with each "on" position as a
+// 2-character-wide block of ⣿ braille dots, and "off" positions as 2 spaces.
 func (s *Splash) buildBrailleLogo() []string {
-	// Play-button triangle pattern (9 rows, 7 cols).
-	pattern := [][]int{
-		{0, 0, 0, 1, 0, 0, 0}, // row 0: tip at col 3
-		{0, 0, 0, 1, 0, 0, 0}, // row 1: tip
-		{0, 0, 1, 1, 1, 0, 0}, // row 2: 3 dots at cols 2,3,4
-		{0, 1, 1, 1, 1, 1, 0}, // row 3: 5 dots at cols 1-5
-		{1, 1, 1, 1, 1, 1, 1}, // row 4: 7 dots (widest)
-		{1, 1, 1, 1, 1, 1, 1}, // row 5: 7 dots (widest)
-		{0, 1, 1, 1, 1, 1, 0}, // row 6: 5 dots
-		{0, 0, 1, 1, 1, 0, 0}, // row 7: 3 dots
-		{0, 0, 0, 1, 0, 0, 0}, // row 8: tip at col 3
-	}
+	lines := make([]string, 0, len(splashPattern))
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
-	// Flatten pattern to get dot index mapping.
-	dotIndexMap := make(map[int]int) // pattern index -> color index
-	idx := 0
-	for row := 0; row < len(pattern); row++ {
-		for col := 0; col < len(pattern[row]); col++ {
-			if pattern[row][col] == 1 {
-				dotIndexMap[row*7+col] = idx
-				idx++
-			}
-		}
-	}
-
-	// Build output lines (scaled 2x horizontally for bigger display).
-	var lines []string
-	for row := 0; row < len(pattern); row++ {
+	dotIdx := 0
+	for _, row := range splashPattern {
 		var line strings.Builder
-		rowPattern := pattern[row]
-
-		for col := 0; col < len(rowPattern); col++ {
-			if rowPattern[col] == 1 {
-				colorIdx := dotIndexMap[row*7+col]
-				color := s.dotColors[colorIdx]
+		for _, v := range row {
+			if v == 1 {
+				color := s.dotColors[dotIdx]
 				style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-				line.WriteString(style.Render("⣿"))
-				line.WriteString(style.Render("⣿"))
+				line.WriteString(style.Render("⣿⣿"))
+				dotIdx++
 			} else {
-				dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 				line.WriteString(dimStyle.Render("  "))
 			}
 		}
-
 		lines = append(lines, line.String())
 	}
-
 	return lines
 }
 
-func (s *Splash) IsDone() bool {
-	return s.done
+func (s *Splash) IsDone() bool { return s.done }
+
+// stripANSIWidth returns the visible character width of s, ignoring ANSI
+// escape sequences.
+func stripANSIWidth(s string) int {
+	n := 0
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 func stripANSI(s string) string {
@@ -303,13 +332,13 @@ func stripANSI(s string) string {
 	return result.String()
 }
 
+// RenderBrailleLogo renders a tiny static logo for inline use elsewhere.
 func RenderBrailleLogo(width int, style lipgloss.Style) string {
 	lines := []string{
 		" ⣠⣾⣦⣀ ",
 		" ⠻⣿⡿⠃ ",
 		"  ⠈⠁  ",
 	}
-
 	var sb strings.Builder
 	for _, line := range lines {
 		padding := (width - len(stripANSI(line))) / 2
@@ -320,6 +349,5 @@ func RenderBrailleLogo(width int, style lipgloss.Style) string {
 		sb.WriteString(style.Render(line))
 		sb.WriteString("\n")
 	}
-
 	return sb.String()
 }

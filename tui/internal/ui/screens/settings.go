@@ -679,12 +679,6 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							})
 							dialog.SetSize(m.width, m.height)
 							return m, screen.TransitionCmd(dialog, true)
-						case "dsp.eq_enabled":
-							editor := NewEqEditorModel(func(key string, val interface{}) tea.Cmd {
-								return func() tea.Msg { return SettingsChangedMsg{Key: key, Value: val} }
-							}, 44100.0)
-							editor.SetSize(m.width, m.height)
-							return m, screen.TransitionCmd(editor, true)
 						default:
 							return m, func() tea.Msg { return OpenPluginSettingsMsg{} }
 						}
@@ -760,16 +754,7 @@ func settingChangedCmd(item *settingItem) tea.Cmd {
 
 func (m SettingsModel) View() tea.View {
 	if m.width == 0 {
-		// Minimal plain-text rendering: list all categories and their item labels.
-		var sb strings.Builder
-		sb.WriteString("  ⚙  Settings\n\n")
-		for _, cat := range m.categories {
-			sb.WriteString("  " + cat.name + "\n")
-			for _, item := range cat.items {
-				sb.WriteString("    " + item.label + "\n")
-			}
-		}
-		return tea.NewView(sb.String())
+		return tea.NewView("  ⚙  Settings\n")
 	}
 
 	// Styles
@@ -1526,12 +1511,6 @@ func defaultCategories() []settingCategory {
 					key:         "dsp.crossfeed_enabled",
 					kind:        settingAction,
 					description: "BS2B headphone crossfeed — blend L/R for natural stereo image",
-				},
-				{
-					label:       "Parametric EQ",
-					key:         "dsp.eq_enabled",
-					kind:        settingAction,
-					description: "Open parametric EQ band editor (biquad, up to 10 bands)",
 				},
 			},
 		},
