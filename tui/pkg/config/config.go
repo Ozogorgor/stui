@@ -56,6 +56,21 @@ type DownloadsConfig struct {
 	MusicDir string `toml:"music_dir"`
 }
 
+// StorageConfig is the user's organised library roots — distinct from
+// DownloadsConfig (which is where new files land before being moved here).
+//
+// ExtraMusicDirs is a free-form list of additional music roots that the
+// MPD bridge should also scan, beyond the primary Music root. Useful when
+// a user keeps music split across multiple drives or NAS shares.
+type StorageConfig struct {
+	Movies          string   `toml:"movies"`
+	Series          string   `toml:"series"`
+	Anime           string   `toml:"anime"`
+	Music           string   `toml:"music"`
+	Podcasts        string   `toml:"podcasts"`
+	ExtraMusicDirs  []string `toml:"extra_music_dirs"`
+}
+
 type SubtitlesConfig struct {
 	AutoDownload      bool    `toml:"auto_download"`
 	PreferredLanguage string  `toml:"preferred_language"`
@@ -112,6 +127,7 @@ type Config struct {
 	Playback      PlaybackConfig      `toml:"playback"`
 	Streaming     StreamingConfig     `toml:"streaming"`
 	Downloads     DownloadsConfig     `toml:"downloads"`
+	Storage       StorageConfig       `toml:"storage"`
 	Subtitles     SubtitlesConfig     `toml:"subtitles"`
 	Providers     ProvidersConfig     `toml:"providers"`
 	Notifications NotificationsConfig `toml:"notifications"`
@@ -155,6 +171,13 @@ func Default() Config {
 		Downloads: DownloadsConfig{
 			VideoDir: filepath.Join(home, "Videos"),
 			MusicDir: filepath.Join(home, "Music"),
+		},
+		Storage: StorageConfig{
+			Movies:   filepath.Join(home, "Videos", "Movies"),
+			Series:   filepath.Join(home, "Videos", "Series"),
+			Anime:    filepath.Join(home, "Videos", "Anime"),
+			Music:    filepath.Join(home, "Music"),
+			Podcasts: filepath.Join(home, "Music", "Podcasts"),
 		},
 		Subtitles: SubtitlesConfig{
 			PreferredLanguage: "eng",
@@ -336,6 +359,30 @@ func ApplyChange(cfg Config, key string, value interface{}) Config {
 	case "downloads.music_dir":
 		if v, ok := value.(string); ok {
 			cfg.Downloads.MusicDir = v
+		}
+	case "storage.movies":
+		if v, ok := value.(string); ok {
+			cfg.Storage.Movies = v
+		}
+	case "storage.series":
+		if v, ok := value.(string); ok {
+			cfg.Storage.Series = v
+		}
+	case "storage.anime":
+		if v, ok := value.(string); ok {
+			cfg.Storage.Anime = v
+		}
+	case "storage.music":
+		if v, ok := value.(string); ok {
+			cfg.Storage.Music = v
+		}
+	case "storage.podcasts":
+		if v, ok := value.(string); ok {
+			cfg.Storage.Podcasts = v
+		}
+	case "storage.extra_music_dirs":
+		if v, ok := value.([]string); ok {
+			cfg.Storage.ExtraMusicDirs = v
 		}
 	case "subtitles.auto_download":
 		if v, ok := value.(bool); ok {

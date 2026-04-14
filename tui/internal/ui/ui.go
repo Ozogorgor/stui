@@ -951,7 +951,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.client != nil {
 			// Handle storage path changes via SetStoragePaths
-			if strings.HasPrefix(msg.Key, "storage.") {
+			switch {
+			case msg.Key == "storage.extra_music_dirs":
+				// Multi-path value: persist to config, push the list to
+				// the runtime, and trigger an MPD rescan so the library
+				// picks up the added/removed music roots immediately.
+				if paths, ok := msg.Value.([]string); ok {
+					m.cfg.Storage.ExtraMusicDirs = paths
+					m.client.SetConfig(msg.Key, paths)
+					m.client.MpdCmd("mpd_update", nil)
+					m.client.MpdListArtists()
+				}
+			case strings.HasPrefix(msg.Key, "storage."):
 				if v, ok := msg.Value.(string); ok {
 					m.client.SetStoragePaths(ipc.SetStoragePathsRequest{
 						Movies:   getIfKey(msg.Key, "storage.movies", v),
@@ -960,15 +971,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						Music:    getIfKey(msg.Key, "storage.music", v),
 						Podcasts: getIfKey(msg.Key, "storage.podcasts", v),
 					})
-					// When the music folder changes, ask MPD to rescan and
-					// reload the artist list so the library reflects the
-					// new folder's content immediately.
-					if msg.Key == "storage.music" {
+					// Keep cfg.Storage in sync locally too so subsequent
+					// reads see the new value without a round-trip.
+					switch msg.Key {
+					case "storage.movies":
+						m.cfg.Storage.Movies = v
+					case "storage.series":
+						m.cfg.Storage.Series = v
+					case "storage.anime":
+						m.cfg.Storage.Anime = v
+					case "storage.music":
+						m.cfg.Storage.Music = v
+						// When the primary music folder changes, ask MPD
+						// to rescan and reload the artist list.
 						m.client.MpdCmd("mpd_update", nil)
 						m.client.MpdListArtists()
+					case "storage.podcasts":
+						m.cfg.Storage.Podcasts = v
 					}
 				}
-			} else {
+			default:
 				m.client.SetConfig(msg.Key, msg.Value)
 			}
 		}

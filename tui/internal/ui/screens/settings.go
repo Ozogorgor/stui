@@ -233,6 +233,18 @@ func (s *settingItem) displayValue() string {
 		}
 		return "—"
 	case settingInfo:
+		// Special case: the extra music dirs info row renders a count +
+		// short preview from choiceVals (populated by populateFromConfig).
+		if s.key == "storage.music_extra" {
+			n := len(s.choiceVals)
+			if n == 0 {
+				return "(none)"
+			}
+			if n == 1 {
+				return s.choiceVals[0]
+			}
+			return fmt.Sprintf("%d paths", n)
+		}
 		return s.description
 	case settingAction:
 		return "→"
@@ -309,6 +321,12 @@ type SettingsModel struct {
 	editing   bool
 	editInput textinput.Model
 	client    *ipc.Client
+
+	// Path-list editor (for multi-folder fields like extra music dirs).
+	pathEditorOpen bool
+	pathEditor     components.PathListEditor
+	// Settings key the editor is bound to (e.g. "storage.extra_music_dirs").
+	pathEditorKey string
 }
 
 func NewSettingsModel(client *ipc.Client, cfg config.Config) SettingsModel {
@@ -395,6 +413,22 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 				item.strVal = cfg.Downloads.VideoDir
 			case "downloads.music_dir":
 				item.strVal = cfg.Downloads.MusicDir
+			case "storage.movies":
+				item.strVal = cfg.Storage.Movies
+			case "storage.series":
+				item.strVal = cfg.Storage.Series
+			case "storage.anime":
+				item.strVal = cfg.Storage.Anime
+			case "storage.music":
+				item.strVal = cfg.Storage.Music
+			case "storage.podcasts":
+				item.strVal = cfg.Storage.Podcasts
+			case "storage.music_extra":
+				// Stash the list in choiceVals so the info item can render
+				// a count + preview without needing a new item kind. The
+				// first "value" here is used by displayValue() indirectly
+				// via the description; we also shadow it on choiceVals.
+				item.choiceVals = append([]string(nil), cfg.Storage.ExtraMusicDirs...)
 			case "subtitles.auto_download":
 				item.boolVal = cfg.Subtitles.AutoDownload
 			case "subtitles.preferred_language":
@@ -495,6 +529,35 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 func (m SettingsModel) Init() tea.Cmd { return nil }
 
 func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
+	// ── Path-list editor intercept ────────────────────────────────────────
+	// When the multi-folder editor is open, forward keys to it. On done/cancel
+	// the editor returns a result; we emit a SettingsChangedMsg on done.
+	if m.pathEditorOpen {
+		switch msg := msg.(type) {
+		case tea.KeyPressMsg:
+			newEditor, result, cmd := m.pathEditor.Update(msg)
+			m.pathEditor = newEditor
+			if result == nil {
+				return m, cmd
+			}
+			m.pathEditorOpen = false
+			if result.Done && m.pathEditorKey != "" {
+				key := m.pathEditorKey
+				paths := result.Paths
+				m.pathEditorKey = ""
+				return m, func() tea.Msg {
+					return SettingsChangedMsg{Key: key, Value: paths}
+				}
+			}
+			m.pathEditorKey = ""
+			return m, cmd
+		case tea.MouseMsg:
+			// Suppress mouse during the editor for now.
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// ── Editing intercept — settingPath inline text input ─────────────────
 	// While editing, all input is consumed here. Navigation is suppressed.
 	if m.editing {
@@ -700,6 +763,18 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 					// Action items navigate to a sub-screen
 					if item.kind == settingAction {
 						switch item.key {
+						case "storage.music_extra.add":
+							// Open the path-list editor seeded with the
+							// currently configured extra music directories.
+							// The editor lives as an overlay on this same
+							// SettingsModel, not a new screen.
+							current := currentExtraMusicDirs(m.categories)
+							m.pathEditor = components.NewPathListEditor(
+								"Extra music directories", current,
+							).SetWidth(min(60, m.width-8))
+							m.pathEditorKey = "storage.extra_music_dirs"
+							m.pathEditorOpen = true
+							return m, nil
 						case "audio.dsp":
 							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), false)
 						case "plugins.manager":
@@ -1004,11 +1079,41 @@ func (m SettingsModel) View() tea.View {
 		footer = hintBar("↑↓ navigate", "enter select/toggle", "+/- adjust", "← back", "esc exit")
 	}
 
-	return tea.NewView(header + "\n\n" + body + "\n\n" + footer + "\n")
+	base := header + "\n\n" + body + "\n\n" + footer + "\n"
+
+	// If the path-list editor is open, overlay it centered on top of the
+	// regular settings view.
+	if m.pathEditorOpen {
+		overlay := m.pathEditor.View()
+		if m.width > 0 && m.height > 0 {
+			overlay = lipgloss.Place(m.width, m.height,
+				lipgloss.Center, lipgloss.Center, overlay)
+		}
+		return tea.NewView(overlay)
+	}
+
+	return tea.NewView(base)
 }
 
 // padOrTruncate ensures s has an exact visible width of w, padding with
 // spaces on the right or truncating (ANSI-aware via lipgloss.Width).
+// currentExtraMusicDirs reaches into the category slice and returns the
+// path list stashed on the "storage.music_extra" info item's choiceVals
+// (populated by populateFromConfig). Returns an empty slice if the item
+// doesn't exist yet.
+func currentExtraMusicDirs(cats []settingCategory) []string {
+	for _, cat := range cats {
+		for _, item := range cat.items {
+			if item.key == "storage.music_extra" {
+				out := make([]string, len(item.choiceVals))
+				copy(out, item.choiceVals)
+				return out
+			}
+		}
+	}
+	return nil
+}
+
 func padOrTruncate(s string, w int) string {
 	vis := lipgloss.Width(s)
 	if vis == w {
