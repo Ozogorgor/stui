@@ -29,6 +29,14 @@ import (
 	"github.com/stui/stui/pkg/theme"
 )
 
+// VizCycleBackendMsg is emitted when the user presses V in the queue to
+// cycle through visualizer backends (off → cliamp → cava → chroma → off).
+type VizCycleBackendMsg struct{}
+
+// VizCycleModeMsg is emitted when the user presses v in the queue to
+// cycle through styles/modes for the current visualizer backend.
+type VizCycleModeMsg struct{}
+
 // MusicQueueScreen displays and controls the live MPD playback queue.
 type MusicQueueScreen struct {
 	Dims
@@ -117,6 +125,18 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 	case ipc.MpdQueueResultMsg:
 		if m.Err == nil {
 			s.tracks = m.Tracks
+			// Auto-dedup: whenever the queue refreshes, silently drop any
+			// duplicate tracks (same file path), keeping the first ID.
+			if s.client != nil && len(s.tracks) > 0 {
+				seen := make(map[string]struct{}, len(s.tracks))
+				for _, t := range s.tracks {
+					if _, dup := seen[t.File]; dup {
+						s.client.MpdCmd("mpd_remove", map[string]any{"id": t.ID})
+					} else {
+						seen[t.File] = struct{}{}
+					}
+				}
+			}
 		}
 		s.loading = false
 		s.spinner.Stop()
@@ -230,6 +250,10 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 					}
 				}
 			}
+		case "V":
+			return s, func() tea.Msg { return VizCycleBackendMsg{} }
+		case "v":
+			return s, func() tea.Msg { return VizCycleModeMsg{} }
 		case "enter":
 			if len(s.tracks) > 0 && s.cursor < len(s.tracks) {
 				trackID := s.tracks[s.cursor].ID
@@ -354,21 +378,32 @@ func (s MusicQueueScreen) View(w, h int) string {
 		vizPanelH = vizContentH + 2 // +2 for top/bottom border
 	}
 
-	// Box outer height: all rows minus the (possibly reserved) viz panel.
-	boxH := h - vizPanelH
+	// ── Fixed box height based on exactly what the right panel needs ──────
+	// Right panel content = art (innerR/2 + 2 for border) + metadata
+	// (3 or 4 fields × 2 rows) + seek bar (2) + volume bar (2).
+	// Column widths first, so we know whether the album row is shown.
+	// innerL minus 2 reserves 1 col of space + 1 col of scrollbar.
+	innerLForCols := innerL - 2
+	if innerLForCols < 10 {
+		innerLForCols = 10
+	}
+	titleW, artistW, albumW := queueColWidths(innerLForCols)
+	rightContentNeeded := rightPanelContentHeight(innerR, albumW > 0)
+	boxH := rightContentNeeded + 2 // +2 for top/bottom border
+	// Cap at available height so small terminals still render.
+	if boxH > h-vizPanelH {
+		boxH = h - vizPanelH
+	}
 	if boxH < 3 {
 		boxH = 3
 	}
-	innerBoxH := boxH - 2  // inner content rows (border top+bottom = 2)
+	innerBoxH := boxH - 2
 
-	// Track rows = innerBoxH - 1 (first inner row is column header)
+	// Track rows = innerBoxH - 1 (first inner row is column header).
 	TH := innerBoxH - 1
 	if TH < 1 {
 		TH = 1
 	}
-
-	// ── Column widths ─────────────────────────────────────────────────────
-	titleW, artistW, albumW := queueColWidths(innerL)
 
 	// ── Column headers row ────────────────────────────────────────────────
 	var colHeaderRaw string
@@ -387,7 +422,8 @@ func (s MusicQueueScreen) View(w, h int) string {
 		components.WithScrollMode(components.ScrollModeCenter),
 	)
 	start, end := vl.VisibleRange()
-	scrollbar := vl.VerticalScrollbar(1, dimStyle)
+	// Always-visible per-row scrollbar (shows track even when all fit).
+	barChars := components.ScrollbarChars(start, TH, len(s.tracks), dimStyle)
 
 	var trackLines []string
 	for i := start; i < end; i++ {
@@ -426,8 +462,11 @@ func (s MusicQueueScreen) View(w, h int) string {
 		trackLines = append(trackLines, "")
 	}
 
-	if scrollbar != "" && len(trackLines) > 0 {
-		trackLines[0] = trackLines[0] + " " + scrollbar
+	// Append per-row scrollbar char (always reserved, even if no scrolling).
+	for i := range trackLines {
+		if i < len(barChars) {
+			trackLines[i] = padRightANSI(trackLines[i], innerLForCols) + " " + barChars[i]
+		}
 	}
 
 	// ── Build left bordered box ───────────────────────────────────────────
@@ -448,6 +487,8 @@ func (s MusicQueueScreen) View(w, h int) string {
 	leftLines = append(leftLines, topLeft)
 	leftLines = append(leftLines, borderVert+padRightANSI(colHeaderStyled, innerL)+borderVert)
 	for _, tl := range trackLines {
+		// trackLines are already padded to innerLForCols + space + scrollbar,
+		// which should equal innerL.
 		leftLines = append(leftLines, borderVert+padRightANSI(tl, innerL)+borderVert)
 	}
 	leftLines = append(leftLines, botLeft)
@@ -533,6 +574,24 @@ func (s MusicQueueScreen) renderVizPanel(w, contentH int, dimStyle, accentStyle 
 	}
 	sb.WriteString(botViz + "\n")
 	return sb.String()
+}
+
+// rightPanelContentHeight returns the exact number of inner rows the right
+// column needs to render its members (art + metadata + seek bar + vol bar),
+// mirroring buildRightPanel's own layout. showAlbum adds one extra label/value
+// pair (2 rows). innerW is the right column's inner width.
+func rightPanelContentHeight(innerW int, showAlbum bool) int {
+	if innerW < 1 {
+		innerW = 1
+	}
+	artRows := innerW/2 + 2 // art box = Height(innerW/2) content + 2 border rows
+	metaRows := 6           // TITLE + ARTIST + DURATION, each label + value
+	if showAlbum {
+		metaRows = 8
+	}
+	seekRows := 2
+	volRows := 2
+	return artRows + metaRows + seekRows + volRows
 }
 
 // buildRightPanel builds the right panel lines, truncating from the bottom
@@ -772,15 +831,25 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 		vizPanelH = vizContentH + 2 // +2 for top/bottom border
 	}
 
-	// Track list height — mirror View's TH/listHeight calculation.
+	// Track list height — mirror View's TH/listHeight calculation, using
+	// the fixed-height-based-on-right-panel logic.
 	var trackListH int
 	if isWide {
-		boxH := s.height - vizPanelH
+		innerLForCols := leftBoxW - 2 - 2 // borders + scrollbar col
+		if innerLForCols < 10 {
+			innerLForCols = 10
+		}
+		_, _, albumW := queueColWidths(innerLForCols)
+		rightNeeded := rightPanelContentHeight(innerR, albumW > 0)
+		boxH := rightNeeded + 2
+		if boxH > s.height-vizPanelH {
+			boxH = s.height - vizPanelH
+		}
 		if boxH < 3 {
 			boxH = 3
 		}
 		innerBoxH := boxH - 2
-		trackListH = innerBoxH - 1 // first inner row is column header
+		trackListH = innerBoxH - 1
 		if trackListH < 1 {
 			trackListH = 1
 		}
@@ -798,7 +867,11 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 	//   seek bar        : 2 lines
 	//   volume bar      : 2 lines
 	if isWide {
-		_, _, albumW := queueColWidths(leftBoxW - 2)
+		innerLForCols := leftBoxW - 2 - 2 // borders + scrollbar col
+		if innerLForCols < 10 {
+			innerLForCols = 10
+		}
+		_, _, albumW := queueColWidths(innerLForCols)
 		artRows := innerR/2 + 2
 		metaRows := 6
 		if albumW > 0 {

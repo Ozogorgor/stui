@@ -872,6 +872,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detail.SimilarLoading = false
 		}
 
+	// ── Visualizer cycle hotkeys (from queue screen) ────────────────────
+
+	case screens.VizCycleBackendMsg:
+		cfg := m.visualizer.Config()
+		// off → cliamp → cava → chroma → off
+		next := (cfg.Backend + 1) % 4
+		cfg.Backend = next
+		backendName := "off"
+		switch next {
+		case components.VisualizerCliamp:
+			backendName = "cliamp"
+		case components.VisualizerCava:
+			backendName = "cava"
+		case components.VisualizerChroma:
+			backendName = "chroma"
+		}
+		m.cfg.Visualizer.Backend = backendName
+		return m, m.visualizer.Reconfigure(cfg)
+
+	case screens.VizCycleModeMsg:
+		cfg := m.visualizer.Config()
+		// Modes are iota 0..N; cycle using the string map's length.
+		const numModes = 21 // Bars..Bricks (must match visualizer.go enum)
+		cfg.Mode = components.VisualizerMode((int(cfg.Mode) + 1) % numModes)
+		m.cfg.Visualizer.Mode = cfg.Mode.String()
+		return m, m.visualizer.Reconfigure(cfg)
+
 	// ── Settings changes ─────────────────────────────────────────────────
 
 	case screens.SettingsChangedMsg:
@@ -1943,7 +1970,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.switchTab(state.TabLibrary)
 	case "5":
 		m.switchTab(state.TabCollections)
-	case ",":
+	case "S":
 		return m, screen.OpenOverlayCmd(screens.NewSettingsModel(m.client, m.cfg))
 	case "esc":
 		if m.cwFocused {
