@@ -22,6 +22,7 @@ package screens
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,6 +41,15 @@ const (
 	LibPaneArtists LibraryPane = iota
 	LibPaneAlbums
 	LibPaneTracks
+)
+
+// libDialogCtx tells the dialog dismiss handler which option set the
+// user was looking at, so we can interpret the chosen index correctly.
+type libDialogCtx int
+
+const (
+	libDialogEnter      libDialogCtx = iota // Add / Replace / Cancel
+	libDialogRightClick                     // Add / Replace / Add to Playlist / Create Playlist / Cancel
 )
 
 // MusicLibraryScreen is the Artist→Album→Track browser with an optional
@@ -63,6 +73,11 @@ type MusicLibraryScreen struct {
 	loadingArtists bool
 	loadingAlbums  bool
 	loadingSongs   bool
+	// Error messages from the runtime (broken pipe, MPD ACK, etc.) so the
+	// view can render an actionable hint instead of a stuck spinner.
+	artistError string
+	albumError  string
+	songError   string
 
 	// Dir browser state
 	dirPath    []string // breadcrumb stack; empty = root
@@ -77,10 +92,15 @@ type MusicLibraryScreen struct {
 	// queueFiles tracks file paths currently in the MPD queue for dedup checks.
 	queueFiles map[string]struct{}
 
-	// Track-action dialog (shown when Enter is pressed on a track).
-	dialogOpen bool
-	dialog     components.Dialog
-	dialogSong ipc.MpdSong
+	// Track-action dialog (shown when Enter is pressed on a track or a
+	// track row is right-clicked). dialogContext describes which option
+	// set is showing — Enter uses the simple Add/Replace/Cancel set, and
+	// right-click uses the extended Add/Replace/Add to Playlist/Create
+	// Playlist set so the option indices are interpreted correctly.
+	dialogOpen    bool
+	dialog        components.Dialog
+	dialogSong    ipc.MpdSong
+	dialogContext libDialogCtx
 
 	spinner      components.Spinner
 	loadingStart time.Time
@@ -134,8 +154,23 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 
 	case ipc.MpdLibraryResultMsg:
 		if m.Err != nil {
+			// Surface the error in the right scope so the UI can show a
+			// useful message instead of just freezing on the spinner.
+			if m.ForAlbum != "" {
+				s.songError = m.Err.Error()
+				s.loadingSongs = false
+			} else if m.ForArtist != "" {
+				s.albumError = m.Err.Error()
+				s.loadingAlbums = false
+			} else {
+				s.artistError = m.Err.Error()
+				s.loadingArtists = false
+				s.spinner.Stop()
+			}
 			break
 		}
+		// Clear any prior error in this scope on a successful response.
+		s.artistError, s.albumError, s.songError = "", "", ""
 		if m.ForAlbum != "" {
 			// Songs for a specific album arrived
 			s.songs = m.Songs
@@ -196,22 +231,7 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		var dismissed bool
 		s.dialog, chosen, dismissed = s.dialog.Update(key)
 		if dismissed {
-			s.dialogOpen = false
-			if s.client != nil {
-				switch chosen {
-				case 0: // Add to queue
-					if _, exists := s.queueFiles[s.dialogSong.File]; exists {
-						s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
-					} else {
-						s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-						s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
-					}
-				case 1: // Replace queue
-					s.client.MpdCmd("mpd_clear", nil)
-					s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-					s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
-				}
-			}
+			s = s.applyDialogChoice(chosen)
 		}
 		return s
 	}
@@ -309,6 +329,7 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 			if len(s.songs) > 0 && s.songCursor < len(s.songs) {
 				song := s.songs[s.songCursor]
 				s.dialogSong = song
+				s.dialogContext = libDialogEnter
 				s.dialog = components.NewDialog(
 					"What to do with '"+truncate(song.Title, 28)+"'?",
 					[]string{"Add to queue", "Replace queue", "Cancel"},
@@ -441,6 +462,96 @@ func (s MusicLibraryScreen) HandleMouse(x, localY int) MusicLibraryScreen {
 	return s.handleTagMouse(x, localY)
 }
 
+// HandleRightMouse handles a right-click. If it lands on a track row,
+// it opens the per-track context dialog with all four actions
+// (Add to queue, Replace queue, Add to Playlist, Create Playlist).
+func (s MusicLibraryScreen) HandleRightMouse(x, localY int) MusicLibraryScreen {
+	if s.dirMode || s.dialogOpen {
+		return s
+	}
+	paneW := s.width / 3
+	if paneW < 10 {
+		paneW = 10
+	}
+	listH := s.height - 4
+	if listH < 1 {
+		listH = 1
+	}
+	// Header row (localY=0) + border (localY=listH+1) — only data rows count.
+	if localY <= 0 {
+		return s
+	}
+	dataRow := localY - 1
+	if dataRow < 0 || dataRow >= listH {
+		return s
+	}
+	// Tracks pane is the rightmost (x >= 2*paneW+1). Right-click outside
+	// the tracks column is ignored.
+	if x < 2*paneW+1 {
+		return s
+	}
+	scroll := libScroll(len(s.songs), s.songCursor, listH)
+	idx := scroll + dataRow
+	if idx < 0 || idx >= len(s.songs) {
+		return s
+	}
+	s.songCursor = idx
+	s.activePane = LibPaneTracks
+	song := s.songs[idx]
+	s.dialogSong = song
+	s.dialogContext = libDialogRightClick
+	s.dialog = components.NewDialog(
+		"Track: '"+truncate(song.Title, 28)+"'",
+		[]string{"Add to queue", "Replace queue", "Add to Playlist", "Create Playlist", "Cancel"},
+	)
+	s.dialogOpen = true
+	return s
+}
+
+// applyDialogChoice runs the action matching the chosen index, with
+// the option set determined by s.dialogContext. -1 = cancel/esc.
+func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
+	s.dialogOpen = false
+	if s.client == nil || chosen < 0 {
+		return s
+	}
+	switch s.dialogContext {
+	case libDialogEnter:
+		switch chosen {
+		case 0: // Add to queue
+			if _, exists := s.queueFiles[s.dialogSong.File]; exists {
+				s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
+			} else {
+				s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+				s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
+			}
+		case 1: // Replace queue
+			s.client.MpdCmd("mpd_clear", nil)
+			s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+			s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
+		}
+	case libDialogRightClick:
+		switch chosen {
+		case 0: // Add to queue
+			if _, exists := s.queueFiles[s.dialogSong.File]; exists {
+				s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
+			} else {
+				s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+				s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
+			}
+		case 1: // Replace queue
+			s.client.MpdCmd("mpd_clear", nil)
+			s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
+			s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
+		case 2: // Add to Playlist (placeholder until playlist picker exists)
+			s.statusMsg = "Add to Playlist: not implemented yet"
+		case 3: // Create Playlist (placeholder until name prompt exists)
+			s.statusMsg = "Create Playlist: not implemented yet"
+		}
+	}
+	return s
+}
+
 func (s MusicLibraryScreen) handleTagMouse(x, localY int) MusicLibraryScreen {
 	paneW := s.width / 3
 	if paneW < 10 {
@@ -565,6 +676,23 @@ func (s MusicLibraryScreen) View(w, h int) string {
 
 // viewTag renders the three-column tag browser.
 func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle lipgloss.Style) string {
+	// While the artist list is still in-flight (or has timed out with no
+	// data), show a centered spinner across the whole library area —
+	// matches the Movies/Series tab loading pattern instead of stuffing
+	// the spinner under the Artists column.
+	if (s.loadingArtists || s.artistError != "") && len(s.artists) == 0 {
+		spinView := s.spinner.View()
+		if spinView == "" {
+			spinView = "Loading library…"
+		}
+		msg := lipgloss.NewStyle().Foreground(theme.T.Neon()).Render(spinView)
+		if s.artistError != "" {
+			msg = lipgloss.NewStyle().Foreground(theme.T.Yellow()).
+				Render("⚠ " + s.artistError)
+		}
+		return CenteredMsg(w, h, msg)
+	}
+
 	// Reserve 1 row: header line
 	listH := h - 1
 	if listH < 1 {
@@ -728,19 +856,29 @@ func (s MusicLibraryScreen) artistNames() []string {
 	return names
 }
 
-// albumNames returns album display strings. When a release year is present,
-// albums are prefixed as "[YYYY] Title" so same-titled releases can be
-// distinguished. Any date longer than 4 chars (e.g. "1996-11-01") is
-// trimmed to just the year.
+// yearRegex finds the first 19xx or 20xx four-digit year anywhere in a
+// string. MPD/file metadata is wildly inconsistent — values can look like
+// "1996", "1996-11-01", "11/1996", "released 1996", or even "1996/2010"
+// (compilation/reissue). This grabs the first plausible year regardless
+// of position, ignoring leading garbage and slash-style date formats.
+var yearRegex = regexp.MustCompile(`(?:19|20)\d{2}`)
+
+// extractYear pulls a 4-digit year out of an arbitrary date string and
+// returns it (or "" if no plausible year is present).
+func extractYear(s string) string {
+	return yearRegex.FindString(s)
+}
+
+// albumNames returns album display strings. When a release year is
+// present, albums are prefixed as "(YYYY) Title" so same-titled releases
+// can be distinguished. Year is extracted via extractYear so any date
+// format MPD reports (1996, 1996-11-01, 11/1996, "released 1996") shows
+// up consistently.
 func (s MusicLibraryScreen) albumNames() []string {
 	names := make([]string, len(s.albums))
 	for i, a := range s.albums {
-		if a.Year != "" {
-			year := a.Year
-			if len(year) > 4 {
-				year = year[:4]
-			}
-			names[i] = "[" + year + "] " + a.Title
+		if year := extractYear(a.Year); year != "" {
+			names[i] = "(" + year + ") " + a.Title
 		} else {
 			names[i] = a.Title
 		}

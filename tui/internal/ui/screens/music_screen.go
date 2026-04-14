@@ -240,6 +240,21 @@ func (s MusicScreen) HandleMouse(x, relY int) (MusicScreen, tea.Cmd) {
 	return s, cmd
 }
 
+// HandleRightMouse routes a right-click. Currently only the Library
+// sub-tab consumes it (to open the per-track context dialog); other
+// sub-tabs ignore.
+func (s MusicScreen) HandleRightMouse(x, relY int) (MusicScreen, tea.Cmd) {
+	const tabBarRows = 3
+	if relY < tabBarRows {
+		return s, nil // ignore right-click in tab bar
+	}
+	bodyY := relY - tabBarRows
+	if s.active == MusicLibrary {
+		s.library = s.library.HandleRightMouse(x, bodyY)
+	}
+	return s, nil
+}
+
 // hitTestSubTabBar returns the sub-tab at horizontal position x, or false if
 // x falls outside all tab areas. Widths are computed by rendering each tab
 // with the same style RenderTabs uses, so hit-boxes exactly match the view.

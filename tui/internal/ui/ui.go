@@ -1238,6 +1238,20 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	case mouse.Button == tea.MouseWheelDown:
 		return m.handleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	case mouse.Button == tea.MouseRight:
+		// Right-click is currently only meaningful in the Music tab so it
+		// can open the per-track context dialog (Add to queue / Replace
+		// queue / Add to Playlist / Create Playlist). Other tabs ignore.
+		if m.state.ActiveTab != state.TabMusic {
+			return m, nil
+		}
+		topBarY := m.overlayRowCount()
+		const topBarTotalRowsR = 5
+		relY := mouse.Y - topBarY - topBarTotalRowsR - 1
+		cardX := mouse.X - 3
+		var cmd tea.Cmd
+		m.musicScreen, cmd = m.musicScreen.HandleRightMouse(cardX, relY)
+		return m, cmd
 	case mouse.Button == tea.MouseLeft:
 		topBarY := m.overlayRowCount()
 		y := mouse.Y
