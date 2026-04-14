@@ -649,7 +649,8 @@ func (m AudioSettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			}
 			// Note: m.profileLoaded is set in DspProfilesListedMsg handler
 			return m, nil
-		case "esc":
+		case "esc", "backspace":
+			// Both pop back to Settings (the previous screen on the stack).
 			return m, screen.PopCmd()
 		}
 	}

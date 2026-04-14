@@ -75,11 +75,12 @@ func overlayPopupSize(termW, termH int) (w, h int) {
 //	ctrl+c, q  — quit
 //	ESC        — pop previous screen (if stack is non-empty)
 type RootModel struct {
-	active  screen.Screen
-	history []screen.Screen // previous screens (stack); ESC pops the top
-	overlay screen.Screen   // non-nil while a popup overlay is open
-	width   int
-	height  int
+	active         screen.Screen
+	history        []screen.Screen // previous screens (stack); ESC pops the top
+	overlay        screen.Screen   // non-nil while a popup overlay is open
+	overlayHistory []screen.Screen // stack of overlays "below" the active one
+	width          int
+	height         int
 }
 
 // NewRootModel creates a RootModel with `initial` as the active screen.
@@ -134,9 +135,14 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Screen transition (from screen.TransitionCmd) ──────────────────────────
 	if t, ok := msg.(screen.TransitionMsg); ok {
-		// If a transition fires from within an overlay, replace the overlay
-		// instead of touching the active screen.
+		// If a transition fires from within an overlay, swap the overlay.
+		// When PushBack is requested, save the current overlay so PopMsg
+		// can return to it (e.g. Settings → DSP Settings → backspace
+		// returns to Settings).
 		if r.overlay != nil {
+			if t.PushBack {
+				r.overlayHistory = append(r.overlayHistory, r.overlay)
+			}
 			r.overlay = t.Next
 			initCmd := r.overlay.Init()
 			if r.width > 0 {
@@ -172,13 +178,29 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return r, cmd
 		}
 
-		// ESC closes the overlay.
-		if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "esc" {
-			r.overlay = nil
-			return r, nil
+		// ESC / backspace pops back to the previous overlay if one was
+		// pushed (Settings → DSP), otherwise closes the overlay entirely.
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			s := key.String()
+			if s == "esc" || s == "backspace" {
+				if n := len(r.overlayHistory); n > 0 {
+					prev := r.overlayHistory[n-1]
+					r.overlayHistory = r.overlayHistory[:n-1]
+					r.overlay = prev
+					return r, nil
+				}
+				r.overlay = nil
+				return r, nil
+			}
 		}
-		// PopMsg from overlay screen closes it.
+		// PopMsg from overlay screen: pop to previous overlay or close.
 		if _, ok := msg.(screen.PopMsg); ok {
+			if n := len(r.overlayHistory); n > 0 {
+				prev := r.overlayHistory[n-1]
+				r.overlayHistory = r.overlayHistory[:n-1]
+				r.overlay = prev
+				return r, nil
+			}
 			r.overlay = nil
 			return r, nil
 		}

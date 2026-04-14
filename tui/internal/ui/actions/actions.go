@@ -185,7 +185,8 @@ var defaultKeyMap = map[string]AppAction{
 
 	// App
 	"/": ActionOpenSearch,
-	",": ActionOpenSettings,
+	"`": ActionOpenSettings,
+	"~": ActionOpenSettings,
 	"?": ActionOpenHelp,
 
 	// Player transport
@@ -388,7 +389,7 @@ func GroupedHelp() []ActionGroup {
 			Title: "Search & App",
 			Rows: []ActionRow{
 				{"/", "Search"},
-				{",", "Settings"},
+				{"`", "Settings"},
 				{"?", "Help"},
 				{"q", "Quit"},
 			},

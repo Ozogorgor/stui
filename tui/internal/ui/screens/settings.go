@@ -776,7 +776,9 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							m.pathEditorOpen = true
 							return m, nil
 						case "audio.dsp":
-							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), false)
+							// Push Settings onto the overlay history so esc/backspace
+							// in DSP returns here instead of closing both.
+							return m, screen.TransitionCmd(NewAudioSettingsModel(m.client), true)
 						case "plugins.manager":
 							return m, func() tea.Msg { return OpenPluginManagerMsg{} }
 						case "plugins.manage_repos":

@@ -21,6 +21,7 @@ import (
 	"github.com/stui/stui/pkg/collections"
 	"github.com/stui/stui/pkg/config"
 	"github.com/stui/stui/pkg/keybinds"
+	"github.com/stui/stui/pkg/log"
 	"github.com/stui/stui/pkg/mediacache"
 	"github.com/stui/stui/pkg/notify"
 	"github.com/stui/stui/pkg/session"
@@ -1076,7 +1077,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.client.SetTrace(v)
 			}
 		}
-		// Persist to config file (debounced 300ms).
+		// Persist to config file. Save synchronously instead of debouncing
+		// so a quick quit can't drop the change.
 		m.cfg = config.ApplyChange(m.cfg, msg.Key, msg.Value)
 		if msg.Key == "interface.theme" {
 			if p, err := config.LoadTheme(m.cfg.Interface.Theme); err == nil {
@@ -1086,11 +1088,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.watcher.SetActiveTheme(m.cfg.Interface.Theme)
 			}
 		}
-		m.cfgSaveSeq++
-		seq := m.cfgSaveSeq
-		return m, tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg {
-			return configSaveTickMsg{seq}
-		})
+		if m.watcher != nil {
+			m.watcher.NotifyWrite()
+		}
+		if err := config.Save(m.cfgPath, m.cfg); err != nil {
+			log.Warn("config save failed", "key", msg.Key, "path", m.cfgPath, "error", err)
+			m.state.StatusMsg = "config save failed: " + err.Error()
+		}
+		return m, nil
 
 	// ── Plugin settings screen ────────────────────────────────────────────
 
