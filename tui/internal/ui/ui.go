@@ -815,15 +815,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
+		// Tick BOTH the top-level loading spinner (Movies/Series grid) and
+		// every music sub-screen — otherwise spinners inside MusicScreen
+		// (library, playlists, etc.) never advance because their TickMsg
+		// chain dies here.
 		var spinCmd tea.Cmd
 		m.loadingSpinner, spinCmd = m.loadingSpinner.Update(msg)
+		var musicCmd tea.Cmd
+		m.musicScreen, musicCmd = m.musicScreen.Update(msg)
 		// Clear stale loading state if nothing responded within the timeout.
 		if m.state.IsLoading && m.state.LoadingStart > 0 &&
 			time.Since(time.Unix(m.state.LoadingStart, 0)) > 8*time.Second {
 			m.state.IsLoading = false
 			m.state.LoadingStart = 0
 		}
-		return m, spinCmd
+		return m, tea.Batch(spinCmd, musicCmd)
 
 	// ── MPD audio events ──────────────────────────────────────────────────
 
