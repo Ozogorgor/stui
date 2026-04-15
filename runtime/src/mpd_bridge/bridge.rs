@@ -26,6 +26,7 @@ use crate::ipc::{
     MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
     MpdSavedPlaylistWire, MpdSongWire,
 };
+use crate::mediacache::normalize::year::extract_year;
 use super::client::MpdConnection;
 
 /// Escape a string for use inside an MPD quoted argument (`"..."`).
@@ -48,26 +49,6 @@ fn parse_f64(v: Option<&String>) -> f64 {
 }
 fn str_or(v: Option<&String>) -> String {
     v.cloned().unwrap_or_default()
-}
-
-/// Extract a 4-digit year from an MPD `Date:` value.
-///
-/// MPD files commonly tag dates as `2017`, `2017-05-03`, `May 2017`, or even
-/// just plain junk; we return the first run of four consecutive digits that
-/// looks like a year (1000–2999), or empty string on no match.
-fn extract_year(date: &str) -> String {
-    if date.is_empty() { return String::new(); }
-    let bytes = date.as_bytes();
-    for i in 0..bytes.len().saturating_sub(3) {
-        let slice = &bytes[i..i + 4];
-        if slice.iter().all(|b| b.is_ascii_digit()) {
-            let first = slice[0];
-            if first == b'1' || first == b'2' {
-                return std::str::from_utf8(slice).unwrap_or("").to_string();
-            }
-        }
-    }
-    String::new()
 }
 
 fn default_entry() -> MpdDirEntryWire {

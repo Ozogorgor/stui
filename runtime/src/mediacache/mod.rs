@@ -3,6 +3,7 @@
 //! fails to start.
 
 mod store;
+pub mod normalize;
 
 pub use store::MediaCacheStore;
 
