@@ -618,6 +618,18 @@ impl MpdBridge {
         }).collect())
     }
 
+    /// Trigger MPD's `update` rescan, optionally scoped to a subpath within
+    /// the music_dir. Returns the job ID string from MPD, or empty on no-id.
+    /// Fire-and-forget: MPD scans in the background.
+    pub async fn update_library(&self, subpath: Option<&str>) -> Result<String> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        match conn.update_library(subpath).await {
+            Ok(job) => Ok(job),
+            Err(e) => { *guard = None; Err(e) }
+        }
+    }
+
     /// Apply initial config to the live MPD daemon (replay gain, crossfade, etc.)
     pub async fn apply_config(&self) {
         let _ = self.set_replay_gain(&self.config.replay_gain.clone()).await;

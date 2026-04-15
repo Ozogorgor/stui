@@ -159,4 +159,25 @@ impl MpdConnection {
             .await?
             .context("MPD connection closed unexpectedly")
     }
+
+    /// Trigger MPD's `update` command, optionally scoped to a subpath.
+    /// Returns the job ID string (from `updating_db:`) — empty if MPD
+    /// didn't return one. Fire-and-forget: MPD scans in the background.
+    pub async fn update_library(&mut self, subpath: Option<&str>) -> Result<String> {
+        let cmd = match subpath {
+            Some(p) if !p.is_empty() => {
+                let mut s = String::from("update ");
+                s.push('"');
+                for ch in p.chars() {
+                    if ch == '\\' || ch == '"' { s.push('\\'); }
+                    s.push(ch);
+                }
+                s.push('"');
+                s
+            }
+            _ => "update".to_string(),
+        };
+        let map = self.command_kv(&cmd).await?;
+        Ok(map.get("updating_db").cloned().unwrap_or_default())
+    }
 }
