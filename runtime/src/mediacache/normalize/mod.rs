@@ -6,3 +6,4 @@ pub mod year;
 pub mod unusual_case;
 pub mod rules;
 pub mod exceptions;
+pub mod lookup;
