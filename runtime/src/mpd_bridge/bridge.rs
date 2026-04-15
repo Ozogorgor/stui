@@ -405,8 +405,10 @@ impl MpdBridge {
                     album.raw_title = album.title.clone();
                     album.title = n.album;
                 }
-                // year may be re-extracted but should be identical; trust pipeline.
-                album.year = n.year;
+                // Leave album.year alone — the bridge's year logic (extract_year
+                // with OriginalDate fallback) is strictly more capable than the
+                // pipeline's plain extract_year on album.date. Overwriting here
+                // would wipe OriginalDate-sourced years whose Date tag is empty.
             }
         }
         Ok(out)
