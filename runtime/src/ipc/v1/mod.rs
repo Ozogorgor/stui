@@ -653,6 +653,12 @@ pub struct MpdAlbumWire {
     /// album has no Date tag.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub date: String,
+    /// Pre-normalized artist value, populated only when normalization changed it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_artist: String,
+    /// Pre-normalized album title, populated only when normalization changed it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_title: String,
 }
 
 /// One song record (used for library tracks and saved-playlist tracks).

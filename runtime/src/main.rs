@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
 
     // ── MPD bridge ────────────────────────────────────────────────────────────
     let mpd_bridge = if cfg.mpd.host != "disabled" {
-        let b = MpdBridge::new(cfg.mpd.clone(), event_tx.clone());
+        let b = MpdBridge::new(cfg.mpd.clone(), event_tx.clone(), cfg.music.normalize.clone());
         b.apply_config().await;
         info!(host = %cfg.mpd.host, port = cfg.mpd.port, "MPD bridge initialized");
         Some(b)

@@ -21,12 +21,13 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::config::types::MpdConfig;
+use crate::config::types::{MpdConfig, MusicNormalizeConfig};
 use crate::ipc::{
     MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
     MpdSavedPlaylistWire, MpdSongWire,
 };
 use crate::mediacache::normalize::year::extract_year;
+use crate::mediacache::normalize::{self, store as norm_store, NormalizationConfig, RawTags};
 use super::client::MpdConnection;
 
 /// Escape a string for use inside an MPD quoted argument (`"..."`).
@@ -101,16 +102,22 @@ pub struct MpdBridge {
     config: MpdConfig,
     conn:   Arc<Mutex<Option<MpdConnection>>>,
     ipc_tx: tokio::sync::mpsc::Sender<String>,
+    normalize_cfg: MusicNormalizeConfig,
 }
 
 impl MpdBridge {
     /// Create a bridge. Does NOT connect immediately — connection is lazy on
     /// first command and retried automatically on failure.
-    pub fn new(config: MpdConfig, ipc_tx: tokio::sync::mpsc::Sender<String>) -> Self {
+    pub fn new(
+        config: MpdConfig,
+        ipc_tx: tokio::sync::mpsc::Sender<String>,
+        normalize_cfg: MusicNormalizeConfig,
+    ) -> Self {
         let bridge = MpdBridge {
             config,
             conn: Arc::new(Mutex::new(None)),
             ipc_tx,
+            normalize_cfg,
         };
         bridge.start_idle_loop();
         bridge
@@ -361,7 +368,42 @@ impl MpdBridge {
             );
             let key = (title.clone(), entry_artist.clone(), raw_date.clone());
             if seen.insert(key) {
-                out.push(MpdAlbumWire { title, artist: entry_artist, year, date: raw_date });
+                out.push(MpdAlbumWire {
+                    title,
+                    artist: entry_artist,
+                    year,
+                    date: raw_date,
+                    raw_artist: String::new(),
+                    raw_title: String::new(),
+                });
+            }
+        }
+        // Apply normalization pipeline if enabled.
+        if self.normalize_cfg.enabled {
+            let exceptions = norm_store::global().map(|s| s.get()).unwrap_or_default();
+            for album in out.iter_mut() {
+                let raw = RawTags {
+                    artist: album.artist.clone(),
+                    album: album.title.clone(),
+                    date: album.date.clone(),
+                    ..Default::default()
+                };
+                let cfg = NormalizationConfig {
+                    enabled: true,
+                    use_lookup: self.normalize_cfg.use_lookup,
+                    exceptions: &exceptions,
+                };
+                let n = normalize::normalize(&raw, &cfg, None);
+                if n.artist != album.artist {
+                    album.raw_artist = album.artist.clone();
+                    album.artist = n.artist;
+                }
+                if n.album != album.title {
+                    album.raw_title = album.title.clone();
+                    album.title = n.album;
+                }
+                // year may be re-extracted but should be identical; trust pipeline.
+                album.year = n.year;
             }
         }
         Ok(out)
