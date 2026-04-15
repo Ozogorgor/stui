@@ -127,6 +127,10 @@ async fn main() -> Result<()> {
     ).await);
     info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
 
+    // ── Tag-write job state (for Action A tag normalization) ─────────────────
+    let tag_job_store = Arc::new(mediacache::tag_write_job::JobStore::new());
+    let tag_job_registry = Arc::new(mediacache::tag_write_job::JobRegistry::new());
+
     // ── Media storage ──────────────────────────────────────────────────────
     let storage = Arc::new(storage::MediaStorage::new(
         cfg.storage.movies.clone(),
@@ -321,6 +325,8 @@ async fn main() -> Result<()> {
                 &media_cache,
                 &bench,
                 &trace,
+                &tag_job_store,
+                &tag_job_registry,
                 &mut event_rx,
                 event_tx.clone(),
                 &mut toast_rx,
@@ -353,6 +359,8 @@ async fn main() -> Result<()> {
             &media_cache,
             &bench,
             &trace,
+            &tag_job_store,
+            &tag_job_registry,
             &mut event_rx,
             event_tx.clone(),
             &mut toast_rx,
@@ -378,6 +386,8 @@ async fn run_ipc_loop<R, W>(
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench:     &StreamBenchmarker,
     trace:     &Arc<TraceEmitter>,
+    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     // Receiver for async events pushed by background tasks (player, aria2, registry, …).
     event_rx:  &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
@@ -538,7 +548,7 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &tag_job_store, &tag_job_registry, &line).await;
                         // Echo the request's `id` (if present) into the response envelope so the
                         // TUI's pending-request router can match the response to its caller.
                         // Variants whose struct already includes `id` are left alone.
@@ -713,6 +723,8 @@ async fn handle_line(
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
     trace: &Arc<TraceEmitter>,
+    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     line: &str,
 ) -> Response {
     let request: Request = match serde_json::from_str(line) {
