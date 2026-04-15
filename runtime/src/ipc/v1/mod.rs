@@ -61,6 +61,19 @@ pub enum Request {
     GetProviderSettings,
     /// Fetch the list of MPD audio outputs.
     GetMpdOutputs,
+
+    // ── MPD library / browse queries ──────────────────────────────────────────
+    /// Fetch the current MPD playback queue.
+    MpdGetQueue(MpdGetQueueRequest),
+    /// List MPD library entities (artists / albums / songs).
+    MpdList(MpdListRequest),
+    /// Browse the MPD music database by path.
+    MpdBrowse(MpdBrowseRequest),
+    /// List saved MPD playlists.
+    MpdGetPlaylists(MpdGetPlaylistsRequest),
+    /// Fetch tracks in a saved MPD playlist.
+    MpdGetPlaylist(MpdGetPlaylistRequest),
+
     /// Fetch the current plugin repository list.
     GetPluginRepos,
     /// Replace the plugin repository list (built-in repo is always prepended by the runtime).
@@ -324,7 +337,8 @@ pub enum Response {
     PluginLoaded(PluginLoadedResponse),
     PluginUnloaded(PluginUnloadedResponse),
     /// Response to `Ping`.  Always carries version metadata so the TUI can
-    /// detect mismatches and warn the user.
+    /// detect mismatches and warn the user.  The correlation `id` is injected
+    /// at the dispatcher level (see `inject_id_into_response` in `main.rs`).
     Pong {
         /// The runtime's active IPC protocol version (matches `ipc::CURRENT_VERSION`).
         ipc_version: u32,
@@ -362,6 +376,19 @@ pub enum Response {
     ProviderSettings(ProviderSettingsResponse),
     /// Response to `GetMpdOutputs`.
     MpdOutputs(MpdOutputsResponse),
+
+    // ── MPD library / browse responses ────────────────────────────────────────
+    /// Response to `MpdGetQueue` — full queue snapshot.
+    MpdGetQueue(MpdGetQueueResponse),
+    /// Response to `MpdList` — one of `artists`, `albums`, or `songs` is populated.
+    MpdList(MpdListResponse),
+    /// Response to `MpdBrowse` — directory listing.
+    MpdBrowse(MpdBrowseResponse),
+    /// Response to `MpdGetPlaylists` — saved playlist names.
+    MpdGetPlaylists(MpdGetPlaylistsResponse),
+    /// Response to `MpdGetPlaylist` — tracks in a saved playlist.
+    MpdGetPlaylist(MpdGetPlaylistResponse),
+
     /// Response to `GetPluginRepos`.
     PluginRepos(PluginReposResponse),
     /// Response to `BrowseRegistry` — full merged index from all repos.
@@ -548,6 +575,161 @@ pub struct MpdOutputInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MpdOutputsResponse {
     pub outputs: Vec<MpdOutputInfo>,
+}
+
+// ── MPD library / browse — requests ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetQueueRequest {
+    pub id: String,
+}
+
+/// `what` is one of `"artists"`, `"albums"`, `"songs"`.  `artist` is required
+/// when `what == "albums"` or `what == "songs"`; `album` is required when
+/// `what == "songs"`.  Empty string means "no filter".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdListRequest {
+    pub id: String,
+    pub what: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    /// Raw MPD `Date:` value used to disambiguate multiple releases of the
+    /// same album (e.g. a 1996 original vs a 2007 remaster sharing the
+    /// Album/Artist tags). Empty means no date filter.
+    #[serde(default)]
+    pub date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdBrowseRequest {
+    pub id: String,
+    /// Relative path inside the MPD music directory.  Empty = root.
+    #[serde(default)]
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetPlaylistsRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetPlaylistRequest {
+    pub id: String,
+    pub name: String,
+}
+
+// ── MPD library / browse — wire entities ─────────────────────────────────────
+
+/// One track in the MPD playback queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdQueueTrackWire {
+    pub id: u32,
+    pub pos: u32,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration: f64,
+    pub file: String,
+}
+
+/// One artist in the MPD library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdArtistWire {
+    pub name: String,
+}
+
+/// One album in the MPD library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdAlbumWire {
+    pub title: String,
+    pub artist: String,
+    /// Release year as a string (MPD returns `Date:` which may be full date or year).
+    pub year: String,
+    /// Raw MPD `Date:` value (e.g. "1996-11-01"), kept so the TUI can echo
+    /// it back when asking for this specific release's tracks. Empty if the
+    /// album has no Date tag.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub date: String,
+}
+
+/// One song record (used for library tracks and saved-playlist tracks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdSongWire {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration: f64,
+    pub file: String,
+}
+
+/// One entry returned by `lsinfo` — either a directory, a file, or a playlist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdDirEntryWire {
+    pub name: String,
+    pub is_dir: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub artist: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub album: String,
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub duration: f64,
+}
+
+fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
+
+/// A saved MPD playlist descriptor (name + last-modified timestamp).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdSavedPlaylistWire {
+    pub name: String,
+    /// ISO-8601 timestamp as returned by MPD; empty when unknown.
+    #[serde(default)]
+    pub modified: String,
+}
+
+// ── MPD library / browse — responses ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetQueueResponse {
+    pub id: String,
+    pub tracks: Vec<MpdQueueTrackWire>,
+}
+
+/// Exactly one of `artists`, `albums`, `songs` is non-empty per response —
+/// matches the `what` in the originating `MpdListRequest`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdListResponse {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artists: Vec<MpdArtistWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub albums: Vec<MpdAlbumWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub songs: Vec<MpdSongWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdBrowseResponse {
+    pub id: String,
+    pub entries: Vec<MpdDirEntryWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetPlaylistsResponse {
+    pub id: String,
+    pub playlists: Vec<MpdSavedPlaylistWire>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MpdGetPlaylistResponse {
+    pub id: String,
+    pub tracks: Vec<MpdSongWire>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

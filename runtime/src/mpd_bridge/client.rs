@@ -101,6 +101,24 @@ impl MpdConnection {
         Ok(changed)
     }
 
+    /// Send a command and return the full stream of `(key, value)` pairs
+    /// in wire order.  Useful for responses where record boundaries are
+    /// marked by any of several keys (e.g. `lsinfo` emits `directory:`,
+    /// `file:`, or `playlist:` as a new-record marker).
+    pub async fn command_kv_ordered(&mut self, cmd: &str) -> Result<Vec<(String, String)>> {
+        self.send_line(cmd).await?;
+        let mut out = Vec::new();
+        loop {
+            let line = self.next_line().await?;
+            if line == "OK" { break; }
+            if line.starts_with("ACK") { bail!("MPD error on `{cmd}`: {line}"); }
+            if let Some((k, v)) = line.split_once(": ") {
+                out.push((k.to_string(), v.to_string()));
+            }
+        }
+        Ok(out)
+    }
+
     /// Send a command that returns multiple records (like `outputs`).
     /// Records are separated by a repeated `outputid:` / `Id:` key.
     pub async fn command_records(

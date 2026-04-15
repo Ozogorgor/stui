@@ -533,7 +533,12 @@ where
                             _ => {}
                         }
                         let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &line).await;
-                        send_wire(&mut writer, &resp.to_wire()?).await?;
+                        // Echo the request's `id` (if present) into the response envelope so the
+                        // TUI's pending-request router can match the response to its caller.
+                        // Variants whose struct already includes `id` are left alone.
+                        let req_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let wire = inject_id_into_response(&resp.to_wire()?, req_id.as_deref());
+                        send_wire(&mut writer, &wire).await?;
                     }
                 }
             }
@@ -633,6 +638,31 @@ async fn send_wire<W: tokio::io::AsyncWrite + Unpin>(
     writer.write_all(wire.as_bytes()).await?;
     writer.flush().await?;
     Ok(())
+}
+
+/// Ensure the outgoing response carries the caller's request `id` field.
+///
+/// The TUI's IPC client routes responses to waiting callers via a pending-id
+/// map; a response without an `id` falls through to the unsolicited dispatcher,
+/// which silently drops messages it doesn't recognize — blocking the caller
+/// forever.  Some `Response` variants already embed `id` in their struct; for
+/// those, this is a no-op.  For the rest, we inject the request id into the
+/// top-level JSON object before sending.
+fn inject_id_into_response(wire: &str, req_id: Option<&str>) -> String {
+    let Some(id) = req_id else { return wire.to_string(); };
+    let trimmed = wire.trim_end_matches('\n');
+    let mut value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return wire.to_string(),
+    };
+    if let Some(map) = value.as_object_mut() {
+        if !map.contains_key("id") {
+            map.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+        }
+    }
+    let mut out = serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string());
+    out.push('\n');
+    out
 }
 
 async fn send_error<W: tokio::io::AsyncWrite + Unpin>(
@@ -884,6 +914,63 @@ async fn handle_line(
 
         // GetMpdOutputs is handled earlier in the IPC loop (needs async mpd.outputs()).
         Request::GetMpdOutputs => Response::error(None, ErrorCode::InvalidRequest, "use get_mpd_outputs message type".to_string()),
+
+        // ── MPD library / browse pull requests ─────────────────────────────
+        Request::MpdGetQueue(r) => match mpd {
+            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            Some(bridge) => match bridge.get_queue().await {
+                Ok(tracks) => Response::MpdGetQueue(ipc::MpdGetQueueResponse { id: r.id, tracks }),
+                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+            },
+        },
+        Request::MpdList(r) => match mpd {
+            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            Some(bridge) => {
+                let result = match r.what.as_str() {
+                    "artists" => bridge.list_artists().await.map(|a| ipc::MpdListResponse {
+                        id: r.id.clone(), artists: a, albums: vec![], songs: vec![],
+                    }),
+                    "albums" => bridge.list_albums(&r.artist).await.map(|a| ipc::MpdListResponse {
+                        id: r.id.clone(), artists: vec![], albums: a, songs: vec![],
+                    }),
+                    "songs" => bridge.list_songs(&r.artist, &r.album, &r.date).await.map(|s| ipc::MpdListResponse {
+                        id: r.id.clone(), artists: vec![], albums: vec![], songs: s,
+                    }),
+                    other => {
+                        return Response::error(
+                            Some(r.id),
+                            ErrorCode::InvalidRequest,
+                            format!("mpd_list: unknown `what` value `{other}` (expected artists|albums|songs)"),
+                        );
+                    }
+                };
+                match result {
+                    Ok(resp) => Response::MpdList(resp),
+                    Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                }
+            }
+        },
+        Request::MpdBrowse(r) => match mpd {
+            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            Some(bridge) => match bridge.browse(&r.path).await {
+                Ok(entries) => Response::MpdBrowse(ipc::MpdBrowseResponse { id: r.id, entries }),
+                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+            },
+        },
+        Request::MpdGetPlaylists(r) => match mpd {
+            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            Some(bridge) => match bridge.get_playlists().await {
+                Ok(playlists) => Response::MpdGetPlaylists(ipc::MpdGetPlaylistsResponse { id: r.id, playlists }),
+                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+            },
+        },
+        Request::MpdGetPlaylist(r) => match mpd {
+            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            Some(bridge) => match bridge.get_playlist_tracks(&r.name).await {
+                Ok(tracks) => Response::MpdGetPlaylist(ipc::MpdGetPlaylistResponse { id: r.id, tracks }),
+                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+            },
+        },
 
         // ── DSP requests ─────────────────────────────────────────────────────────
         Request::GetDspStatus => {

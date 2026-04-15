@@ -82,6 +82,23 @@ pub use v1::{
     // MPD output types
     MpdOutputInfo,
     MpdOutputsResponse,
+    // MPD library / browse types
+    MpdAlbumWire,
+    MpdArtistWire,
+    MpdBrowseRequest,
+    MpdBrowseResponse,
+    MpdDirEntryWire,
+    MpdGetPlaylistRequest,
+    MpdGetPlaylistResponse,
+    MpdGetPlaylistsRequest,
+    MpdGetPlaylistsResponse,
+    MpdGetQueueRequest,
+    MpdGetQueueResponse,
+    MpdListRequest,
+    MpdListResponse,
+    MpdQueueTrackWire,
+    MpdSavedPlaylistWire,
+    MpdSongWire,
 
     PlayRequest,
     // New typed command types

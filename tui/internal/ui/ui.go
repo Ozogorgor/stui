@@ -333,11 +333,15 @@ type fromIPC struct{ tea.Msg }
 // delivers the next message as a fromIPC wrapper.  Update re-subscribes
 // by returning another listenIPC after processing each message.
 func listenIPC(ch <-chan tea.Msg) tea.Cmd {
+	log.Info("ui: listenIPC cmd built (not yet running)")
 	return func() tea.Msg {
+		log.Info("ui: listenIPC cmd RUNNING — waiting for message")
 		msg, ok := <-ch
 		if !ok {
+			log.Warn("ui: listenIPC channel closed")
 			return fromIPC{ipc.RuntimeErrorMsg{Err: fmt.Errorf("IPC channel closed")}}
 		}
+		log.Info("ui: listenIPC got message", "type", fmt.Sprintf("%T", msg))
 		return fromIPC{msg}
 	}
 }
@@ -352,15 +356,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// fromIPC unwraps a message from the IPC channel, re-subscribes the
 	// listener, then dispatches the inner message through Update as normal.
 	case fromIPC:
+		log.Info("ui: fromIPC received", "type", fmt.Sprintf("%T", msg.Msg))
 		updated, cmd := m.Update(msg.Msg)
 		newModel, ok := updated.(Model)
 		if !ok {
+			log.Warn("ui: fromIPC dispatch — updated is not Model", "type", fmt.Sprintf("%T", updated))
 			return m, cmd
 		}
 		m = newModel
 		if m.client != nil {
 			return m, tea.Batch(cmd, listenIPC(m.client.Chan()))
 		}
+		log.Warn("ui: fromIPC dispatch — m.client is nil, not re-subscribing listenIPC")
 		return m, cmd
 
 	case tea.WindowSizeMsg:
@@ -374,6 +381,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Runtime lifecycle ─────────────────────────────────────────────────
 
 	case runtimeStartedMsg:
+		log.Info("ui: runtimeStartedMsg received")
 		m.client = msg.client
 		m.state.RuntimeStatus = state.RuntimeReady
 		m.state.StatusMsg = "Loading catalog…"
@@ -2538,9 +2546,20 @@ func (m Model) hudRows() int {
 //
 // Fixed chrome above the main card: MarginTop(1) + topbar box(3) + gap blank(1) = 5 rows.
 // Main card borders: 2 rows.  Total fixed = 7.
+//
+// Footer block when shown:
+//
+//	card MarginBottom(1) + blank separator(1) + statusBar(4) = 6 rows
+//
+// The statusBar's "4 rows" come from StatusBarStyle: rounded border (top
+// + bottom) + 1 content row + MarginBottom(1). Earlier versions of this
+// function treated it as a single row, which over-allocated the music
+// body by 3 rows and pushed most of the statusBar past the bottom of
+// the terminal — visible as "I can see its top border but the rest is
+// overflowing" with a gap above it.
 func (m Model) computeMusicHeight() int {
 	const fixedRows = 7 // topbar area (5) + main-card borders (2)
-	footerRows := 2     // blank separator + status bar
+	footerRows := 6     // card MB(1) + blank(1) + statusBar(4) — see comment above
 	// Only Queue suppresses the footer (it uses every row for the
 	// tracklist + visualizer panel). Library/Browse/Playlists keep the
 	// global footer visible — that's where status messages and key hints
@@ -2568,11 +2587,11 @@ func (m Model) View() tea.View {
 		)
 		content = m.applyToast(overlay)
 	} else {
-		// Hide the footer (statusbar + preceding blank line) for music subtabs
-		// other than Browse — they don't need key-hint info and the space is better
-		// used by the queue/library/playlists content.
+		// Hide the footer (statusbar + preceding blank line) only on the
+		// Queue sub-tab, which uses every row for tracklist + visualizer.
+		// Library/Browse/Playlists keep the footer for status messages.
 		hidingFooter := m.state.ActiveTab == state.TabMusic &&
-			m.musicScreen.ActiveSubTab() != screens.MusicBrowse
+			m.musicScreen.ActiveSubTab() == screens.MusicQueue
 		var parts []string
 		parts = append(parts, m.viewTopBar(m.state.Focus == state.FocusSearch), "", m.viewMainCard(hidingFooter))
 		if !hidingFooter {
@@ -2950,7 +2969,18 @@ func (m Model) viewStatusBar() string {
 		screenIndicator = lipgloss.NewStyle().Foreground(theme.T.Neon()).Render("  \u25c8 detail")
 	}
 
-	statusMsg := lipgloss.NewStyle().Foreground(theme.T.TextMuted()).Render("  " + m.state.StatusMsg)
+	// While the Music tab is active each sub-screen publishes its own
+	// hint/status text; that supersedes the global StatusMsg slot so the
+	// stale "Added X to queue" line from a previous action doesn't sit
+	// in the footer forever (the sub-screens apply their own statusTTL
+	// before reverting to a key-hint string).
+	statusText := m.state.StatusMsg
+	if m.state.ActiveTab == state.TabMusic {
+		if t := m.musicScreen.FooterText(); t != "" {
+			statusText = t
+		}
+	}
+	statusMsg := lipgloss.NewStyle().Foreground(theme.T.TextMuted()).Render("  " + statusText)
 
 	count := len(m.currentGridEntries())
 	if m.screen == screenList {

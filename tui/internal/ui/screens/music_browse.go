@@ -116,13 +116,11 @@ func (s MusicBrowseScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
-	footerLine := hintBar("enter add to queue", "/ search", "↑↓ navigate")
-
 	results := s.filtered()
 
 	if len(results) == 0 {
 		emptyMsg := "No music in catalog — providers load on startup"
-		listHeight := h - 1
+		listHeight := h
 		if listHeight < 1 {
 			listHeight = 1
 		}
@@ -139,11 +137,12 @@ func (s MusicBrowseScreen) View(w, h int) string {
 				sb.WriteString("\n")
 			}
 		}
-		sb.WriteString(footerLine + "\n")
 		return sb.String()
 	}
 
-	listHeight := h - 1 // 1 for footer
+	// Hint/status text lives in the global footer (see ui.viewStatusBar);
+	// the screen uses every available row for the bordered list.
+	listHeight := h
 	if listHeight < 1 {
 		listHeight = 1
 	}
@@ -205,8 +204,15 @@ func (s MusicBrowseScreen) View(w, h int) string {
 
 	// Wrap in border container
 	borderedContent := borderStyle.Width(w - 2).Render(content.String())
-	sb.WriteString(borderedContent + "\n")
+	sb.WriteString(borderedContent)
 
-	sb.WriteString(footerLine + "\n")
 	return sb.String()
+}
+
+// FooterText is what the global status bar shows while this screen is
+// active. Static hint — Browse has no per-action status messages of its
+// own; status forwarded by other screens still wins via the StatusMsg
+// route on the Model.
+func (s MusicBrowseScreen) FooterText() string {
+	return "enter add to queue · / search · ↑↓ navigate"
 }

@@ -77,6 +77,22 @@ func NewMusicScreen(client *ipc.Client) MusicScreen {
 // ActiveSubTab returns the currently visible sub-tab.
 func (s MusicScreen) ActiveSubTab() MusicSubTab { return s.active }
 
+// FooterText is the hint/status string the global status bar should
+// surface for the currently-active sub-tab. Queue returns "" because
+// it suppresses the global footer entirely; everyone else publishes
+// their own key hints (and their recent action status, if any).
+func (s MusicScreen) FooterText() string {
+	switch s.active {
+	case MusicBrowse:
+		return s.browse.FooterText()
+	case MusicLibrary:
+		return s.library.FooterText()
+	case MusicPlaylists:
+		return s.playlists.FooterText()
+	}
+	return ""
+}
+
 // SetVisualizer passes the visualizer reference to the queue sub-tab so it
 // can render the visualizer strip inline.
 func (s *MusicScreen) SetVisualizer(v *components.Visualizer) {

@@ -131,10 +131,14 @@ type MpdArtist struct {
 }
 
 // MpdAlbum is one entry in the MPD library album list.
+// Year is the 4-digit display year (may be empty). Date holds the raw MPD
+// `Date:` tag value (e.g. "1996-11-01") and is used to disambiguate
+// multiple releases of the same album when listing that release's tracks.
 type MpdAlbum struct {
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
 	Year   string `json:"year"`
+	Date   string `json:"date"`
 }
 
 // MpdSong is one entry in the library track list or a saved playlist.
@@ -154,6 +158,7 @@ type MpdLibraryResultMsg struct {
 	Songs     []MpdSong
 	ForArtist string // the artist filter used; empty means "all artists"
 	ForAlbum  string // the album filter used; empty means no album filter
+	ForDate   string // the raw MPD Date filter used; empty means no date filter
 	Err       error
 }
 
@@ -208,6 +213,7 @@ func snippet(b []byte) string {
 func (c *Client) MpdListAlbums(artist string) {
 	go func() {
 		id := c.nextID()
+		log.Info("ipc: MpdListAlbums send", "id", id, "artist", artist)
 		ch := c.sendWithID(id, map[string]any{
 			"type":   "mpd_list",
 			"id":     id,
@@ -218,18 +224,22 @@ func (c *Client) MpdListAlbums(artist string) {
 		var msg MpdLibraryResultMsg
 		msg.ForArtist = artist
 		if raw.Err != nil {
+			log.Warn("ipc: MpdListAlbums transport error", "id", id, "err", raw.Err)
 			msg.Err = raw.Err
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
+			log.Warn("ipc: MpdListAlbums runtime error", "id", id, "code", ep.Code, "msg", ep.Message)
 			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
 		} else {
 			var payload struct {
 				Albums []MpdAlbum `json:"albums"`
 			}
 			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				log.Warn("ipc: MpdListAlbums decode error", "id", id, "err", err, "snippet", snippet(raw.Raw))
 				msg.Err = err
 			} else {
+				log.Info("ipc: MpdListAlbums ok", "id", id, "albums", len(payload.Albums))
 				msg.Albums = payload.Albums
 			}
 		}
@@ -237,35 +247,46 @@ func (c *Client) MpdListAlbums(artist string) {
 	}()
 }
 
-// MpdListSongs requests tracks for a specific album.
-// Pass artist="" to skip the artist filter.
-func (c *Client) MpdListSongs(artist, album string) {
+// MpdListSongs requests tracks for a specific album release.
+// Pass artist="" to skip the artist filter. Pass date="" to skip the date
+// filter (legacy / when the caller doesn't know the release date). Date
+// must be the raw MPD `Date:` string from MpdAlbum.Date — it's used to
+// pick one specific release when two share Album+Artist tags (e.g. a
+// 1996 original and a 2007 remaster).
+func (c *Client) MpdListSongs(artist, album, date string) {
 	go func() {
 		id := c.nextID()
+		log.Info("ipc: MpdListSongs send", "id", id, "artist", artist, "album", album, "date", date)
 		ch := c.sendWithID(id, map[string]any{
 			"type":   "mpd_list",
 			"id":     id,
 			"what":   "songs",
 			"artist": artist,
 			"album":  album,
+			"date":   date,
 		})
 		raw := receiveWithTimeout(ch)
 		var msg MpdLibraryResultMsg
 		msg.ForArtist = artist
 		msg.ForAlbum = album
+		msg.ForDate = date
 		if raw.Err != nil {
+			log.Warn("ipc: MpdListSongs transport error", "id", id, "err", raw.Err)
 			msg.Err = raw.Err
 		} else if raw.Type == "error" {
 			var ep ErrorPayload
 			_ = json.Unmarshal(raw.Raw, &ep)
+			log.Warn("ipc: MpdListSongs runtime error", "id", id, "code", ep.Code, "msg", ep.Message)
 			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
 		} else {
 			var payload struct {
 				Songs []MpdSong `json:"songs"`
 			}
 			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				log.Warn("ipc: MpdListSongs decode error", "id", id, "err", err, "snippet", snippet(raw.Raw))
 				msg.Err = err
 			} else {
+				log.Info("ipc: MpdListSongs ok", "id", id, "songs", len(payload.Songs))
 				msg.Songs = payload.Songs
 			}
 		}

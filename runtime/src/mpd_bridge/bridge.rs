@@ -22,7 +22,65 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::types::MpdConfig;
+use crate::ipc::{
+    MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
+    MpdSavedPlaylistWire, MpdSongWire,
+};
 use super::client::MpdConnection;
+
+/// Escape a string for use inside an MPD quoted argument (`"..."`).
+fn quote_mpd(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        if ch == '\\' || ch == '"' { out.push('\\'); }
+        out.push(ch);
+    }
+    out.push('"');
+    out
+}
+
+fn parse_u32(v: Option<&String>) -> u32 {
+    v.and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
+}
+fn parse_f64(v: Option<&String>) -> f64 {
+    v.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+}
+fn str_or(v: Option<&String>) -> String {
+    v.cloned().unwrap_or_default()
+}
+
+/// Extract a 4-digit year from an MPD `Date:` value.
+///
+/// MPD files commonly tag dates as `2017`, `2017-05-03`, `May 2017`, or even
+/// just plain junk; we return the first run of four consecutive digits that
+/// looks like a year (1000–2999), or empty string on no match.
+fn extract_year(date: &str) -> String {
+    if date.is_empty() { return String::new(); }
+    let bytes = date.as_bytes();
+    for i in 0..bytes.len().saturating_sub(3) {
+        let slice = &bytes[i..i + 4];
+        if slice.iter().all(|b| b.is_ascii_digit()) {
+            let first = slice[0];
+            if first == b'1' || first == b'2' {
+                return std::str::from_utf8(slice).unwrap_or("").to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+fn default_entry() -> MpdDirEntryWire {
+    MpdDirEntryWire {
+        name: String::new(),
+        is_dir: false,
+        file: String::new(),
+        title: String::new(),
+        artist: String::new(),
+        album: String::new(),
+        duration: 0.0,
+    }
+}
 
 // ── Wire event types ──────────────────────────────────────────────────────────
 
@@ -217,6 +275,288 @@ impl MpdBridge {
                 name:    r.get("outputname").cloned().unwrap_or_default(),
                 plugin:  r.get("plugin").cloned().unwrap_or_default(),
                 enabled: r.get("outputenabled").map(|v| v == "1").unwrap_or(false),
+            })
+        }).collect())
+    }
+
+    // ── Library / browse queries ──────────────────────────────────────────
+
+    /// Fetch the full playback queue via `playlistinfo`.
+    pub async fn get_queue(&self) -> Result<Vec<MpdQueueTrackWire>> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let records = match conn.command_records("playlistinfo", "file").await {
+            Ok(r) => r,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        Ok(records.into_iter().map(|r| MpdQueueTrackWire {
+            id:       parse_u32(r.get("Id")),
+            pos:      parse_u32(r.get("Pos")),
+            title:    str_or(r.get("Title")),
+            artist:   str_or(r.get("Artist")),
+            album:    str_or(r.get("Album")),
+            duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+            file:     str_or(r.get("file")),
+        }).collect())
+    }
+
+    /// `list artist` — every distinct artist in the MPD database.
+    pub async fn list_artists(&self) -> Result<Vec<MpdArtistWire>> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let records = match conn.command_records("list artist", "Artist").await {
+            Ok(r) => r,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        Ok(records.into_iter().filter_map(|r| {
+            let name = r.get("Artist")?.clone();
+            if name.is_empty() { None } else { Some(MpdArtistWire { name }) }
+        }).collect())
+    }
+
+    /// `list album artist "X" group date` — albums by `artist` with release year.
+    ///
+    /// Pass empty `artist` to list all albums across every artist.  The `group`
+    /// keyword must appear AFTER filter pairs (MPD 0.21+ protocol syntax);
+    /// on older MPD it's silently ignored and Year is returned empty.
+    ///
+    /// De-duplicates entries that share the same (title, artist) — this happens
+    /// when an album's tracks have inconsistent Date tags (some tagged with a
+    /// full date like `2017-05-03`, others with just `2017`, others missing).
+    /// The best-populated year (preferring 4-digit year extracted from any
+    /// variant) is kept.
+    pub async fn list_albums(&self, artist: &str) -> Result<Vec<MpdAlbumWire>> {
+        let cmd = if artist.is_empty() {
+            "list album group artist group date".to_string()
+        } else {
+            format!("list album artist {} group date", quote_mpd(artist))
+        };
+        // Phase 1: pull album rows. Held in its own scope so the
+        // connection lock is released before phase 2 runs follow-up
+        // queries — otherwise fetch_originaldate_year would deadlock
+        // trying to re-acquire the same lock.
+        let records = {
+            let mut guard = self.conn.lock().await;
+            let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+            match conn.command_records(&cmd, "Album").await {
+                Ok(r) => r,
+                Err(e) => { *guard = None; return Err(e); }
+            }
+        };
+
+        // Phase 2: dedup + back-fill missing years from OriginalDate.
+        //
+        // Two releases of the same album by the same artist (1996 original
+        // vs 2007 remaster) carry identical Album/Artist tags but different
+        // Date values; MPD reports them as separate records via `group
+        // date`. We key dedup on (title, artist, raw date) so both rows
+        // survive into the TUI, and list_songs disambiguates them with an
+        // exact `date` filter.
+        //
+        // Some releases (typically older ones tagged by tools that only
+        // populate the MusicBrainz "OriginalDate") leave Date empty. For
+        // those we run a single follow-up `list originaldate` query to
+        // recover a year for display, while still keeping raw_date="" as
+        // the dedup key (so the empty-Date release stays distinct from
+        // any release whose Date is populated).
+        let mut out: Vec<MpdAlbumWire> = Vec::new();
+        let mut seen: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
+        for r in records {
+            let Some(title) = r.get("Album").cloned() else { continue };
+            if title.is_empty() { continue; }
+            let entry_artist = r.get("Artist").cloned().unwrap_or_else(|| artist.to_string());
+            let raw_date = str_or(r.get("Date"));
+            let mut year = extract_year(&raw_date);
+            if year.is_empty() {
+                year = self.fetch_originaldate_year(&title, &entry_artist).await
+                    .unwrap_or_default();
+            }
+            info!(
+                album = %title,
+                artist = %entry_artist,
+                raw_date = %raw_date,
+                extracted_year = %year,
+                "mpd: list_albums record"
+            );
+            let key = (title.clone(), entry_artist.clone(), raw_date.clone());
+            if seen.insert(key) {
+                out.push(MpdAlbumWire { title, artist: entry_artist, year, date: raw_date });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Look up an album's OriginalDate when MPD's `Date` group came back
+    /// empty. Returns the first parseable 4-digit year, or empty if the
+    /// album has no OriginalDate either. Failures are swallowed (returned
+    /// as empty) since this is a best-effort display enhancement.
+    async fn fetch_originaldate_year(&self, title: &str, artist: &str) -> Result<String> {
+        let cmd = format!(
+            "list originaldate album {} artist {}",
+            quote_mpd(title),
+            quote_mpd(artist),
+        );
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let pairs = match conn.command_kv_ordered(&cmd).await {
+            Ok(p) => p,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        for (key, value) in pairs {
+            // MPD spells the tag "OriginalDate" in responses; accept any
+            // case to be defensive against server-side normalization.
+            if key.eq_ignore_ascii_case("OriginalDate") {
+                let y = extract_year(&value);
+                if !y.is_empty() {
+                    return Ok(y);
+                }
+            }
+        }
+        Ok(String::new())
+    }
+
+    /// `find album "Y" artist "X" [date "Z"]` — tracks on a specific release.
+    /// When `date` is non-empty it's passed as an exact MPD `date` filter so
+    /// remasters / reissues that share Album+Artist tags don't collide. The
+    /// value must be the raw MPD `Date:` string (e.g. "1996-11-01"); the TUI
+    /// gets it from `MpdAlbumWire.date` on the matching list_albums row.
+    pub async fn list_songs(&self, artist: &str, album: &str, date: &str) -> Result<Vec<MpdSongWire>> {
+        let mut cmd = if artist.is_empty() {
+            format!("find album {}", quote_mpd(album))
+        } else {
+            format!("find album {} artist {}", quote_mpd(album), quote_mpd(artist))
+        };
+        if !date.is_empty() {
+            cmd.push_str(&format!(" date {}", quote_mpd(date)));
+        }
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let records = match conn.command_records(&cmd, "file").await {
+            Ok(r) => r,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        Ok(records.into_iter().filter_map(|r| {
+            let file = r.get("file")?.clone();
+            Some(MpdSongWire {
+                title:    str_or(r.get("Title")),
+                artist:   str_or(r.get("Artist")),
+                album:    str_or(r.get("Album")),
+                duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+                file,
+            })
+        }).collect())
+    }
+
+    /// `lsinfo PATH` — browse the MPD music directory tree.
+    ///
+    /// Entries in the response may be directories, playlists, or files (songs)
+    /// in arbitrary order; we preserve MPD's emission order.
+    pub async fn browse(&self, path: &str) -> Result<Vec<MpdDirEntryWire>> {
+        let cmd = if path.is_empty() {
+            "lsinfo".to_string()
+        } else {
+            format!("lsinfo {}", quote_mpd(path))
+        };
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let pairs = match conn.command_kv_ordered(&cmd).await {
+            Ok(p) => p,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+
+        // Walk the ordered kv stream.  A record starts on any of: `directory`,
+        // `file`, `playlist`.  Every subsequent key belongs to that record
+        // until the next record starter.
+        let mut entries: Vec<MpdDirEntryWire> = Vec::new();
+        let mut current: Option<MpdDirEntryWire> = None;
+
+        let flush = |cur: &mut Option<MpdDirEntryWire>, out: &mut Vec<MpdDirEntryWire>| {
+            if let Some(entry) = cur.take() { out.push(entry); }
+        };
+
+        for (k, v) in pairs {
+            match k.as_str() {
+                "directory" => {
+                    flush(&mut current, &mut entries);
+                    let name = v.rsplit('/').next().unwrap_or(&v).to_string();
+                    current = Some(MpdDirEntryWire {
+                        name,
+                        is_dir: true,
+                        file: v,
+                        ..default_entry()
+                    });
+                }
+                "playlist" => {
+                    flush(&mut current, &mut entries);
+                    current = Some(MpdDirEntryWire {
+                        name: v.clone(),
+                        is_dir: false,
+                        file: v,
+                        ..default_entry()
+                    });
+                }
+                "file" => {
+                    flush(&mut current, &mut entries);
+                    let name = v.rsplit('/').next().unwrap_or(&v).to_string();
+                    current = Some(MpdDirEntryWire {
+                        name,
+                        is_dir: false,
+                        file: v,
+                        ..default_entry()
+                    });
+                }
+                _ => {
+                    if let Some(ref mut entry) = current {
+                        match k.as_str() {
+                            "Title"    => entry.title  = v,
+                            "Artist"   => entry.artist = v,
+                            "Album"    => entry.album  = v,
+                            "Time"     => entry.duration = v.parse().unwrap_or(0.0),
+                            "duration" => entry.duration = v.parse().unwrap_or(0.0),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        flush(&mut current, &mut entries);
+        Ok(entries)
+    }
+
+    /// `listplaylists` — saved MPD playlists.
+    pub async fn get_playlists(&self) -> Result<Vec<MpdSavedPlaylistWire>> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let records = match conn.command_records("listplaylists", "playlist").await {
+            Ok(r) => r,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        Ok(records.into_iter().filter_map(|r| {
+            let name = r.get("playlist")?.clone();
+            Some(MpdSavedPlaylistWire {
+                name,
+                modified: str_or(r.get("Last-Modified")),
+            })
+        }).collect())
+    }
+
+    /// `listplaylistinfo NAME` — tracks inside a saved playlist.
+    pub async fn get_playlist_tracks(&self, name: &str) -> Result<Vec<MpdSongWire>> {
+        let cmd = format!("listplaylistinfo {}", quote_mpd(name));
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let records = match conn.command_records(&cmd, "file").await {
+            Ok(r) => r,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        Ok(records.into_iter().filter_map(|r| {
+            let file = r.get("file")?.clone();
+            Some(MpdSongWire {
+                title:    str_or(r.get("Title")),
+                artist:   str_or(r.get("Artist")),
+                album:    str_or(r.get("Album")),
+                duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+                file,
             })
         }).collect())
     }

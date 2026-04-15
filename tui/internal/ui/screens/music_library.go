@@ -46,11 +46,16 @@ const (
 
 // libDialogCtx tells the dialog dismiss handler which option set the
 // user was looking at, so we can interpret the chosen index correctly.
+// The dialog is the default action surface for Enter and right-click on
+// every pane (artist/album/track) — h/l/arrows still navigate as a
+// power-user shortcut, but the dialog is what the UI advertises.
 type libDialogCtx int
 
 const (
-	libDialogEnter      libDialogCtx = iota // Add / Replace / Cancel
-	libDialogRightClick                     // Add / Replace / Add to Playlist / Create Playlist / Cancel
+	libDialogEnter      libDialogCtx = iota // Track Enter — Add / Replace / Cancel
+	libDialogRightClick                     // Track right-click — Add / Replace / Add to Playlist / Create Playlist / Cancel
+	libDialogArtist                         // Artist Enter or right-click — Browse / Add all / Replace with all / Cancel
+	libDialogAlbum                          // Album Enter or right-click — Browse / Add / Replace / Add to Playlist / Cancel
 )
 
 // MusicLibraryScreen is the Artist→Album→Track browser with an optional
@@ -87,8 +92,12 @@ type MusicLibraryScreen struct {
 	dirScroll  int
 	loadingDir bool
 
-	// Footer status message (e.g. "Added 'Track' to queue").
-	statusMsg string
+	// Footer status message (e.g. "Added 'Track' to queue"). Surfaced in
+	// the local hintBar for statusTTL after being set, and also forwarded
+	// to the global footer exactly once when statusPending is true.
+	statusMsg     string
+	statusAt      time.Time
+	statusPending bool
 
 	// queueFiles tracks file paths currently in the MPD queue for dedup checks.
 	queueFiles map[string]struct{}
@@ -189,7 +198,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 			// Pre-fetch songs for the first album
 			if len(m.Albums) > 0 && s.client != nil {
 				s.loadingSongs = true
-				s.client.MpdListSongs(m.ForArtist, m.Albums[0].Title)
+				s.client.MpdListSongs(m.ForArtist, m.Albums[0].Title, m.Albums[0].Date)
 			}
 		} else {
 			// Artist list arrived
@@ -225,16 +234,31 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		}
 	}
 
-	// If a key handler queued a status message, surface it via the global
-	// stui footer (m.state.StatusMsg) and clear the local field so we
-	// don't re-emit on every subsequent Update.
-	if s.statusMsg != "" {
+	// Forward a freshly-set status message to the global stui footer
+	// exactly once. statusMsg itself is kept so the local hintBar can echo
+	// it for statusTTL; the pending flag is what prevents re-emission on
+	// every subsequent Update.
+	if s.statusPending {
+		s.statusPending = false
 		text := s.statusMsg
-		s.statusMsg = ""
 		return s, func() tea.Msg { return ipc.StatusMsg{Text: text} }
 	}
 	return s, nil
 }
+
+// setStatus records a footer message, arms it for forwarding to the global
+// footer on the next Update tail, and resets the local-echo clock so the
+// in-screen hintBar shows it for statusTTL.
+func (s MusicLibraryScreen) setStatus(msg string) MusicLibraryScreen {
+	s.statusMsg = msg
+	s.statusAt = time.Now()
+	s.statusPending = true
+	return s
+}
+
+// statusTTL is how long the library's local hintBar keeps echoing a
+// recently-set status message before falling back to the default key hints.
+const statusTTL = 3 * time.Second
 
 // handleTagKey processes key events in tag-browser mode.
 func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
@@ -274,7 +298,8 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				if s.client != nil && s.albumCursor < len(s.albums) && s.artistCursor < len(s.artists) {
 					s.loadingSongs = true
 					s.songs = nil
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, s.albums[s.albumCursor].Title)
+					a := s.albums[s.albumCursor]
+					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
 				}
 			}
 		case LibPaneTracks:
@@ -307,7 +332,8 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				if s.client != nil && s.albumCursor < len(s.albums) && s.artistCursor < len(s.artists) {
 					s.loadingSongs = true
 					s.songs = nil
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, s.albums[s.albumCursor].Title)
+					a := s.albums[s.albumCursor]
+					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
 				}
 			}
 		case LibPaneTracks:
@@ -316,7 +342,10 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 			}
 		}
 
-	case "l", "right", "enter":
+	case "l", "right":
+		// Hotkey shortcut: skip the dialog and dive straight into the next
+		// pane. The dialog (Enter) is the advertised default; this is the
+		// power-user route.
 		switch s.activePane {
 		case LibPaneArtists:
 			s.activePane = LibPaneAlbums
@@ -335,21 +364,15 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				s.songs = nil
 				s.songCursor = 0
 				s.songScroll = 0
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, s.albums[s.albumCursor].Title)
-			}
-		case LibPaneTracks:
-			// Open the track-action dialog instead of adding immediately.
-			if len(s.songs) > 0 && s.songCursor < len(s.songs) {
-				song := s.songs[s.songCursor]
-				s.dialogSong = song
-				s.dialogContext = libDialogEnter
-				s.dialog = components.NewDialog(
-					"What to do with '"+truncate(song.Title, 28)+"'?",
-					[]string{"Add to queue", "Replace queue", "Cancel"},
-				)
-				s.dialogOpen = true
+				a := s.albums[s.albumCursor]
+				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
 			}
 		}
+
+	case "enter":
+		// Default action surface: every pane opens a dialog so the user
+		// sees what's actionable instead of having to memorise hotkeys.
+		s = s.openPaneDialog()
 
 	case "h", "left":
 		switch s.activePane {
@@ -357,28 +380,6 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 			s.activePane = LibPaneArtists
 		case LibPaneTracks:
 			s.activePane = LibPaneAlbums
-		}
-
-	case "a":
-		if s.client != nil {
-			switch s.activePane {
-			case LibPaneAlbums:
-				if len(s.albums) > 0 && s.albumCursor < len(s.albums) && len(s.artists) > 0 {
-					// Add all songs in the album — use the artist/album URI pattern
-					uri := s.artists[s.artistCursor].Name + "/" + s.albums[s.albumCursor].Title
-					s.client.MpdCmd("mpd_add", map[string]any{"uri": uri})
-				}
-			case LibPaneTracks:
-				if len(s.songs) > 0 && s.songCursor < len(s.songs) {
-					song := s.songs[s.songCursor]
-					if _, exists := s.queueFiles[song.File]; exists {
-						s.statusMsg = "'" + song.Title + "' is already in the queue"
-					} else {
-						s.client.MpdCmd("mpd_add", map[string]any{"uri": song.File})
-						s.statusMsg = "Added '" + song.Title + "' to queue"
-					}
-				}
-			}
 		}
 
 	case "D":
@@ -424,14 +425,25 @@ func (s MusicLibraryScreen) handleDirKey(key string) MusicLibraryScreen {
 				s.client.MpdBrowseDir(strings.Join(s.dirPath, "/"))
 			}
 		} else {
-			// Add file to queue
-			if s.client != nil {
-				uri := e.File
-				if uri == "" {
-					uri = e.Name
-				}
-				s.client.MpdCmd("mpd_add", map[string]any{"uri": uri})
+			// File — open the action dialog instead of adding silently.
+			uri := e.File
+			if uri == "" {
+				uri = e.Name
 			}
+			title := e.Title
+			if title == "" {
+				title = e.Name
+			}
+			s.dialogSong = ipc.MpdSong{
+				File:  uri,
+				Title: title,
+			}
+			s.dialogContext = libDialogEnter
+			s.dialog = components.NewDialog(
+				"What to do with '"+truncate(title, 28)+"'?",
+				[]string{"Add to queue", "Replace queue", "Cancel"},
+			)
+			s.dialogOpen = true
 		}
 
 	case "h", "esc":
@@ -469,16 +481,18 @@ func (s MusicLibraryScreen) handleDirKey(key string) MusicLibraryScreen {
 
 // HandleMouse handles a left-click within the library's own coordinate space.
 func (s MusicLibraryScreen) HandleMouse(x, localY int) MusicLibraryScreen {
+	log.Info("library: HandleMouse(left)", "x", x, "localY", localY, "dirMode", s.dirMode)
 	if s.dirMode {
 		return s.handleDirMouse(x, localY)
 	}
 	return s.handleTagMouse(x, localY)
 }
 
-// HandleRightMouse handles a right-click. If it lands on a track row,
-// it opens the per-track context dialog with all four actions
-// (Add to queue, Replace queue, Add to Playlist, Create Playlist).
+// HandleRightMouse handles a right-click. The dialog is the advertised
+// default action surface, so right-click is wired for every pane —
+// artists, albums, and tracks — not just the tracks column.
 func (s MusicLibraryScreen) HandleRightMouse(x, localY int) MusicLibraryScreen {
+	log.Info("library: HandleRightMouse", "x", x, "localY", localY, "dirMode", s.dirMode, "dialogOpen", s.dialogOpen)
 	if s.dirMode || s.dialogOpen {
 		return s
 	}
@@ -498,26 +512,93 @@ func (s MusicLibraryScreen) HandleRightMouse(x, localY int) MusicLibraryScreen {
 	if dataRow < 0 || dataRow >= listH {
 		return s
 	}
-	// Tracks pane is the rightmost (x >= 2*paneW+1). Right-click outside
-	// the tracks column is ignored.
-	if x < 2*paneW+1 {
-		return s
+
+	// Decide which pane the click landed in, mirror handleTagMouse's hit-test.
+	switch {
+	case x < paneW:
+		scroll := libScroll(len(s.artists), s.artistCursor, listH)
+		idx := scroll + dataRow
+		if idx < 0 || idx >= len(s.artists) {
+			return s
+		}
+		s.artistCursor = idx
+		s.activePane = LibPaneArtists
+		s = s.openPaneDialog()
+		// Right-click on a track gets the extended "Add to Playlist /
+		// Create Playlist" set; for artists the Enter set is enough since
+		// playlist actions don't apply at the artist level yet.
+	case x < 2*paneW+1:
+		scroll := libScroll(len(s.albums), s.albumCursor, listH)
+		idx := scroll + dataRow
+		if idx < 0 || idx >= len(s.albums) {
+			return s
+		}
+		s.albumCursor = idx
+		s.activePane = LibPaneAlbums
+		s = s.openPaneDialog()
+	default:
+		scroll := libScroll(len(s.songs), s.songCursor, listH)
+		idx := scroll + dataRow
+		if idx < 0 || idx >= len(s.songs) {
+			return s
+		}
+		s.songCursor = idx
+		s.activePane = LibPaneTracks
+		// Tracks keep the extended right-click dialog (4 actions) rather
+		// than the slimmer Enter set used by openPaneDialog.
+		song := s.songs[idx]
+		s.dialogSong = song
+		s.dialogContext = libDialogRightClick
+		s.dialog = components.NewDialog(
+			"Track: '"+truncate(song.Title, 28)+"'",
+			[]string{"Add to queue", "Replace queue", "Add to Playlist", "Create Playlist", "Cancel"},
+		)
+		s.dialogOpen = true
 	}
-	scroll := libScroll(len(s.songs), s.songCursor, listH)
-	idx := scroll + dataRow
-	if idx < 0 || idx >= len(s.songs) {
-		return s
+	return s
+}
+
+// openPaneDialog builds the right action dialog for the currently-focused
+// pane. Track dialogs use the existing Add/Replace/Cancel set; artist and
+// album dialogs lead with the navigation option (Browse) so Enter still
+// feels like "go deeper" when that's all the user wanted.
+func (s MusicLibraryScreen) openPaneDialog() MusicLibraryScreen {
+	switch s.activePane {
+	case LibPaneArtists:
+		if len(s.artists) == 0 || s.artistCursor >= len(s.artists) {
+			return s
+		}
+		name := s.artists[s.artistCursor].Name
+		s.dialogContext = libDialogArtist
+		s.dialog = components.NewDialog(
+			"Artist: '"+truncate(name, 28)+"'",
+			[]string{"Browse albums", "Add all tracks to queue", "Replace queue with all", "Cancel"},
+		)
+		s.dialogOpen = true
+	case LibPaneAlbums:
+		if len(s.albums) == 0 || s.albumCursor >= len(s.albums) {
+			return s
+		}
+		title := s.albums[s.albumCursor].Title
+		s.dialogContext = libDialogAlbum
+		s.dialog = components.NewDialog(
+			"Album: '"+truncate(title, 28)+"'",
+			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Cancel"},
+		)
+		s.dialogOpen = true
+	case LibPaneTracks:
+		if len(s.songs) == 0 || s.songCursor >= len(s.songs) {
+			return s
+		}
+		song := s.songs[s.songCursor]
+		s.dialogSong = song
+		s.dialogContext = libDialogEnter
+		s.dialog = components.NewDialog(
+			"What to do with '"+truncate(song.Title, 28)+"'?",
+			[]string{"Add to queue", "Replace queue", "Cancel"},
+		)
+		s.dialogOpen = true
 	}
-	s.songCursor = idx
-	s.activePane = LibPaneTracks
-	song := s.songs[idx]
-	s.dialogSong = song
-	s.dialogContext = libDialogRightClick
-	s.dialog = components.NewDialog(
-		"Track: '"+truncate(song.Title, 28)+"'",
-		[]string{"Add to queue", "Replace queue", "Add to Playlist", "Create Playlist", "Cancel"},
-	)
-	s.dialogOpen = true
 	return s
 }
 
@@ -533,33 +614,85 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 		switch chosen {
 		case 0: // Add to queue
 			if _, exists := s.queueFiles[s.dialogSong.File]; exists {
-				s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
+				s = s.setStatus("'" + s.dialogSong.Title + "' is already in the queue")
 			} else {
 				s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-				s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
+				s = s.setStatus("Added '" + s.dialogSong.Title + "' to queue")
 			}
 		case 1: // Replace queue
 			s.client.MpdCmd("mpd_clear", nil)
 			s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-			s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
+			s = s.setStatus("Replaced queue with '" + s.dialogSong.Title + "'")
 		}
 	case libDialogRightClick:
 		switch chosen {
 		case 0: // Add to queue
 			if _, exists := s.queueFiles[s.dialogSong.File]; exists {
-				s.statusMsg = "'" + s.dialogSong.Title + "' is already in the queue"
+				s = s.setStatus("'" + s.dialogSong.Title + "' is already in the queue")
 			} else {
 				s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-				s.statusMsg = "Added '" + s.dialogSong.Title + "' to queue"
+				s = s.setStatus("Added '" + s.dialogSong.Title + "' to queue")
 			}
 		case 1: // Replace queue
 			s.client.MpdCmd("mpd_clear", nil)
 			s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
-			s.statusMsg = "Replaced queue with '" + s.dialogSong.Title + "'"
+			s = s.setStatus("Replaced queue with '" + s.dialogSong.Title + "'")
 		case 2: // Add to Playlist (placeholder until playlist picker exists)
-			s.statusMsg = "Add to Playlist: not implemented yet"
+			s = s.setStatus("Add to Playlist: not implemented yet")
 		case 3: // Create Playlist (placeholder until name prompt exists)
-			s.statusMsg = "Create Playlist: not implemented yet"
+			s = s.setStatus("Create Playlist: not implemented yet")
+		}
+	case libDialogArtist:
+		if s.artistCursor >= len(s.artists) {
+			return s
+		}
+		name := s.artists[s.artistCursor].Name
+		switch chosen {
+		case 0: // Browse albums — same as the l/right shortcut
+			s.activePane = LibPaneAlbums
+			s.loadingAlbums = true
+			s.albums = nil
+			s.songs = nil
+			s.albumCursor = 0
+			s.albumScroll = 0
+			s.client.MpdListAlbums(name)
+		case 1: // Add all tracks to queue (needs runtime mpd findadd; not wired yet)
+			s = s.setStatus("Add all tracks: not implemented yet")
+		case 2: // Replace queue with all (same dependency as above)
+			s = s.setStatus("Replace queue with all: not implemented yet")
+		}
+	case libDialogAlbum:
+		if s.artistCursor >= len(s.artists) || s.albumCursor >= len(s.albums) {
+			return s
+		}
+		artist := s.artists[s.artistCursor].Name
+		album := s.albums[s.albumCursor]
+		switch chosen {
+		case 0: // Browse tracks — same as the l/right shortcut
+			s.activePane = LibPaneTracks
+			s.loadingSongs = true
+			s.songs = nil
+			s.songCursor = 0
+			s.songScroll = 0
+			s.client.MpdListSongs(artist, album.Title, album.Date)
+		case 1: // Add album to queue — relies on having songs already loaded
+			added := 0
+			for _, song := range s.songs {
+				if _, exists := s.queueFiles[song.File]; exists {
+					continue
+				}
+				s.client.MpdCmd("mpd_add", map[string]any{"uri": song.File})
+				added++
+			}
+			s = s.setStatus(fmt.Sprintf("Added %d tracks from '%s' to queue", added, album.Title))
+		case 2: // Replace queue with album
+			s.client.MpdCmd("mpd_clear", nil)
+			for _, song := range s.songs {
+				s.client.MpdCmd("mpd_add", map[string]any{"uri": song.File})
+			}
+			s = s.setStatus(fmt.Sprintf("Replaced queue with '%s' (%d tracks)", album.Title, len(s.songs)))
+		case 3: // Add to playlist (same placeholder as the track variant)
+			s = s.setStatus("Add to Playlist: not implemented yet")
 		}
 	}
 	return s
@@ -629,7 +762,8 @@ func (s MusicLibraryScreen) handleTagMouse(x, localY int) MusicLibraryScreen {
 			if s.client != nil && s.artistCursor < len(s.artists) {
 				s.loadingSongs = true
 				s.songs = nil
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, s.albums[s.albumCursor].Title)
+				a := s.albums[s.albumCursor]
+				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
 			}
 		}
 	case LibPaneTracks:
@@ -681,10 +815,19 @@ func (s MusicLibraryScreen) View(w, h int) string {
 	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
+	var base string
 	if s.dirMode {
-		return s.viewDir(w, h, accentStyle, dimStyle, textStyle)
+		base = s.viewDir(w, h, accentStyle, dimStyle, textStyle)
+	} else {
+		base = s.viewTag(w, h, accentStyle, dimStyle, textStyle)
 	}
-	return s.viewTag(w, h, accentStyle, dimStyle, textStyle)
+	// Overlay the action dialog, if open. The component knows how to
+	// centre itself with the lipgloss-style dotted whitespace fill, so
+	// the screen just hands it the available area.
+	if s.dialogOpen {
+		base = s.dialog.Place(w, h)
+	}
+	return base
 }
 
 // viewTag renders the three-column tag browser.
@@ -707,8 +850,9 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	}
 
 	// Total height budget = h. Subtract: 1 header row + 2 border rows
-	// (top + bottom of the bordered container). What's left is the visible
-	// data rows inside the panes.
+	// (top + bottom of the bordered container). The hint/status text
+	// lives in the global footer (see ui.viewStatusBar) so we don't
+	// reserve a row for it here.
 	listH := h - 3
 	if listH < 1 {
 		listH = 1
@@ -792,9 +936,7 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	}
 
 	// Wrap in border container. TrimRight the trailing "\n" so lipgloss
-	// doesn't add an extra empty content row inside the box (which would
-	// push our footer off-screen). Also don't append "\n" after the
-	// bordered block — the global footer follows directly.
+	// doesn't add an extra empty content row inside the box.
 	body := strings.TrimRight(paneContent.String(), "\n")
 	borderedContent := borderStyle.Width(w - 2).Render(body)
 	sb.WriteString(borderedContent)
@@ -802,12 +944,32 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 	return sb.String()
 }
 
+// FooterText is what the global status bar shows while this screen is
+// active. A recent status message wins for statusTTL — long enough for
+// the user to read "Added 'X' to queue" — then we fall back to the
+// default key-hint string. The screen used to render its own hintBar
+// row; that's been collapsed into the global footer so the chrome looks
+// the same as Movies/Series.
+func (s MusicLibraryScreen) FooterText() string {
+	if s.statusMsg != "" && !s.statusAt.IsZero() && time.Since(s.statusAt) < statusTTL {
+		return s.statusMsg
+	}
+	if s.dirMode {
+		return "enter open · h back · a add · D tag mode"
+	}
+	return "enter action · h/l navigate · ↑↓ cursor · D dir mode"
+}
+
 // tagHeader builds the column-header row. The fourth "Track Info" column
 // is only included when withInfo is true (i.e. the Tracks pane is focused
 // and a track is selected).
 func (s MusicLibraryScreen) tagHeader(accentStyle, dimStyle lipgloss.Style, paneW int, withInfo bool) string {
+	// buildPaneLines renders each row as "▶ " (or "  ") + label padded to
+	// paneW-2, so the label text starts 2 cells into the column. Headers
+	// must use the same 2-cell lead-in or they appear shifted left of the
+	// data beneath them.
 	render := func(label string, active bool) string {
-		padded := fmt.Sprintf("%-*s", paneW, label)
+		padded := fmt.Sprintf("  %-*s", paneW-2, label)
 		if active {
 			return accentStyle.Render(padded)
 		}
@@ -1020,7 +1182,8 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 	}
 	sb.WriteString(accentStyle.Render(crumb) + "\n")
 
-	// Reserve 1 row: breadcrumb
+	// Reserve 1 row: breadcrumb. Hint/status text lives in the global
+	// footer (see ui.viewStatusBar), not inline.
 	listH := h - 1
 	if listH < 1 {
 		listH = 1

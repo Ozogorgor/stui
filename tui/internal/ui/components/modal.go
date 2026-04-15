@@ -213,58 +213,111 @@ func (d Dialog) Update(key string) (out Dialog, chosen int, dismissed bool) {
 	return out, -1, false
 }
 
-// Render returns the styled dialog box string. Center it with lipgloss.Place.
+// Render returns the styled dialog box string. Prefer Dialog.Place for
+// the common "center inside a w×h area with a dotted whitespace fill"
+// case; raw Render is for callers that want to position it themselves.
+//
+// Style matches the lipgloss `examples/layout` dialog: a solid Surface
+// fill behind everything inside a thick Accent-coloured border, with
+// pill-shaped buttons (active = Accent fill, inactive = darker fill).
+// The whole box reads as one card rather than as a thin outline so it
+// stands out unambiguously over the underlying screen content.
 func (d Dialog) Render() string {
-	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
-	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	dialogBg := theme.T.Surface()
 
-	// Message.
+	textStyle := lipgloss.NewStyle().
+		Foreground(theme.T.Text()).
+		Background(dialogBg)
+	dimStyle := lipgloss.NewStyle().
+		Foreground(theme.T.TextDim()).
+		Background(dialogBg)
+
+	// Message — wrap-then-pad each line to a fixed width so the solid
+	// background paints all the way to the edges of the inner area
+	// instead of stopping at the end of the (variable-width) text.
 	const msgMaxW = 38
 	wrapped := dialogWrapText(d.Message, msgMaxW)
 	msgLines := make([]string, len(wrapped))
 	for i, l := range wrapped {
-		msgLines[i] = textStyle.Render(l)
+		pad := msgMaxW - lipgloss.Width(l)
+		if pad < 0 {
+			pad = 0
+		}
+		msgLines[i] = textStyle.Render(strings.Repeat(" ", pad/2) + l + strings.Repeat(" ", pad-pad/2))
 	}
 	msgBlock := strings.Join(msgLines, "\n")
 
-	// Buttons: selected = solid accent fill; unselected = rounded border.
+	// Buttons: solid pill-shaped rectangles with no border. Active uses
+	// the Accent colour; inactive uses Bg (darker than the dialog's
+	// Surface) so the cards still read as separate from the panel.
+	activeBtn := lipgloss.NewStyle().
+		Background(theme.T.Accent()).
+		Foreground(theme.T.Bg()).
+		Bold(true).
+		Padding(0, 3).
+		MarginRight(2)
+	inactiveBtn := lipgloss.NewStyle().
+		Background(theme.T.Bg()).
+		Foreground(theme.T.Text()).
+		Padding(0, 3).
+		MarginRight(2)
+
 	var btnParts []string
 	for i, label := range d.Options {
+		// Drop the trailing margin on the last button so the row
+		// centres correctly under the message.
+		style := inactiveBtn
 		if i == d.Cursor {
-			btn := lipgloss.NewStyle().
-				Background(theme.T.Accent()).
-				Foreground(theme.T.Bg()).
-				Bold(true).
-				Padding(0, 2).
-				Render(label)
-			btnParts = append(btnParts, btn)
-		} else {
-			btn := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(theme.T.Border()).
-				Foreground(theme.T.TextDim()).
-				Padding(0, 1).
-				Render(label)
-			btnParts = append(btnParts, btn)
+			style = activeBtn
 		}
+		if i == len(d.Options)-1 {
+			style = style.MarginRight(0)
+		}
+		btnParts = append(btnParts, style.Render(label))
 	}
-	buttonRow := lipgloss.JoinHorizontal(lipgloss.Center, btnParts...)
+	buttonRow := lipgloss.JoinHorizontal(lipgloss.Top, btnParts...)
+	// Pad the button row's gutters with the dialog background so the
+	// row blends into the surrounding panel rather than showing the
+	// terminal's default background between buttons.
+	rowW := lipgloss.Width(buttonRow)
+	if rowW < msgMaxW {
+		gutter := lipgloss.NewStyle().Background(dialogBg).
+			Render(strings.Repeat(" ", (msgMaxW-rowW)/2))
+		buttonRow = gutter + buttonRow + gutter
+	}
 
-	hint := dimStyle.Render("← → navigate · enter · esc cancel")
+	hint := dimStyle.Render(" ← → navigate · enter · esc cancel ")
 
 	inner := lipgloss.JoinVertical(lipgloss.Center,
 		msgBlock,
-		"",
+		lipgloss.NewStyle().Background(dialogBg).Render(strings.Repeat(" ", msgMaxW)),
 		buttonRow,
-		"",
+		lipgloss.NewStyle().Background(dialogBg).Render(strings.Repeat(" ", msgMaxW)),
 		hint,
 	)
 
 	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(theme.T.Border()).
+		Border(lipgloss.ThickBorder()).
+		BorderForeground(theme.T.Accent()).
+		BorderBackground(dialogBg).
+		Background(dialogBg).
 		Padding(1, 3).
 		Render(inner)
+}
+
+// Place renders the dialog and centres it inside a w×h region using a
+// dotted whitespace fill — matches the lipgloss `examples/layout` look
+// where the dialog sits on a textured background instead of plain
+// spaces. Use this when overlaying the dialog on top of a screen.
+func (d Dialog) Place(w, h int) string {
+	return lipgloss.Place(w, h,
+		lipgloss.Center, lipgloss.Center,
+		d.Render(),
+		lipgloss.WithWhitespaceChars("░"),
+		lipgloss.WithWhitespaceStyle(
+			lipgloss.NewStyle().Foreground(theme.T.TextMuted()),
+		),
+	)
 }
 
 // dialogWrapText wraps s into lines of at most maxW visible characters.

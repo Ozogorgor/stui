@@ -5,6 +5,7 @@
 #   ./scripts/build.sh                   # runtime + TUI + all metadata plugins
 #   ./scripts/build.sh --no-plugins      # skip plugin build
 #   ./scripts/build.sh --wasm-host       # runtime with full WASM execution support
+#   ./scripts/build.sh --clean           # nuke caches first (cargo clean + go clean -cache)
 #   ./scripts/build.sh kitsunekko        # pass plugin filter through to build-plugins.sh
 #   ARIA2_SECRET=x ./scripts/build.sh
 set -euo pipefail
@@ -15,22 +16,39 @@ mkdir -p "$DIST"
 
 FEATURES=""
 BUILD_PLUGINS=true
+CLEAN=false
 PLUGIN_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
         --wasm-host)   FEATURES="--features wasm-host" ;;
         --no-plugins)  BUILD_PLUGINS=false ;;
+        --clean)       CLEAN=true ;;
         --help|-h)
-            echo "Usage: $0 [--wasm-host] [--no-plugins] [plugin-name]"
+            echo "Usage: $0 [--wasm-host] [--no-plugins] [--clean] [plugin-name]"
             echo ""
             echo "By default, all metadata WASM plugins are compiled and installed."
             echo "Pass a plugin name to build only that plugin (forwarded to build-plugins.sh)."
+            echo "--clean wipes cargo's target/ and Go's build cache for a true scratch build."
             exit 0
             ;;
         *)  PLUGIN_ARGS+=("$arg") ;;
     esac
 done
+
+# ── Optional pre-build clean ─────────────────────────────────────────────────
+# `--clean` is for "I don't trust incremental compilation, give me a fresh
+# build" situations: stale codegen, corrupt fingerprints, or after large
+# refactors. It costs minutes but rules out caching as a suspect.
+if [[ "$CLEAN" == "true" ]]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "▶ Cleaning build caches…"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cd "$ROOT" && cargo clean
+    cd "$ROOT/tui" && go clean -cache
+    echo "✓  caches cleared"
+    echo ""
+fi
 
 # ── Runtime (Rust) ────────────────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -369,11 +369,22 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 	borderedContent := borderStyle.Width(w - 2).Render(paneContent.String())
 	sb.WriteString(borderedContent + "\n")
 
-	// Save-mode overlay at bottom.
+	// Save-mode overlay sits at the bottom while the prompt is active so
+	// the user's input has somewhere prominent to land.
 	if s.saving {
 		prompt := fmt.Sprintf("  Save current queue as: %s_", s.saveName)
 		sb.WriteString(accentStyle.Render(prompt) + "\n")
 	}
 
 	return sb.String()
+}
+
+// FooterText is what the global status bar shows while this screen is
+// active. Mirrors MusicLibraryScreen.FooterText: hint by default, the
+// save prompt while editing one.
+func (s MusicPlaylistsScreen) FooterText() string {
+	if s.saving {
+		return "type name · enter save · esc cancel"
+	}
+	return "enter view · s save queue as · d delete · ↑↓ navigate"
 }
