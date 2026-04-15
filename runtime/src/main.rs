@@ -106,6 +106,12 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)?;
     std::fs::create_dir_all(&cfg.plugin_dir)?;
 
+    // Initialize process-wide exception store for music tag normalization.
+    mediacache::normalize::store::init(
+        mediacache::normalize::store::default_bundled_path(),
+        mediacache::normalize::store::default_user_path(),
+    );
+
     // ── Engine ────────────────────────────────────────────────────────────
     let engine = Arc::new(Engine::new(cfg.cache_dir.clone(), cfg.data_dir.clone()));
 

@@ -5,6 +5,7 @@
 pub mod exceptions;
 pub mod lookup;
 pub mod rules;
+pub mod store;
 pub mod unusual_case;
 pub mod year;
 
