@@ -1114,6 +1114,16 @@ async fn handle_line(
                 Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
             }
         }
+
+        // ── Tag normalization (schema wired; handlers land in later tasks) ──
+        Request::MarkTagException(_)
+        | Request::ActionATagsPreview(_)
+        | Request::ActionATagsApply(_)
+        | Request::ActionATagsCancel(_) => Response::error(
+            None,
+            ErrorCode::InvalidRequest,
+            "tag normalization IPC not yet implemented".to_string(),
+        ),
     }
 }
 

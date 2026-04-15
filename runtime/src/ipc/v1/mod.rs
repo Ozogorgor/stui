@@ -142,6 +142,16 @@ pub enum Request {
     LoadDspProfile(LoadDspProfileRequest),
     /// Delete a named DSP profile.
     DeleteDspProfile(DeleteDspProfileRequest),
+
+    // ── Tag normalization ────────────────────────────────────────────────────
+    /// Mark a raw tag value as an exception (protected from normalization).
+    MarkTagException(MarkTagExceptionRequest),
+    /// Compute the normalize-vs-raw diff for a scope, without writing.
+    ActionATagsPreview(ActionATagsPreviewRequest),
+    /// Apply a pre-computed Action A write set.
+    ActionATagsApply(ActionATagsApplyRequest),
+    /// Cancel an in-progress Action A run by job ID.
+    ActionATagsCancel(ActionATagsCancelRequest),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -468,6 +478,12 @@ pub enum Response {
     DspProfileDeleted {
         success: bool,
     },
+
+    // ── Tag normalization responses ──────────────────────────────────────────
+    MarkTagException(MarkTagExceptionResponse),
+    ActionATagsPreview(ActionATagsPreviewResponse),
+    ActionATagsApply(ActionATagsApplyResponse),
+    ActionATagsCancel(ActionATagsCancelResponse),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -748,6 +764,77 @@ pub struct MpdGetPlaylistsResponse {
 pub struct MpdGetPlaylistResponse {
     pub id: String,
     pub tracks: Vec<MpdSongWire>,
+}
+
+// ── Tag normalization — requests ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkTagExceptionRequest {
+    pub field: String,     // "artist" | "album_artist" | "album" | "title" | "genre"
+    pub raw_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsPreviewRequest {
+    pub scope: TagWriteScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TagWriteScope {
+    Album { artist: String, album: String, date: String },
+    Artist { artist: String },
+    Library,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsApplyRequest {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsCancelRequest {
+    pub job_id: String,
+}
+
+// ── Tag normalization — responses ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkTagExceptionResponse {
+    pub id: String,
+    pub added: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagDiffRowWire {
+    pub file: String,
+    pub field: String,
+    pub old_value: String,
+    pub new_value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsPreviewResponse {
+    pub id: String,
+    pub job_id: String,
+    pub rows: Vec<TagDiffRowWire>,
+    pub total_files: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsApplyResponse {
+    pub id: String,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub skipped_cancelled: usize,
+    pub failures: Vec<String>,
+    pub rescan_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionATagsCancelResponse {
+    pub id: String,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
