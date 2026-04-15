@@ -32,6 +32,6 @@ pub fn default_bundled_path() -> PathBuf {
 
 pub fn default_user_path() -> PathBuf {
     dirs::home_dir()
-        .map(|h| h.join(".config").join("stui").join("exceptions.toml"))
+        .map(|h| h.join(".stui").join("config").join("exceptions.toml"))
         .unwrap_or_else(|| PathBuf::from("exceptions.toml"))
 }
