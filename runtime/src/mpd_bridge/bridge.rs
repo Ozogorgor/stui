@@ -61,6 +61,9 @@ fn default_entry() -> MpdDirEntryWire {
         artist: String::new(),
         album: String::new(),
         duration: 0.0,
+        raw_artist: String::new(),
+        raw_album: String::new(),
+        raw_title: String::new(),
     }
 }
 
@@ -460,13 +463,23 @@ impl MpdBridge {
         };
         Ok(records.into_iter().filter_map(|r| {
             let file = r.get("file")?.clone();
-            Some(MpdSongWire {
+            let mut song = MpdSongWire {
                 title:    str_or(r.get("Title")),
                 artist:   str_or(r.get("Artist")),
                 album:    str_or(r.get("Album")),
                 duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
                 file,
-            })
+                raw_artist: String::new(),
+                raw_album: String::new(),
+                raw_title: String::new(),
+            };
+            apply_song_normalize(
+                &self.normalize_cfg,
+                &mut song.artist, &mut song.raw_artist,
+                &mut song.album,  &mut song.raw_album,
+                &mut song.title,  &mut song.raw_title,
+            );
+            Some(song)
         }).collect())
     }
 
@@ -493,8 +506,17 @@ impl MpdBridge {
         let mut entries: Vec<MpdDirEntryWire> = Vec::new();
         let mut current: Option<MpdDirEntryWire> = None;
 
+        let normalize_cfg = self.normalize_cfg.clone();
         let flush = |cur: &mut Option<MpdDirEntryWire>, out: &mut Vec<MpdDirEntryWire>| {
-            if let Some(entry) = cur.take() { out.push(entry); }
+            if let Some(mut entry) = cur.take() {
+                apply_song_normalize(
+                    &normalize_cfg,
+                    &mut entry.artist, &mut entry.raw_artist,
+                    &mut entry.album,  &mut entry.raw_album,
+                    &mut entry.title,  &mut entry.raw_title,
+                );
+                out.push(entry);
+            }
         };
 
         for (k, v) in pairs {
@@ -574,13 +596,23 @@ impl MpdBridge {
         };
         Ok(records.into_iter().filter_map(|r| {
             let file = r.get("file")?.clone();
-            Some(MpdSongWire {
+            let mut song = MpdSongWire {
                 title:    str_or(r.get("Title")),
                 artist:   str_or(r.get("Artist")),
                 album:    str_or(r.get("Album")),
                 duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
                 file,
-            })
+                raw_artist: String::new(),
+                raw_album: String::new(),
+                raw_title: String::new(),
+            };
+            apply_song_normalize(
+                &self.normalize_cfg,
+                &mut song.artist, &mut song.raw_artist,
+                &mut song.album,  &mut song.raw_album,
+                &mut song.title,  &mut song.raw_title,
+            );
+            Some(song)
         }).collect())
     }
 
@@ -728,4 +760,31 @@ async fn run_idle_loop(
             let _ = ipc_tx.send(msg).await;
         }
     }
+}
+
+/// Normalize a song-like record in place. Stashes raw values when the pipeline
+/// changes a field. No-op when `cfg.enabled == false`.
+fn apply_song_normalize(
+    cfg: &MusicNormalizeConfig,
+    artist: &mut String, raw_artist: &mut String,
+    album: &mut String, raw_album: &mut String,
+    title: &mut String, raw_title: &mut String,
+) {
+    if !cfg.enabled { return; }
+    let exceptions = norm_store::global().map(|s| s.get()).unwrap_or_default();
+    let raw = RawTags {
+        artist: artist.clone(),
+        album: album.clone(),
+        title: title.clone(),
+        ..Default::default()
+    };
+    let nc = NormalizationConfig {
+        enabled: true,
+        use_lookup: cfg.use_lookup,
+        exceptions: &exceptions,
+    };
+    let n = normalize::normalize(&raw, &nc, None);
+    if n.artist != *artist { *raw_artist = artist.clone(); *artist = n.artist; }
+    if n.album != *album   { *raw_album  = album.clone();  *album  = n.album; }
+    if n.title != *title   { *raw_title  = title.clone();  *title  = n.title; }
 }

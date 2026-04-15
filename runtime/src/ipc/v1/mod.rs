@@ -669,6 +669,12 @@ pub struct MpdSongWire {
     pub album: String,
     pub duration: f64,
     pub file: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_artist: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_album: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_title: String,
 }
 
 /// One entry returned by `lsinfo` — either a directory, a file, or a playlist.
@@ -686,6 +692,12 @@ pub struct MpdDirEntryWire {
     pub album: String,
     #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub duration: f64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_artist: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_album: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub raw_title: String,
 }
 
 fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
