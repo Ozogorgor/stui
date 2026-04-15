@@ -372,7 +372,7 @@ mod pipeline {
             &mut self,
             samples: &mut [f32],
             sample_rate: u32,
-            log: &pipeline_eq_tests::StageLog,
+            log: &tests::pipeline_eq_tests::StageLog,
         ) -> (Vec<f32>, u32) {
             let mut input = samples.to_vec();
             let mut output_rate = sample_rate;
@@ -1055,7 +1055,7 @@ mod pipeline {
             }
         }
 
-    mod pipeline_eq_tests {
+    pub(super) mod pipeline_eq_tests {
         use super::*;
         use crate::dsp::config::{DspConfig, EqBand, EqFilterType};
         use std::sync::{Arc, Mutex};
