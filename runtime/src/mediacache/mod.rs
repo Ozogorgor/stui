@@ -5,6 +5,7 @@
 mod store;
 pub mod normalize;
 pub mod tag_writer;
+pub mod tag_write_job;
 
 pub use store::MediaCacheStore;
 
