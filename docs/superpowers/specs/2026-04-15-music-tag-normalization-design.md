@@ -24,6 +24,7 @@ The feature is **opt-in at two levels**:
 - **Not building a tag editor.** STUI will never provide per-field tag-editing UI. Dedicated tools (Picard, Kid3, beets) exist for that. The only tag mutation STUI performs is bulk normalization via Action A.
 - **Not inferring metadata from filenames.** Normalization operates on existing tags (plus optional lookup enrichment). Filename parsing is out of scope.
 - **Not syncing changes back to MusicBrainz.** Lookup is read-only.
+- **Not applied to externally-managed libraries.** This feature is for *locally hosted and directly managed* files only — i.e., the MPD library. Future plugins that surface music from externally-managed systems (Plex, Jellyfin, Subsonic, Roon, cloud services, etc.) MUST NOT have normalization applied: those systems own their own metadata pipelines and their users rely on them being authoritative. Design enforcement: Action B's pipeline pass lives inside `mpd_bridge` and the Action A IPC commands target MPD file paths only. Any future non-MPD music source must be a separate catalog provider with no hook into this pipeline. If a non-MPD provider ever wants opt-in normalization, it gets its own toggle and scope; this feature's `[music.normalize]` section stays MPD-scoped.
 
 ## Design
 
