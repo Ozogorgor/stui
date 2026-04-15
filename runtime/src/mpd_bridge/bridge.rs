@@ -22,6 +22,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::config::types::{MpdConfig, MusicNormalizeConfig};
+use crate::ipc::v1::TagWriteScope;
 use crate::ipc::{
     MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
     MpdSavedPlaylistWire, MpdSongWire,
@@ -38,6 +39,28 @@ fn quote_mpd(s: &str) -> String {
         if ch == '\\' || ch == '"' { out.push('\\'); }
         out.push(ch);
     }
+    out.push('"');
+    out
+}
+
+/// Escape a value for use inside an MPD filter expression (e.g. `(artist == "foo")`).
+/// MPD's filter syntax requires the value to be a double-quoted string with
+/// internal quotes + backslashes backslash-escaped. Since the filter value is
+/// itself embedded inside an outer `"..."` MPD-quoted argument, every `\` and
+/// `"` in the value needs two levels of escaping.
+fn mpd_escape_filter(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\\');
+    out.push('"');
+    for ch in s.chars() {
+        if ch == '\\' || ch == '"' {
+            out.push('\\');
+            out.push('\\');
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('\\');
     out.push('"');
     out
 }
@@ -483,6 +506,72 @@ impl MpdBridge {
             );
             Some(song)
         }).collect())
+    }
+
+    /// Gather (absolute_path, RawTags) for every file in a tag-write scope.
+    /// Uses MPD's `find`/`listallinfo` commands under the hood; converts
+    /// MPD-relative paths to absolute paths via `music_dir`.
+    pub async fn gather_scope_files(
+        &self,
+        scope: &TagWriteScope,
+        music_dir: &std::path::Path,
+    ) -> Result<Vec<(std::path::PathBuf, RawTags)>> {
+        let cmd = match scope {
+            TagWriteScope::Album { artist, album, date } => {
+                // Prefer album+artist+date to disambiguate remasters.
+                if date.is_empty() {
+                    format!(
+                        "find \"(album == {}) AND (artist == {})\"",
+                        mpd_escape_filter(album),
+                        mpd_escape_filter(artist),
+                    )
+                } else {
+                    format!(
+                        "find \"(album == {}) AND (artist == {}) AND (date == {})\"",
+                        mpd_escape_filter(album),
+                        mpd_escape_filter(artist),
+                        mpd_escape_filter(date),
+                    )
+                }
+            }
+            TagWriteScope::Artist { artist } => {
+                format!("find \"(artist == {})\"", mpd_escape_filter(artist))
+            }
+            TagWriteScope::Library => "listallinfo".to_string(),
+        };
+
+        let pairs = {
+            let mut guard = self.conn.lock().await;
+            let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+            match conn.command_kv_ordered(&cmd).await {
+                Ok(p) => p,
+                Err(e) => { *guard = None; return Err(e); }
+            }
+        };
+
+        let mut out: Vec<(std::path::PathBuf, RawTags)> = Vec::new();
+        let mut cur: Option<(std::path::PathBuf, RawTags)> = None;
+        for (k, v) in pairs {
+            if k == "file" {
+                if let Some(done) = cur.take() { out.push(done); }
+                cur = Some((music_dir.join(v.trim()), RawTags::default()));
+                continue;
+            }
+            let Some((_, raw)) = cur.as_mut() else { continue };
+            match k.as_str() {
+                "Artist" => raw.artist = v,
+                "AlbumArtist" => raw.album_artist = v,
+                "Album" => raw.album = v,
+                "Title" => raw.title = v,
+                "Date" => raw.date = v,
+                "Genre" => raw.genre = v,
+                "Track" => raw.track = v,
+                "Disc" => raw.disc = v,
+                _ => {}
+            }
+        }
+        if let Some(done) = cur { out.push(done); }
+        Ok(out)
     }
 
     /// `lsinfo PATH` — browse the MPD music directory tree.

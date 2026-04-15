@@ -770,12 +770,14 @@ pub struct MpdGetPlaylistResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkTagExceptionRequest {
+    pub id: String,
     pub field: String,     // "artist" | "album_artist" | "album" | "title" | "genre"
     pub raw_value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionATagsPreviewRequest {
+    pub id: String,
     pub scope: TagWriteScope,
 }
 
@@ -789,11 +791,13 @@ pub enum TagWriteScope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionATagsApplyRequest {
+    pub id: String,
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionATagsCancelRequest {
+    pub id: String,
     pub job_id: String,
 }
 
