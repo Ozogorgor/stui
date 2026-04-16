@@ -544,7 +544,17 @@ func (s MusicQueueScreen) View(w, h int) string {
 		sb.WriteString(s.renderVizPanel(w, vizContentH, dimStyle, accentStyle))
 	}
 
-	return strings.TrimRight(sb.String(), "\n")
+	// Force output to exactly h lines so the queue fills its allocation
+	// with no gap and no overflow.
+	out := strings.TrimRight(sb.String(), "\n")
+	lines := strings.Split(out, "\n")
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderVizPanel returns a bordered container of width `w` and total height
