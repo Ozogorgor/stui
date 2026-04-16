@@ -811,7 +811,7 @@ func (s MusicLibraryScreen) openPaneDialog() MusicLibraryScreen {
 		s.dialogContext = libDialogAlbum
 		s.dialog = components.NewDialog(
 			"Album: '"+truncate(title, 28)+"'",
-			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Normalize tags on disk…", "Cancel"},
+			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Create playlist", "Normalize tags on disk…", "Cancel"},
 		)
 		s.dialogOpen = true
 	case LibPaneTracks:
@@ -942,7 +942,22 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 				s = s.setStatus("Browse the album's tracks first (press Enter), then try again")
 				s.playlistPrompt = false
 			}
-		case 4: // Normalize tags on disk…
+		case 4: // Create playlist
+			s.playlistPrompt = true
+			s.playlistCreate = true
+			s.playlistName = ""
+			if len(s.songs) > 0 {
+				uris := make([]string, 0, len(s.songs))
+				for _, song := range s.songs {
+					uris = append(uris, song.File)
+				}
+				s.playlistURIs = uris
+				s = s.openPlaylistPromptDialog()
+			} else {
+				s = s.setStatus("Browse the album's tracks first (press Enter), then try again")
+				s.playlistPrompt = false
+			}
+		case 5: // Normalize tags on disk…
 			s.dialogContext = libDialogNormalizeScope
 			a := s.albums[s.albumCursor]
 			s.normalizeScope = ipc.TagWriteScope{Kind: "album", Artist: artist, Album: a.Title, Date: a.Date}

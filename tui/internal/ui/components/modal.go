@@ -197,11 +197,11 @@ func NewDialog(message string, options []string) Dialog {
 func (d Dialog) Update(key string) (out Dialog, chosen int, dismissed bool) {
 	out = d
 	switch key {
-	case "h", "left":
+	case "h", "left", "k", "up":
 		if out.Cursor > 0 {
 			out.Cursor--
 		}
-	case "l", "right", "tab":
+	case "l", "right", "tab", "j", "down":
 		if out.Cursor < len(out.Options)-1 {
 			out.Cursor++
 		}
@@ -262,36 +262,48 @@ func (d Dialog) Render() string {
 		Padding(0, 3).
 		MarginRight(2)
 
+	vertical := len(d.Options) > 3
+
 	var btnParts []string
 	for i, label := range d.Options {
-		// Drop the trailing margin on the last button so the row
-		// centres correctly under the message.
 		style := inactiveBtn
 		if i == d.Cursor {
 			style = activeBtn
 		}
-		if i == len(d.Options)-1 {
+		if vertical {
+			style = style.MarginRight(0).Width(msgMaxW - 2).Align(lipgloss.Center)
+		} else if i == len(d.Options)-1 {
 			style = style.MarginRight(0)
 		}
 		btnParts = append(btnParts, style.Render(label))
 	}
-	buttonRow := lipgloss.JoinHorizontal(lipgloss.Top, btnParts...)
-	// Pad the button row's gutters with the dialog background so the
-	// row blends into the surrounding panel rather than showing the
-	// terminal's default background between buttons.
-	rowW := lipgloss.Width(buttonRow)
-	if rowW < msgMaxW {
+
+	var buttonBlock string
+	if vertical {
+		buttonBlock = lipgloss.JoinVertical(lipgloss.Center, btnParts...)
+	} else {
+		buttonBlock = lipgloss.JoinHorizontal(lipgloss.Top, btnParts...)
+	}
+	// Pad gutters with dialog background so the block blends into the
+	// surrounding panel.
+	blockW := lipgloss.Width(buttonBlock)
+	if blockW < msgMaxW {
 		gutter := lipgloss.NewStyle().Background(dialogBg).
-			Render(strings.Repeat(" ", (msgMaxW-rowW)/2))
-		buttonRow = gutter + buttonRow + gutter
+			Render(strings.Repeat(" ", (msgMaxW-blockW)/2))
+		buttonBlock = gutter + buttonBlock + gutter
 	}
 
-	hint := dimStyle.Render(" ← → navigate · enter · esc cancel ")
+	var hint string
+	if vertical {
+		hint = dimStyle.Render(" ↑ ↓ navigate · enter · esc cancel ")
+	} else {
+		hint = dimStyle.Render(" ← → navigate · enter · esc cancel ")
+	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Center,
 		msgBlock,
 		lipgloss.NewStyle().Background(dialogBg).Render(strings.Repeat(" ", msgMaxW)),
-		buttonRow,
+		buttonBlock,
 		lipgloss.NewStyle().Background(dialogBg).Render(strings.Repeat(" ", msgMaxW)),
 		hint,
 	)
