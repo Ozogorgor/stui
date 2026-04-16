@@ -461,5 +461,5 @@ func (s MusicPlaylistsScreen) FooterText() string {
 	if s.saving {
 		return "type name · enter save · esc cancel"
 	}
-	return "enter actions · a append · s save queue as · ↑↓ navigate"
+	return "enter actions · a append · s save · ↑↓ nav"
 }
