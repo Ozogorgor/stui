@@ -280,7 +280,7 @@ func (d Dialog) Render() string {
 
 	var buttonBlock string
 	if vertical {
-		buttonBlock = lipgloss.JoinVertical(lipgloss.Center, btnParts...)
+		buttonBlock = lipgloss.JoinVertical(lipgloss.Left, btnParts...)
 	} else {
 		buttonBlock = lipgloss.JoinHorizontal(lipgloss.Top, btnParts...)
 	}
