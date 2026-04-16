@@ -63,6 +63,57 @@ func init() {
 	}
 }
 
+// detectMpdConfPaths reads mpd.conf and extracts music_directory and
+// playlist_directory. Returns empty strings if not found.
+func detectMpdConfPaths() (musicDir, playlistDir string) {
+	candidates := []string{
+		filepath.Join(settingsHomeDir, ".config", "mpd", "mpd.conf"),
+		filepath.Join(settingsHomeDir, ".mpd", "mpd.conf"),
+		"/etc/mpd.conf",
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || line == "" {
+				continue
+			}
+			if val, ok := extractMpdDirective(line, "music_directory"); ok && musicDir == "" {
+				musicDir = expandTilde(val)
+			}
+			if val, ok := extractMpdDirective(line, "playlist_directory"); ok && playlistDir == "" {
+				playlistDir = expandTilde(val)
+			}
+		}
+		if musicDir != "" || playlistDir != "" {
+			return
+		}
+	}
+	return
+}
+
+func extractMpdDirective(line, directive string) (string, bool) {
+	if !strings.HasPrefix(line, directive) {
+		return "", false
+	}
+	rest := strings.TrimSpace(line[len(directive):])
+	rest = strings.Trim(rest, "\"")
+	if rest == "" {
+		return "", false
+	}
+	return rest, true
+}
+
+func expandTilde(path string) string {
+	if strings.HasPrefix(path, "~") {
+		return settingsHomeDir + path[1:]
+	}
+	return path
+}
+
 func isValidPath(path string) bool {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -1095,6 +1146,13 @@ func padOrTruncate(s string, w int) string {
 // ── Default categories ────────────────────────────────────────────────────────
 
 func defaultCategories() []settingCategory {
+	mpdMusicDir, mpdPlaylistDir := detectMpdConfPaths()
+	if mpdMusicDir == "" {
+		mpdMusicDir = "(not found — check mpd.conf)"
+	}
+	if mpdPlaylistDir == "" {
+		mpdPlaylistDir = "(not found — check mpd.conf)"
+	}
 	return []settingCategory{
 		{
 			name: "Audio",
@@ -1159,6 +1217,20 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     false,
 					description: "Remove tracks from queue after playing",
+				},
+				{
+					label:       "Music directory",
+					key:         "mpd.music_dir",
+					kind:        settingInfo,
+					strVal:      mpdMusicDir,
+					description: "Auto-detected from mpd.conf (or set in stui.toml)",
+				},
+				{
+					label:       "Playlist directory",
+					key:         "mpd.playlist_dir",
+					kind:        settingInfo,
+					strVal:      mpdPlaylistDir,
+					description: "Where MPD stores .m3u playlists (auto-detected from mpd.conf)",
 				},
 				{
 					label:       "MPD outputs",
