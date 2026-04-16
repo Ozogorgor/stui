@@ -413,7 +413,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 		innerLForCols = 10
 	}
 	titleW, artistW, albumW := queueColWidths(innerLForCols)
-	boxH := h - vizPanelH
+	boxH := h - vizPanelH - 1 // -1: JoinVertical in MusicScreen.View adds a trailing row
 	if boxH < 3 {
 		boxH = 3
 	}
