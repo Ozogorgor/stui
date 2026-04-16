@@ -114,6 +114,12 @@ type MusicLibraryScreen struct {
 	dialogSong    ipc.MpdSong
 	dialogContext libDialogCtx
 
+	// Playlist prompt state (used for "Create Playlist" and "Add to Playlist")
+	playlistPrompt bool
+	playlistName   string
+	playlistCreate bool     // true = create (clear+add), false = add (append)
+	playlistURIs   []string // URIs to add when prompt is confirmed
+
 	// Tag normalization state
 	normalizeJobID string
 	normalizeRows  []ipc.TagDiffRow
@@ -273,6 +279,10 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		return s, nil
 
 	case tea.KeyPressMsg:
+		// Playlist name prompt intercepts all keys when active.
+		if s.playlistPrompt {
+			return s.handlePlaylistPrompt(m)
+		}
 		if s.dirMode {
 			s = s.handleDirKey(m.String())
 		} else {
@@ -305,6 +315,49 @@ func (s MusicLibraryScreen) setStatus(msg string) MusicLibraryScreen {
 // statusTTL is how long the library's local hintBar keeps echoing a
 // recently-set status message before falling back to the default key hints.
 const statusTTL = 3 * time.Second
+
+// handlePlaylistPrompt processes key events while the playlist name prompt
+// is active. All keys are consumed so nothing leaks to the tag/dir handlers.
+func (s MusicLibraryScreen) handlePlaylistPrompt(m tea.KeyPressMsg) (MusicLibraryScreen, tea.Cmd) {
+	switch m.String() {
+	case "esc":
+		s.playlistPrompt = false
+		s.playlistName = ""
+		s.playlistURIs = nil
+	case "backspace":
+		if len(s.playlistName) > 0 {
+			runes := []rune(s.playlistName)
+			s.playlistName = string(runes[:len(runes)-1])
+		}
+	case "enter":
+		if s.playlistName != "" && s.client != nil && len(s.playlistURIs) > 0 {
+			name := s.playlistName
+			if s.playlistCreate {
+				s.client.MpdCmd("mpd_playlist_create", map[string]any{
+					"name": name,
+					"uris": s.playlistURIs,
+				})
+				s = s.setStatus(fmt.Sprintf("Created playlist '%s' with %d tracks", name, len(s.playlistURIs)))
+			} else {
+				for _, uri := range s.playlistURIs {
+					s.client.MpdCmd("mpd_playlist_add_track", map[string]any{
+						"name": name,
+						"uri":  uri,
+					})
+				}
+				s = s.setStatus(fmt.Sprintf("Added %d tracks to '%s'", len(s.playlistURIs), name))
+			}
+			s.playlistPrompt = false
+			s.playlistName = ""
+			s.playlistURIs = nil
+		}
+	default:
+		if len(m.Text) > 0 {
+			s.playlistName += m.Text
+		}
+	}
+	return s, nil
+}
 
 // handleTagKey processes key events in tag-browser mode.
 func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
@@ -790,10 +843,16 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s.client.MpdCmd("mpd_clear", nil)
 			s.client.MpdCmd("mpd_add", map[string]any{"uri": s.dialogSong.File})
 			s = s.setStatus("Replaced queue with '" + s.dialogSong.Title + "'")
-		case 2: // Add to Playlist (placeholder until playlist picker exists)
-			s = s.setStatus("Add to Playlist: not implemented yet")
-		case 3: // Create Playlist (placeholder until name prompt exists)
-			s = s.setStatus("Create Playlist: not implemented yet")
+		case 2: // Add to Playlist
+			s.playlistPrompt = true
+			s.playlistCreate = false
+			s.playlistName = ""
+			s.playlistURIs = []string{s.dialogSong.File}
+		case 3: // Create Playlist
+			s.playlistPrompt = true
+			s.playlistCreate = true
+			s.playlistName = ""
+			s.playlistURIs = []string{s.dialogSong.File}
 		}
 	case libDialogArtist:
 		if s.artistCursor >= len(s.artists) {
@@ -844,8 +903,20 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 				s.client.MpdCmd("mpd_add", map[string]any{"uri": song.File})
 			}
 			s = s.setStatus(fmt.Sprintf("Replaced queue with '%s' (%d tracks)", album.Title, len(s.songs)))
-		case 3: // Add to playlist (same placeholder as the track variant)
-			s = s.setStatus("Add to Playlist: not implemented yet")
+		case 3: // Add to playlist
+			s.playlistPrompt = true
+			s.playlistCreate = false
+			s.playlistName = ""
+			if len(s.songs) > 0 {
+				uris := make([]string, 0, len(s.songs))
+				for _, song := range s.songs {
+					uris = append(uris, song.File)
+				}
+				s.playlistURIs = uris
+			} else {
+				s = s.setStatus("Browse the album's tracks first (press Enter), then try again")
+				s.playlistPrompt = false
+			}
 		case 4: // Normalize tags on disk…
 			s.dialogContext = libDialogNormalizeScope
 			a := s.albums[s.albumCursor]
@@ -1132,6 +1203,13 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 // row; that's been collapsed into the global footer so the chrome looks
 // the same as Movies/Series.
 func (s MusicLibraryScreen) FooterText() string {
+	if s.playlistPrompt {
+		action := "Add to playlist"
+		if s.playlistCreate {
+			action = "Create playlist"
+		}
+		return fmt.Sprintf("%s: %s█  (enter confirm / esc cancel)", action, s.playlistName)
+	}
 	if s.statusMsg != "" && !s.statusAt.IsZero() && time.Since(s.statusAt) < statusTTL {
 		return s.statusMsg
 	}
