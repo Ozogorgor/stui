@@ -80,7 +80,10 @@ type MpdDirEntry struct {
 	Title    string  `json:"title,omitempty"`
 	Artist   string  `json:"artist,omitempty"`
 	Album    string  `json:"album,omitempty"`
-	Duration float64 `json:"duration,omitempty"`
+	Duration  float64 `json:"duration,omitempty"`
+	RawArtist string  `json:"raw_artist,omitempty"`
+	RawAlbum  string  `json:"raw_album,omitempty"`
+	RawTitle  string  `json:"raw_title,omitempty"`
 }
 
 // MpdDirResultMsg is dispatched when MpdBrowseDir completes.
@@ -137,8 +140,10 @@ type MpdArtist struct {
 type MpdAlbum struct {
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
-	Year   string `json:"year"`
-	Date   string `json:"date"`
+	Year      string `json:"year"`
+	Date      string `json:"date"`
+	RawArtist string `json:"raw_artist,omitempty"`
+	RawTitle  string `json:"raw_title,omitempty"`
 }
 
 // MpdSong is one entry in the library track list or a saved playlist.
@@ -146,8 +151,11 @@ type MpdSong struct {
 	Title    string  `json:"title"`
 	Artist   string  `json:"artist"`
 	Album    string  `json:"album"`
-	Duration float64 `json:"duration"` // seconds
-	File     string  `json:"file"`
+	Duration  float64 `json:"duration"` // seconds
+	File      string  `json:"file"`
+	RawArtist string  `json:"raw_artist,omitempty"`
+	RawAlbum  string  `json:"raw_album,omitempty"`
+	RawTitle  string  `json:"raw_title,omitempty"`
 }
 
 // MpdLibraryResultMsg is dispatched by MpdListArtists / MpdListAlbums / MpdListSongs.
@@ -368,6 +376,191 @@ func (c *Client) MpdGetPlaylistTracks(name string) {
 				msg.Err = err
 			} else {
 				msg.Tracks = payload.Tracks
+			}
+		}
+		c.send(msg)
+	}()
+}
+
+// ── Tag normalization ────────────────────────────────────────────────────────
+
+// TagWriteScope defines what scope to normalize.
+type TagWriteScope struct {
+	Kind   string `json:"kind"`             // "album" | "artist" | "library"
+	Artist string `json:"artist,omitempty"`
+	Album  string `json:"album,omitempty"`
+	Date   string `json:"date,omitempty"`
+}
+
+// TagDiffRow is one field-level change in a tag normalization preview.
+type TagDiffRow struct {
+	File     string `json:"file"`
+	Field    string `json:"field"`
+	OldValue string `json:"old_value"`
+	NewValue string `json:"new_value"`
+}
+
+// MarkTagExceptionResultMsg is dispatched when MarkTagException completes.
+type MarkTagExceptionResultMsg struct {
+	Added bool
+	Err   error
+}
+
+// MarkTagException adds a raw tag value to the user's exception list.
+func (c *Client) MarkTagException(field, rawValue string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":      "mark_tag_exception",
+			"id":        id,
+			"field":     field,
+			"raw_value": rawValue,
+		})
+		raw := receiveWithTimeout(ch)
+		var msg MarkTagExceptionResultMsg
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			var payload struct {
+				Added bool `json:"added"`
+			}
+			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				msg.Err = err
+			} else {
+				msg.Added = payload.Added
+			}
+		}
+		c.send(msg)
+	}()
+}
+
+// ActionAPreviewResultMsg is dispatched when ActionATagsPreview completes.
+type ActionAPreviewResultMsg struct {
+	JobID      string
+	Rows       []TagDiffRow
+	TotalFiles int
+	Err        error
+}
+
+// ActionATagsPreview computes a normalize-vs-raw diff for a scope without writing.
+func (c *Client) ActionATagsPreview(scope TagWriteScope) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":  "action_a_tags_preview",
+			"id":    id,
+			"scope": scope,
+		})
+		raw := receiveWithTimeout(ch)
+		var msg ActionAPreviewResultMsg
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			var payload struct {
+				JobID      string       `json:"job_id"`
+				Rows       []TagDiffRow `json:"rows"`
+				TotalFiles int          `json:"total_files"`
+			}
+			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				msg.Err = err
+			} else {
+				msg.JobID = payload.JobID
+				msg.Rows = payload.Rows
+				msg.TotalFiles = payload.TotalFiles
+			}
+		}
+		c.send(msg)
+	}()
+}
+
+// ActionAApplyResultMsg is dispatched when ActionATagsApply completes.
+type ActionAApplyResultMsg struct {
+	Succeeded        int
+	Failed           int
+	SkippedCancelled int
+	Failures         []string
+	RescanPath       string
+	Err              error
+}
+
+// ActionATagsApply writes normalized tags to files for a previously-previewed job.
+func (c *Client) ActionATagsApply(jobID string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":   "action_a_tags_apply",
+			"id":     id,
+			"job_id": jobID,
+		})
+		raw := receiveWithTimeout(ch)
+		var msg ActionAApplyResultMsg
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			var payload struct {
+				Succeeded        int      `json:"succeeded"`
+				Failed           int      `json:"failed"`
+				SkippedCancelled int      `json:"skipped_cancelled"`
+				Failures         []string `json:"failures"`
+				RescanPath       string   `json:"rescan_path"`
+			}
+			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				msg.Err = err
+			} else {
+				msg.Succeeded = payload.Succeeded
+				msg.Failed = payload.Failed
+				msg.SkippedCancelled = payload.SkippedCancelled
+				msg.Failures = payload.Failures
+				msg.RescanPath = payload.RescanPath
+			}
+		}
+		c.send(msg)
+	}()
+}
+
+// ActionACancelResultMsg is dispatched when ActionATagsCancel completes.
+type ActionACancelResultMsg struct {
+	Cancelled bool
+	Err       error
+}
+
+// ActionATagsCancel cancels an in-progress Action A job.
+func (c *Client) ActionATagsCancel(jobID string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":   "action_a_tags_cancel",
+			"id":     id,
+			"job_id": jobID,
+		})
+		raw := receiveWithTimeout(ch)
+		var msg ActionACancelResultMsg
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			var payload struct {
+				Cancelled bool `json:"cancelled"`
+			}
+			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				msg.Err = err
+			} else {
+				msg.Cancelled = payload.Cancelled
 			}
 		}
 		c.send(msg)
