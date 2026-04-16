@@ -2559,7 +2559,7 @@ func (m Model) hudRows() int {
 // overflowing" with a gap above it.
 func (m Model) computeMusicHeight() int {
 	const fixedRows = 7 // topbar area (5) + main-card borders (2)
-	footerRows := 6     // card MB(1) + blank(1) + statusBar(4) — see comment above
+	footerRows := 7     // card MB(1) + blank(1) + statusBar(4) + JoinVertical trailing row(1)
 	// Only Queue suppresses the footer (it uses every row for the
 	// tracklist + visualizer panel). Library/Browse/Playlists keep the
 	// global footer visible — that's where status messages and key hints
