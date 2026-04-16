@@ -2471,6 +2471,12 @@ func (m *Model) providersForTab() []string {
 
 func (m *Model) switchTab(t state.Tab) {
 	m.state.ActiveTab = t
+	// Recompute music height — footer visibility depends on the active tab
+	// and sub-tab, so switching tabs can change the available height.
+	if t == state.TabMusic {
+		innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
+		m.musicScreen, _ = m.musicScreen.Update(innerMsg)
+	}
 	m.state.Cursor = 0
 	m.state.Results = nil
 	m.gridCursor = screens.GridCursor{}
