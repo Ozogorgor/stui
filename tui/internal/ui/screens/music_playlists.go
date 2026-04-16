@@ -18,8 +18,9 @@ import (
 type playlistDialogCtx int
 
 const (
-	plDialogAction  playlistDialogCtx = iota // Main action menu
-	plDialogConfirm                          // Delete confirmation
+	plDialogAction       playlistDialogCtx = iota // Main action menu
+	plDialogConfirm                               // Delete confirmation
+	plDialogTrackConfirm                          // Delete-track confirmation
 )
 
 // MusicPlaylistsScreen displays saved MPD playlists with a track preview pane.
@@ -33,6 +34,10 @@ type MusicPlaylistsScreen struct {
 	previewFor     string        // which playlist name the preview is for
 	loadingList    bool
 	loadingPreview bool
+	// Right pane (track list) focus and cursor state.
+	rightFocus  bool
+	trackCursor int
+	trackScroll int
 	// Save-mode: prompt user for new playlist name
 	saving   bool
 	saveName string
@@ -118,6 +123,9 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 			if m.Err == nil {
 				s.preview = m.Tracks
 			}
+			if s.trackCursor >= len(s.preview) {
+				s.trackCursor = max(0, len(s.preview)-1)
+			}
 		}
 
 	case tea.KeyPressMsg:
@@ -146,6 +154,10 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylist
 		return s.applyDialogChoice(chosen)
 	}
 
+	if s.rightFocus {
+		return s.updateRightPane(m)
+	}
+
 	switch m.String() {
 	case "j", "down":
 		if s.cursor < len(s.playlists)-1 {
@@ -154,6 +166,8 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylist
 			if name != s.previewFor {
 				s.previewFor = name
 				s.loadingPreview = true
+				s.trackCursor = 0
+				s.trackScroll = 0
 				return s, fetchPreviewCmd(s.client, name)
 			}
 		}
@@ -164,8 +178,14 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylist
 			if name != s.previewFor {
 				s.previewFor = name
 				s.loadingPreview = true
+				s.trackCursor = 0
+				s.trackScroll = 0
 				return s, fetchPreviewCmd(s.client, name)
 			}
+		}
+	case "tab", "l", "right":
+		if len(s.preview) > 0 {
+			s.rightFocus = true
 		}
 	case "enter":
 		if name := s.hoveredPlaylistName(); name != "" {
@@ -183,6 +203,36 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylist
 	case "s":
 		s.saving = true
 		s.saveName = ""
+	}
+	return s, nil
+}
+
+// updateRightPane handles key events when the right (tracks) pane is focused.
+func (s MusicPlaylistsScreen) updateRightPane(m tea.KeyPressMsg) (MusicPlaylistsScreen, tea.Cmd) {
+	switch m.String() {
+	case "j", "down":
+		if s.trackCursor < len(s.preview)-1 {
+			s.trackCursor++
+		}
+	case "k", "up":
+		if s.trackCursor > 0 {
+			s.trackCursor--
+		}
+	case "tab", "h", "left", "esc":
+		s.rightFocus = false
+	case "d", "enter":
+		if len(s.preview) > 0 && s.trackCursor < len(s.preview) && s.previewFor != "" {
+			trackTitle := s.preview[s.trackCursor].Title
+			if trackTitle == "" {
+				trackTitle = "track"
+			}
+			s.dialogContext = plDialogTrackConfirm
+			s.dialog = components.NewDialog(
+				fmt.Sprintf("Remove '%s' from '%s'?", truncate(trackTitle, 30), truncate(s.previewFor, 20)),
+				[]string{"Yes, remove", "Cancel"},
+			)
+			s.dialogOpen = true
+		}
 	}
 	return s, nil
 }
@@ -229,6 +279,16 @@ func (s MusicPlaylistsScreen) applyDialogChoice(chosen int) (MusicPlaylistsScree
 			}
 		}
 		s.deleteTarget = ""
+
+	case plDialogTrackConfirm:
+		if chosen == 0 && s.previewFor != "" && s.client != nil {
+			s.client.MpdCmd("mpd_playlist_remove_track", map[string]any{
+				"name": s.previewFor,
+				"pos":  s.trackCursor,
+			})
+			s.loadingPreview = true
+			return s, fetchPreviewCmd(s.client, s.previewFor)
+		}
 	}
 	return s, nil
 }
@@ -392,10 +452,27 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 	if s.loadingPreview {
 		rightLines = append(rightLines, dimStyle.Render("  Loading…"))
 	} else {
-		for _, song := range s.preview {
-			if len(rightLines) >= bodyH {
-				break
-			}
+		// Scroll the track list to keep trackCursor visible.
+		visibleTracks := bodyH - 1 // -1 for header
+		if visibleTracks < 1 {
+			visibleTracks = 1
+		}
+		trackScroll := s.trackScroll
+		if s.trackCursor < trackScroll {
+			trackScroll = s.trackCursor
+		}
+		if s.trackCursor >= trackScroll+visibleTracks {
+			trackScroll = s.trackCursor - visibleTracks + 1
+		}
+		if trackScroll < 0 {
+			trackScroll = 0
+		}
+		end := trackScroll + visibleTracks
+		if end > len(s.preview) {
+			end = len(s.preview)
+		}
+		for i := trackScroll; i < end; i++ {
+			song := s.preview[i]
 			dur := ""
 			if song.Duration > 0 {
 				dur = fmtMusicDuration(song.Duration)
@@ -403,7 +480,11 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 			titleStr := truncate(song.Title, rightW-30)
 			artistStr := truncate(song.Artist, 16)
 			line := fmt.Sprintf("  %-*s  %-16s  %s", rightW-34, titleStr, artistStr, dur)
-			rightLines = append(rightLines, textStyle.Render(line))
+			if s.rightFocus && i == s.trackCursor {
+				rightLines = append(rightLines, accentStyle.Render(line))
+			} else {
+				rightLines = append(rightLines, textStyle.Render(line))
+			}
 		}
 	}
 
@@ -461,5 +542,8 @@ func (s MusicPlaylistsScreen) FooterText() string {
 	if s.saving {
 		return "type name · enter save · esc cancel"
 	}
-	return "enter actions · a append · s save · ↑↓ nav"
+	if s.rightFocus {
+		return "d remove track · tab playlists · ↑↓ nav"
+	}
+	return "enter actions · a append · s save · tab tracks · ↑↓ nav"
 }

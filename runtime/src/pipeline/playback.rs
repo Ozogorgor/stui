@@ -271,6 +271,15 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdPlaylistDelete { name } => {
             if let Some(m) = mpd { if let Err(e) = m.delete_playlist(&name).await { warn!("mpd playlist delete failed: {e}"); } }
         }
+        PlayerCmd::MpdPlaylistAddTrack { name, uri } => {
+            if let Some(m) = mpd { if let Err(e) = m.add_to_playlist(&name, &uri).await { warn!("mpd playlist add-track failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlaylistCreate { name, uris } => {
+            if let Some(m) = mpd { if let Err(e) = m.create_playlist(&name, &uris).await { warn!("mpd playlist create failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlaylistRemoveTrack { name, pos } => {
+            if let Some(m) = mpd { if let Err(e) = m.remove_from_playlist(&name, pos).await { warn!("mpd playlist remove-track failed: {e}"); } }
+        }
     }
     Response::Ok
 }

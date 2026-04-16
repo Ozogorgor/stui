@@ -270,6 +270,12 @@ pub enum PlayerCmd {
     MpdPlaylistAppend { name: String },
     /// Delete a saved playlist.
     MpdPlaylistDelete { name: String },
+    /// Add a track (by URI) to a saved playlist.
+    MpdPlaylistAddTrack { name: String, uri: String },
+    /// Create a new empty playlist (clears if exists), then add URIs.
+    MpdPlaylistCreate { name: String, uris: Vec<String> },
+    /// Remove a track from a saved playlist by position (0-based).
+    MpdPlaylistRemoveTrack { name: String, pos: u32 },
 }
 
 /// Live-update a runtime config value without restarting.

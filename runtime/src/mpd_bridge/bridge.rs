@@ -712,6 +712,27 @@ impl MpdBridge {
         self.cmd(&format!("rm {}", quote_mpd(name))).await
     }
 
+    /// Add a single track to a saved playlist. Creates the playlist if it
+    /// doesn't exist (MPD auto-creates on first `playlistadd`).
+    pub async fn add_to_playlist(&self, name: &str, uri: &str) -> Result<()> {
+        self.cmd(&format!("playlistadd {} {}", quote_mpd(name), quote_mpd(uri))).await
+    }
+
+    /// Remove a track from a saved playlist by 0-based position.
+    pub async fn remove_from_playlist(&self, name: &str, pos: u32) -> Result<()> {
+        self.cmd(&format!("playlistdelete {} {}", quote_mpd(name), pos)).await
+    }
+
+    /// Create a new playlist with the given tracks. Clears any existing
+    /// playlist with the same name first.
+    pub async fn create_playlist(&self, name: &str, uris: &[String]) -> Result<()> {
+        let _ = self.cmd(&format!("rm {}", quote_mpd(name))).await;
+        for uri in uris {
+            self.cmd(&format!("playlistadd {} {}", quote_mpd(name), quote_mpd(uri))).await?;
+        }
+        Ok(())
+    }
+
     /// Apply initial config to the live MPD daemon (replay gain, crossfade, etc.)
     pub async fn apply_config(&self) {
         let _ = self.set_replay_gain(&self.config.replay_gain.clone()).await;
