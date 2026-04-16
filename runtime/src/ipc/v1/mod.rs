@@ -260,6 +260,16 @@ pub enum PlayerCmd {
     MpdCrossfade {
         secs: u32,
     },
+
+    // ── MPD playlist commands ─────────────────────────────────────────────
+    /// Save the current queue as a named playlist.
+    MpdPlaylistSave { name: String },
+    /// Load a saved playlist into the queue (clear + load).
+    MpdPlaylistLoad { name: String },
+    /// Append a saved playlist to the end of the queue.
+    MpdPlaylistAppend { name: String },
+    /// Delete a saved playlist.
+    MpdPlaylistDelete { name: String },
 }
 
 /// Live-update a runtime config value without restarting.

@@ -257,6 +257,20 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdCrossfade { secs }       => {
             if let Some(m) = mpd { if let Err(e) = m.set_crossfade(secs).await        { warn!("mpd crossfade failed: {e}"); } }
         }
+
+        // ── Playlist commands ────────────────────────────────────────────────
+        PlayerCmd::MpdPlaylistSave { name } => {
+            if let Some(m) = mpd { if let Err(e) = m.save_playlist(&name).await   { warn!("mpd playlist save failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlaylistLoad { name } => {
+            if let Some(m) = mpd { if let Err(e) = m.load_playlist(&name).await   { warn!("mpd playlist load failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlaylistAppend { name } => {
+            if let Some(m) = mpd { if let Err(e) = m.append_playlist(&name).await { warn!("mpd playlist append failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlaylistDelete { name } => {
+            if let Some(m) = mpd { if let Err(e) = m.delete_playlist(&name).await { warn!("mpd playlist delete failed: {e}"); } }
+        }
     }
     Response::Ok
 }

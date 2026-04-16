@@ -687,6 +687,31 @@ impl MpdBridge {
         }
     }
 
+    // ── Playlist mutations ─────────────────────────────────────────────────
+
+    /// Save the current queue as a named playlist. Overwrites if it exists.
+    pub async fn save_playlist(&self, name: &str) -> Result<()> {
+        // MPD's `save` fails if the playlist already exists, so try `rm` first.
+        let _ = self.cmd(&format!("rm {}", quote_mpd(name))).await;
+        self.cmd(&format!("save {}", quote_mpd(name))).await
+    }
+
+    /// Clear the queue and load a saved playlist.
+    pub async fn load_playlist(&self, name: &str) -> Result<()> {
+        self.cmd("clear").await?;
+        self.cmd(&format!("load {}", quote_mpd(name))).await
+    }
+
+    /// Append a saved playlist to the end of the current queue.
+    pub async fn append_playlist(&self, name: &str) -> Result<()> {
+        self.cmd(&format!("load {}", quote_mpd(name))).await
+    }
+
+    /// Delete a saved playlist.
+    pub async fn delete_playlist(&self, name: &str) -> Result<()> {
+        self.cmd(&format!("rm {}", quote_mpd(name))).await
+    }
+
     /// Apply initial config to the live MPD daemon (replay gain, crossfade, etc.)
     pub async fn apply_config(&self) {
         let _ = self.set_replay_gain(&self.config.replay_gain.clone()).await;
