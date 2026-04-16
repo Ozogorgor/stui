@@ -226,6 +226,14 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		}
 		s.loadingDir = false
 
+	case ipc.MarkTagExceptionResultMsg:
+		if m.Err != nil {
+			s.statusMsg = fmt.Sprintf("Exception failed: %v", m.Err)
+			s.statusAt = time.Now()
+			s.statusPending = true
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		if s.dirMode {
 			s = s.handleDirKey(m.String())
@@ -392,6 +400,9 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		if s.client != nil {
 			s.client.MpdBrowseDir("")
 		}
+
+	case "x", "X":
+		s = s.handleMarkExceptionTag()
 	}
 
 	return s
@@ -474,8 +485,112 @@ func (s MusicLibraryScreen) handleDirKey(key string) MusicLibraryScreen {
 
 	case "D":
 		s.dirMode = false
+
+	case "x", "X":
+		s = s.handleMarkExceptionDir()
 	}
 
+	return s
+}
+
+// handleMarkExceptionTag marks the currently-selected item's tag fields as
+// normalization exceptions (tag-browser mode).
+func (s MusicLibraryScreen) handleMarkExceptionTag() MusicLibraryScreen {
+	if s.client == nil {
+		return s
+	}
+	switch s.activePane {
+	case LibPaneArtists:
+		if s.artistCursor < len(s.artists) {
+			name := s.artists[s.artistCursor].Name
+			s.client.MarkTagException("artist", name)
+			s = s.setStatus(fmt.Sprintf("Protected artist: %s", name))
+		}
+	case LibPaneAlbums:
+		if s.albumCursor < len(s.albums) {
+			a := s.albums[s.albumCursor]
+			raw := a.RawArtist
+			if raw == "" {
+				raw = a.Artist
+			}
+			if raw != "" {
+				s.client.MarkTagException("artist", raw)
+			}
+			raw = a.RawTitle
+			if raw == "" {
+				raw = a.Title
+			}
+			if raw != "" {
+				s.client.MarkTagException("album", raw)
+			}
+			s = s.setStatus(fmt.Sprintf("Protected: %s — %s", a.Artist, a.Title))
+		}
+	case LibPaneTracks:
+		if s.songCursor < len(s.songs) {
+			song := s.songs[s.songCursor]
+			raw := song.RawArtist
+			if raw == "" {
+				raw = song.Artist
+			}
+			if raw != "" {
+				s.client.MarkTagException("artist", raw)
+			}
+			raw = song.RawAlbum
+			if raw == "" {
+				raw = song.Album
+			}
+			if raw != "" {
+				s.client.MarkTagException("album", raw)
+			}
+			raw = song.RawTitle
+			if raw == "" {
+				raw = song.Title
+			}
+			if raw != "" {
+				s.client.MarkTagException("title", raw)
+			}
+			s = s.setStatus(fmt.Sprintf("Protected: %s", song.Title))
+		}
+	}
+	return s
+}
+
+// handleMarkExceptionDir marks the currently-selected directory entry's tag
+// fields as normalization exceptions (directory-browser mode).
+func (s MusicLibraryScreen) handleMarkExceptionDir() MusicLibraryScreen {
+	if s.client == nil || s.dialogOpen {
+		return s
+	}
+	if s.dirCursor >= len(s.dirEntries) {
+		return s
+	}
+	entry := s.dirEntries[s.dirCursor]
+	if entry.IsDir {
+		s = s.setStatus("Can't mark a directory as exception")
+		return s
+	}
+	raw := entry.RawArtist
+	if raw == "" {
+		raw = entry.Artist
+	}
+	if raw != "" {
+		s.client.MarkTagException("artist", raw)
+	}
+	raw = entry.RawAlbum
+	if raw == "" {
+		raw = entry.Album
+	}
+	if raw != "" {
+		s.client.MarkTagException("album", raw)
+	}
+	raw = entry.RawTitle
+	if raw == "" {
+		raw = entry.Title
+	}
+	if raw != "" {
+		s.client.MarkTagException("title", raw)
+	}
+	s = s.setStatus(fmt.Sprintf("Protected tags for: %s", entry.Title))
 	return s
 }
 
