@@ -19,5 +19,6 @@
 
 pub mod client;
 pub mod bridge;
+pub mod mpd_conf;
 
 pub use bridge::MpdBridge;

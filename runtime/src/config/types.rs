@@ -459,8 +459,13 @@ pub struct MpdConfig {
     #[serde(default)]
     pub consume: bool,
     /// Optional path to the MPD music directory (enables library browsing).
+    /// Auto-detected from mpd.conf if not set.
     #[serde(default)]
     pub music_dir: Option<std::path::PathBuf>,
+    /// Optional path to the MPD playlist directory (where .m3u files live).
+    /// Auto-detected from mpd.conf if not set.
+    #[serde(default)]
+    pub playlist_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for MpdConfig {
@@ -474,6 +479,7 @@ impl Default for MpdConfig {
             mixramp_db: None,
             consume: false,
             music_dir: None,
+            playlist_dir: None,
         }
     }
 }

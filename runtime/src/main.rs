@@ -99,7 +99,25 @@ async fn main() -> Result<()> {
     );
 
     // Load config from ~/.stui/config/stui.toml + STUI_* env overrides
-    let cfg = config::load();
+    let mut cfg = config::load();
+
+    // Auto-detect MPD paths from mpd.conf if not set in stui.toml.
+    {
+        let mpd_paths = mpd_bridge::mpd_conf::detect();
+        if cfg.mpd.music_dir.is_none() {
+            if let Some(p) = mpd_paths.music_directory {
+                info!(path = %p.display(), "auto-detected music_directory from mpd.conf");
+                cfg.mpd.music_dir = Some(p);
+            }
+        }
+        if cfg.mpd.playlist_dir.is_none() {
+            if let Some(p) = mpd_paths.playlist_directory {
+                info!(path = %p.display(), "auto-detected playlist_directory from mpd.conf");
+                cfg.mpd.playlist_dir = Some(p);
+            }
+        }
+    }
+
     // Re-init logging now that we have the configured level
     logging::init(&cfg.logging);
     std::fs::create_dir_all(&cfg.cache_dir)?;
