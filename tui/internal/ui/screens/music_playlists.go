@@ -14,6 +14,14 @@ import (
 	"github.com/stui/stui/pkg/theme"
 )
 
+// playlistDialogCtx distinguishes which dialog is currently showing.
+type playlistDialogCtx int
+
+const (
+	plDialogAction  playlistDialogCtx = iota // Main action menu
+	plDialogConfirm                          // Delete confirmation
+)
+
 // MusicPlaylistsScreen displays saved MPD playlists with a track preview pane.
 type MusicPlaylistsScreen struct {
 	Dims
@@ -29,6 +37,11 @@ type MusicPlaylistsScreen struct {
 	saving   bool
 	saveName string
 	spinner  components.Spinner
+	// Action / delete-confirmation dialog state.
+	dialogOpen    bool
+	dialog        components.Dialog
+	dialogContext playlistDialogCtx
+	deleteTarget  string // playlist name pending deletion confirmation
 }
 
 // NewMusicPlaylistsScreen creates a new playlists screen. Loading starts immediately.
@@ -118,6 +131,21 @@ func (s MusicPlaylistsScreen) Update(msg tea.Msg) (MusicPlaylistsScreen, tea.Cmd
 }
 
 func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylistsScreen, tea.Cmd) {
+	// Dialog intercepts all keys when open.
+	if s.dialogOpen {
+		var chosen int
+		var dismissed bool
+		s.dialog, chosen, dismissed = s.dialog.Update(m.String())
+		if !dismissed {
+			return s, nil
+		}
+		s.dialogOpen = false
+		if chosen < 0 {
+			return s, nil
+		}
+		return s.applyDialogChoice(chosen)
+	}
+
 	switch m.String() {
 	case "j", "down":
 		if s.cursor < len(s.playlists)-1 {
@@ -140,28 +168,67 @@ func (s MusicPlaylistsScreen) updateNormalMode(m tea.KeyPressMsg) (MusicPlaylist
 			}
 		}
 	case "enter":
-		if name := s.hoveredPlaylistName(); name != "" && s.client != nil {
-			s.client.MpdCmd("mpd_playlist_load", map[string]any{"name": name})
-			return s, func() tea.Msg {
-				s.client.MpdGetQueue()
-				return nil
-			}
+		if name := s.hoveredPlaylistName(); name != "" {
+			s.dialogContext = plDialogAction
+			s.dialog = components.NewDialog(
+				"Playlist: '"+name+"'",
+				[]string{"Load (replace queue)", "Append to queue", "Delete playlist", "Cancel"},
+			)
+			s.dialogOpen = true
 		}
 	case "a":
 		if name := s.hoveredPlaylistName(); name != "" && s.client != nil {
 			s.client.MpdCmd("mpd_playlist_append", map[string]any{"name": name})
 		}
-	case "d":
-		if name := s.hoveredPlaylistName(); name != "" && s.client != nil {
-			s.client.MpdCmd("mpd_playlist_delete", map[string]any{"name": name})
+	case "s":
+		s.saving = true
+		s.saveName = ""
+	}
+	return s, nil
+}
+
+// applyDialogChoice processes the user's selection from the active dialog.
+func (s MusicPlaylistsScreen) applyDialogChoice(chosen int) (MusicPlaylistsScreen, tea.Cmd) {
+	switch s.dialogContext {
+	case plDialogAction:
+		name := s.hoveredPlaylistName()
+		if name == "" {
+			return s, nil
+		}
+		switch chosen {
+		case 0: // Load (replace queue)
+			if s.client != nil {
+				s.client.MpdCmd("mpd_playlist_load", map[string]any{"name": name})
+				return s, func() tea.Msg {
+					s.client.MpdGetQueue()
+					return nil
+				}
+			}
+		case 1: // Append to queue
+			if s.client != nil {
+				s.client.MpdCmd("mpd_playlist_append", map[string]any{"name": name})
+			}
+		case 2: // Delete playlist → confirmation
+			s.deleteTarget = name
+			s.dialogContext = plDialogConfirm
+			s.dialog = components.NewDialog(
+				fmt.Sprintf("Delete '%s'?", name),
+				[]string{"Yes, delete", "Cancel"},
+			)
+			s.dialogOpen = true
+			return s, nil
+		}
+		// case 3: Cancel — already dismissed above
+	case plDialogConfirm:
+		if chosen == 0 && s.deleteTarget != "" && s.client != nil {
+			s.client.MpdCmd("mpd_playlist_delete", map[string]any{"name": s.deleteTarget})
+			s.deleteTarget = ""
 			return s, func() tea.Msg {
 				s.client.MpdGetPlaylists()
 				return nil
 			}
 		}
-	case "s":
-		s.saving = true
-		s.saveName = ""
+		s.deleteTarget = ""
 	}
 	return s, nil
 }
@@ -199,7 +266,7 @@ func (s MusicPlaylistsScreen) updateSaveMode(m tea.KeyPressMsg) (MusicPlaylistsS
 // HandleMouse handles a left-click within the playlists' own coordinate space.
 // localY maps directly to body row (no header row in this view).
 func (s MusicPlaylistsScreen) HandleMouse(x, localY int) (MusicPlaylistsScreen, tea.Cmd) {
-	if s.saving {
+	if s.saving || s.dialogOpen {
 		return s, nil
 	}
 	// bodyH = View's h - 1, where h = terminal_height - 2 → bodyH = s.height - 3
@@ -370,14 +437,21 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 	borderedContent := borderStyle.Width(w - 2).Render(paneContent.String())
 	sb.WriteString(borderedContent + "\n")
 
+	base := sb.String()
+
+	// Overlay the action/confirmation dialog, if open.
+	if s.dialogOpen {
+		base = s.dialog.Place(w, h)
+	}
+
 	// Save-mode overlay sits at the bottom while the prompt is active so
 	// the user's input has somewhere prominent to land.
 	if s.saving {
 		prompt := fmt.Sprintf("  Save current queue as: %s_", s.saveName)
-		sb.WriteString(accentStyle.Render(prompt) + "\n")
+		base += accentStyle.Render(prompt) + "\n"
 	}
 
-	return sb.String()
+	return base
 }
 
 // FooterText is what the global status bar shows while this screen is
@@ -387,5 +461,5 @@ func (s MusicPlaylistsScreen) FooterText() string {
 	if s.saving {
 		return "type name · enter save · esc cancel"
 	}
-	return "enter view · s save queue as · d delete · ↑↓ navigate"
+	return "enter actions · a append · s save queue as · ↑↓ navigate"
 }
