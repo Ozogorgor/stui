@@ -164,4 +164,16 @@ pub use v1::{
     WatchHistoryPositionUpdateResponse,
     WatchHistoryRemoveResponse,
     WatchHistoryUpsertResponse,
+
+    // Tag normalization
+    MarkTagExceptionRequest,
+    MarkTagExceptionResponse,
+    ActionATagsPreviewRequest,
+    ActionATagsPreviewResponse,
+    ActionATagsApplyRequest,
+    ActionATagsApplyResponse,
+    ActionATagsCancelRequest,
+    ActionATagsCancelResponse,
+    TagDiffRowWire,
+    TagWriteScope,
 };

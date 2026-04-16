@@ -138,6 +138,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub mpd: MpdConfig,
 
+    /// Music tag normalization configuration.
+    #[serde(default)]
+    pub music: MusicConfig,
+
     /// Intro/credits skip detection configuration.
     #[serde(default)]
     pub skipper: SkipperConfig,
@@ -474,6 +478,28 @@ impl Default for MpdConfig {
     }
 }
 
+/// Music tag normalization configuration (`[music.normalize]` section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicNormalizeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "defaults::normalize_use_lookup")]
+    pub use_lookup: bool,
+}
+
+impl Default for MusicNormalizeConfig {
+    fn default() -> Self {
+        Self { enabled: false, use_lookup: defaults::normalize_use_lookup() }
+    }
+}
+
+/// `[music]` section wrapper.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MusicConfig {
+    #[serde(default)]
+    pub normalize: MusicNormalizeConfig,
+}
+
 /// Configuration for the intro/credits skip detector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkipperConfig {
@@ -545,6 +571,7 @@ impl Default for RuntimeConfig {
             providers: ProvidersConfig::default(),
             api_keys: ApiKeysConfig::default(),
             mpd: MpdConfig::default(),
+            music: MusicConfig::default(),
             skipper: SkipperConfig::default(),
             plugin_repos: defaults::plugin_repos(),
             plugins: std::collections::HashMap::new(),
@@ -653,6 +680,11 @@ mod defaults {
         true
     }
 
+    // MusicNormalizeConfig defaults
+    pub fn normalize_use_lookup() -> bool {
+        true
+    }
+
     fn base() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -688,5 +720,29 @@ mod defaults {
 
     fn home() -> PathBuf {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    }
+}
+
+#[cfg(test)]
+mod music_normalize_tests {
+    use super::*;
+
+    #[test]
+    fn music_normalize_defaults() {
+        let c: MusicConfig = toml::from_str("").unwrap();
+        assert!(!c.normalize.enabled);
+        assert!(c.normalize.use_lookup);
+    }
+
+    #[test]
+    fn music_normalize_round_trip() {
+        let s = r#"
+            [normalize]
+            enabled = true
+            use_lookup = false
+        "#;
+        let c: MusicConfig = toml::from_str(s).unwrap();
+        assert!(c.normalize.enabled);
+        assert!(!c.normalize.use_lookup);
     }
 }

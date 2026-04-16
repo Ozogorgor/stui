@@ -21,11 +21,14 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::config::types::MpdConfig;
+use crate::config::types::{MpdConfig, MusicNormalizeConfig};
+use crate::ipc::v1::TagWriteScope;
 use crate::ipc::{
     MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
     MpdSavedPlaylistWire, MpdSongWire,
 };
+use crate::mediacache::normalize::year::extract_year;
+use crate::mediacache::normalize::{self, store as norm_store, NormalizationConfig, RawTags};
 use super::client::MpdConnection;
 
 /// Escape a string for use inside an MPD quoted argument (`"..."`).
@@ -50,26 +53,6 @@ fn str_or(v: Option<&String>) -> String {
     v.cloned().unwrap_or_default()
 }
 
-/// Extract a 4-digit year from an MPD `Date:` value.
-///
-/// MPD files commonly tag dates as `2017`, `2017-05-03`, `May 2017`, or even
-/// just plain junk; we return the first run of four consecutive digits that
-/// looks like a year (1000–2999), or empty string on no match.
-fn extract_year(date: &str) -> String {
-    if date.is_empty() { return String::new(); }
-    let bytes = date.as_bytes();
-    for i in 0..bytes.len().saturating_sub(3) {
-        let slice = &bytes[i..i + 4];
-        if slice.iter().all(|b| b.is_ascii_digit()) {
-            let first = slice[0];
-            if first == b'1' || first == b'2' {
-                return std::str::from_utf8(slice).unwrap_or("").to_string();
-            }
-        }
-    }
-    String::new()
-}
-
 fn default_entry() -> MpdDirEntryWire {
     MpdDirEntryWire {
         name: String::new(),
@@ -79,6 +62,9 @@ fn default_entry() -> MpdDirEntryWire {
         artist: String::new(),
         album: String::new(),
         duration: 0.0,
+        raw_artist: String::new(),
+        raw_album: String::new(),
+        raw_title: String::new(),
     }
 }
 
@@ -120,16 +106,22 @@ pub struct MpdBridge {
     config: MpdConfig,
     conn:   Arc<Mutex<Option<MpdConnection>>>,
     ipc_tx: tokio::sync::mpsc::Sender<String>,
+    normalize_cfg: MusicNormalizeConfig,
 }
 
 impl MpdBridge {
     /// Create a bridge. Does NOT connect immediately — connection is lazy on
     /// first command and retried automatically on failure.
-    pub fn new(config: MpdConfig, ipc_tx: tokio::sync::mpsc::Sender<String>) -> Self {
+    pub fn new(
+        config: MpdConfig,
+        ipc_tx: tokio::sync::mpsc::Sender<String>,
+        normalize_cfg: MusicNormalizeConfig,
+    ) -> Self {
         let bridge = MpdBridge {
             config,
             conn: Arc::new(Mutex::new(None)),
             ipc_tx,
+            normalize_cfg,
         };
         bridge.start_idle_loop();
         bridge
@@ -380,7 +372,44 @@ impl MpdBridge {
             );
             let key = (title.clone(), entry_artist.clone(), raw_date.clone());
             if seen.insert(key) {
-                out.push(MpdAlbumWire { title, artist: entry_artist, year, date: raw_date });
+                out.push(MpdAlbumWire {
+                    title,
+                    artist: entry_artist,
+                    year,
+                    date: raw_date,
+                    raw_artist: String::new(),
+                    raw_title: String::new(),
+                });
+            }
+        }
+        // Apply normalization pipeline if enabled.
+        if self.normalize_cfg.enabled {
+            let exceptions = norm_store::global().map(|s| s.get()).unwrap_or_default();
+            for album in out.iter_mut() {
+                let raw = RawTags {
+                    artist: album.artist.clone(),
+                    album: album.title.clone(),
+                    date: album.date.clone(),
+                    ..Default::default()
+                };
+                let cfg = NormalizationConfig {
+                    enabled: true,
+                    use_lookup: self.normalize_cfg.use_lookup,
+                    exceptions: &exceptions,
+                };
+                let n = normalize::normalize(&raw, &cfg, None);
+                if n.artist != album.artist {
+                    album.raw_artist = album.artist.clone();
+                    album.artist = n.artist;
+                }
+                if n.album != album.title {
+                    album.raw_title = album.title.clone();
+                    album.title = n.album;
+                }
+                // Leave album.year alone — the bridge's year logic (extract_year
+                // with OriginalDate fallback) is strictly more capable than the
+                // pipeline's plain extract_year on album.date. Overwriting here
+                // would wipe OriginalDate-sourced years whose Date tag is empty.
             }
         }
         Ok(out)
@@ -437,14 +466,80 @@ impl MpdBridge {
         };
         Ok(records.into_iter().filter_map(|r| {
             let file = r.get("file")?.clone();
-            Some(MpdSongWire {
+            let mut song = MpdSongWire {
                 title:    str_or(r.get("Title")),
                 artist:   str_or(r.get("Artist")),
                 album:    str_or(r.get("Album")),
                 duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
                 file,
-            })
+                raw_artist: String::new(),
+                raw_album: String::new(),
+                raw_title: String::new(),
+            };
+            apply_song_normalize(
+                &self.normalize_cfg,
+                &mut song.artist, &mut song.raw_artist,
+                &mut song.album,  &mut song.raw_album,
+                &mut song.title,  &mut song.raw_title,
+            );
+            Some(song)
         }).collect())
+    }
+
+    /// Gather (absolute_path, RawTags) for every file in a tag-write scope.
+    /// Uses MPD's `find`/`listallinfo` commands under the hood; converts
+    /// MPD-relative paths to absolute paths via `music_dir`.
+    pub async fn gather_scope_files(
+        &self,
+        scope: &TagWriteScope,
+        music_dir: &std::path::Path,
+    ) -> Result<Vec<(std::path::PathBuf, RawTags)>> {
+        let cmd = match scope {
+            TagWriteScope::Album { artist, album, date } => {
+                let mut c = format!("find album {} artist {}", quote_mpd(album), quote_mpd(artist));
+                if !date.is_empty() {
+                    c.push_str(&format!(" date {}", quote_mpd(date)));
+                }
+                c
+            }
+            TagWriteScope::Artist { artist } => {
+                format!("find artist {}", quote_mpd(artist))
+            }
+            TagWriteScope::Library => "listallinfo".to_string(),
+        };
+
+        let pairs = {
+            let mut guard = self.conn.lock().await;
+            let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+            match conn.command_kv_ordered(&cmd).await {
+                Ok(p) => p,
+                Err(e) => { *guard = None; return Err(e); }
+            }
+        };
+
+        let mut out: Vec<(std::path::PathBuf, RawTags)> = Vec::new();
+        let mut cur: Option<(std::path::PathBuf, RawTags)> = None;
+        for (k, v) in pairs {
+            if k == "file" {
+                if let Some(done) = cur.take() { out.push(done); }
+                cur = Some((music_dir.join(v.trim()), RawTags::default()));
+                continue;
+            }
+            let Some((_, raw)) = cur.as_mut() else { continue };
+            match k.as_str() {
+                "Artist" => raw.artist = v,
+                "AlbumArtist" => raw.album_artist = v,
+                "Album" => raw.album = v,
+                "Title" => raw.title = v,
+                "Date" => raw.date = v,
+                "Genre" => raw.genre = v,
+                "Track" => raw.track = v,
+                "Disc" => raw.disc = v,
+                _ => {}
+            }
+        }
+        if let Some(done) = cur { out.push(done); }
+        Ok(out)
     }
 
     /// `lsinfo PATH` — browse the MPD music directory tree.
@@ -470,8 +565,17 @@ impl MpdBridge {
         let mut entries: Vec<MpdDirEntryWire> = Vec::new();
         let mut current: Option<MpdDirEntryWire> = None;
 
+        let normalize_cfg = self.normalize_cfg.clone();
         let flush = |cur: &mut Option<MpdDirEntryWire>, out: &mut Vec<MpdDirEntryWire>| {
-            if let Some(entry) = cur.take() { out.push(entry); }
+            if let Some(mut entry) = cur.take() {
+                apply_song_normalize(
+                    &normalize_cfg,
+                    &mut entry.artist, &mut entry.raw_artist,
+                    &mut entry.album,  &mut entry.raw_album,
+                    &mut entry.title,  &mut entry.raw_title,
+                );
+                out.push(entry);
+            }
         };
 
         for (k, v) in pairs {
@@ -551,14 +655,36 @@ impl MpdBridge {
         };
         Ok(records.into_iter().filter_map(|r| {
             let file = r.get("file")?.clone();
-            Some(MpdSongWire {
+            let mut song = MpdSongWire {
                 title:    str_or(r.get("Title")),
                 artist:   str_or(r.get("Artist")),
                 album:    str_or(r.get("Album")),
                 duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
                 file,
-            })
+                raw_artist: String::new(),
+                raw_album: String::new(),
+                raw_title: String::new(),
+            };
+            apply_song_normalize(
+                &self.normalize_cfg,
+                &mut song.artist, &mut song.raw_artist,
+                &mut song.album,  &mut song.raw_album,
+                &mut song.title,  &mut song.raw_title,
+            );
+            Some(song)
         }).collect())
+    }
+
+    /// Trigger MPD's `update` rescan, optionally scoped to a subpath within
+    /// the music_dir. Returns the job ID string from MPD, or empty on no-id.
+    /// Fire-and-forget: MPD scans in the background.
+    pub async fn update_library(&self, subpath: Option<&str>) -> Result<String> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        match conn.update_library(subpath).await {
+            Ok(job) => Ok(job),
+            Err(e) => { *guard = None; Err(e) }
+        }
     }
 
     /// Apply initial config to the live MPD daemon (replay gain, crossfade, etc.)
@@ -705,4 +831,31 @@ async fn run_idle_loop(
             let _ = ipc_tx.send(msg).await;
         }
     }
+}
+
+/// Normalize a song-like record in place. Stashes raw values when the pipeline
+/// changes a field. No-op when `cfg.enabled == false`.
+fn apply_song_normalize(
+    cfg: &MusicNormalizeConfig,
+    artist: &mut String, raw_artist: &mut String,
+    album: &mut String, raw_album: &mut String,
+    title: &mut String, raw_title: &mut String,
+) {
+    if !cfg.enabled { return; }
+    let exceptions = norm_store::global().map(|s| s.get()).unwrap_or_default();
+    let raw = RawTags {
+        artist: artist.clone(),
+        album: album.clone(),
+        title: title.clone(),
+        ..Default::default()
+    };
+    let nc = NormalizationConfig {
+        enabled: true,
+        use_lookup: cfg.use_lookup,
+        exceptions: &exceptions,
+    };
+    let n = normalize::normalize(&raw, &nc, None);
+    if n.artist != *artist { *raw_artist = artist.clone(); *artist = n.artist; }
+    if n.album != *album   { *raw_album  = album.clone();  *album  = n.album; }
+    if n.title != *title   { *raw_title  = title.clone();  *title  = n.title; }
 }

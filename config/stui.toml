@@ -63,6 +63,15 @@ max_candidates    = 10
 auto_fallback     = true
 benchmark_streams = false
 
+# ── Music Tag Normalization ──────────────────────────────────────────────────
+# Opt-in: normalizes messy tag metadata (year, artist, album, title, genre)
+# for display in the library. Does NOT touch audio files unless you explicitly
+# trigger "Normalize tags on disk" from the album action menu.
+
+[music.normalize]
+enabled    = false   # Virtual normalization in library views
+use_lookup = true    # Fill missing fields from lookup plugins (v2, currently inert)
+
 # ── DSP / Audio Processing ───────────────────────────────────────────────────
 
 [dsp]

@@ -1,0 +1,34 @@
+# Bundled exception list — community-maintained.
+# Values here are NEVER title-cased by the normalizer. Case-insensitive match
+# on the raw (pre-normalized) MPD tag value.
+#
+# Users: add your own protections to ~/.config/stui/exceptions.toml instead
+# of editing this file — so you won't lose them on upgrade.
+#
+# PRs welcome.
+
+[artist]
+values = [
+    "deadmau5",
+    "AC/DC",
+    "MGMT",
+    "iamamiwhoami",
+    "3OH!3",
+    "!!!",
+    "will.i.am",
+    "t.A.T.u.",
+]
+
+[album_artist]
+values = []
+
+[album]
+values = [
+    "untitled unmastered.",
+]
+
+[title]
+values = []
+
+[genre]
+values = []

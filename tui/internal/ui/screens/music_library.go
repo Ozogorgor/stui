@@ -55,7 +55,9 @@ const (
 	libDialogEnter      libDialogCtx = iota // Track Enter — Add / Replace / Cancel
 	libDialogRightClick                     // Track right-click — Add / Replace / Add to Playlist / Create Playlist / Cancel
 	libDialogArtist                         // Artist Enter or right-click — Browse / Add all / Replace with all / Cancel
-	libDialogAlbum                          // Album Enter or right-click — Browse / Add / Replace / Add to Playlist / Cancel
+	libDialogAlbum                          // Album Enter or right-click — Browse / Add / Replace / Add to Playlist / Normalize / Cancel
+	libDialogNormalizeScope                 // Scope picker: This album / This artist / Whole library / Cancel
+	libDialogNormalizeConfirm               // Preview confirm: Apply / Cancel
 )
 
 // MusicLibraryScreen is the Artist→Album→Track browser with an optional
@@ -111,6 +113,11 @@ type MusicLibraryScreen struct {
 	dialog        components.Dialog
 	dialogSong    ipc.MpdSong
 	dialogContext libDialogCtx
+
+	// Tag normalization state
+	normalizeJobID string
+	normalizeRows  []ipc.TagDiffRow
+	normalizeScope ipc.TagWriteScope
 
 	spinner      components.Spinner
 	loadingStart time.Time
@@ -225,6 +232,45 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 			s.dirEntries = m.Entries
 		}
 		s.loadingDir = false
+
+	case ipc.MarkTagExceptionResultMsg:
+		if m.Err != nil {
+			s.statusMsg = fmt.Sprintf("Exception failed: %v", m.Err)
+			s.statusAt = time.Now()
+			s.statusPending = true
+		}
+		return s, nil
+
+	case ipc.ActionAPreviewResultMsg:
+		if m.Err != nil {
+			s = s.setStatus(fmt.Sprintf("Preview failed: %v", m.Err))
+			return s, nil
+		}
+		if len(m.Rows) == 0 {
+			s = s.setStatus("Nothing to normalize — all tags are already clean")
+			return s, nil
+		}
+		s.normalizeJobID = m.JobID
+		s.normalizeRows = m.Rows
+		s.dialogContext = libDialogNormalizeConfirm
+		s.dialog = components.NewDialog(
+			fmt.Sprintf("Normalize %d changes across %d files?", len(m.Rows), m.TotalFiles),
+			[]string{"Apply", "Cancel"},
+		)
+		s.dialogOpen = true
+		return s, nil
+
+	case ipc.ActionAApplyResultMsg:
+		if m.Err != nil {
+			s = s.setStatus(fmt.Sprintf("Apply failed: %v", m.Err))
+		} else if m.Failed > 0 {
+			s = s.setStatus(fmt.Sprintf("Wrote %d files (%d failed)", m.Succeeded, m.Failed))
+		} else {
+			s = s.setStatus(fmt.Sprintf("Wrote %d files — tags normalized", m.Succeeded))
+		}
+		s.normalizeJobID = ""
+		s.normalizeRows = nil
+		return s, nil
 
 	case tea.KeyPressMsg:
 		if s.dirMode {
@@ -392,6 +438,9 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		if s.client != nil {
 			s.client.MpdBrowseDir("")
 		}
+
+	case "x", "X":
+		s = s.handleMarkExceptionTag()
 	}
 
 	return s
@@ -474,8 +523,112 @@ func (s MusicLibraryScreen) handleDirKey(key string) MusicLibraryScreen {
 
 	case "D":
 		s.dirMode = false
+
+	case "x", "X":
+		s = s.handleMarkExceptionDir()
 	}
 
+	return s
+}
+
+// handleMarkExceptionTag marks the currently-selected item's tag fields as
+// normalization exceptions (tag-browser mode).
+func (s MusicLibraryScreen) handleMarkExceptionTag() MusicLibraryScreen {
+	if s.client == nil {
+		return s
+	}
+	switch s.activePane {
+	case LibPaneArtists:
+		if s.artistCursor < len(s.artists) {
+			name := s.artists[s.artistCursor].Name
+			s.client.MarkTagException("artist", name)
+			s = s.setStatus(fmt.Sprintf("Protected artist: %s", name))
+		}
+	case LibPaneAlbums:
+		if s.albumCursor < len(s.albums) {
+			a := s.albums[s.albumCursor]
+			raw := a.RawArtist
+			if raw == "" {
+				raw = a.Artist
+			}
+			if raw != "" {
+				s.client.MarkTagException("artist", raw)
+			}
+			raw = a.RawTitle
+			if raw == "" {
+				raw = a.Title
+			}
+			if raw != "" {
+				s.client.MarkTagException("album", raw)
+			}
+			s = s.setStatus(fmt.Sprintf("Protected: %s — %s", a.Artist, a.Title))
+		}
+	case LibPaneTracks:
+		if s.songCursor < len(s.songs) {
+			song := s.songs[s.songCursor]
+			raw := song.RawArtist
+			if raw == "" {
+				raw = song.Artist
+			}
+			if raw != "" {
+				s.client.MarkTagException("artist", raw)
+			}
+			raw = song.RawAlbum
+			if raw == "" {
+				raw = song.Album
+			}
+			if raw != "" {
+				s.client.MarkTagException("album", raw)
+			}
+			raw = song.RawTitle
+			if raw == "" {
+				raw = song.Title
+			}
+			if raw != "" {
+				s.client.MarkTagException("title", raw)
+			}
+			s = s.setStatus(fmt.Sprintf("Protected: %s", song.Title))
+		}
+	}
+	return s
+}
+
+// handleMarkExceptionDir marks the currently-selected directory entry's tag
+// fields as normalization exceptions (directory-browser mode).
+func (s MusicLibraryScreen) handleMarkExceptionDir() MusicLibraryScreen {
+	if s.client == nil || s.dialogOpen {
+		return s
+	}
+	if s.dirCursor >= len(s.dirEntries) {
+		return s
+	}
+	entry := s.dirEntries[s.dirCursor]
+	if entry.IsDir {
+		s = s.setStatus("Can't mark a directory as exception")
+		return s
+	}
+	raw := entry.RawArtist
+	if raw == "" {
+		raw = entry.Artist
+	}
+	if raw != "" {
+		s.client.MarkTagException("artist", raw)
+	}
+	raw = entry.RawAlbum
+	if raw == "" {
+		raw = entry.Album
+	}
+	if raw != "" {
+		s.client.MarkTagException("album", raw)
+	}
+	raw = entry.RawTitle
+	if raw == "" {
+		raw = entry.Title
+	}
+	if raw != "" {
+		s.client.MarkTagException("title", raw)
+	}
+	s = s.setStatus(fmt.Sprintf("Protected tags for: %s", entry.Title))
 	return s
 }
 
@@ -583,7 +736,7 @@ func (s MusicLibraryScreen) openPaneDialog() MusicLibraryScreen {
 		s.dialogContext = libDialogAlbum
 		s.dialog = components.NewDialog(
 			"Album: '"+truncate(title, 28)+"'",
-			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Cancel"},
+			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Normalize tags on disk…", "Cancel"},
 		)
 		s.dialogOpen = true
 	case LibPaneTracks:
@@ -693,6 +846,34 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s = s.setStatus(fmt.Sprintf("Replaced queue with '%s' (%d tracks)", album.Title, len(s.songs)))
 		case 3: // Add to playlist (same placeholder as the track variant)
 			s = s.setStatus("Add to Playlist: not implemented yet")
+		case 4: // Normalize tags on disk…
+			s.dialogContext = libDialogNormalizeScope
+			a := s.albums[s.albumCursor]
+			s.normalizeScope = ipc.TagWriteScope{Kind: "album", Artist: artist, Album: a.Title, Date: a.Date}
+			s.dialog = components.NewDialog(
+				"Normalize tags on disk",
+				[]string{"This album", "This artist", "Whole library", "Cancel"},
+			)
+			s.dialogOpen = true
+		}
+	case libDialogNormalizeScope:
+		switch chosen {
+		case 0: // This album — scope already set
+		case 1: // This artist
+			if s.artistCursor < len(s.artists) {
+				s.normalizeScope = ipc.TagWriteScope{Kind: "artist", Artist: s.artists[s.artistCursor].Name}
+			}
+		case 2: // Whole library
+			s.normalizeScope = ipc.TagWriteScope{Kind: "library"}
+		default:
+			return s // Cancel
+		}
+		s.client.ActionATagsPreview(s.normalizeScope)
+		s = s.setStatus("Computing preview…")
+	case libDialogNormalizeConfirm:
+		if chosen == 0 { // Apply
+			s.client.ActionATagsApply(s.normalizeJobID)
+			s = s.setStatus("Writing normalized tags…")
 		}
 	}
 	return s

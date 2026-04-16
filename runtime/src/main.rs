@@ -106,6 +106,12 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)?;
     std::fs::create_dir_all(&cfg.plugin_dir)?;
 
+    // Initialize process-wide exception store for music tag normalization.
+    mediacache::normalize::store::init(
+        mediacache::normalize::store::default_bundled_path(),
+        mediacache::normalize::store::default_user_path(),
+    );
+
     // ── Engine ────────────────────────────────────────────────────────────
     let engine = Arc::new(Engine::new(cfg.cache_dir.clone(), cfg.data_dir.clone()));
 
@@ -120,6 +126,10 @@ async fn main() -> Result<()> {
         mediacache::default_cache_path(),
     ).await);
     info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
+
+    // ── Tag-write job state (for Action A tag normalization) ─────────────────
+    let tag_job_store = Arc::new(mediacache::tag_write_job::JobStore::new());
+    let tag_job_registry = Arc::new(mediacache::tag_write_job::JobRegistry::new());
 
     // ── Media storage ──────────────────────────────────────────────────────
     let storage = Arc::new(storage::MediaStorage::new(
@@ -189,7 +199,7 @@ async fn main() -> Result<()> {
 
     // ── MPD bridge ────────────────────────────────────────────────────────────
     let mpd_bridge = if cfg.mpd.host != "disabled" {
-        let b = MpdBridge::new(cfg.mpd.clone(), event_tx.clone());
+        let b = MpdBridge::new(cfg.mpd.clone(), event_tx.clone(), cfg.music.normalize.clone());
         b.apply_config().await;
         info!(host = %cfg.mpd.host, port = cfg.mpd.port, "MPD bridge initialized");
         Some(b)
@@ -315,6 +325,8 @@ async fn main() -> Result<()> {
                 &media_cache,
                 &bench,
                 &trace,
+                &tag_job_store,
+                &tag_job_registry,
                 &mut event_rx,
                 event_tx.clone(),
                 &mut toast_rx,
@@ -347,6 +359,8 @@ async fn main() -> Result<()> {
             &media_cache,
             &bench,
             &trace,
+            &tag_job_store,
+            &tag_job_registry,
             &mut event_rx,
             event_tx.clone(),
             &mut toast_rx,
@@ -372,6 +386,8 @@ async fn run_ipc_loop<R, W>(
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench:     &StreamBenchmarker,
     trace:     &Arc<TraceEmitter>,
+    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     // Receiver for async events pushed by background tasks (player, aria2, registry, …).
     event_rx:  &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
@@ -532,7 +548,7 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &tag_job_store, &tag_job_registry, &line).await;
                         // Echo the request's `id` (if present) into the response envelope so the
                         // TUI's pending-request router can match the response to its caller.
                         // Variants whose struct already includes `id` are left alone.
@@ -707,6 +723,8 @@ async fn handle_line(
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
     trace: &Arc<TraceEmitter>,
+    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     line: &str,
 ) -> Response {
     let request: Request = match serde_json::from_str(line) {
@@ -1107,6 +1125,132 @@ async fn handle_line(
             } else {
                 Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
             }
+        }
+
+        // ── Tag normalization ────────────────────────────────────────────────
+        Request::MarkTagException(r) => {
+            use mediacache::normalize::{self as norm, exceptions::ExceptionField};
+            let field = match ExceptionField::from_str(&r.field) {
+                Some(f) => f,
+                None => return Response::error(
+                    Some(r.id),
+                    ErrorCode::InvalidRequest,
+                    format!("unknown field `{}` (expected artist|album_artist|album|title|genre)", r.field),
+                ),
+            };
+            let Some(store) = norm::store::global() else {
+                return Response::error(
+                    Some(r.id),
+                    ErrorCode::Internal,
+                    "exception store not initialized".to_string(),
+                );
+            };
+            match store.add_user_exception(field, &r.raw_value) {
+                Ok(added) => Response::MarkTagException(ipc::MarkTagExceptionResponse { id: r.id, added }),
+                Err(e) => Response::error(
+                    Some(r.id),
+                    ErrorCode::Internal,
+                    format!("add_user_exception failed: {e}"),
+                ),
+            }
+        }
+
+        Request::ActionATagsPreview(r) => {
+            use mediacache::{
+                normalize::{self as norm, NormalizationConfig},
+                tag_write_job,
+            };
+            let Some(bridge) = mpd else {
+                return Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string());
+            };
+            let cfg_snap = config.snapshot().await;
+            let Some(music_dir) = cfg_snap.mpd.music_dir.clone() else {
+                return Response::error(
+                    Some(r.id),
+                    ErrorCode::InvalidRequest,
+                    "[mpd.music_dir] not configured — can't resolve tag file paths".to_string(),
+                );
+            };
+            let raw_files = match bridge.gather_scope_files(&r.scope, &music_dir).await {
+                Ok(f) => f,
+                Err(e) => return Response::error(
+                    Some(r.id), ErrorCode::Internal, format!("gather scope files: {e}"),
+                ),
+            };
+            let exceptions = norm::store::global()
+                .map(|s| s.get())
+                .unwrap_or_default();
+            let cfg = NormalizationConfig {
+                enabled: true,
+                use_lookup: cfg_snap.music.normalize.use_lookup,
+                exceptions: &exceptions,
+            };
+            let lookups = std::collections::HashMap::new(); // v1: always empty
+            let diff = tag_write_job::build_diff(raw_files, &cfg, &lookups);
+            let total_files = diff.len();
+            let rows = tag_write_job::to_wire_rows(&diff);
+            let job_id = uuid::Uuid::new_v4().to_string();
+            tag_job_store.insert(job_id.clone(), diff);
+            Response::ActionATagsPreview(ipc::ActionATagsPreviewResponse {
+                id: r.id,
+                job_id,
+                rows,
+                total_files,
+            })
+        }
+
+        Request::ActionATagsApply(r) => {
+            use mediacache::tag_write_job;
+            let Some(bridge) = mpd else {
+                return Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string());
+            };
+            let Some(diff) = tag_job_store.take(&r.job_id) else {
+                return Response::error(
+                    Some(r.id),
+                    ErrorCode::InvalidRequest,
+                    format!("unknown job_id: {}", r.job_id),
+                );
+            };
+            let cancel_flag = tag_job_registry.register(&r.job_id);
+            let files_for_rescan: Vec<std::path::PathBuf> =
+                diff.iter().map(|d| d.file.clone()).collect();
+            let outcome = tag_write_job::apply(
+                r.job_id.clone(),
+                diff,
+                cancel_flag,
+                None, // v1: no streaming progress (see spec)
+            ).await;
+            tag_job_registry.done(&r.job_id);
+
+            let rescan_path = tag_write_job::common_ancestor(&files_for_rescan)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !rescan_path.is_empty() {
+                if let Err(e) = bridge.update_library(Some(&rescan_path)).await {
+                    warn!(error = %e, path = %rescan_path, "mpd rescan after tag write failed");
+                }
+            }
+
+            let failed_count = outcome.failed.len();
+            let failures = outcome.failed.iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            Response::ActionATagsApply(ipc::ActionATagsApplyResponse {
+                id: r.id,
+                succeeded: outcome.succeeded,
+                failed: failed_count,
+                skipped_cancelled: outcome.skipped_cancelled,
+                failures,
+                rescan_path,
+            })
+        }
+
+        Request::ActionATagsCancel(r) => {
+            let cancelled = tag_job_registry.cancel(&r.job_id);
+            Response::ActionATagsCancel(ipc::ActionATagsCancelResponse {
+                id: r.id,
+                cancelled,
+            })
         }
     }
 }
