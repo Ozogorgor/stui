@@ -845,13 +845,18 @@ func (m SettingsModel) View() tea.View {
 	// ── Header ─────────────────────────────────────────────────────────────
 	header := headerStyle.Render("⚙  Settings")
 
-	// ── Left panel layout: width + box height driven by category count ────
+	// ── Left panel layout: width + box height driven by allocated height ──
+	// The overlay system gives us m.height rows. We consume 6 rows of
+	// overhead (header, 2 blanks, footer, border top/bottom) so the panels
+	// get the rest. Falls back to category count if height isn't set yet.
 	const leftInnerW = 20 // inner content width of the categories box
-	leftInnerH := len(m.categories)
-	if leftInnerH < 4 {
-		leftInnerH = 4 // keep a minimal body even with few categories
+	boxInnerH := m.height - 6 // 1 header + 2 blank + 1 footer + 2 border
+	if boxInnerH < len(m.categories) {
+		boxInnerH = len(m.categories)
 	}
-	boxInnerH := leftInnerH // both panels share this inner height (baseline)
+	if boxInnerH < 4 {
+		boxInnerH = 4
+	}
 
 	// ── Left panel: categories with dim Surface background ───────────────
 	catLines := make([]string, boxInnerH)

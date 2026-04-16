@@ -335,6 +335,19 @@ func (r RootModel) View() tea.View {
 	if r.overlay != nil && r.width > 0 && r.height > 0 {
 		ov := r.overlay.View()
 		popup := strings.TrimRight(ov.Content, "\n")
+		// Force popup content to exactly the allocated overlay dimensions so
+		// lipgloss.Place centering matches translateOverlayMouse's math.
+		// Without this, overlays that render fewer lines than allocated cause
+		// the visual position and mouse-hit math to diverge.
+		pw, ph := overlayPopupSize(r.width, r.height)
+		lines := strings.Split(popup, "\n")
+		for len(lines) < ph {
+			lines = append(lines, strings.Repeat(" ", pw))
+		}
+		if len(lines) > ph {
+			lines = lines[:ph]
+		}
+		popup = strings.Join(lines, "\n")
 		// Wrap in a rounded border box with a solid background so underlying
 		// content doesn't bleed through and obscure the popup text.
 		boxed := lipgloss.NewStyle().
