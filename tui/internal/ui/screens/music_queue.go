@@ -544,7 +544,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 		sb.WriteString(s.renderVizPanel(w, vizContentH, dimStyle, accentStyle))
 	}
 
-	return sb.String()
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // renderVizPanel returns a bordered container of width `w` and total height
