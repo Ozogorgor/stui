@@ -43,28 +43,6 @@ fn quote_mpd(s: &str) -> String {
     out
 }
 
-/// Escape a value for use inside an MPD filter expression (e.g. `(artist == "foo")`).
-/// MPD's filter syntax requires the value to be a double-quoted string with
-/// internal quotes + backslashes backslash-escaped. Since the filter value is
-/// itself embedded inside an outer `"..."` MPD-quoted argument, every `\` and
-/// `"` in the value needs two levels of escaping.
-fn mpd_escape_filter(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\\');
-    out.push('"');
-    for ch in s.chars() {
-        if ch == '\\' || ch == '"' {
-            out.push('\\');
-            out.push('\\');
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out.push('\\');
-    out.push('"');
-    out
-}
-
 fn parse_u32(v: Option<&String>) -> u32 {
     v.and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
 }
@@ -518,24 +496,14 @@ impl MpdBridge {
     ) -> Result<Vec<(std::path::PathBuf, RawTags)>> {
         let cmd = match scope {
             TagWriteScope::Album { artist, album, date } => {
-                // Prefer album+artist+date to disambiguate remasters.
-                if date.is_empty() {
-                    format!(
-                        "find \"(album == {}) AND (artist == {})\"",
-                        mpd_escape_filter(album),
-                        mpd_escape_filter(artist),
-                    )
-                } else {
-                    format!(
-                        "find \"(album == {}) AND (artist == {}) AND (date == {})\"",
-                        mpd_escape_filter(album),
-                        mpd_escape_filter(artist),
-                        mpd_escape_filter(date),
-                    )
+                let mut c = format!("find album {} artist {}", quote_mpd(album), quote_mpd(artist));
+                if !date.is_empty() {
+                    c.push_str(&format!(" date {}", quote_mpd(date)));
                 }
+                c
             }
             TagWriteScope::Artist { artist } => {
-                format!("find \"(artist == {})\"", mpd_escape_filter(artist))
+                format!("find artist {}", quote_mpd(artist))
             }
             TagWriteScope::Library => "listallinfo".to_string(),
         };
