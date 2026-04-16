@@ -305,9 +305,10 @@ func (s MusicPlaylistsScreen) View(w, h int) string {
 		}
 	}
 
-	// Pad left pane to bodyH.
+	// Pad left pane to bodyH with fixed-width empty lines so the separator
+	// column stays aligned all the way down.
 	for len(leftLines) < bodyH {
-		leftLines = append(leftLines, "")
+		leftLines = append(leftLines, strings.Repeat(" ", leftW))
 	}
 
 	// Build right pane lines (track preview).
