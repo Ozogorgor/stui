@@ -719,12 +719,25 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	lines = append(lines, accentStyle.Render(volBar))
 	lines = append(lines, dimStyle.Render(volHint))
 
-	// Truncate to availH from the bottom
+	// Truncate to availH. Seekbar and volume are essential — trim the art
+	// placeholder from the top instead of cutting essential controls from
+	// the bottom.
 	if availH < 0 {
 		availH = 0
 	}
 	if len(lines) > availH {
-		lines = lines[:availH]
+		excess := len(lines) - availH
+		// artLines occupy the first len(artLines) rows; trim those first.
+		trimArt := excess
+		if trimArt > len(artLines) {
+			trimArt = len(artLines)
+		}
+		lines = lines[trimArt:]
+		// If still too tall after removing all art, trim from the top
+		// (metadata labels) rather than losing seekbar/volume.
+		if len(lines) > availH {
+			lines = lines[len(lines)-availH:]
+		}
 	}
 	return lines
 }
