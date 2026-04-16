@@ -404,22 +404,16 @@ func (s MusicQueueScreen) View(w, h int) string {
 		vizPanelH = vizContentH + 2 // +2 for top/bottom border
 	}
 
-	// ── Fixed box height based on exactly what the right panel needs ──────
-	// Right panel content = art (innerR/2 + 2 for border) + metadata
-	// (3 or 4 fields × 2 rows) + seek bar (2) + volume bar (2).
-	// Column widths first, so we know whether the album row is shown.
-	// innerL minus 2 reserves 1 col of space + 1 col of scrollbar.
+	// ── Responsive box height — fill all available space ──────────────────
+	// Both panels stretch to use the full height above the visualizer.
+	// Left (track list) shows more tracks; right panel pads below the
+	// seekbar/volume when there's room, and truncates art when tight.
 	innerLForCols := innerL - 2
 	if innerLForCols < 10 {
 		innerLForCols = 10
 	}
 	titleW, artistW, albumW := queueColWidths(innerLForCols)
-	rightContentNeeded := rightPanelContentHeight(innerR, albumW > 0)
-	boxH := rightContentNeeded + 2 // +2 for top/bottom border
-	// Cap at available height so small terminals still render.
-	if boxH > h-vizPanelH {
-		boxH = h - vizPanelH
-	}
+	boxH := h - vizPanelH
 	if boxH < 3 {
 		boxH = 3
 	}
