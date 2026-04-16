@@ -25,6 +25,13 @@ pub fn smart_title_case(input: &str) -> String {
 }
 
 fn capitalize_word(w: &str) -> String {
+    if w.contains('/') {
+        return w.split('/').map(capitalize_simple).collect::<Vec<_>>().join("/");
+    }
+    capitalize_simple(w)
+}
+
+fn capitalize_simple(w: &str) -> String {
     let mut chars = w.chars();
     match chars.next() {
         None => String::new(),
@@ -69,6 +76,7 @@ mod tests {
     #[test] fn titlecase_collapses() { assert_eq!(smart_title_case("the    wall"), "The Wall"); }
     #[test] fn titlecase_fixes_screaming_multiword() { assert_eq!(smart_title_case("DARK SIDE OF THE MOON"), "Dark Side of the Moon"); }
     #[test] fn titlecase_empty() { assert_eq!(smart_title_case(""), ""); }
+    #[test] fn titlecase_slash_compound() { assert_eq!(smart_title_case("girl/boy song"), "Girl/Boy Song"); }
 
     #[test] fn collapse_basic() { assert_eq!(collapse_whitespace("a  b   c"), "a b c"); }
     #[test] fn collapse_tabs() { assert_eq!(collapse_whitespace("a\tb\nc"), "a b c"); }
