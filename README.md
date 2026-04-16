@@ -83,6 +83,15 @@ Output targets: PipeWire, ALSA (direct hw:), MPD, Roon RAAT.
 
 Auto-detect modes: crossfeed auto-enables when headphones are detected; dither auto-enables when output is ALSA at 16-bit.
 
+### Music Tag Normalization
+
+Opt-in feature that cleans up messy tag metadata in your MPD library:
+
+- **Virtual normalization** (`[music.normalize] enabled = true`): library views show clean title-cased artist/album/title names, extracted years, and collapsed whitespace — without touching your files
+- **Write to disk** (action menu → "Normalize tags on disk…"): preview a diff of proposed changes, then write normalized tags to the actual audio files with sidecar JSON backups
+- **Exception list**: press `X` on any artist/album in the library to protect it from normalization (e.g., `deadmau5`, `AC/DC`). Bundled defaults ship in `config/exceptions.toml`; user overrides go to `~/.stui/config/exceptions.toml`
+- **MPD-only**: normalization applies exclusively to locally-managed MPD files, never to externally-managed libraries (Plex, Jellyfin, etc.)
+
 ### Audio (MPD)
 
 - **MPD music player** integration
