@@ -1731,8 +1731,8 @@ func defaultCategories() []settingCategory {
 					label:       "Music directory",
 					key:         "storage.music",
 					kind:        settingPath,
-					strVal:      filepath.Join(settingsHomeDir, "Music"),
-					description: "Music root scanned by MPD for the Library tab",
+					strVal:      mpdMusicDir,
+					description: "Must be inside MPD's music root for Library to see downloads",
 				},
 				{
 					label:       "Podcasts directory",
