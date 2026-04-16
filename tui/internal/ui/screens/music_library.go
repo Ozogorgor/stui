@@ -316,6 +316,22 @@ func (s MusicLibraryScreen) setStatus(msg string) MusicLibraryScreen {
 // recently-set status message before falling back to the default key hints.
 const statusTTL = 3 * time.Second
 
+// openPlaylistPromptDialog sets up (or refreshes) the dialog overlay that
+// serves as the visible centered prompt for the playlist name input. Call
+// this every time playlistName changes so the title stays in sync.
+func (s MusicLibraryScreen) openPlaylistPromptDialog() MusicLibraryScreen {
+	action := "Create playlist"
+	if !s.playlistCreate {
+		action = "Add to playlist"
+	}
+	s.dialog = components.NewDialog(
+		fmt.Sprintf("%s: %s█", action, s.playlistName),
+		[]string{"(type playlist name, Enter to confirm)"},
+	)
+	s.dialogOpen = true
+	return s
+}
+
 // handlePlaylistPrompt processes key events while the playlist name prompt
 // is active. All keys are consumed so nothing leaks to the tag/dir handlers.
 func (s MusicLibraryScreen) handlePlaylistPrompt(m tea.KeyPressMsg) (MusicLibraryScreen, tea.Cmd) {
@@ -324,11 +340,13 @@ func (s MusicLibraryScreen) handlePlaylistPrompt(m tea.KeyPressMsg) (MusicLibrar
 		s.playlistPrompt = false
 		s.playlistName = ""
 		s.playlistURIs = nil
+		s.dialogOpen = false
 	case "backspace":
 		if len(s.playlistName) > 0 {
 			runes := []rune(s.playlistName)
 			s.playlistName = string(runes[:len(runes)-1])
 		}
+		s = s.openPlaylistPromptDialog()
 	case "enter":
 		if s.playlistName != "" && s.client != nil && len(s.playlistURIs) > 0 {
 			name := s.playlistName
@@ -347,14 +365,18 @@ func (s MusicLibraryScreen) handlePlaylistPrompt(m tea.KeyPressMsg) (MusicLibrar
 				}
 				s = s.setStatus(fmt.Sprintf("Added %d tracks to '%s'", len(s.playlistURIs), name))
 			}
+			// Trigger playlists re-fetch so the playlists tab shows the new/updated playlist.
+			s.client.MpdGetPlaylists()
 			s.playlistPrompt = false
 			s.playlistName = ""
 			s.playlistURIs = nil
+			s.dialogOpen = false
 		}
 	default:
 		if len(m.Text) > 0 {
 			s.playlistName += m.Text
 		}
+		s = s.openPlaylistPromptDialog()
 	}
 	return s, nil
 }
@@ -540,10 +562,10 @@ func (s MusicLibraryScreen) handleDirKey(key string) MusicLibraryScreen {
 				File:  uri,
 				Title: title,
 			}
-			s.dialogContext = libDialogEnter
+			s.dialogContext = libDialogRightClick
 			s.dialog = components.NewDialog(
 				"What to do with '"+truncate(title, 28)+"'?",
-				[]string{"Add to queue", "Replace queue", "Cancel"},
+				[]string{"Add to queue", "Replace queue", "Add to Playlist", "Create Playlist", "Cancel"},
 			)
 			s.dialogOpen = true
 		}
@@ -798,10 +820,10 @@ func (s MusicLibraryScreen) openPaneDialog() MusicLibraryScreen {
 		}
 		song := s.songs[s.songCursor]
 		s.dialogSong = song
-		s.dialogContext = libDialogEnter
+		s.dialogContext = libDialogRightClick
 		s.dialog = components.NewDialog(
 			"What to do with '"+truncate(song.Title, 28)+"'?",
-			[]string{"Add to queue", "Replace queue", "Cancel"},
+			[]string{"Add to queue", "Replace queue", "Add to Playlist", "Create Playlist", "Cancel"},
 		)
 		s.dialogOpen = true
 	}
@@ -848,11 +870,13 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s.playlistCreate = false
 			s.playlistName = ""
 			s.playlistURIs = []string{s.dialogSong.File}
+			s = s.openPlaylistPromptDialog()
 		case 3: // Create Playlist
 			s.playlistPrompt = true
 			s.playlistCreate = true
 			s.playlistName = ""
 			s.playlistURIs = []string{s.dialogSong.File}
+			s = s.openPlaylistPromptDialog()
 		}
 	case libDialogArtist:
 		if s.artistCursor >= len(s.artists) {
@@ -913,6 +937,7 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 					uris = append(uris, song.File)
 				}
 				s.playlistURIs = uris
+				s = s.openPlaylistPromptDialog()
 			} else {
 				s = s.setStatus("Browse the album's tracks first (press Enter), then try again")
 				s.playlistPrompt = false
