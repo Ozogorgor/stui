@@ -1219,14 +1219,14 @@ func defaultCategories() []settingCategory {
 					description: "Remove tracks from queue after playing",
 				},
 				{
-					label:       "Music directory",
+					label:       "MPD music root",
 					key:         "mpd.music_dir",
 					kind:        settingInfo,
 					strVal:      mpdMusicDir,
-					description: "Auto-detected from mpd.conf (or set in stui.toml)",
+					description: "Where MPD scans for audio (auto-detected from mpd.conf)",
 				},
 				{
-					label:       "Playlist directory",
+					label:       "MPD playlist dir",
 					key:         "mpd.playlist_dir",
 					kind:        settingInfo,
 					strVal:      mpdPlaylistDir,
