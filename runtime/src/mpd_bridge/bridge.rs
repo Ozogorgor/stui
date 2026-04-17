@@ -96,6 +96,8 @@ struct MpdStatusWire<'a> {
     consume:       bool,
     random:        bool,
     queue_length:  u32,
+    song_pos:      i32,
+    song_id:       i32,
 }
 
 // ── MpdBridge ─────────────────────────────────────────────────────────────────
@@ -835,6 +837,8 @@ async fn run_idle_loop(
         let audio_format = status.get("audio").map(String::as_str);
         let replay_gain  = status.get("replay_gain_mode").map(String::as_str).unwrap_or("off");
         let crossfade    = status.get("xfade").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        let song_pos     = status.get("song").and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1);
+        let song_id      = status.get("songid").and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
         let consume      = status.get("consume").map(|v| v == "1").unwrap_or(false);
         let random       = status.get("random").map(|v| v == "1").unwrap_or(false);
         let queue_length = status.get("playlistlength").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
@@ -874,6 +878,8 @@ async fn run_idle_loop(
             consume,
             random,
             queue_length,
+            song_pos,
+            song_id,
         };
 
         if let Ok(mut msg) = serde_json::to_string(&wire) {

@@ -2532,6 +2532,12 @@ func (m Model) hudRows() int {
 	if m.mpdNowPlaying == nil || m.mpdNowPlaying.State == "stop" {
 		return 0
 	}
+	// Queue has its own playback UI — HUD is hidden there.
+	if m.state.ActiveTab == state.TabMusic &&
+		m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
+		m.innerWidth() > 80 {
+		return 0
+	}
 	if m.mpdNowPlaying.Artist != "" || m.mpdNowPlaying.Album != "" {
 		return 8
 	}
@@ -2614,14 +2620,16 @@ func (m Model) applyToast(base string) string {
 			queueActive := m.state.ActiveTab == state.TabMusic &&
 				m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
 				m.innerWidth() > 80
-			if !queueActive {
+			if queueActive {
+				// Queue has its own playback UI — skip the HUD entirely.
+			} else {
 				if m.visualizer.IsRunning() {
 					if viz := m.visualizer.RenderBars(m.state.Width); viz != "" {
 						hud = hud + viz
 					}
 				}
+				base = hud + base
 			}
-			base = hud + base
 		}
 	}
 	// Prepend DSP status panel when DSP is enabled
