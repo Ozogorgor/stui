@@ -303,6 +303,9 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdStop => {
             if let Some(m) = mpd { if let Err(e) = m.stop().await { warn!("mpd stop failed: {e}"); } }
         }
+        PlayerCmd::MpdUpdate => {
+            if let Some(m) = mpd { if let Err(e) = m.update_library(None).await { warn!("mpd update failed: {e}"); } }
+        }
     }
     Response::Ok
 }

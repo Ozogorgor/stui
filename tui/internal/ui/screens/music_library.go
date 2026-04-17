@@ -511,6 +511,18 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 			s.activePane = LibPaneAlbums
 		}
 
+	case "R":
+		if s.client != nil {
+			s.client.MpdCmd("mpd_update", nil)
+			s = s.setStatus("Rescanning MPD library…")
+			// Re-fetch artists after a short delay for the scan to start
+			s.loadingArtists = true
+			s.artists = nil
+			s.albums = nil
+			s.songs = nil
+			s.client.MpdListArtists()
+		}
+
 	case "D":
 		s.dirMode = true
 		s.dirPath = nil

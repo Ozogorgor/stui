@@ -292,6 +292,8 @@ pub enum PlayerCmd {
     MpdTogglePause,
     /// Stop MPD playback.
     MpdStop,
+    /// Trigger MPD database rescan.
+    MpdUpdate,
 }
 
 /// Live-update a runtime config value without restarting.
