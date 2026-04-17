@@ -279,6 +279,8 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.send(msg)
 		}
+	case "mpd_queue_changed":
+		c.send(MpdQueueChangedMsg{})
 	case "mpd_status":
 		var msg MpdStatusMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {

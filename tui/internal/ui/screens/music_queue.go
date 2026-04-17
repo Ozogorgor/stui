@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -28,6 +29,9 @@ import (
 	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/theme"
 )
+
+// seekTickMsg fires every second to update the elapsed time display.
+type seekTickMsg struct{}
 
 // VizCycleBackendMsg is emitted when the user presses V in the queue to
 // cycle through visualizer backends (off → cliamp → cava → chroma → off).
@@ -51,6 +55,7 @@ type MusicQueueScreen struct {
 	spinner    components.Spinner
 
 	// Now-playing state from MpdStatusMsg
+	nowState    string  // "play" | "pause" | "stop"
 	nowElapsed  float64
 	nowDuration float64
 	nowVolume   uint32
@@ -175,6 +180,15 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			return nil
 		}
 
+	case seekTickMsg:
+		if s.nowState == "play" {
+			s.nowElapsed += 1.0
+			if s.nowElapsed > s.nowDuration && s.nowDuration > 0 {
+				s.nowElapsed = s.nowDuration
+			}
+			return s, tea.Tick(time.Second, func(time.Time) tea.Msg { return seekTickMsg{} })
+		}
+
 	case ipc.MpdStatusMsg:
 		s.nowTitle = m.SongTitle
 		s.nowArtist = m.SongArtist
@@ -183,9 +197,15 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		s.nowElapsed = m.Elapsed
 		s.nowDuration = m.Duration
 		s.nowVolume = m.Volume
+		wasPlaying := s.nowState == "play"
+		s.nowState = m.State
 		// External volume change clears local mute state
 		if s.nowMuted && m.Volume > 0 {
 			s.nowMuted = false
+		}
+		// Start the seek tick when playback begins.
+		if m.State == "play" && !wasPlaying {
+			return s, tea.Tick(time.Second, func(time.Time) tea.Msg { return seekTickMsg{} })
 		}
 
 	case tea.KeyPressMsg:

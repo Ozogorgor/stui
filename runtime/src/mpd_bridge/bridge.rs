@@ -820,7 +820,14 @@ async fn run_idle_loop(
     let mut last_state: Option<String> = None;
 
     loop {
-        conn.idle(&["player", "mixer", "options", "playlist"]).await?;
+        let changed = conn.idle(&["player", "mixer", "options", "playlist"]).await?;
+
+        // If the queue changed, push a dedicated event so the TUI refreshes.
+        if changed.iter().any(|s| s == "playlist") {
+            let mut msg = r#"{"type":"mpd_queue_changed"}"#.to_string();
+            msg.push('\n');
+            let _ = ipc_tx.send(msg).await;
+        }
 
         // Something changed — fetch current state and push to TUI.
         let status  = status_conn.command_kv("status").await?;
