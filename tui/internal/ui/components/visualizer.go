@@ -730,6 +730,7 @@ func (v *Visualizer) IsCliampMode() bool {
 // mode. Callers should use this instead of calling RenderBars directly.
 func (v *Visualizer) Render(width int) string {
 	if v.IsCliampMode() {
+		v.fftViz.SetWidth(width)
 		return v.RenderCliampStyle(v.barsToBands())
 	}
 	return v.RenderBars(width)

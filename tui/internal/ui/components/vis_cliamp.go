@@ -91,12 +91,14 @@ type FftVisualizer struct {
 	waveBuf        []float64
 	frame          uint64
 	rows           int
+	width          int // panel width in columns (set before each render)
 	bandWidth      VisBandWidthFunc
 	terrainHistory []float64 // persistent for terrain smoothing
 }
 
 func NewFftVisualizer(sampleRate float64) *FftVisualizer {
-	terrainHistory := make([]float64, panelWidth)
+	w := panelWidth // initial default; overridden by SetWidth before render
+	terrainHistory := make([]float64, w)
 	for i := range terrainHistory {
 		terrainHistory[i] = 0.5
 	}
@@ -105,9 +107,38 @@ func NewFftVisualizer(sampleRate float64) *FftVisualizer {
 		buf:            make([]float64, visFFTSize),
 		waveBuf:        make([]float64, visFFTSize),
 		rows:           visNumRows,
+		width:          w,
 		bandWidth:      defaultVisBandWidth,
 		terrainHistory: terrainHistory,
 	}
+}
+
+func (v *FftVisualizer) SetWidth(w int) {
+	if w < 10 {
+		w = 10
+	}
+	v.mu.Lock()
+	if w != v.width {
+		v.width = w
+		// Resize terrain history to match new width
+		th := make([]float64, w)
+		copy(th, v.terrainHistory)
+		for i := len(v.terrainHistory); i < w; i++ {
+			th[i] = 0.5
+		}
+		v.terrainHistory = th
+		// Update band width function to use new width
+		v.bandWidth = func(b int) int {
+			const gap = 1
+			base := (w - (visNumBands-1)*gap) / visNumBands
+			extra := (w - (visNumBands-1)*gap) % visNumBands
+			if b < extra {
+				return base + 1
+			}
+			return base
+		}
+	}
+	v.mu.Unlock()
 }
 
 func (v *FftVisualizer) SetRows(rows int) {
@@ -256,14 +287,14 @@ func (v *FftVisualizer) RenderWave() string {
 	height := v.rows
 	v.mu.RUnlock()
 	if len(waveBuf) == 0 {
-		return strings.Repeat(" ", panelWidth)
+		return strings.Repeat(" ", v.width)
 	}
 
 	var lines []string
 	for row := 0; row < height; row++ {
 		var b strings.Builder
-		for col := 0; col < panelWidth; col++ {
-			idx := (col * len(waveBuf)) / panelWidth
+		for col := 0; col < v.width; col++ {
+			idx := (col * len(waveBuf)) / v.width
 			if idx >= len(waveBuf) {
 				idx = len(waveBuf) - 1
 			}
@@ -297,17 +328,17 @@ func (v *FftVisualizer) RenderScope() string {
 	height := v.rows
 	v.mu.RUnlock()
 	if len(waveBuf) < 2 {
-		return strings.Repeat(" ", panelWidth)
+		return strings.Repeat(" ", v.width)
 	}
 
 	lines := make([]string, height)
 	for i := range lines {
-		lines[i] = strings.Repeat(" ", panelWidth)
+		lines[i] = strings.Repeat(" ", v.width)
 	}
 
 	numPoints := len(waveBuf)
-	if numPoints > panelWidth {
-		numPoints = panelWidth
+	if numPoints > v.width {
+		numPoints = v.width
 	}
 	step := len(waveBuf) / numPoints
 
@@ -349,8 +380,8 @@ func (v *FftVisualizer) RenderRetro(bands [visNumBands]float64) string {
 		var b strings.Builder
 		rowPos := float64(height - 1 - row)
 
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -359,8 +390,8 @@ func (v *FftVisualizer) RenderRetro(bands [visNumBands]float64) string {
 			barHeight := int(level * float64(height))
 			isBar := rowPos < float64(barHeight)
 
-			distFromCenter := float64(visAbs(col - panelWidth/2))
-			perspective := 1.0 - (distFromCenter/float64(panelWidth/2))*0.3
+			distFromCenter := float64(visAbs(col - v.width/2))
+			perspective := 1.0 - (distFromCenter/float64(v.width/2))*0.3
 
 			if isBar && perspective > 0.3 {
 				b.WriteRune('█')
@@ -405,8 +436,8 @@ func (v *FftVisualizer) RenderMatrix(bands [visNumBands]float64) string {
 
 	for row := 0; row < height; row++ {
 		var b strings.Builder
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -448,8 +479,8 @@ func (v *FftVisualizer) RenderFlame(bands [visNumBands]float64) string {
 	for row := 0; row < height; row++ {
 		var b strings.Builder
 
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -460,8 +491,8 @@ func (v *FftVisualizer) RenderFlame(bands [visNumBands]float64) string {
 				flameHeight = len(flameChars) - 1
 			}
 
-			distFromCenter := float64(visAbs(col - panelWidth/2))
-			fade := 1.0 - (distFromCenter/float64(panelWidth/2))*0.6
+			distFromCenter := float64(visAbs(col - v.width/2))
+			fade := 1.0 - (distFromCenter/float64(v.width/2))*0.6
 
 			actualHeight := int(float64(flameHeight) * fade)
 			rowFromBottom := height - 1 - row
@@ -494,12 +525,12 @@ func (v *FftVisualizer) RenderPulse(bands [visNumBands]float64) string {
 	v.mu.RLock()
 	height := v.rows
 	v.mu.RUnlock()
-	centerX := panelWidth / 2
+	centerX := v.width / 2
 	centerY := height / 2
 
 	var lines []string
 	for range height {
-		lines = append(lines, strings.Repeat(" ", panelWidth))
+		lines = append(lines, strings.Repeat(" ", v.width))
 	}
 
 	var totalEnergy float64
@@ -532,7 +563,7 @@ func (v *FftVisualizer) RenderPulse(bands [visNumBands]float64) string {
 			}
 			x := centerX + int(float64(r)*math.Cos(rad))
 			y := centerY - int(float64(r)*math.Sin(rad))
-			if x >= 0 && x < panelWidth && y >= 0 && y < height {
+			if x >= 0 && x < v.width && y >= 0 && y < height {
 				runes := []rune(lines[y])
 				if (angle/2+r)%2 == 0 {
 					runes[x] = '█'
@@ -563,8 +594,8 @@ func (v *FftVisualizer) RenderBinary(bands [visNumBands]float64) string {
 
 	for row := 0; row < height; row++ {
 		var b strings.Builder
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -607,13 +638,13 @@ func (v *FftVisualizer) RenderButterfly(bands [visNumBands]float64) string {
 		rowBottom := float64(height-1-row) / float64(height)
 		rowTop := float64(height-row) / float64(height)
 
-		for col := 0; col < panelWidth; col++ {
-			mirrorCol := panelWidth - 1 - col
+		for col := 0; col < v.width; col++ {
+			mirrorCol := v.width - 1 - col
 			lo := col
 			if mirrorCol < lo {
 				lo = mirrorCol
 			}
-			bandIdx := (lo * visNumBands) / (panelWidth / 2)
+			bandIdx := (lo * visNumBands) / (v.width / 2)
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -633,15 +664,15 @@ func (v *FftVisualizer) RenderTerrain(bands [visNumBands]float64) string {
 	// so that height and terrainHistory are always consistent.
 	v.mu.Lock()
 	height := v.rows
-	for col := 0; col < panelWidth; col++ {
-		bandIdx := (col * visNumBands) / panelWidth
+	for col := 0; col < v.width; col++ {
+		bandIdx := (col * visNumBands) / v.width
 		if bandIdx >= visNumBands {
 			bandIdx = visNumBands - 1
 		}
 		target := bands[bandIdx]
 		v.terrainHistory[col] = v.terrainHistory[col]*0.7 + target*0.3
 	}
-	historyCopy := make([]float64, panelWidth)
+	historyCopy := make([]float64, v.width)
 	copy(historyCopy, v.terrainHistory)
 	v.mu.Unlock()
 
@@ -651,7 +682,7 @@ func (v *FftVisualizer) RenderTerrain(bands [visNumBands]float64) string {
 		var b strings.Builder
 		rowY := float64(height - 1 - row)
 
-		for col := 0; col < panelWidth; col++ {
+		for col := 0; col < v.width; col++ {
 			terrainH := historyCopy[col] * float64(height-2)
 			if rowY <= terrainH {
 				if rowY > terrainH-1 {
@@ -681,7 +712,7 @@ func (v *FftVisualizer) RenderSakura(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	for i := range height {
-		lines[i] = strings.Repeat(" ", panelWidth)
+		lines[i] = strings.Repeat(" ", v.width)
 	}
 
 	var totalEnergy float64
@@ -697,11 +728,11 @@ func (v *FftVisualizer) RenderSakura(bands [visNumBands]float64) string {
 	// and organic rather than all advancing at the same rate.
 	for i := 0; i < numParticles; i++ {
 		seed := uint32(i)*2654435761 + 1
-		px := int(seed>>17) % panelWidth
+		px := int(seed>>17) % v.width
 		py := (frame/2 + int(seed>>23)%height + i*3) % height
 		age := (frame + i) % 20
 
-		if py >= 0 && py < height && px >= 0 && px < panelWidth {
+		if py >= 0 && py < height && px >= 0 && px < v.width {
 			runes := []rune(lines[py])
 			if age < 10 {
 				runes[px] = sakura[age%len(sakura)]
@@ -730,7 +761,7 @@ func (v *FftVisualizer) RenderFirework(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	for i := range height {
-		lines[i] = strings.Repeat(" ", panelWidth)
+		lines[i] = strings.Repeat(" ", v.width)
 	}
 
 	var totalEnergy float64
@@ -742,7 +773,7 @@ func (v *FftVisualizer) RenderFirework(bands [visNumBands]float64) string {
 	// Idle animation (slow pulse) plays when quiet.
 	const burstThreshold = 0.8
 	if totalEnergy > burstThreshold {
-		centerX := panelWidth / 2
+		centerX := v.width / 2
 		centerY := height / 2
 		maxR := centerX - 2
 		if centerY-2 < maxR {
@@ -758,7 +789,7 @@ func (v *FftVisualizer) RenderFirework(bands [visNumBands]float64) string {
 			for r := 0; r <= radius; r++ {
 				x := centerX + int(float64(r)*math.Cos(rad))
 				y := centerY - int(float64(r)*math.Sin(rad))
-				if x >= 0 && x < panelWidth && y >= 0 && y < height {
+				if x >= 0 && x < v.width && y >= 0 && y < height {
 					runes := []rune(lines[y])
 					runes[x] = '✦'
 					lines[y] = string(runes)
@@ -767,9 +798,9 @@ func (v *FftVisualizer) RenderFirework(bands [visNumBands]float64) string {
 		}
 	} else {
 		// Idle: single slow-breathing dot at centre
-		cx := panelWidth / 2
+		cx := v.width / 2
 		cy := height / 2
-		if cy >= 0 && cy < height && cx >= 0 && cx < panelWidth {
+		if cy >= 0 && cy < height && cx >= 0 && cx < v.width {
 			runes := []rune(lines[cy])
 			runes[cx] = '·'
 			lines[cy] = string(runes)
@@ -795,7 +826,7 @@ func (v *FftVisualizer) RenderGlitch(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	for row := range height {
-		rowChars := make([]rune, panelWidth)
+		rowChars := make([]rune, v.width)
 		for i := range rowChars {
 			rowChars[i] = ' '
 		}
@@ -805,8 +836,8 @@ func (v *FftVisualizer) RenderGlitch(bands [visNumBands]float64) string {
 
 		isGlitchRow := (frame+row)%8 == 0
 
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -819,7 +850,7 @@ func (v *FftVisualizer) RenderGlitch(bands [visNumBands]float64) string {
 				displayCol = col + offset - 3
 			}
 
-			if displayCol >= 0 && displayCol < panelWidth {
+			if displayCol >= 0 && displayCol < v.width {
 				block := visFracBlock(level, rowBottom, rowTop)
 				if isGlitchRow && (frame%5) == 0 && col%4 == 0 {
 					rowChars[displayCol] = '▓'
@@ -856,13 +887,13 @@ func (v *FftVisualizer) RenderLightning(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	for i := range height {
-		lines[i] = strings.Repeat(" ", panelWidth)
+		lines[i] = strings.Repeat(" ", v.width)
 	}
 
 	trebleEnergy := bands[visNumBands-1] + bands[visNumBands-2]
 
 	if trebleEnergy > 0.5 {
-		startX := panelWidth/2 + (frame%20 - 10)
+		startX := v.width/2 + (frame%20 - 10)
 
 		points := []struct{ x, y int }{{startX, 0}}
 		currentX := startX
@@ -872,17 +903,17 @@ func (v *FftVisualizer) RenderLightning(bands [visNumBands]float64) string {
 			if currentX < 2 {
 				currentX = 2
 			}
-			if currentX > panelWidth-3 {
-				currentX = panelWidth - 3
+			if currentX > v.width-3 {
+				currentX = v.width - 3
 			}
 			points = append(points, struct{ x, y int }{currentX, y})
 		}
 
 		for _, p := range points {
-			if p.y < height && p.x >= 0 && p.x < panelWidth {
+			if p.y < height && p.x >= 0 && p.x < v.width {
 				runes := []rune(lines[p.y])
 				runes[p.x] = '⚡'
-				if p.x+1 < panelWidth {
+				if p.x+1 < v.width {
 					runes[p.x+1] = 'ϟ'
 				}
 				lines[p.y] = string(runes)
@@ -911,8 +942,8 @@ func (v *FftVisualizer) RenderRain(bands [visNumBands]float64) string {
 	for row := 0; row < height; row++ {
 		var b strings.Builder
 
-		for col := 0; col < panelWidth; col++ {
-			bandIdx := (col * visNumBands) / panelWidth
+		for col := 0; col < v.width; col++ {
+			bandIdx := (col * visNumBands) / v.width
 			if bandIdx >= visNumBands {
 				bandIdx = visNumBands - 1
 			}
@@ -953,11 +984,11 @@ func (v *FftVisualizer) RenderScatter(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	for i := range height {
-		lines[i] = strings.Repeat(" ", panelWidth)
+		lines[i] = strings.Repeat(" ", v.width)
 	}
 
-	for col := 0; col < panelWidth; col++ {
-		bandIdx := (col * visNumBands) / panelWidth
+	for col := 0; col < v.width; col++ {
+		bandIdx := (col * visNumBands) / v.width
 		if bandIdx >= visNumBands {
 			bandIdx = visNumBands - 1
 		}
@@ -1000,8 +1031,8 @@ func (v *FftVisualizer) RenderColumns(bands [visNumBands]float64) string {
 	lines := make([]string, height)
 
 	cols := visNumBands
-	colWidth := panelWidth / cols
-	extra := panelWidth % cols
+	colWidth := v.width / cols
+	extra := v.width % cols
 
 	for row := 0; row < height; row++ {
 		var b strings.Builder
@@ -1052,9 +1083,9 @@ func (v *FftVisualizer) RenderBricks(bands [visNumBands]float64) string {
 			offset = 2
 		}
 
-		for col := 0; col < panelWidth; col++ {
+		for col := 0; col < v.width; col++ {
 			realCol := col - offset
-			bandIdx := (realCol * visNumBands) / panelWidth
+			bandIdx := (realCol * visNumBands) / v.width
 			if bandIdx < 0 {
 				bandIdx = 0
 			}
