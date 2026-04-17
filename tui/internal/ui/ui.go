@@ -858,7 +858,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case ipc.MpdStatusMsg:
-		m.musicScreen, _ = m.musicScreen.Update(msg) // keep queue highlight in sync
+		var musicCmd tea.Cmd
+		m.musicScreen, musicCmd = m.musicScreen.Update(msg) // keep queue highlight in sync
 		if msg.State == "stop" && (m.mpdNowPlaying == nil || m.mpdNowPlaying.State == "stop") {
 			// Already stopped — skip unnecessary alloc
 			break
@@ -873,6 +874,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.visualizer.Stop()
 		} else if msg.State == "play" {
 			var cmds []tea.Cmd
+			if musicCmd != nil {
+				cmds = append(cmds, musicCmd)
+			}
 			if !wasPlaying {
 				cmds = append(cmds, mpdElapsedTickCmd())
 			}
@@ -884,6 +888,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(cmds) > 0 {
 				return m, tea.Batch(cmds...)
 			}
+		}
+		// If we didn't return above, still propagate the music screen's Cmd.
+		if musicCmd != nil {
+			return m, musicCmd
 		}
 
 	case ipc.MpdOutputsResultMsg:
