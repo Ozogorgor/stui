@@ -171,7 +171,8 @@ type VisualizerConfig struct {
 	Framerate   int            // target refresh rate in fps (10–60)
 	Mode        VisualizerMode // visualization style
 	Gradient    bool           // shade bars from accent (top) to dim (bottom)
-	InputMethod string         // audio input method: "pulse" | "pipewire" | "alsa"
+	InputMethod string         // audio input method: "pulse" | "pipewire" | "alsa" | "fifo"
+	FifoPath    string         // path to MPD FIFO (default /tmp/mpd.fifo)
 	PeakHold    bool           // show peak hold indicators
 }
 
@@ -261,8 +262,8 @@ func (v *Visualizer) Reconfigure(cfg VisualizerConfig) tea.Cmd {
 		return nil
 	}
 	if cfg.Backend == VisualizerCliamp {
-		// Built-in renderer: no subprocess needed
 		v.runningCliamp = true
+		v.startFifoReader(cfg)
 		return v.TickCmd()
 	}
 	if err := v.Start(); err != nil {
@@ -358,6 +359,74 @@ func (v *Visualizer) Stop() {
 	// Re-initialize to a closed "done" so future Stop calls are safe
 	v.done = make(chan struct{})
 	close(v.done)
+}
+
+// startFifoReader opens the MPD FIFO and feeds PCM samples to the FFT
+// analyzer in a background goroutine. The goroutine exits when Stop() is
+// called (which sets runningCliamp = false and closes the done channel).
+func (v *Visualizer) startFifoReader(cfg VisualizerConfig) {
+	fifoPath := cfg.FifoPath
+	if fifoPath == "" {
+		fifoPath = "/tmp/mpd.fifo"
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	v.cancel = cancel
+	done := make(chan struct{})
+	v.done = done
+
+	go func() {
+		defer close(done)
+
+		f, err := os.OpenFile(fifoPath, os.O_RDONLY, 0)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+
+		// MPD FIFO: 16-bit signed LE, 2 channels, 44100 Hz.
+		// Read 2048 frames (4 bytes each = 8192 bytes) per chunk.
+		const frameSize = 4 // 2 bytes × 2 channels
+		const chunkFrames = 2048
+		buf := make([]byte, chunkFrames*frameSize)
+		samples := make([]float64, chunkFrames)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			n, err := f.Read(buf)
+			if err != nil || n < frameSize {
+				continue
+			}
+
+			// Decode 16-bit signed LE stereo → mono float64
+			nFrames := n / frameSize
+			if nFrames > chunkFrames {
+				nFrames = chunkFrames
+			}
+			for i := 0; i < nFrames; i++ {
+				off := i * frameSize
+				// Left channel (16-bit signed LE)
+				left := int16(buf[off]) | int16(buf[off+1])<<8
+				// Right channel
+				right := int16(buf[off+2]) | int16(buf[off+3])<<8
+				// Mix to mono, normalize to -1.0..1.0
+				samples[i] = (float64(left) + float64(right)) / (2.0 * 32768.0)
+			}
+
+			// Feed to FFT analyzer and update bars
+			bands := v.fftViz.Analyze(samples[:nFrames])
+			v.mu.Lock()
+			for i := 0; i < len(v.bars) && i < visNumBands; i++ {
+				v.bars[i] = bands[i]
+			}
+			v.mu.Unlock()
+		}
+	}()
 }
 
 // IsRunning reports whether the subprocess is currently active.
