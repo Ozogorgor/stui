@@ -847,7 +847,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Already stopped — skip unnecessary alloc
 			break
 		}
-		prevHudRows := m.hudRows()
 		if m.mpdNowPlaying == nil {
 			m.mpdNowPlaying = &components.MpdNowPlayingState{}
 		}
@@ -860,12 +859,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err := m.visualizer.Start(); err == nil {
 				return m, m.visualizer.TickCmd()
 			}
-		}
-		// HUD visibility may have changed — resize music screen so the
-		// visualizer section doesn't get clipped or leave a gap.
-		if newHudRows := m.hudRows(); newHudRows != prevHudRows {
-			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
-			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
 		}
 
 	case ipc.MpdOutputsResultMsg:
@@ -1318,22 +1311,14 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 // overlayRowCount returns the number of rows prepended above the main content
-// by applyToast (NowPlaying bar, MPD HUD, visualizer).
+// by applyToast (NowPlaying bar for non-MPD playback, DSP status).
+// MPD HUD is no longer prepended — it lives in the footer slot.
 func (m Model) overlayRowCount() int {
 	n := 0
 	if m.nowPlaying != nil {
 		s := components.RenderNowPlaying(m.nowPlaying, m.state.Width)
 		if s != "" {
 			n += strings.Count(s, "\n")
-		}
-	}
-	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" {
-		hud := components.RenderMpdNowPlaying(m.mpdNowPlaying, m.state.Width)
-		if hud != "" {
-			n += strings.Count(hud, "\n")
-			if m.visualizer.IsRunning() {
-				n += m.visualizer.Config().Height
-			}
 		}
 	}
 	if m.dspState != nil && m.dspState.Enabled {
@@ -2524,26 +2509,6 @@ func (m Model) innerWidth() int {
 	return max(0, m.state.Width-6)
 }
 
-// hudRows returns the number of terminal rows consumed by the MPD HUD when
-// it is visible, or 0 when the HUD is hidden.
-// Layout: border_top(1) + title(1) + optional_artist(1) + progress(1) + info(1)
-// + hints(1) + border_bottom(1) + trailing_blank(1) = 8 (with artist) / 7 (without).
-func (m Model) hudRows() int {
-	if m.mpdNowPlaying == nil || m.mpdNowPlaying.State == "stop" {
-		return 0
-	}
-	// Queue has its own playback UI — HUD is hidden there.
-	if m.state.ActiveTab == state.TabMusic &&
-		m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
-		m.innerWidth() > 80 {
-		return 0
-	}
-	if m.mpdNowPlaying.Artist != "" || m.mpdNowPlaying.Album != "" {
-		return 8
-	}
-	return 7
-}
-
 // computeMusicHeight returns the correct height to send to MusicScreen.
 // It accounts for the HUD, the top-bar chrome, the main-card borders, and
 // whether the footer (status bar) is currently visible.
@@ -2562,11 +2527,11 @@ func (m Model) hudRows() int {
 // the terminal — visible as "I can see its top border but the rest is
 // overflowing" with a gap above it.
 func (m Model) computeMusicHeight() int {
-	const fixedRows = 7 // topbar area (5) + main-card borders (2)
-	const footerRows = 6 // card MB(1) + blank(1) + statusBar(4)
-	// Always reserve footer space. Queue gets the extra rows via
-	// MusicScreen.View which passes a larger h when footer is hidden.
-	return max(0, m.state.Height-fixedRows-m.hudRows()-footerRows)
+	const fixedRows = 7  // topbar area (5) + main-card borders (2)
+	const footerRows = 6 // card MB(1) + blank(1) + footer(4)
+	// HUD no longer prepended — it lives in the footer slot, so no hudRows
+	// subtraction needed. Layout is stable regardless of playback state.
+	return max(0, m.state.Height-fixedRows-footerRows)
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
@@ -2594,7 +2559,7 @@ func (m Model) View() tea.View {
 		var parts []string
 		parts = append(parts, m.viewTopBar(m.state.Focus == state.FocusSearch), "", m.viewMainCard(hidingFooter))
 		if !hidingFooter {
-			parts = append(parts, "", m.viewStatusBar())
+			parts = append(parts, "", m.viewFooter())
 		}
 		base := lipgloss.JoinVertical(lipgloss.Left, parts...)
 		content = m.applyToast(base)
@@ -2613,25 +2578,8 @@ func (m Model) applyToast(base string) string {
 			base = np + base
 		}
 	}
-	// Prepend MPD audiophile HUD when MPD is active
-	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" {
-		hud := components.RenderMpdNowPlaying(m.mpdNowPlaying, m.state.Width)
-		if hud != "" {
-			queueActive := m.state.ActiveTab == state.TabMusic &&
-				m.musicScreen.ActiveSubTab() == screens.MusicQueue &&
-				m.innerWidth() > 80
-			if queueActive {
-				// Queue has its own playback UI — skip the HUD entirely.
-			} else {
-				if m.visualizer.IsRunning() {
-					if viz := m.visualizer.RenderBars(m.state.Width); viz != "" {
-						hud = hud + viz
-					}
-				}
-				base = hud + base
-			}
-		}
-	}
+	// MPD HUD is now rendered inline in the footer slot (viewFooter),
+	// not prepended here. This keeps layout stable regardless of playback.
 	// Prepend DSP status panel when DSP is enabled
 	if m.dspState != nil && m.dspState.Enabled {
 		dspHud := components.RenderDspStatus(m.dspState, m.state.Width)
@@ -2943,6 +2891,78 @@ func (m Model) viewResults() string {
 	}
 
 	return theme.T.ResultsPanelStyle().Width(w).Height(availH).Render(strings.Join(rows, "\n"))
+}
+
+// viewFooter renders either the compact MPD now-playing bar (when playing)
+// or the normal status bar (when stopped/paused). Same size either way.
+func (m Model) viewFooter() string {
+	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
+		return m.viewMpdFooter()
+	}
+	return m.viewStatusBar()
+}
+
+func fmtDuration(secs float64) string {
+	m := int(secs) / 60
+	s := int(secs) % 60
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// viewMpdFooter renders a compact now-playing bar that fits in the footer slot.
+func (m Model) viewMpdFooter() string {
+	w := m.state.Width
+	np := m.mpdNowPlaying
+	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextMuted())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
+
+	// State icon
+	icon := accentStyle.Render("▶")
+
+	// Artist - Title (truncated to fit)
+	track := np.Title
+	if np.Artist != "" {
+		track = np.Artist + " — " + track
+	}
+
+	// Time
+	elapsed := fmtDuration(np.Elapsed)
+	total := fmtDuration(np.Duration)
+	timeStr := dimStyle.Render(fmt.Sprintf(" %s/%s ", elapsed, total))
+
+	// Volume
+	volStr := dimStyle.Render(fmt.Sprintf(" %d%% ", np.Volume))
+
+	// Seekbar — fill remaining space
+	contentW := w - 8 // account for StatusBarStyle margins/padding/border
+	fixedW := 2 + lipgloss.Width(timeStr) + lipgloss.Width(volStr) + 2 // icon + gaps
+	trackMaxW := (contentW - fixedW) / 2
+	if trackMaxW < 10 {
+		trackMaxW = 10
+	}
+	if len([]rune(track)) > trackMaxW {
+		track = string([]rune(track)[:trackMaxW-1]) + "…"
+	}
+	trackStr := textStyle.Render(" " + track + " ")
+
+	barW := contentW - 2 - lipgloss.Width(trackStr) - lipgloss.Width(timeStr) - lipgloss.Width(volStr)
+	if barW < 5 {
+		barW = 5
+	}
+	var seekBar string
+	if np.Duration > 0 {
+		filled := int(np.Elapsed / np.Duration * float64(barW))
+		if filled > barW {
+			filled = barW
+		}
+		seekBar = accentStyle.Render(strings.Repeat("━", filled)) +
+			dimStyle.Render(strings.Repeat("─", barW-filled))
+	} else {
+		seekBar = dimStyle.Render(strings.Repeat("─", barW))
+	}
+
+	bar := icon + trackStr + seekBar + timeStr + volStr
+	return theme.T.StatusBarStyle().Width(w - 2).Render(bar)
 }
 
 func (m Model) viewStatusBar() string {
