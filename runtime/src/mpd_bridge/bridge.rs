@@ -186,6 +186,10 @@ impl MpdBridge {
     pub async fn previous(&self)      -> Result<()> { self.cmd("previous").await }
     pub async fn clear(&self)         -> Result<()> { self.cmd("clear").await }
     pub async fn shuffle(&self)       -> Result<()> { self.cmd("shuffle").await }
+    pub async fn add(&self, uri: &str) -> Result<()> { self.cmd(&format!("add {}", quote_mpd(uri))).await }
+    pub async fn remove_id(&self, id: u32) -> Result<()> { self.cmd(&format!("deleteid {id}")).await }
+    pub async fn play_id(&self, id: u32) -> Result<()> { self.cmd(&format!("playid {id}")).await }
+    pub async fn seek_id(&self, id: u32, time: f64) -> Result<()> { self.cmd(&format!("seekid {id} {time:.1}")).await }
 
     pub async fn seek(&self, secs: f64) -> Result<()> {
         self.cmd(&format!("seekcur {secs:.3}")).await

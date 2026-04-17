@@ -276,6 +276,18 @@ pub enum PlayerCmd {
     MpdPlaylistCreate { name: String, uris: Vec<String> },
     /// Remove a track from a saved playlist by position (0-based).
     MpdPlaylistRemoveTrack { name: String, pos: u32 },
+
+    // ── MPD queue manipulation ────────────────────────────────────────────
+    /// Add a URI to the MPD queue.
+    MpdAdd { uri: String },
+    /// Remove a track from the queue by its MPD song ID.
+    MpdRemove { id: u32 },
+    /// Start playback of a specific track by its MPD song ID.
+    MpdPlayId { id: u32 },
+    /// Set MPD volume (0–100).
+    MpdSetVolume { volume: u32 },
+    /// Seek to a position within a track by song ID.
+    MpdSeek { id: u32, time: f64 },
 }
 
 /// Live-update a runtime config value without restarting.

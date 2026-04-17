@@ -280,6 +280,23 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdPlaylistRemoveTrack { name, pos } => {
             if let Some(m) = mpd { if let Err(e) = m.remove_from_playlist(&name, pos).await { warn!("mpd playlist remove-track failed: {e}"); } }
         }
+
+        // ── Queue manipulation ───────────────────────────────────────────────
+        PlayerCmd::MpdAdd { uri } => {
+            if let Some(m) = mpd { if let Err(e) = m.add(&uri).await { warn!("mpd add failed: {e}"); } }
+        }
+        PlayerCmd::MpdRemove { id } => {
+            if let Some(m) = mpd { if let Err(e) = m.remove_id(id).await { warn!("mpd remove failed: {e}"); } }
+        }
+        PlayerCmd::MpdPlayId { id } => {
+            if let Some(m) = mpd { if let Err(e) = m.play_id(id).await { warn!("mpd play_id failed: {e}"); } }
+        }
+        PlayerCmd::MpdSetVolume { volume } => {
+            if let Some(m) = mpd { if let Err(e) = m.set_volume(volume).await { warn!("mpd set_volume failed: {e}"); } }
+        }
+        PlayerCmd::MpdSeek { id, time } => {
+            if let Some(m) = mpd { if let Err(e) = m.seek_id(id, time).await { warn!("mpd seek failed: {e}"); } }
+        }
     }
     Response::Ok
 }
