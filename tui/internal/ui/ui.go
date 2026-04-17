@@ -1229,6 +1229,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	default:
+		// Forward unhandled messages (e.g. seekTickMsg) to the music screen
+		// so sub-screen ticks and custom messages aren't silently dropped.
+		if m.state.ActiveTab == state.TabMusic {
+			var cmd tea.Cmd
+			m.musicScreen, cmd = m.musicScreen.Update(msg)
+			return m, cmd
+		}
 	}
 
 	return m, nil
