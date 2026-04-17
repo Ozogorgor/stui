@@ -213,7 +213,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 			// Pre-fetch songs for the first album
 			if len(m.Albums) > 0 && s.client != nil {
 				s.loadingSongs = true
-				s.client.MpdListSongs(m.ForArtist, m.Albums[0].Title, m.Albums[0].Date)
+				s.client.MpdListSongs(m.ForArtist, m.Albums[0].MpdTitle(), m.Albums[0].Date)
 			}
 		} else {
 			// Artist list arrived
@@ -422,7 +422,7 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 					s.loadingSongs = true
 					s.songs = nil
 					a := s.albums[s.albumCursor]
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
+					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
 				}
 			}
 		case LibPaneTracks:
@@ -456,7 +456,7 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 					s.loadingSongs = true
 					s.songs = nil
 					a := s.albums[s.albumCursor]
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
+					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
 				}
 			}
 		case LibPaneTracks:
@@ -488,7 +488,7 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 				s.songCursor = 0
 				s.songScroll = 0
 				a := s.albums[s.albumCursor]
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
+				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
 			}
 		}
 
@@ -930,7 +930,7 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s.songs = nil
 			s.songCursor = 0
 			s.songScroll = 0
-			s.client.MpdListSongs(artist, album.Title, album.Date)
+			s.client.MpdListSongs(artist, album.MpdTitle(), album.Date)
 		case 1: // Add album to queue — relies on having songs already loaded
 			added := 0
 			for _, song := range s.songs {
@@ -1075,7 +1075,7 @@ func (s MusicLibraryScreen) handleTagMouse(x, localY int) MusicLibraryScreen {
 				s.loadingSongs = true
 				s.songs = nil
 				a := s.albums[s.albumCursor]
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.Title, a.Date)
+				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
 			}
 		}
 	case LibPaneTracks:

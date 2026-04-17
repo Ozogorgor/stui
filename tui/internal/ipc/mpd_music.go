@@ -146,6 +146,15 @@ type MpdAlbum struct {
 	RawTitle  string `json:"raw_title,omitempty"`
 }
 
+// mpdTitle returns the raw (pre-normalized) album title for MPD queries.
+// MPD only knows the original tag value, so normalized titles won't match.
+func (a MpdAlbum) MpdTitle() string {
+	if a.RawTitle != "" {
+		return a.RawTitle
+	}
+	return a.Title
+}
+
 // MpdSong is one entry in the library track list or a saved playlist.
 type MpdSong struct {
 	Title    string  `json:"title"`
