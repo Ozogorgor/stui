@@ -1614,6 +1614,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.detail != nil && m.detail.NowPlaying != nil {
 		activePlayer = m.detail.NowPlaying
 	}
+	// MPD pause: space toggles MPD pause from any screen when MPD is playing.
+	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" && m.client != nil {
+		if action, ok := actions.FromKey(key); ok && action == actions.ActionPlayerPause {
+			m.client.MpdCmd("mpd_toggle_pause", nil)
+			return m, nil
+		}
+	}
 	if activePlayer != nil && m.client != nil {
 		if action, ok := actions.FromKey(key); ok && action.IsPlayerAction() {
 			switch action {
