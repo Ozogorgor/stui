@@ -113,12 +113,15 @@ func (s MusicQueueScreen) totalDuration() float64 {
 
 // isCurrentTrack returns true if the given track is the currently playing one.
 func (s MusicQueueScreen) isCurrentTrack(t ipc.MpdTrack) bool {
-	if s.nowSongID != 0 {
+	// Try song ID first (most reliable).
+	if s.nowSongID > 0 {
 		return int32(t.ID) == s.nowSongID
 	}
-	if s.nowSongPos >= 0 {
+	// Fall back to queue position.
+	if s.nowSongPos >= 0 && int(s.nowSongPos) < len(s.tracks) {
 		return t.Pos == uint32(s.nowSongPos)
 	}
+	// Last resort: title + artist match.
 	return t.Title == s.nowTitle && t.Artist == s.nowArtist
 }
 
@@ -688,7 +691,7 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	if s.cursor >= 0 && s.cursor < len(s.tracks) {
 		selTrack = &s.tracks[s.cursor]
 	}
-	selIsPlaying := selTrack != nil && s.isCurrentTrack(*selTrack)
+
 
 	valStr := func(v string) string {
 		if v == "" {
@@ -726,16 +729,10 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 		lines = append(lines, valStr(f.value))
 	}
 
-	// 3. Seek bar (2 rows). If the cursor is on the playing track use the
-	// live elapsed; otherwise show 0:00 against the selected track's
-	// duration with an empty bar.
-	var elapsed, duration float64
-	if selIsPlaying {
-		elapsed = s.nowElapsed
-		duration = s.nowDuration
-	} else if selTrack != nil {
-		duration = selTrack.Duration
-	}
+	// 3. Seek bar (2 rows). Always shows the playing track's progress,
+	// regardless of which track the cursor is on.
+	elapsed := s.nowElapsed
+	duration := s.nowDuration
 	barRow, timeRow := queueSeekBar(elapsed, duration, innerW)
 	lines = append(lines, accentStyle.Render(barRow))
 	lines = append(lines, dimStyle.Render(timeRow))
