@@ -1824,8 +1824,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.musicScreen, cmd = m.musicScreen.Update(msg)
 		if m.musicScreen.ActiveSubTab() != prev {
-			innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
-			m.musicScreen, _ = m.musicScreen.Update(innerMsg)
 			return m, tea.Batch(cmd, m.sessionSaveCmd())
 		}
 		return m, cmd
@@ -2471,12 +2469,6 @@ func (m *Model) providersForTab() []string {
 
 func (m *Model) switchTab(t state.Tab) {
 	m.state.ActiveTab = t
-	// Recompute music height — footer visibility depends on the active tab
-	// and sub-tab, so switching tabs can change the available height.
-	if t == state.TabMusic {
-		innerMsg := tea.WindowSizeMsg{Width: m.innerWidth(), Height: m.computeMusicHeight()}
-		m.musicScreen, _ = m.musicScreen.Update(innerMsg)
-	}
 	m.state.Cursor = 0
 	m.state.Results = nil
 	m.gridCursor = screens.GridCursor{}
@@ -2565,14 +2557,9 @@ func (m Model) hudRows() int {
 // overflowing" with a gap above it.
 func (m Model) computeMusicHeight() int {
 	const fixedRows = 7 // topbar area (5) + main-card borders (2)
-	footerRows := 6     // card MB(1) + blank(1) + statusBar(4)
-	// Only Queue suppresses the footer (it uses every row for the
-	// tracklist + visualizer panel). Library/Browse/Playlists keep the
-	// global footer visible — that's where status messages and key hints
-	// live.
-	if m.state.ActiveTab == state.TabMusic && m.musicScreen.ActiveSubTab() == screens.MusicQueue {
-		footerRows = 0
-	}
+	const footerRows = 6 // card MB(1) + blank(1) + statusBar(4)
+	// Always reserve footer space. Queue gets the extra rows via
+	// MusicScreen.View which passes a larger h when footer is hidden.
 	return max(0, m.state.Height-fixedRows-m.hudRows()-footerRows)
 }
 

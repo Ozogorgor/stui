@@ -194,12 +194,16 @@ func (s MusicScreen) View() tea.View {
 	if subH < 0 {
 		subH = 0
 	}
+	// Queue gets extra rows because its parent hides the footer (6 rows:
+	// card MarginBottom + gap + statusBar). Other sub-tabs keep the footer
+	// so they use the base height.
+	const footerBonus = 6
 	var body string
 	switch s.active {
 	case MusicBrowse:
 		body = s.browse.View(s.width, subH)
 	case MusicQueue:
-		body = s.queue.View(s.width, subH)
+		body = s.queue.View(s.width, subH+footerBonus)
 	case MusicLibrary:
 		body = s.library.View(s.width, subH)
 	case MusicPlaylists:
