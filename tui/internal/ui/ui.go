@@ -86,6 +86,13 @@ const (
 	screenDetail                   // full-screen detail overlay
 )
 
+// mpdElapsedTickMsg fires every second to keep the footer seekbar in sync.
+type mpdElapsedTickMsg struct{}
+
+func mpdElapsedTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return mpdElapsedTickMsg{} })
+}
+
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type Model struct {
@@ -841,12 +848,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── MPD audio events ──────────────────────────────────────────────────
 
+	case mpdElapsedTickMsg:
+		if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
+			m.mpdNowPlaying.Elapsed += 1.0
+			if m.mpdNowPlaying.Duration > 0 && m.mpdNowPlaying.Elapsed > m.mpdNowPlaying.Duration {
+				m.mpdNowPlaying.Elapsed = m.mpdNowPlaying.Duration
+			}
+			return m, mpdElapsedTickCmd()
+		}
+
 	case ipc.MpdStatusMsg:
 		m.musicScreen, _ = m.musicScreen.Update(msg) // keep queue highlight in sync
 		if msg.State == "stop" && (m.mpdNowPlaying == nil || m.mpdNowPlaying.State == "stop") {
 			// Already stopped — skip unnecessary alloc
 			break
 		}
+		wasPlaying := m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play"
 		if m.mpdNowPlaying == nil {
 			m.mpdNowPlaying = &components.MpdNowPlayingState{}
 		}
@@ -854,10 +871,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.State == "stop" && msg.QueueLength == 0 {
 			m.mpdNowPlaying = nil
 			m.visualizer.Stop()
-		} else if msg.State == "play" && !m.visualizer.IsRunning() &&
-			m.visualizer.Config().Backend != components.VisualizerOff {
-			if err := m.visualizer.Start(); err == nil {
-				return m, m.visualizer.TickCmd()
+		} else if msg.State == "play" {
+			var cmds []tea.Cmd
+			if !wasPlaying {
+				cmds = append(cmds, mpdElapsedTickCmd())
+			}
+			if !m.visualizer.IsRunning() && m.visualizer.Config().Backend != components.VisualizerOff {
+				if err := m.visualizer.Start(); err == nil {
+					cmds = append(cmds, m.visualizer.TickCmd())
+				}
+			}
+			if len(cmds) > 0 {
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -1526,6 +1551,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch action {
 		case actions.ActionQuit:
 			if m.client != nil {
+				// Stop MPD playback before exiting so music doesn't keep
+				// playing after stui closes.
+				if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
+					m.client.MpdCmd("stop", nil)
+				}
 				m.client.Stop()
 			}
 			return m, tea.Quit
@@ -1979,6 +2009,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "ctrl+c", "q":
 		if m.client != nil {
+			if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
+				m.client.MpdCmd("stop", nil)
+			}
 			m.client.Stop()
 		}
 		return m, tea.Quit
