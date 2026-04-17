@@ -191,6 +191,7 @@ var defaultKeyMap = map[string]AppAction{
 
 	// Player transport
 	" ":           ActionPlayerPause,
+	"space":       ActionPlayerPause,
 	"shift+right": ActionPlayerSeekFwdLong,
 	"shift+left":  ActionPlayerSeekBackLong,
 	"Q":           ActionPlayerStop,

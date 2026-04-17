@@ -305,7 +305,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 				trackID := s.tracks[s.cursor].ID
 				s.client.MpdCmd("mpd_play_id", map[string]any{"id": trackID})
 			}
-		case " ":
+		case " ", "space":
 			s.client.MpdCmd("mpd_toggle_pause", nil)
 		}
 	}
