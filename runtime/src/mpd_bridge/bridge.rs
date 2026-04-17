@@ -182,7 +182,23 @@ impl MpdBridge {
 
     pub async fn pause(&self)         -> Result<()> { self.cmd("pause 1").await }
     pub async fn resume(&self)        -> Result<()> { self.cmd("pause 0").await }
-    pub async fn toggle_pause(&self)  -> Result<()> { self.cmd("pause").await }
+    pub async fn toggle_pause(&self)  -> Result<()> {
+        let mut guard = self.conn.lock().await;
+        let conn = Self::get_or_connect(&mut guard, &self.config).await?;
+        let status = match conn.command_kv("status").await {
+            Ok(s) => s,
+            Err(e) => { *guard = None; return Err(e); }
+        };
+        let cmd = if status.get("state").map(|s| s.as_str()) == Some("play") {
+            "pause 1"
+        } else {
+            "pause 0"
+        };
+        match conn.run_command(cmd).await {
+            Ok(()) => Ok(()),
+            Err(e) => { *guard = None; Err(e) }
+        }
+    }
     pub async fn stop(&self)          -> Result<()> { self.cmd("stop").await }
     pub async fn next(&self)          -> Result<()> { self.cmd("next").await }
     pub async fn previous(&self)      -> Result<()> { self.cmd("previous").await }
