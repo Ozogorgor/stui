@@ -122,6 +122,12 @@ func detectVisualizerBackend() string {
 // Config is the full set of user preferences.
 // Always construct via Default() — never use a zero-value Config directly,
 // as many defaults are non-zero (e.g. DefaultVolume=100, PreferHTTP=true).
+// MPDConfig holds the MPD connection settings (read from stui.toml [mpd]).
+type MPDConfig struct {
+	Host string `toml:"host"`
+	Port int    `toml:"port"`
+}
+
 type Config struct {
 	Interface     InterfaceConfig     `toml:"interface"`
 	Playback      PlaybackConfig      `toml:"playback"`
@@ -133,6 +139,7 @@ type Config struct {
 	Notifications NotificationsConfig `toml:"notifications"`
 	Skipper       SkipperConfig       `toml:"skipper"`
 	Visualizer    VisualizerSettings  `toml:"visualizer"`
+	MPD           MPDConfig           `toml:"mpd"`
 }
 
 // ConfigReloadMsg is sent to the bubbletea program when config.toml or the
@@ -209,6 +216,10 @@ func Default() Config {
 			Gradient:    true,
 			PeakHold:    true,
 			InputMethod: "pulse",
+		},
+		MPD: MPDConfig{
+			Host: "127.0.0.1",
+			Port: 6600,
 		},
 	}
 }

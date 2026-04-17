@@ -288,6 +288,10 @@ pub enum PlayerCmd {
     MpdSetVolume { volume: u32 },
     /// Seek to a position within a track by song ID.
     MpdSeek { id: u32, time: f64 },
+    /// Toggle MPD play/pause.
+    MpdTogglePause,
+    /// Stop MPD playback.
+    MpdStop,
 }
 
 /// Live-update a runtime config value without restarting.

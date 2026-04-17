@@ -1554,7 +1554,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				// Stop MPD playback before exiting so music doesn't keep
 				// playing after stui closes.
 				if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
-					m.client.MpdCmd("stop", nil)
+					m.client.MpdCmd("mpd_stop", nil)
 				}
 				m.client.Stop()
 			}
@@ -2010,7 +2010,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		if m.client != nil {
 			if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
-				m.client.MpdCmd("stop", nil)
+				m.client.MpdCmd("mpd_stop", nil)
 			}
 			m.client.Stop()
 		}

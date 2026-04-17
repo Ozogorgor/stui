@@ -297,6 +297,12 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdSeek { id, time } => {
             if let Some(m) = mpd { if let Err(e) = m.seek_id(id, time).await { warn!("mpd seek failed: {e}"); } }
         }
+        PlayerCmd::MpdTogglePause => {
+            if let Some(m) = mpd { if let Err(e) = m.toggle_pause().await { warn!("mpd toggle_pause failed: {e}"); } }
+        }
+        PlayerCmd::MpdStop => {
+            if let Some(m) = mpd { if let Err(e) = m.stop().await { warn!("mpd stop failed: {e}"); } }
+        }
     }
     Response::Ok
 }

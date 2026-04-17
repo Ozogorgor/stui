@@ -3,8 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -127,6 +131,24 @@ func main() {
 			theme.T.Apply(palette)
 		}
 	}
+
+	// Catch SIGTERM/SIGHUP (WM window close, kill, etc.) and stop MPD
+	// playback before dying. Uses a raw TCP connection to MPD — faster and
+	// more reliable than routing through the IPC client during shutdown.
+	mpdAddr := fmt.Sprintf("%s:%d", cfg.MPD.Host, cfg.MPD.Port)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigCh
+		conn, err := net.DialTimeout("tcp", mpdAddr, time.Second)
+		if err == nil {
+			buf := make([]byte, 256)
+			conn.Read(buf) // consume MPD greeting
+			conn.Write([]byte("stop\n"))
+			conn.Close()
+		}
+		os.Exit(0)
+	}()
 
 	opts := ui.Options{
 		RuntimePath: *runtimePath,
