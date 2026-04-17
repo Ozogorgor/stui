@@ -109,6 +109,7 @@ type MusicLibraryScreen struct {
 	// set is showing — Enter uses the simple Add/Replace/Cancel set, and
 	// right-click uses the extended Add/Replace/Add to Playlist/Create
 	// Playlist set so the option indices are interpreted correctly.
+	initDone      bool // set after first successful data load; prevents stray startup events from opening dialogs
 	dialogOpen    bool
 	dialog        components.Dialog
 	dialogSong    ipc.MpdSong
@@ -198,6 +199,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		}
 		// Clear any prior error in this scope on a successful response.
 		s.artistError, s.albumError, s.songError = "", "", ""
+		s.initDone = true
 		if m.ForAlbum != "" {
 			// Songs for a specific album arrived
 			s.songs = m.Songs
@@ -491,6 +493,12 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		}
 
 	case "enter":
+		// Guard: don't open dialogs until the first data has loaded.
+		// Prevents stray terminal events during startup from triggering
+		// a dialog loop when the saved state lands on tracks.
+		if !s.initDone {
+			break
+		}
 		// Default action surface: every pane opens a dialog so the user
 		// sees what's actionable instead of having to memorise hotkeys.
 		s = s.openPaneDialog()
