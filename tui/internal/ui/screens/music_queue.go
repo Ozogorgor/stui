@@ -29,6 +29,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
+	"github.com/stui/stui/pkg/log"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -187,9 +188,9 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		}
 
 	case ipc.AlbumArtResultMsg:
+		log.Info("queue: AlbumArtResultMsg", "path", m.Path, "file", m.File, "err", m.Err)
 		if m.Err == nil && m.Path != "" {
 			queueImageView.SetImage(m.Path)
-			// Invalidate cache so next render picks up the new art
 			cachedArtResolvedFile = ""
 		}
 
@@ -347,7 +348,7 @@ var (
 
 func init() {
 	queueImageView = components.NewImageView(20, 10)
-	queueImageView.SetPlaceholder("♪")
+	queueImageView.SetPlaceholder("🎵  No Art")
 }
 
 // resolveAlbumArt finds cover art for a track and updates the ImageView.
@@ -369,6 +370,8 @@ func resolveAlbumArt(innerW int, trackFile string) {
 	if cachedArtResolvedFile == trackFile {
 		return
 	}
+	// Clear previous art immediately when switching tracks
+	queueImageView.SetImage("")
 	cachedArtResolvedFile = trackFile
 
 	// Try cover file in album directory
@@ -383,8 +386,10 @@ func resolveAlbumArt(innerW int, trackFile string) {
 
 	// No cover file — request embedded art extraction from runtime
 	if queueClient != nil {
+		log.Info("queue: requesting album art extraction", "file", trackFile)
 		queueClient.GetAlbumArt(trackFile)
-		// Result arrives as AlbumArtResultMsg and sets the image there
+	} else {
+		log.Warn("queue: no client for album art request")
 	}
 }
 

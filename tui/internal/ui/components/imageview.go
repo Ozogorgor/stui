@@ -164,7 +164,12 @@ func (iv *ImageView) placeholderLines() []string {
 	lines := make([]string, iv.height)
 	if iv.placeholder != "" {
 		mid := iv.height / 2
-		lines[mid] = iv.placeholder
+		// Center the placeholder horizontally
+		pad := (iv.width - len([]rune(iv.placeholder))) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		lines[mid] = strings.Repeat(" ", pad) + iv.placeholder
 	}
 	return lines
 }
