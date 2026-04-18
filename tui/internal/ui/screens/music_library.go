@@ -1180,7 +1180,11 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		cols = 4
 	}
 
-	paneW := w / cols
+	// Inner content width of borderStyle.Width(w-2):
+	// outer = w-2, minus border(2) + padding(2) = content w-6.
+	// Then subtract (cols-1) separator │ chars between panes.
+	contentW := w - 6 - (cols - 1)
+	paneW := contentW / cols
 	if paneW < 10 {
 		paneW = 10
 	}
@@ -1333,21 +1337,27 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 	innerW := paneW - 2 // 1ch padding either side
 
 	row := func(label, value string) []string {
-		labelLine := dimStyle.Render(fmt.Sprintf(" %s", label))
+		labelLine := dimStyle.Width(paneW).Render(fmt.Sprintf(" %s", label))
 		val := value
 		if val == "" {
 			val = "—"
 		}
-		valLine := textStyle.Render(" " + val)
-		// Hard-clamp to paneW after rendering (ANSI-aware).
-		if lipgloss.Width(valLine) > paneW {
-			valLine = lipgloss.NewStyle().MaxWidth(paneW).Render(valLine)
+		// Hard-truncate raw value by rune count before styling.
+		// paneW is the total column width; subtract 2 for " " prefix + margin.
+		maxRunes := paneW - 2
+		if maxRunes < 3 {
+			maxRunes = 3
 		}
+		runes := []rune(val)
+		if len(runes) > maxRunes {
+			val = string(runes[:maxRunes-1]) + "…"
+		}
+		valLine := textStyle.Width(paneW).Render(" " + val)
 		return []string{labelLine, valLine}
 	}
 
 	var lines []string
-	lines = append(lines, accentStyle.Render(" Track Info"))
+	lines = append(lines, accentStyle.Width(paneW).Render(" Track Info"))
 	lines = append(lines, "")
 	lines = append(lines, row("TITLE", song.Title)...)
 	lines = append(lines, row("ARTIST", song.Artist)...)
