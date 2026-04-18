@@ -551,7 +551,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 	if innerLForCols < 10 {
 		innerLForCols = 10
 	}
-	titleW, artistW, albumW := queueColWidths(innerLForCols)
+	titleW, artistW, albumW, fmtW := queueColWidths(innerLForCols)
 	boxH := h - vizPanelH
 	if boxH < 3 {
 		boxH = 3
@@ -566,7 +566,10 @@ func (s MusicQueueScreen) View(w, h int) string {
 
 	// ── Column headers row ────────────────────────────────────────────────
 	var colHeaderRaw string
-	if albumW > 0 {
+	if albumW > 0 && fmtW > 0 {
+		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %-*s %-*s %7s",
+			"#", titleW, "Title", artistW, "Artist", albumW, "Album", fmtW, "Fmt", "Dur")
+	} else if albumW > 0 {
 		colHeaderRaw = fmt.Sprintf("   %-3s %-*s %-*s %-*s %7s",
 			"#", titleW, "Title", artistW, "Artist", albumW, "Album", "Dur")
 	} else {
@@ -600,7 +603,12 @@ func (s MusicQueueScreen) View(w, h int) string {
 		artistStr := truncate(tr.Artist, artistW)
 
 		var line string
-		if albumW > 0 {
+		if albumW > 0 && fmtW > 0 {
+			albumStr := truncate(tr.Album, albumW)
+			ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(tr.File), "."))
+			line = fmt.Sprintf("%s%s %-*s %-*s %-*s %-*s %s",
+				prefix, posStr, titleW, titleStr, artistW, artistStr, albumW, albumStr, fmtW, ext, durStr)
+		} else if albumW > 0 {
 			albumStr := truncate(tr.Album, albumW)
 			line = fmt.Sprintf("%s%s %-*s %-*s %-*s %s",
 				prefix, posStr, titleW, titleStr, artistW, artistStr, albumW, albumStr, durStr)
@@ -1064,7 +1072,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 		if innerLForCols < 10 {
 			innerLForCols = 10
 		}
-		_, _, albumW := queueColWidths(innerLForCols)
+		_, _, albumW, _ := queueColWidths(innerLForCols)
 		rightNeeded := rightPanelContentHeight(innerR, albumW > 0)
 		boxH := rightNeeded + 2
 		if boxH > s.height-vizPanelH {
@@ -1096,7 +1104,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 		if innerLForCols < 10 {
 			innerLForCols = 10
 		}
-		_, _, albumW := queueColWidths(innerLForCols)
+		_, _, albumW, _ := queueColWidths(innerLForCols)
 		artRows := innerR / 2
 		metaRows := 6
 		if albumW > 0 {
@@ -1163,24 +1171,30 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 // given left-panel width L. albumW == 0 means the Album column is hidden.
 // Fixed overhead: 17ch (no album) or 18ch (with album). Dur column is %7s,
 // and 1 extra ch reserves the gap between Dur and the right border.
-func queueColWidths(L int) (titleW, artistW, albumW int) {
-	if L >= 120 {
+func queueColWidths(L int) (titleW, artistW, albumW, fmtW int) {
+	if L >= 140 {
+		// Wide: Title + Artist + Album + Format + Dur
+		fmtW = 5
+		R := L - 18 - fmtW - 1
+		if R < 1 { R = 1 }
+		titleW  = R * 38 / 100
+		artistW = R * 33 / 100
+		albumW  = R * 29 / 100
+		titleW += R - titleW - artistW - albumW
+	} else if L >= 120 {
+		// Medium: Title + Artist + Album + Dur (no format)
 		R := L - 18
-		if R < 1 {
-			R = 1
-		}
+		if R < 1 { R = 1 }
 		titleW  = R * 40 / 100
 		artistW = R * 35 / 100
 		albumW  = R * 25 / 100
 		titleW += R - titleW - artistW - albumW
 	} else {
+		// Narrow: Title + Artist + Dur only
 		R := L - 17
-		if R < 1 {
-			R = 1
-		}
+		if R < 1 { R = 1 }
 		titleW  = R * 55 / 100
 		artistW = R * 45 / 100
-		albumW  = 0
 		titleW += R - titleW - artistW
 	}
 	return
