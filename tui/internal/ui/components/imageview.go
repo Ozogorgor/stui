@@ -17,7 +17,6 @@ package components
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -32,19 +31,12 @@ const (
 )
 
 // DetectImageProtocol checks the terminal and returns the best protocol.
+// Currently always returns Symbols because Kitty graphics protocol
+// doesn't survive Bubbletea's diff-based alt-screen redraws.
+// The Kitty code path is kept for future use when a compatible
+// rendering approach is found.
 func DetectImageProtocol() ImageProtocol {
-	termProg := os.Getenv("TERM_PROGRAM")
-	term := os.Getenv("TERM")
-	switch {
-	case term == "xterm-kitty" || termProg == "kitty":
-		return ImageProtocolKitty
-	case termProg == "ghostty":
-		return ImageProtocolKitty
-	case termProg == "WezTerm":
-		return ImageProtocolKitty
-	default:
-		return ImageProtocolSymbols
-	}
+	return ImageProtocolSymbols
 }
 
 // ImageView renders an image file into terminal-compatible output.
