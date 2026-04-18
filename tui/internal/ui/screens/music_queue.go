@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -331,66 +330,35 @@ func queueArtPlaceholder(innerW int) string {
 	return boxStyle.Render(dim.Render("♪")) + "\n"
 }
 
-// Package-level album art cache (persists across value-receiver calls).
-var (
-	cachedArtFile     string
-	cachedArtRendered string
-	cachedArtWidth    int
-)
+// Package-level ImageView + cover art resolver.
+var queueImageView *components.ImageView
 
-// queueAlbumArt returns rendered album art for the track's directory,
-// or falls back to the placeholder. Caches the result keyed by file path.
-func queueAlbumArt(innerW int, trackFile string) string {
+func init() {
+	queueImageView = components.NewImageView(20, 10)
+	queueImageView.SetPlaceholder("♪")
+}
+
+// resolveAlbumArt finds cover art for a track and updates the ImageView.
+func resolveAlbumArt(innerW int, trackFile string) {
+	artH := innerW / 2
+	if artH < 3 {
+		artH = 3
+	}
+	queueImageView.SetSize(innerW, artH)
+
 	if trackFile == "" {
-		return queueArtPlaceholder(innerW)
+		queueImageView.SetImage("")
+		return
 	}
 
-	// Check cache
-	if cachedArtFile == trackFile && cachedArtWidth == innerW && cachedArtRendered != "" {
-		return cachedArtRendered
-	}
-
-	// Find cover art in the track's directory
 	musicDir := findMusicDir()
 	if musicDir == "" {
-		return queueArtPlaceholder(innerW)
+		queueImageView.SetImage("")
+		return
 	}
 	dir := filepath.Dir(filepath.Join(musicDir, trackFile))
 	coverPath := findCoverArt(dir)
-	if coverPath == "" {
-		return queueArtPlaceholder(innerW)
-	}
-
-	// Render via chafa — use Kitty protocol for supported terminals,
-	// fall back to Unicode symbols for everything else.
-	h := innerW / 2
-	if h < 3 {
-		h = 3
-	}
-	format := chafaFormat()
-	out, err := exec.Command("chafa",
-		"--format", format,
-		"--size", fmt.Sprintf("%dx%d", innerW, h),
-		"--animate", "off",
-		coverPath,
-	).Output()
-	if err != nil || len(out) == 0 {
-		return queueArtPlaceholder(innerW)
-	}
-
-	cachedArtFile = trackFile
-	cachedArtWidth = innerW
-	cachedArtRendered = strings.TrimRight(string(out), "\n") + "\n"
-	return cachedArtRendered
-}
-
-// chafaFormat returns the chafa output format to use.
-// Kitty/sixel protocols don't survive Bubbletea's frame redraws (the
-// image is sent once but cleared on the next text repaint). Symbols
-// (Unicode half-blocks with 24-bit color) are text-based and render
-// reliably inside Bubbletea's diff-based rendering model.
-func chafaFormat() string {
-	return "symbols"
+	queueImageView.SetImage(coverPath)
 }
 
 // findMusicDir reads mpd.conf to get the music directory.
@@ -659,18 +627,10 @@ func (s MusicQueueScreen) View(w, h int) string {
 		trackFile = selTrack.File
 	}
 
-	// Art area: height = innerR/2 rows (keeps square aspect)
-	artH := innerR / 2
-	if artH < 3 {
-		artH = 3
-	}
-	artStr := queueAlbumArt(innerR, trackFile)
-	artLines := strings.Split(strings.TrimRight(artStr, "\n"), "\n")
-	// Ensure art fills exactly artH lines
-	for len(artLines) < artH {
-		artLines = append(artLines, "")
-	}
-	artLines = artLines[:artH]
+	// Art area via reusable ImageView component
+	resolveAlbumArt(innerR, trackFile)
+	artLines := queueImageView.Lines()
+	artH := len(artLines)
 
 	// Metadata panel: fills remaining height
 	metaH := innerBoxH - artH
