@@ -384,12 +384,21 @@ func queueAlbumArt(innerW int, trackFile string) string {
 	return cachedArtRendered
 }
 
-// chafaFormat returns the chafa output format to use.
-// Kitty/sixel protocols produce single escape sequences that can't be
-// split into lines for the bordered right panel, so we always use
-// symbols (Unicode half-blocks) which produce regular text rows.
+// chafaFormat returns the best chafa output format for the current terminal.
+// Art is rendered outside the bordered panel so Kitty protocol works.
 func chafaFormat() string {
-	return "symbols"
+	termProg := os.Getenv("TERM_PROGRAM")
+	term := os.Getenv("TERM")
+	switch {
+	case term == "xterm-kitty" || termProg == "kitty":
+		return "kitty"
+	case termProg == "ghostty":
+		return "kitty"
+	case termProg == "WezTerm":
+		return "kitty"
+	default:
+		return "symbols"
+	}
 }
 
 // findMusicDir reads mpd.conf to get the music directory.
@@ -646,17 +655,51 @@ func (s MusicQueueScreen) View(w, h int) string {
 	}
 	leftLines = append(leftLines, botLeft)
 
-	// ── Build right bordered box ──────────────────────────────────────────
-	rightContent := s.buildRightPanel(innerBoxH, albumW > 0, innerR)
-	for len(rightContent) < innerBoxH {
+	// ── Build right side: art block + bordered metadata panel ────────────
+	// Art is rendered separately (supports Kitty protocol for true images).
+	// Metadata panel has borders and contains title/artist/seekbar/volume.
+	var selTrack *ipc.MpdTrack
+	if s.cursor >= 0 && s.cursor < len(s.tracks) {
+		selTrack = &s.tracks[s.cursor]
+	}
+	var trackFile string
+	if selTrack != nil {
+		trackFile = selTrack.File
+	}
+
+	// Art area: height = innerR/2 rows (keeps square aspect)
+	artH := innerR / 2
+	if artH < 3 {
+		artH = 3
+	}
+	artStr := queueAlbumArt(innerR, trackFile)
+	artLines := strings.Split(strings.TrimRight(artStr, "\n"), "\n")
+	// Ensure art fills exactly artH lines
+	for len(artLines) < artH {
+		artLines = append(artLines, "")
+	}
+	artLines = artLines[:artH]
+
+	// Metadata panel: fills remaining height
+	metaH := innerBoxH - artH
+	if metaH < 4 {
+		metaH = 4
+	}
+	rightContent := s.buildRightPanel(metaH, albumW > 0, innerR)
+	for len(rightContent) < metaH {
 		rightContent = append(rightContent, "")
 	}
-	rightContent = rightContent[:innerBoxH]
+	rightContent = rightContent[:metaH]
 
 	topRight := dimStyle.Render("╭" + strings.Repeat("─", innerR) + "╮")
-	botRight  := dimStyle.Render("╰" + strings.Repeat("─", innerR) + "╯")
+	botRight := dimStyle.Render("╰" + strings.Repeat("─", innerR) + "╯")
 
 	var rightLines []string
+	// Art block (no borders — raw image or symbols)
+	for _, al := range artLines {
+		rightLines = append(rightLines, padRightANSI(al, innerR+2)) // +2 to match bordered width
+	}
+	// Bordered metadata panel
 	rightLines = append(rightLines, topRight)
 	for _, rl := range rightContent {
 		rightLines = append(rightLines, dimStyle.Render("│")+padRightANSI(rl, innerR)+dimStyle.Render("│"))
@@ -791,15 +834,12 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
 
-	// The right panel follows the CURSOR track so users can preview metadata
-	// and duration while browsing. If the cursor is on the currently playing
-	// track, the seek bar shows real elapsed/duration; otherwise it shows
-	// 0:00 / track-duration with an empty progress channel.
+	// Art is now rendered separately in the View (supports Kitty protocol).
+	// This method only builds metadata + seekbar + volume.
 	var selTrack *ipc.MpdTrack
 	if s.cursor >= 0 && s.cursor < len(s.tracks) {
 		selTrack = &s.tracks[s.cursor]
 	}
-
 
 	valStr := func(v string) string {
 		if v == "" {
@@ -810,16 +850,7 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 
 	var lines []string
 
-	// 1. Album art (or placeholder if no cover found)
-	var trackFile string
-	if selTrack != nil {
-		trackFile = selTrack.File
-	}
-	artStr := queueAlbumArt(innerW, trackFile)
-	artLines := strings.Split(strings.TrimRight(artStr, "\n"), "\n")
-	lines = append(lines, artLines...)
-
-	// 2. Metadata (label+value rows), pulled from the selected track.
+	// 1. Metadata (label+value rows), pulled from the selected track.
 	type metaField struct{ label, value string }
 	var fields []metaField
 	if selTrack != nil {
@@ -861,19 +892,9 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	if availH < 0 {
 		availH = 0
 	}
+	// Trim from the top (metadata labels) to preserve seekbar/volume at bottom.
 	if len(lines) > availH {
-		excess := len(lines) - availH
-		// artLines occupy the first len(artLines) rows; trim those first.
-		trimArt := excess
-		if trimArt > len(artLines) {
-			trimArt = len(artLines)
-		}
-		lines = lines[trimArt:]
-		// If still too tall after removing all art, trim from the top
-		// (metadata labels) rather than losing seekbar/volume.
-		if len(lines) > availH {
-			lines = lines[len(lines)-availH:]
-		}
+		lines = lines[len(lines)-availH:]
 	}
 	return lines
 }
