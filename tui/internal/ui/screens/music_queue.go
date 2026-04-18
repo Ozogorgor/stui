@@ -19,6 +19,9 @@ package screens
 import (
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -317,8 +320,6 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 }
 
 // queueArtPlaceholder returns an art placeholder box that fills innerW columns.
-// Width and Height are outer dimensions (border-inclusive). Height = innerW/2
-// keeps a roughly square appearance given terminal character aspect ratio.
 func queueArtPlaceholder(innerW int) string {
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	boxStyle := lipgloss.NewStyle().
@@ -328,6 +329,103 @@ func queueArtPlaceholder(innerW int) string {
 		Height(innerW / 2).
 		Align(lipgloss.Center, lipgloss.Center)
 	return boxStyle.Render(dim.Render("♪")) + "\n"
+}
+
+// Package-level album art cache (persists across value-receiver calls).
+var (
+	cachedArtFile     string
+	cachedArtRendered string
+	cachedArtWidth    int
+)
+
+// queueAlbumArt returns rendered album art for the track's directory,
+// or falls back to the placeholder. Caches the result keyed by file path.
+func queueAlbumArt(innerW int, trackFile string) string {
+	if trackFile == "" {
+		return queueArtPlaceholder(innerW)
+	}
+
+	// Check cache
+	if cachedArtFile == trackFile && cachedArtWidth == innerW && cachedArtRendered != "" {
+		return cachedArtRendered
+	}
+
+	// Find cover art in the track's directory
+	musicDir := findMusicDir()
+	if musicDir == "" {
+		return queueArtPlaceholder(innerW)
+	}
+	dir := filepath.Dir(filepath.Join(musicDir, trackFile))
+	coverPath := findCoverArt(dir)
+	if coverPath == "" {
+		return queueArtPlaceholder(innerW)
+	}
+
+	// Render via chafa
+	h := innerW / 2
+	if h < 3 {
+		h = 3
+	}
+	out, err := exec.Command("chafa",
+		"--format", "symbols",
+		"--size", fmt.Sprintf("%dx%d", innerW, h),
+		"--animate", "off",
+		coverPath,
+	).Output()
+	if err != nil || len(out) == 0 {
+		return queueArtPlaceholder(innerW)
+	}
+
+	cachedArtFile = trackFile
+	cachedArtWidth = innerW
+	cachedArtRendered = strings.TrimRight(string(out), "\n") + "\n"
+	return cachedArtRendered
+}
+
+// findMusicDir reads mpd.conf to get the music directory.
+func findMusicDir() string {
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, ".config", "mpd", "mpd.conf"),
+		filepath.Join(home, ".mpd", "mpd.conf"),
+		"/etc/mpd.conf",
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, "music_directory") {
+				continue
+			}
+			rest := strings.TrimSpace(line[len("music_directory"):])
+			rest = strings.Trim(rest, "\"")
+			if strings.HasPrefix(rest, "~") {
+				rest = home + rest[1:]
+			}
+			return rest
+		}
+	}
+	return ""
+}
+
+// findCoverArt looks for common cover art filenames in a directory.
+func findCoverArt(dir string) string {
+	names := []string{
+		"cover.jpg", "cover.png", "Cover.jpg", "Cover.png",
+		"folder.jpg", "folder.png", "Folder.jpg", "Folder.png",
+		"front.jpg", "front.png", "Front.jpg", "Front.png",
+		"album.jpg", "album.png", "Album.jpg", "Album.png",
+	}
+	for _, name := range names {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // queueSeekBar returns (barRow, timeRow) for the progress display.
@@ -702,8 +800,13 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 
 	var lines []string
 
-	// 1. Art placeholder (fills innerW, height = innerW/2 rows)
-	artLines := strings.Split(strings.TrimRight(queueArtPlaceholder(innerW), "\n"), "\n")
+	// 1. Album art (or placeholder if no cover found)
+	var trackFile string
+	if selTrack != nil {
+		trackFile = selTrack.File
+	}
+	artStr := queueAlbumArt(innerW, trackFile)
+	artLines := strings.Split(strings.TrimRight(artStr, "\n"), "\n")
 	lines = append(lines, artLines...)
 
 	// 2. Metadata (label+value rows), pulled from the selected track.
