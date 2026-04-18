@@ -298,6 +298,12 @@ pub enum PlayerCmd {
     MpdStop,
     /// Trigger MPD database rescan.
     MpdUpdate,
+    /// Toggle MPD repeat mode.
+    MpdToggleRepeat,
+    /// Toggle MPD single mode (single-track repeat).
+    MpdToggleSingle,
+    /// Toggle MPD random/shuffle mode.
+    MpdToggleRandom,
 }
 
 /// Live-update a runtime config value without restarting.

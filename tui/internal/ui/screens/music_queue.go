@@ -59,6 +59,9 @@ type MusicQueueScreen struct {
 
 	// Now-playing state from MpdStatusMsg
 	nowState    string  // "play" | "pause" | "stop"
+	nowRepeat   bool
+	nowSingle   bool
+	nowRandom   bool
 	nowElapsed  float64
 	nowDuration float64
 	nowVolume   uint32
@@ -213,6 +216,9 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		s.nowVolume = m.Volume
 		wasPlaying := s.nowState == "play"
 		s.nowState = m.State
+		s.nowRepeat = m.Repeat
+		s.nowSingle = m.Single
+		s.nowRandom = m.Random
 		// External volume change clears local mute state
 		if s.nowMuted && m.Volume > 0 {
 			s.nowMuted = false
@@ -322,6 +328,12 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			}
 		case " ", "space":
 			s.client.MpdCmd("mpd_toggle_pause", nil)
+		case "r":
+			s.client.MpdCmd("mpd_toggle_repeat", nil)
+		case "s":
+			s.client.MpdCmd("mpd_toggle_single", nil)
+		case "z":
+			s.client.MpdCmd("mpd_toggle_random", nil)
 		}
 		// Pre-resolve album art when cursor moves to avoid View-triggered IPC
 		if s.cursor != prevCursor && s.cursor >= 0 && s.cursor < len(s.tracks) {
@@ -887,6 +899,21 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	volBar, volHint := queueVolumeBar(s.nowVolume, s.nowMuted)
 	lines = append(lines, accentStyle.Render(volBar))
 	lines = append(lines, dimStyle.Render(volHint))
+
+	// 5. Playback mode icons (1 row) — dimmed when off, accent when on
+	repeatIcon := dimStyle.Render("🔁")
+	if s.nowRepeat {
+		repeatIcon = accentStyle.Render("🔁")
+	}
+	singleIcon := dimStyle.Render("🔂")
+	if s.nowSingle {
+		singleIcon = accentStyle.Render("🔂")
+	}
+	shuffleIcon := dimStyle.Render("🔀")
+	if s.nowRandom {
+		shuffleIcon = accentStyle.Render("🔀")
+	}
+	lines = append(lines, repeatIcon+" "+singleIcon+" "+shuffleIcon)
 
 	// Truncate to availH. Seekbar and volume are essential — trim the art
 	// placeholder from the top instead of cutting essential controls from

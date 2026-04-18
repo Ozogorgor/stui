@@ -95,6 +95,8 @@ struct MpdStatusWire<'a> {
     crossfade:     u32,
     consume:       bool,
     random:        bool,
+    repeat:        bool,
+    single:        bool,
     queue_length:  u32,
     song_pos:      i32,
     song_id:       i32,
@@ -183,20 +185,19 @@ impl MpdBridge {
     pub async fn pause(&self)         -> Result<()> { self.cmd("pause 1").await }
     pub async fn resume(&self)        -> Result<()> { self.cmd("pause 0").await }
     pub async fn toggle_pause(&self)  -> Result<()> {
+        info!("mpd: toggle_pause called");
         let mut guard = self.conn.lock().await;
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let status = match conn.command_kv("status").await {
             Ok(s) => s,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => { warn!("mpd: toggle_pause status failed: {e}"); *guard = None; return Err(e); }
         };
-        let cmd = if status.get("state").map(|s| s.as_str()) == Some("play") {
-            "pause 1"
-        } else {
-            "pause 0"
-        };
+        let state = status.get("state").map(|s| s.as_str()).unwrap_or("unknown");
+        let cmd = if state == "play" { "pause 1" } else { "pause 0" };
+        info!(state, cmd, "mpd: toggle_pause sending");
         match conn.run_command(cmd).await {
-            Ok(()) => Ok(()),
-            Err(e) => { *guard = None; Err(e) }
+            Ok(()) => { info!("mpd: toggle_pause success"); Ok(()) },
+            Err(e) => { warn!("mpd: toggle_pause cmd failed: {e}"); *guard = None; Err(e) }
         }
     }
     pub async fn stop(&self)          -> Result<()> { self.cmd("stop").await }
@@ -207,6 +208,21 @@ impl MpdBridge {
     pub async fn add(&self, uri: &str) -> Result<()> { self.cmd(&format!("add {}", quote_mpd(uri))).await }
     pub async fn remove_id(&self, id: u32) -> Result<()> { self.cmd(&format!("deleteid {id}")).await }
     pub async fn play_id(&self, id: u32) -> Result<()> { self.cmd(&format!("playid {id}")).await }
+    pub async fn toggle_repeat(&self) -> Result<()> {
+        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let on = status.get("repeat").map(|v| v == "1").unwrap_or(false);
+        self.cmd(&format!("repeat {}", if on { 0 } else { 1 })).await
+    }
+    pub async fn toggle_single(&self) -> Result<()> {
+        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let on = status.get("single").map(|v| v == "1").unwrap_or(false);
+        self.cmd(&format!("single {}", if on { 0 } else { 1 })).await
+    }
+    pub async fn toggle_random(&self) -> Result<()> {
+        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let on = status.get("random").map(|v| v == "1").unwrap_or(false);
+        self.cmd(&format!("random {}", if on { 0 } else { 1 })).await
+    }
     pub async fn seek_id(&self, id: u32, time: f64) -> Result<()> { self.cmd(&format!("seekid {id} {time:.1}")).await }
 
     pub async fn seek(&self, secs: f64) -> Result<()> {
@@ -864,6 +880,8 @@ async fn run_idle_loop(
         let song_id      = status.get("songid").and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
         let consume      = status.get("consume").map(|v| v == "1").unwrap_or(false);
         let random       = status.get("random").map(|v| v == "1").unwrap_or(false);
+        let repeat       = status.get("repeat").map(|v| v == "1").unwrap_or(false);
+        let single       = status.get("single").map(|v| v == "1").unwrap_or(false);
         let queue_length = status.get("playlistlength").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
 
         let song_title  = current.get("Title").map(String::as_str);
@@ -900,6 +918,8 @@ async fn run_idle_loop(
             crossfade,
             consume,
             random,
+            repeat,
+            single,
             queue_length,
             song_pos,
             song_id,

@@ -306,6 +306,15 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
         PlayerCmd::MpdUpdate => {
             if let Some(m) = mpd { if let Err(e) = m.update_library(None).await { warn!("mpd update failed: {e}"); } }
         }
+        PlayerCmd::MpdToggleRepeat => {
+            if let Some(m) = mpd { if let Err(e) = m.toggle_repeat().await { warn!("mpd toggle_repeat failed: {e}"); } }
+        }
+        PlayerCmd::MpdToggleSingle => {
+            if let Some(m) = mpd { if let Err(e) = m.toggle_single().await { warn!("mpd toggle_single failed: {e}"); } }
+        }
+        PlayerCmd::MpdToggleRandom => {
+            if let Some(m) = mpd { if let Err(e) = m.toggle_random().await { warn!("mpd toggle_random failed: {e}"); } }
+        }
     }
     Response::Ok
 }

@@ -385,6 +385,8 @@ type MpdStatusMsg struct {
 	Crossfade   uint32  `json:"crossfade"`
 	Consume     bool    `json:"consume"`
 	Random      bool    `json:"random"`
+	Repeat      bool    `json:"repeat"`
+	Single      bool    `json:"single"`
 	QueueLength uint32  `json:"queue_length"`
 	SongPos     int32   `json:"song_pos"`
 	SongID      int32   `json:"song_id"`
