@@ -391,6 +391,48 @@ func (c *Client) MpdGetPlaylistTracks(name string) {
 	}()
 }
 
+// ── Album art ────────────────────────────────────────────────────────────────
+
+// AlbumArtResultMsg is dispatched when GetAlbumArt completes.
+type AlbumArtResultMsg struct {
+	Path string // absolute path to cached image, empty if none
+	File string // the track file this was requested for
+	Err  error
+}
+
+// GetAlbumArt extracts embedded album art from an audio file.
+// The runtime caches the extracted image; the path is returned.
+func (c *Client) GetAlbumArt(file string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "get_album_art",
+			"id":   id,
+			"file": file,
+		})
+		raw := receiveWithTimeout(ch)
+		var msg AlbumArtResultMsg
+		msg.File = file
+		if raw.Err != nil {
+			msg.Err = raw.Err
+		} else if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+		} else {
+			var payload struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+				msg.Err = err
+			} else {
+				msg.Path = payload.Path
+			}
+		}
+		c.send(msg)
+	}()
+}
+
 // ── Tag normalization ────────────────────────────────────────────────────────
 
 // TagWriteScope defines what scope to normalize.

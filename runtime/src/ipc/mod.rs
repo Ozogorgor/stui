@@ -46,6 +46,8 @@ pub const CURRENT_VERSION: u32 = 1;
 pub use v1::{
     ClearMediaCacheRequest,
     DetailEntry,
+    GetAlbumArtRequest,
+    GetAlbumArtResponse,
 
     DspStatusResponse,
     ErrorCode,

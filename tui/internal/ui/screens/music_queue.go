@@ -86,6 +86,7 @@ func NewMusicQueueScreen(client *ipc.Client) MusicQueueScreen {
 	if client != nil {
 		client.MpdGetQueue()
 	}
+	queueClient = client
 	return s
 }
 
@@ -183,6 +184,13 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		return s, func() tea.Msg {
 			s.client.MpdGetQueue()
 			return nil
+		}
+
+	case ipc.AlbumArtResultMsg:
+		if m.Err == nil && m.Path != "" {
+			queueImageView.SetImage(m.Path)
+			// Invalidate cache so next render picks up the new art
+			cachedArtResolvedFile = ""
 		}
 
 	case seekTickMsg:
@@ -331,7 +339,11 @@ func queueArtPlaceholder(innerW int) string {
 }
 
 // Package-level ImageView + cover art resolver.
-var queueImageView *components.ImageView
+var (
+	queueImageView       *components.ImageView
+	cachedArtResolvedFile string // tracks which file we've already resolved art for
+	queueClient          *ipc.Client // set when the screen gets a client
+)
 
 func init() {
 	queueImageView = components.NewImageView(20, 10)
@@ -339,6 +351,7 @@ func init() {
 }
 
 // resolveAlbumArt finds cover art for a track and updates the ImageView.
+// Tries cover files first, falls back to lofty extraction via IPC.
 func resolveAlbumArt(innerW int, trackFile string) {
 	artH := innerW / 2
 	if artH < 3 {
@@ -348,17 +361,31 @@ func resolveAlbumArt(innerW int, trackFile string) {
 
 	if trackFile == "" {
 		queueImageView.SetImage("")
+		cachedArtResolvedFile = ""
 		return
 	}
 
-	musicDir := findMusicDir()
-	if musicDir == "" {
-		queueImageView.SetImage("")
+	// Already resolved for this track
+	if cachedArtResolvedFile == trackFile {
 		return
 	}
-	dir := filepath.Dir(filepath.Join(musicDir, trackFile))
-	coverPath := findCoverArt(dir)
-	queueImageView.SetImage(coverPath)
+	cachedArtResolvedFile = trackFile
+
+	// Try cover file in album directory
+	musicDir := findMusicDir()
+	if musicDir != "" {
+		dir := filepath.Dir(filepath.Join(musicDir, trackFile))
+		if coverPath := findCoverArt(dir); coverPath != "" {
+			queueImageView.SetImage(coverPath)
+			return
+		}
+	}
+
+	// No cover file — request embedded art extraction from runtime
+	if queueClient != nil {
+		queueClient.GetAlbumArt(trackFile)
+		// Result arrives as AlbumArtResultMsg and sets the image there
+	}
 }
 
 // findMusicDir reads mpd.conf to get the music directory.

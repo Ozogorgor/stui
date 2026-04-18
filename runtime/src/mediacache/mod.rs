@@ -3,6 +3,7 @@
 //! fails to start.
 
 mod store;
+pub mod album_art;
 pub mod normalize;
 pub mod tag_writer;
 pub mod tag_write_job;

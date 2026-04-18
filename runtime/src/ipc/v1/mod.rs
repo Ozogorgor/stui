@@ -143,6 +143,10 @@ pub enum Request {
     /// Delete a named DSP profile.
     DeleteDspProfile(DeleteDspProfileRequest),
 
+    // ── Album art ─────────────────────────────────────────────────────────
+    /// Extract embedded album art from an audio file.
+    GetAlbumArt(GetAlbumArtRequest),
+
     // ── Tag normalization ────────────────────────────────────────────────────
     /// Mark a raw tag value as an exception (protected from normalization).
     MarkTagException(MarkTagExceptionRequest),
@@ -514,6 +518,7 @@ pub enum Response {
     },
 
     // ── Tag normalization responses ──────────────────────────────────────────
+    GetAlbumArt(GetAlbumArtResponse),
     MarkTagException(MarkTagExceptionResponse),
     ActionATagsPreview(ActionATagsPreviewResponse),
     ActionATagsApply(ActionATagsApplyResponse),
@@ -801,6 +806,20 @@ pub struct MpdGetPlaylistResponse {
 }
 
 // ── Tag normalization — requests ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAlbumArtRequest {
+    pub id: String,
+    /// Relative path to the audio file within the MPD music directory.
+    pub file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAlbumArtResponse {
+    pub id: String,
+    /// Absolute path to the cached image file, or empty if no art found.
+    pub path: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkTagExceptionRequest {

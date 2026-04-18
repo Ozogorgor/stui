@@ -1146,6 +1146,20 @@ async fn handle_line(
         }
 
         // ── Tag normalization ────────────────────────────────────────────────
+        Request::GetAlbumArt(r) => {
+            let music_dir = config.snapshot().await.mpd.music_dir.clone();
+            let path = match music_dir {
+                Some(dir) => {
+                    let audio_path = dir.join(&r.file);
+                    mediacache::album_art::extract(&audio_path)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                }
+                None => String::new(),
+            };
+            Response::GetAlbumArt(ipc::GetAlbumArtResponse { id: r.id, path })
+        }
+
         Request::MarkTagException(r) => {
             use mediacache::normalize::{self as norm, exceptions::ExceptionField};
             let field = match ExceptionField::from_str(&r.field) {
