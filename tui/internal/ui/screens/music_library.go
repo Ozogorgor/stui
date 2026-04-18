@@ -1338,16 +1338,11 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 		if val == "" {
 			val = "—"
 		}
-		// Truncate by visible rune width, not byte count.
-		runes := []rune(val)
-		maxVal := innerW - 2 // 1 leading space + 1 safety margin
-		if maxVal < 1 {
-			maxVal = 1
-		}
-		if len(runes) > maxVal {
-			val = string(runes[:maxVal-1]) + "…"
-		}
 		valLine := textStyle.Render(" " + val)
+		// Hard-clamp to paneW after rendering (ANSI-aware).
+		if lipgloss.Width(valLine) > paneW {
+			valLine = lipgloss.NewStyle().MaxWidth(paneW).Render(valLine)
+		}
 		return []string{labelLine, valLine}
 	}
 
@@ -1373,10 +1368,13 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 	for len(lines) < listH {
 		lines = append(lines, "")
 	}
-	// Ensure each line is paneW visible chars (so `│` separators line up).
+	// Ensure each line is exactly paneW visible chars (so `│` separators line up).
 	for i, ln := range lines {
-		if vis := lipgloss.Width(ln); vis < paneW {
+		vis := lipgloss.Width(ln)
+		if vis < paneW {
 			lines[i] = ln + strings.Repeat(" ", paneW-vis)
+		} else if vis > paneW {
+			lines[i] = lipgloss.NewStyle().MaxWidth(paneW).Render(ln)
 		}
 	}
 	return lines
