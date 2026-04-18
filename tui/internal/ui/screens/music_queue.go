@@ -361,13 +361,15 @@ func queueAlbumArt(innerW int, trackFile string) string {
 		return queueArtPlaceholder(innerW)
 	}
 
-	// Render via chafa
+	// Render via chafa — use Kitty protocol for supported terminals,
+	// fall back to Unicode symbols for everything else.
 	h := innerW / 2
 	if h < 3 {
 		h = 3
 	}
+	format := chafaFormat()
 	out, err := exec.Command("chafa",
-		"--format", "symbols",
+		"--format", format,
 		"--size", fmt.Sprintf("%dx%d", innerW, h),
 		"--animate", "off",
 		coverPath,
@@ -380,6 +382,24 @@ func queueAlbumArt(innerW int, trackFile string) string {
 	cachedArtWidth = innerW
 	cachedArtRendered = strings.TrimRight(string(out), "\n") + "\n"
 	return cachedArtRendered
+}
+
+// chafaFormat returns the best chafa output format for the current terminal.
+// Kitty graphics protocol is preferred (true image rendering); Unicode
+// symbols are the fallback for terminals without image support.
+func chafaFormat() string {
+	term := os.Getenv("TERM")
+	termProg := os.Getenv("TERM_PROGRAM")
+	switch {
+	case term == "xterm-kitty" || termProg == "kitty":
+		return "kitty"
+	case termProg == "ghostty":
+		return "kitty"
+	case termProg == "WezTerm":
+		return "kitty"
+	default:
+		return "symbols"
+	}
 }
 
 // findMusicDir reads mpd.conf to get the music directory.
