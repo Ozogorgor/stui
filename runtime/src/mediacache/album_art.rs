@@ -29,9 +29,19 @@ pub fn extract(audio_path: &Path) -> Option<PathBuf> {
     }
 
     // Extract via lofty
-    let tagged = Probe::open(audio_path).ok()?.read().ok()?;
-    let tag = tagged.primary_tag().or(tagged.first_tag())?;
+    let tagged = match Probe::open(audio_path) {
+        Ok(p) => match p.read() {
+            Ok(t) => t,
+            Err(e) => { tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty read failed"); return None; }
+        },
+        Err(e) => { tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty open failed"); return None; }
+    };
+    let tag = match tagged.primary_tag().or(tagged.first_tag()) {
+        Some(t) => t,
+        None => { tracing::warn!(path = %audio_path.display(), "album_art: no tags found"); return None; }
+    };
     let pictures = tag.pictures();
+    tracing::info!(path = %audio_path.display(), count = pictures.len(), "album_art: pictures found");
     if pictures.is_empty() {
         return None;
     }

@@ -191,7 +191,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		log.Info("queue: AlbumArtResultMsg", "path", m.Path, "file", m.File, "err", m.Err)
 		if m.Err == nil && m.Path != "" {
 			queueImageView.SetImage(m.Path)
-			cachedArtResolvedFile = ""
+			// Keep cachedArtResolvedFile as-is so we don't re-request
 		}
 
 	case seekTickMsg:
@@ -223,6 +223,7 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		prevCursor := s.cursor
 		switch m.String() {
 		case "j", "down":
 			if s.cursor < len(s.tracks)-1 {
@@ -321,6 +322,10 @@ func (s MusicQueueScreen) Update(msg tea.Msg) (MusicQueueScreen, tea.Cmd) {
 			}
 		case " ", "space":
 			s.client.MpdCmd("mpd_toggle_pause", nil)
+		}
+		// Pre-resolve album art when cursor moves to avoid View-triggered IPC
+		if s.cursor != prevCursor && s.cursor >= 0 && s.cursor < len(s.tracks) {
+			resolveAlbumArt(22, s.tracks[s.cursor].File) // 22 = innerR default
 		}
 	}
 
