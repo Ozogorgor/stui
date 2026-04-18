@@ -627,13 +627,15 @@ func (s MusicQueueScreen) View(w, h int) string {
 		trackFile = selTrack.File
 	}
 
-	// Art area via reusable ImageView component
+	// Art area via reusable ImageView component (bordered)
 	resolveAlbumArt(innerR, trackFile)
 	artLines := queueImageView.Lines()
 	artH := len(artLines)
+	// Art box = artH content + 2 border rows
+	artBoxH := artH + 2
 
 	// Metadata panel: fills remaining height
-	metaH := innerBoxH - artH
+	metaH := innerBoxH - artBoxH - 2 // -2 for metadata border top+bottom
 	if metaH < 4 {
 		metaH = 4
 	}
@@ -645,16 +647,19 @@ func (s MusicQueueScreen) View(w, h int) string {
 
 	topRight := dimStyle.Render("╭" + strings.Repeat("─", innerR) + "╮")
 	botRight := dimStyle.Render("╰" + strings.Repeat("─", innerR) + "╯")
+	borderV := dimStyle.Render("│")
 
 	var rightLines []string
-	// Art block (no borders — raw image or symbols)
+	// Art bordered box
+	rightLines = append(rightLines, topRight)
 	for _, al := range artLines {
-		rightLines = append(rightLines, padRightANSI(al, innerR+2)) // +2 to match bordered width
+		rightLines = append(rightLines, borderV+padRightANSI(al, innerR)+borderV)
 	}
-	// Bordered metadata panel
+	rightLines = append(rightLines, botRight)
+	// Metadata bordered box
 	rightLines = append(rightLines, topRight)
 	for _, rl := range rightContent {
-		rightLines = append(rightLines, dimStyle.Render("│")+padRightANSI(rl, innerR)+dimStyle.Render("│"))
+		rightLines = append(rightLines, borderV+padRightANSI(rl, innerR)+borderV)
 	}
 	rightLines = append(rightLines, botRight)
 
