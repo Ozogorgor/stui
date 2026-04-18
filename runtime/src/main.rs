@@ -1147,13 +1147,18 @@ async fn handle_line(
 
         // ── Tag normalization ────────────────────────────────────────────────
         Request::GetAlbumArt(r) => {
+            info!(file = %r.file, "GetAlbumArt request received");
             let music_dir = config.snapshot().await.mpd.music_dir.clone();
             let path = match music_dir {
                 Some(dir) => {
                     let audio_path = dir.join(&r.file);
-                    mediacache::album_art::extract(&audio_path)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default()
+                    // spawn_blocking: lofty does sync file I/O that would
+                    // block the IPC loop and cause timeouts.
+                    tokio::task::spawn_blocking(move || {
+                        mediacache::album_art::extract(&audio_path)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    }).await.unwrap_or_default()
                 }
                 None => String::new(),
             };
