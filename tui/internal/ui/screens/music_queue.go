@@ -384,22 +384,12 @@ func queueAlbumArt(innerW int, trackFile string) string {
 	return cachedArtRendered
 }
 
-// chafaFormat returns the best chafa output format for the current terminal.
-// Kitty graphics protocol is preferred (true image rendering); Unicode
-// symbols are the fallback for terminals without image support.
+// chafaFormat returns the chafa output format to use.
+// Kitty/sixel protocols produce single escape sequences that can't be
+// split into lines for the bordered right panel, so we always use
+// symbols (Unicode half-blocks) which produce regular text rows.
 func chafaFormat() string {
-	term := os.Getenv("TERM")
-	termProg := os.Getenv("TERM_PROGRAM")
-	switch {
-	case term == "xterm-kitty" || termProg == "kitty":
-		return "kitty"
-	case termProg == "ghostty":
-		return "kitty"
-	case termProg == "WezTerm":
-		return "kitty"
-	default:
-		return "symbols"
-	}
+	return "symbols"
 }
 
 // findMusicDir reads mpd.conf to get the music directory.
