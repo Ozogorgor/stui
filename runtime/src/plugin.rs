@@ -18,8 +18,34 @@ pub struct PluginManifest {
     pub env: HashMap<String, String>,
     /// Configuration fields for this plugin.
     /// These are shown in the TUI settings screen and stored in stui.toml.
-    #[serde(default)]
+    /// Accepts both `[[config]]` (array) and `[config]` (ignored as empty table).
+    #[serde(default, deserialize_with = "deserialize_config_fields")]
     pub config: Vec<PluginConfigField>,
+    // Tolerate unknown top-level sections (capabilities, etc.)
+    #[serde(flatten)]
+    pub _extra: HashMap<String, toml::Value>,
+}
+
+fn deserialize_config_fields<'de, D>(deserializer: D) -> Result<Vec<PluginConfigField>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+    // Try as array first, fall back to ignoring (table/empty)
+    let value = toml::Value::deserialize(deserializer)?;
+    match value {
+        toml::Value::Array(arr) => {
+            let mut fields = Vec::new();
+            for v in arr {
+                match v.try_into() {
+                    Ok(f) => fields.push(f),
+                    Err(_) => {} // skip malformed entries
+                }
+            }
+            Ok(fields)
+        }
+        _ => Ok(Vec::new()), // [config] as table or other → treat as empty
+    }
 }
 
 /// A single configuration field for a plugin.
@@ -97,18 +123,28 @@ pub struct PluginMeta {
     pub version: String,
     #[serde(rename = "type")]
     pub plugin_type: PluginType,
+    /// Entrypoint file (default: "plugin.wasm").
+    #[serde(default = "default_entrypoint")]
     pub entrypoint: String,
     pub description: Option<String>,
     /// Tags for organizing plugins (e.g., "movies", "music", "anime", "tv", "subtitles")
     #[serde(default)]
     pub tags: Vec<String>,
+    // Tolerate extra fields in plugin.toml (author, abi_version, etc.)
+    #[serde(default, rename = "author")]
+    pub _author: Option<String>,
+    #[serde(default, rename = "abi_version")]
+    pub _abi_version: Option<u32>,
 }
+
+fn default_entrypoint() -> String { "plugin.wasm".to_string() }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PluginType {
     /// Provides catalog metadata: trending lists, search results, posters, ratings.
     /// Does NOT supply playable stream URLs.
+    #[serde(alias = "metadata")]
     MetadataProvider,
     /// Provides playable stream URLs or magnet links for a given media item.
     StreamProvider,
