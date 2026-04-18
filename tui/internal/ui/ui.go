@@ -1564,7 +1564,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// ── Action-based dispatch (high-level intents, independent of key layout) ──
-	if action, ok := actions.FromKey(key); ok {
+	// Skip when search is focused — letter keys should go to the textinput.
+	if m.state.Focus == state.FocusSearch {
+		// Jump straight to the search handler below.
+	} else if action, ok := actions.FromKey(key); ok {
 		switch action {
 		case actions.ActionQuit:
 			if m.client != nil {
