@@ -1338,7 +1338,16 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 		if val == "" {
 			val = "—"
 		}
-		valLine := textStyle.Render(" " + truncate(val, innerW-1))
+		// Truncate by visible rune width, not byte count.
+		runes := []rune(val)
+		maxVal := innerW - 2 // 1 leading space + 1 safety margin
+		if maxVal < 1 {
+			maxVal = 1
+		}
+		if len(runes) > maxVal {
+			val = string(runes[:maxVal-1]) + "…"
+		}
+		valLine := textStyle.Render(" " + val)
 		return []string{labelLine, valLine}
 	}
 
