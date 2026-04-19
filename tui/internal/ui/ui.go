@@ -2494,9 +2494,10 @@ func (m *Model) dispatchPersonSearch(name string) tea.Cmd {
 			return ipc.SearchResultMsg{Result: ipc.SearchResult{Items: items, Total: total}}
 		}
 	}
-	reqID := fmt.Sprintf("person-%d", m.reqSeq.Add(1))
-	tab := ipc.MediaTab(m.state.ActiveTab.MediaTabID())
-	m.client.Search(reqID, name, tab, 50, 0)
+	// TODO(Chunk 6): migrate to streaming search. Client.Search now returns
+	// (qid, <-chan ipc.ScopeResultsMsg, error) — wire scope-results into
+	// the person-mode detail overlay via a tea.Cmd that drains the channel.
+	_ = name
 	return nil
 }
 
@@ -2550,9 +2551,12 @@ func (m *Model) dispatchSearch(query string) {
 		m.state.StatusMsg = "No runtime \u2014 start with API keys set"
 		return
 	}
-	reqID := fmt.Sprintf("search-%d", m.reqSeq.Add(1))
-	tab := ipc.MediaTab(m.state.ActiveTab.MediaTabID())
-	m.client.Search(reqID, query, tab, 100, 0)
+	// TODO(Chunk 6): migrate to streaming search. Client.Search now returns
+	// (qid, <-chan ipc.ScopeResultsMsg, error) — wire scope-results into the
+	// grid/list screen via a tea.Cmd that drains the channel and dispatches
+	// ipc.SearchResultMsg for backward-compatible handling.
+	m.state.IsLoading = false
+	m.state.StatusMsg = "search pending Chunk 6 migration"
 }
 
 func (m Model) currentGridEntries() []ipc.CatalogEntry {

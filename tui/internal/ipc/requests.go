@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -19,42 +20,94 @@ func receiveWithTimeout(ch <-chan RawResponse) RawResponse {
 
 // Public request methods for the IPC client
 
-// Search sends a search request and dispatches a SearchResultMsg to the
-// Bubble Tea program when the response arrives.
-// opts is optional; pass SearchOptions{} or omit for default (rating-sorted, no filters).
-func (c *Client) Search(reqID, query string, tab MediaTab, limit, offset int, opts ...SearchOptions) {
+// Search dispatches a scoped search request and returns the query id plus a
+// channel that receives scope-results as they stream back. The channel is
+// closed when every scope has emitted partial=false. On error, neither qid
+// nor channel is returned.
+//
+// Caller is responsible for draining the channel. A pending search will retain
+// its subscriber entry in scopeSubs until finalization or channel GC.
+func (c *Client) Search(ctx context.Context, query string, scopes []SearchScope) (uint64, <-chan ScopeResultsMsg, error) {
+	qid := c.NextQueryID()
+	ch := c.SubscribeScopeResults(qid, scopes)
+
+	reqID := c.nextID()
+	req := SearchReq{
+		ID:      reqID,
+		Query:   query,
+		Scopes:  scopes,
+		Limit:   50,
+		Offset:  0,
+		QueryID: qid,
+	}
+
+	// Marshal req as a map so sendWithID can add the id field and correlate the ack.
+	payload := map[string]any{
+		"type":     "search",
+		"id":       reqID,
+		"query":    req.Query,
+		"scopes":   req.Scopes,
+		"limit":    req.Limit,
+		"offset":   req.Offset,
+		"query_id": req.QueryID,
+	}
+	respCh := c.sendWithID(reqID, payload)
+
+	// Wait for the ack in the background; the channel carry the real payload.
+	// If the ack itself carries an error (transport failure), clean up the subscription.
 	go func() {
-		req := map[string]any{
-			"type":   "search",
-			"id":     reqID,
-			"query":  query,
-			"tab":    string(tab),
-			"limit":  limit,
-			"offset": offset,
+		select {
+		case raw := <-respCh:
+			if raw.Err != nil {
+				c.scopeSubs.Delete(qid)
+			}
+			// ack received (ok or error) — streaming events are the real payload.
+		case <-ctx.Done():
+			c.scopeSubs.Delete(qid)
 		}
-		if len(opts) > 0 {
-			o := opts[0]
-			if o.Sort != "" {
-				req["sort"] = o.Sort
-			}
-			if o.Genre != "" {
-				req["genre"] = o.Genre
-			}
-			if o.MinRating > 0 {
-				req["min_rating"] = o.MinRating
-			}
-			if o.YearFrom > 0 {
-				req["year_from"] = o.YearFrom
-			}
-			if o.YearTo > 0 {
-				req["year_to"] = o.YearTo
-			}
-		}
-		ch := c.sendWithID(reqID, req)
-		raw := receiveWithTimeout(ch)
-		msg := decodeSearchResult(reqID, raw)
-		c.send(msg)
 	}()
+
+	return qid, ch, nil
+}
+
+// MpdSearch performs a synchronous local MPD search. MPD is fast enough that
+// streaming adds complexity without benefit — a single typed response carries
+// all three buckets.
+func (c *Client) MpdSearch(ctx context.Context, query string, scopes []MpdScope) (*MpdSearchResult, error) {
+	qid := c.NextQueryID()
+	reqID := c.nextID()
+	payload := map[string]any{
+		"type":     "mpd_search",
+		"id":       reqID,
+		"query":    query,
+		"scopes":   scopes,
+		"limit":    uint32(200),
+		"query_id": qid,
+	}
+
+	respCh := c.sendWithID(reqID, payload)
+
+	var raw RawResponse
+	select {
+	case raw = <-respCh:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	if raw.Err != nil {
+		return nil, raw.Err
+	}
+	if raw.Type == "error" {
+		var ep ErrorPayload
+		_ = json.Unmarshal(raw.Raw, &ep)
+		return nil, fmt.Errorf("%s: %s", ep.Code, ep.Message)
+	}
+
+	var result MpdSearchResult
+	if err := json.Unmarshal(raw.Raw, &result); err != nil {
+		return nil, fmt.Errorf("ipc: mpd_search decode: %w", err)
+	}
+	return &result, nil
 }
 
 // UnloadPlugin removes a plugin from the running engine.
@@ -505,23 +558,6 @@ type PluginInstallResultMsg struct {
 	Version string
 	Path    string
 	Err     error
-}
-
-// decodeSearchResult decodes a search response into a SearchResultMsg.
-func decodeSearchResult(reqID string, raw RawResponse) SearchResultMsg {
-	if raw.Err != nil {
-		return SearchResultMsg{ReqID: reqID, Err: raw.Err}
-	}
-	if raw.Type == "error" {
-		var ep ErrorPayload
-		_ = json.Unmarshal(raw.Raw, &ep)
-		return SearchResultMsg{ReqID: reqID, Err: fmt.Errorf("%s: %s", ep.Code, ep.Message)}
-	}
-	var result SearchResult
-	if err := json.Unmarshal(raw.Raw, &result); err != nil {
-		return SearchResultMsg{ReqID: reqID, Err: err}
-	}
-	return SearchResultMsg{ReqID: reqID, Result: result}
 }
 
 // RankStreams sends a policy-based ranking request to the runtime.

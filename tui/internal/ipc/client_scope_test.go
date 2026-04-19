@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
-// newClientForTest returns a bare *Client sufficient for subscription map
-// logic. No transport, no goroutines — safe to use in unit tests without a
-// running runtime process.
+// newClientForTest returns a minimal *Client suitable for unit tests that
+// exercise subscription-map and query-id logic without a live transport.
+// The pending map is initialized so sendWithID does not panic; no goroutines
+// are started and no IPC pipe is opened.
 func newClientForTest() *Client {
-	return &Client{}
+	return &Client{
+		pending: make(map[string]chan RawResponse),
+	}
 }
 
 // ---------------------------------------------------------------------------

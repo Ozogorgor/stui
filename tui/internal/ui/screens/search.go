@@ -12,7 +12,6 @@ package screens
 // cursor movement (←/→, ctrl+a/e, alt+←/→ word-jump, ctrl+w delete-word, etc.).
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -178,18 +177,10 @@ func (s *SearchScreen) debouncedSearch() tea.Cmd {
 		if s.client == nil {
 			return
 		}
-		if s.searchAll {
-			tabs := []ipc.MediaTab{ipc.TabMovies, ipc.TabSeries, ipc.TabLibrary}
-			for _, t := range tabs {
-				s.client.Search(fmt.Sprintf("qs-%s-%s", t, q), q, t, 30, 0)
-			}
-		} else {
-			tab := s.activeTab
-			if tab == "" {
-				tab = ipc.TabMovies
-			}
-			s.client.Search(fmt.Sprintf("qs-%s-%s", tab, q), q, tab, 50, 0)
-		}
+		// TODO(Chunk 6): migrate to streaming search (Client.Search returns
+		// (qid, <-chan ScopeResultsMsg, error) — wire scope-results into
+		// SearchScreen.Update via a tea.Cmd that drains the channel).
+		_ = q
 	})
 	return nil
 }
