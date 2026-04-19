@@ -85,6 +85,9 @@ type CatalogEntry struct {
 	Provider    string  `json:"provider"`
 	Tab         string  `json:"tab"`
 	ImdbID      *string `json:"imdb_id"`
+	// Fields added for scoped search (Chunk 4).
+	Kind   EntryKind `json:"kind,omitempty"`
+	Source string    `json:"source,omitempty"`
 }
 
 // DetailEntry is the rich metadata for a single title.

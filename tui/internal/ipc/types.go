@@ -16,6 +16,39 @@ const (
 	TabLibrary MediaTab = "library"
 )
 
+// SearchScope is the set of entity kinds a search request may target.
+type SearchScope string
+
+const (
+	ScopeArtist  SearchScope = "artist"
+	ScopeAlbum   SearchScope = "album"
+	ScopeTrack   SearchScope = "track"
+	ScopeMovie   SearchScope = "movie"
+	ScopeSeries  SearchScope = "series"
+	ScopeEpisode SearchScope = "episode"
+)
+
+// EntryKind labels what kind of media a MediaEntry represents.
+type EntryKind string
+
+const (
+	KindArtist  EntryKind = "artist"
+	KindAlbum   EntryKind = "album"
+	KindTrack   EntryKind = "track"
+	KindMovie   EntryKind = "movie"
+	KindSeries  EntryKind = "series"
+	KindEpisode EntryKind = "episode"
+)
+
+// MpdScope is the subset of SearchScope values valid for MPD searches.
+type MpdScope string
+
+const (
+	MpdScopeArtist MpdScope = "artist"
+	MpdScopeAlbum  MpdScope = "album"
+	MpdScopeTrack  MpdScope = "track"
+)
+
 type requestEnvelope struct {
 	Type string         `json:"type"`
 	Data map[string]any `json:"-"`
@@ -70,6 +103,14 @@ type MediaEntry struct {
 	PosterURL   *string  `json:"poster_url"`
 	Provider    string   `json:"provider"`
 	Tab         MediaTab `json:"tab"`
+	// Fields added for scoped search (Chunk 4).
+	Kind        EntryKind `json:"kind,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	ArtistName  string    `json:"artist_name,omitempty"`
+	AlbumName   string    `json:"album_name,omitempty"`
+	TrackNumber uint32    `json:"track_number,omitempty"`
+	Season      uint32    `json:"season,omitempty"`
+	Episode     uint32    `json:"episode,omitempty"`
 }
 
 type PluginInfo struct {
