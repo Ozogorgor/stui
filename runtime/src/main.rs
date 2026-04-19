@@ -566,7 +566,7 @@ where
                             }
                             _ => {}
                         }
-                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &tag_job_store, &tag_job_registry, &line).await;
+                        let resp = handle_line(&engine, &catalog, health, config, player, mpd, dsp, watch_history, media_cache, &bench, &trace, &tag_job_store, &tag_job_registry, event_tx.clone(), &line).await;
                         // Echo the request's `id` (if present) into the response envelope so the
                         // TUI's pending-request router can match the response to its caller.
                         // Variants whose struct already includes `id` are left alone.
@@ -750,6 +750,7 @@ async fn handle_line(
     trace: &Arc<TraceEmitter>,
     tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
     tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
+    event_tx: ipc::EventSender,
     line: &str,
 ) -> Response {
     let request: Request = match serde_json::from_str(line) {
@@ -795,7 +796,24 @@ async fn handle_line(
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
 
-        Request::Search(r)    => pipeline::search::run_search(engine, catalog, trace, config, r).await,
+        Request::Search(r)    => {
+            // Fire-and-forget: results stream back as Event::ScopeResults messages
+            // keyed by query_id.  Response::SearchResult (synchronous path) is
+            // retired for user-initiated searches; it survives in Engine::search
+            // for catalog.rs and engine/pipeline.rs which migrate separately.
+            let engine_c   = Arc::clone(engine);
+            let event_tx_c = event_tx.clone();
+            let query_id = r.query_id;
+            tokio::spawn(async move {
+                pipeline::search::run_search((*engine_c).clone(), r, event_tx_c).await;
+                tracing::debug!(query_id, "search spawn finished");
+            });
+            // No synchronous response — streaming scope_results events carry the
+            // results.  Return Ok so the IPC loop doesn't write a SearchResult
+            // placeholder.  The TUI (Task 4.3) will be rewritten to consume
+            // ScopeResults events instead of a synchronous SearchResult.
+            Response::Ok
+        }
 
         Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 

@@ -1,128 +1,48 @@
-//! Search pipeline — fan-out to engine plugins, fallback to catalog grid filter.
+//! Search pipeline — fan-out to engine plugins via scoped streaming.
 
-use std::sync::Arc;
+use crate::engine::{Engine, search_scoped, ScopedSearchConfig};
+use crate::ipc::SearchRequest;
+use crate::ipc::v1::stream::EventSender;
+use tracing::Instrument;
 
-use stui_plugin_sdk::SearchScope;
-
-use crate::catalog::Catalog;
-use crate::catalog_engine::SortOrder;
-use crate::config::ConfigManager;
-use crate::engine::{Engine, SearchOptions, TraceEmitter};
-use crate::ipc::{self, MediaEntry, Response, SearchRequest, SearchResponse};
-
-/// Map a `SearchScope` to the closest legacy `MediaTab` value.
+/// Drive a scoped search: delegates to `search_scoped`, which emits per-scope
+/// `ScopeResultsMsg` events over `event_tx`.  No synchronous return — results
+/// flow back as streaming events keyed by `query_id`.
 ///
-/// TODO(Task 2.9): remove when the engine fan-out is scope-aware.
-fn scope_to_legacy_tab(scope: &SearchScope) -> ipc::MediaTab {
-    match scope {
-        SearchScope::Movie              => ipc::MediaTab::Movies,
-        SearchScope::Series
-        | SearchScope::Episode          => ipc::MediaTab::Series,
-        SearchScope::Artist
-        | SearchScope::Album
-        | SearchScope::Track            => ipc::MediaTab::Music,
+/// # Streaming protocol
+///
+/// Each scope that completes (or times out at the partial deadline) emits one
+/// `Event::ScopeResults` message on `event_tx`.  The Go TUI (Task 4.3) listens
+/// for those events and feeds them into the search result view.
+///
+/// # Cache
+///
+/// Per-plugin result caching is deferred to a follow-up task (Chunk 7 /
+/// Task 2.9 follow-up).  The cache stores `Vec<CatalogEntry>` while
+/// `supervisor_search` returns `Vec<MediaEntry>`; adapting that boundary is
+/// non-trivial and is out of scope here.
+///
+/// # Legacy path
+///
+/// `Engine::search` (the legacy synchronous path used by `catalog.rs` and
+/// `engine/pipeline.rs`) is kept alive and unmodified.  Only this
+/// user-facing pipeline has been migrated.
+pub async fn run_search(engine: Engine, req: SearchRequest, event_tx: EventSender) {
+    let span = tracing::info_span!(
+        "run_search",
+        query_id = req.query_id,
+        scopes   = ?req.scopes,
+    );
+
+    async {
+        // TODO(Task 2.9 follow-up / Chunk 7): add per-plugin cache lookup here
+        // once SearchCache is extended to store Vec<MediaEntry> or a conversion
+        // helper is in place.  Tracking issue: cache stores Vec<CatalogEntry>
+        // but supervisor_search returns Vec<MediaEntry>.
+
+        let cfg = ScopedSearchConfig::default();
+        search_scoped(engine, req.query, req.scopes, req.query_id, cfg, event_tx).await;
     }
-}
-
-/// Handle a `search` IPC request.
-///
-/// Tries engine plugins first; if they return no results, falls back to
-/// a local full-text filter over the catalog grid.
-pub async fn run_search(
-    engine: &Arc<Engine>,
-    catalog: &Arc<Catalog>,
-    trace: &Arc<TraceEmitter>,
-    config: &Arc<ConfigManager>,
-    r: SearchRequest,
-) -> Response {
-    let t0 = std::time::Instant::now();
-
-    let adult_content_enabled = config.snapshot().await.adult_content_enabled;
-
-    // TODO(Task 2.9): Legacy filter fields (sort, genre, min_rating, year_from,
-    // year_to, tab, provider) were dropped from SearchRequest in Task 2.3.
-    // Until Task 2.9 rewrites this pipeline, use harmless defaults so the build
-    // stays green.  The engine will fan-out to all providers / all tabs.
-    let options = SearchOptions {
-        sort: SortOrder::Rating,
-        genre: None,
-        min_rating: None,
-        year_from: None,
-        year_to: None,
-        adult_content_enabled,
-    };
-
-    // Derive a legacy MediaTab from the first scope, falling back to Movies.
-    let legacy_tab = r.scopes.first()
-        .map(|s| scope_to_legacy_tab(s))
-        .unwrap_or(ipc::MediaTab::Movies);
-
-    let results = engine.search(
-        &r.id,
-        &r.query,
-        &legacy_tab,
-        None,                        // provider filter removed from request
-        r.limit as usize,
-        r.offset as usize,
-        options,
-    ).await;
-
-    let elapsed_ms = t0.elapsed().as_millis() as u64;
-
-    if let Response::SearchResult(ref sr) = results {
-        if sr.items.is_empty() {
-            let fallback = catalog_search(catalog, &r.id, &r.query, &legacy_tab).await;
-            if let Response::SearchResult(ref fr) = fallback {
-                trace.search(0, elapsed_ms);
-                trace.resolve(fr.items.len());
-            }
-            return fallback;
-        }
-        // Count distinct providers that returned results
-        let n_providers = {
-            use std::collections::HashSet;
-            sr.items.iter().map(|e| e.provider.as_str()).collect::<HashSet<_>>().len()
-        };
-        trace.search(n_providers, elapsed_ms);
-        trace.resolve(sr.items.len());
-    } else {
-        trace.fallback("search error");
-    }
-
-    results
-}
-
-/// Filter the in-memory catalog grid by a query string.
-///
-/// Used as a zero-latency fallback when no plugin claims the search.
-pub async fn catalog_search(
-    catalog: &Arc<Catalog>,
-    req_id: &str,
-    query: &str,
-    tab: &ipc::MediaTab,
-) -> Response {
-    let grid = catalog.get_grid(tab).await;
-    let q = query.to_lowercase();
-    let matched: Vec<MediaEntry> = grid.into_iter()
-        .filter(|e| e.title.to_lowercase().contains(&q))
-        .map(|e| MediaEntry {
-            id: e.id, title: e.title, year: e.year,
-            genre: e.genre, rating: e.rating,
-            description: e.description, poster_url: e.poster_url,
-            provider: e.provider, tab: tab.clone(),
-            media_type: e.media_type,
-            ratings: std::collections::HashMap::new(),
-            imdb_id: None,
-            tmdb_id: None,
-            kind: Default::default(),
-            source: String::new(),
-            artist_name: None,
-            album_name: None,
-            track_number: None,
-            season: None,
-            episode: None,
-        })
-        .collect();
-    let total = matched.len();
-    Response::SearchResult(SearchResponse { id: req_id.to_string(), items: matched, total, offset: 0 })
+    .instrument(span)
+    .await;
 }

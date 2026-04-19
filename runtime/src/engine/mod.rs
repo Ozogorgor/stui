@@ -505,8 +505,10 @@ impl Engine {
         // We only cache when there's no provider filter (i.e. a normal
         // cross-provider search), and only the first page (offset == 0).
         let cache_key = if provider_filter.is_none() && offset == 0 {
-            // TODO(Task 2.9): legacy path, remove with Engine::search rewrite.
-            // Using placeholder scope value since this path is being replaced by search_scoped.
+            // TODO(Chunk 7 / "Retire Engine::search"): replace this placeholder
+            // once catalog.rs and engine/pipeline.rs migrate to search_scoped.
+            // The key uses "legacy" as a synthetic plugin-id because the legacy
+            // path fans out to all providers; per-plugin keying is not available here.
             Some(SearchKey::new("legacy", query, SearchScope::Track, 1))
         } else { None };
 
@@ -540,9 +542,12 @@ impl Engine {
         }
 
         let mut set = tokio::task::JoinSet::new();
-        // TODO(Task 2.9): remove this per-call semaphore once Engine::search is retired.
-        // The process-wide Engine::plugin_semaphore replaces it for all new call paths.
-        let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent provider requests
+        // Use the shared process-wide plugin_semaphore (Task 2.9 Option B).
+        // This replaces the old per-call Semaphore::new(8), aligning legacy
+        // Engine::search with the concurrency budget used by search_scoped.
+        // Engine::search can be fully retired once catalog.rs and
+        // engine/pipeline.rs migrate (tracked as a Chunk 7 task).
+        let sem = Arc::clone(&self.plugin_semaphore);
         for plugin in &providers {
             if let Some(filter) = provider_filter {
                 if plugin.manifest.plugin.name != filter { continue; }
