@@ -13,7 +13,6 @@ tags        = ["music", "metadata", "vinyl"]
 [env]
 DISCOGS_API_KEY = ""                     # Required — https://www.discogs.com/settings/developers
 
-[config]
 [[config]]
 key       = "api_key"
 label     = "Discogs Personal Access Token"

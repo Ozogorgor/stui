@@ -13,7 +13,6 @@ tags        = ["movies", "tv", "metadata"]
 [env]
 TMDB_API_KEY = ""                         # Free at themoviedb.org/settings/api
 
-[config]
 [[config]]
 key       = "api_key"
 label     = "TMDB API Key"

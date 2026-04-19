@@ -13,7 +13,6 @@ tags        = ["movies", "tv", "metadata"]
 [env]
 OMDB_API_KEY = ""                         # Free at www.omdbapi.com/apikey.aspx
 
-[config]
 [[config]]
 key       = "api_key"
 label     = "OMDB API Key"

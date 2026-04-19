@@ -4,8 +4,75 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use stui_plugin_sdk::EntryKind;
 
 // ── Manifest schema ──────────────────────────────────────────────────────────
+
+// ── CatalogCapability ─────────────────────────────────────────────────────────
+
+/// Typed or legacy catalog capability declared in `[capabilities]`.
+///
+/// Two TOML forms are accepted via `#[serde(untagged)]`:
+///
+/// - **Legacy boolean**: `catalog = true` / `catalog = false`
+///   All existing plugin.toml files use this form. The plugin is excluded from
+///   scoped search dispatch (no declared kinds) until it migrates to the typed form.
+///
+/// - **Typed table**: `[capabilities.catalog]` with `kinds = [...]`
+///   Used in Chunk 7 migrations; enables scoped dispatch.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum CatalogCapability {
+    /// Legacy form: `catalog = true` / `catalog = false`.
+    /// Carries no scope information; excluded from scoped dispatch.
+    Enabled(bool),
+    /// New typed form: `[capabilities.catalog] kinds = [...]`.
+    Typed {
+        #[serde(default)]
+        kinds: Vec<EntryKind>,
+    },
+}
+
+impl Default for CatalogCapability {
+    fn default() -> Self { Self::Typed { kinds: Vec::new() } }
+}
+
+impl CatalogCapability {
+    /// Declared search kinds (empty unless plugin uses the typed form).
+    pub fn kinds(&self) -> &[EntryKind] {
+        match self {
+            Self::Typed { kinds } => kinds.as_slice(),
+            Self::Enabled(_) => &[],
+        }
+    }
+
+    /// True if the plugin has any catalog capability at all (typed or legacy-enabled).
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Typed { kinds } => !kinds.is_empty(),
+            Self::Enabled(b) => *b,
+        }
+    }
+}
+
+// ── Capabilities ──────────────────────────────────────────────────────────────
+
+/// Structured `[capabilities]` table from plugin.toml.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub catalog: CatalogCapability,
+    #[serde(default)]
+    pub streams: bool,
+    /// Forward-compat catch-all for unknown capability keys
+    /// (e.g. `metadata = true`, `music = true`, `anime = true`,
+    /// `search = true`, `resolve = true` seen in existing plugin.toml files).
+    /// These remain opaque until they earn a typed field.
+    #[serde(flatten)]
+    pub _extra: HashMap<String, toml::Value>,
+}
+
+// ── PluginManifest ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PluginManifest {
@@ -21,7 +88,10 @@ pub struct PluginManifest {
     /// Accepts both `[[config]]` (array) and `[config]` (ignored as empty table).
     #[serde(default, deserialize_with = "deserialize_config_fields")]
     pub config: Vec<PluginConfigField>,
-    // Tolerate unknown top-level sections (capabilities, etc.)
+    /// Structured capabilities declared in `[capabilities]`.
+    #[serde(default)]
+    pub capabilities: Capabilities,
+    /// Tolerate unknown top-level sections.
     #[serde(flatten)]
     pub _extra: HashMap<String, toml::Value>,
 }
@@ -271,11 +341,44 @@ impl std::fmt::Display for PluginCapability {
     }
 }
 
+/// Network permission: either a boolean (`network = true`) or an allowlist
+/// (`network = ["api.example.com", ...]`).
+///
+/// Both forms appear in existing plugin.toml files.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum NetworkPermission {
+    /// `network = true` / `network = false`
+    Bool(bool),
+    /// `network = ["host1", "host2", ...]`
+    Hosts(Vec<String>),
+}
+
+impl Default for NetworkPermission {
+    fn default() -> Self { Self::Bool(false) }
+}
+
+impl NetworkPermission {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Bool(b) => *b,
+            Self::Hosts(h) => !h.is_empty(),
+        }
+    }
+
+    pub fn hosts(&self) -> &[String] {
+        match self {
+            Self::Bool(_) => &[],
+            Self::Hosts(h) => h.as_slice(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Permissions {
     #[serde(default)]
-    pub network: bool,
-    /// Explicit allowlist of hostnames (from `network = [...]` in plugin.toml).
+    pub network: NetworkPermission,
+    /// Explicit allowlist of hostnames (from `network_hosts = [...]` in plugin.toml).
     /// When non-empty this takes precedence over the boolean `network` flag.
     #[serde(default)]
     pub network_hosts: Vec<String>,
@@ -286,6 +389,7 @@ pub struct Permissions {
 impl Permissions {
     /// True if the plugin may reach `host` (bare hostname or IP).
     pub fn allows_host(&self, host: &str) -> bool {
+        // network_hosts (legacy separate field) takes precedence
         if !self.network_hosts.is_empty() {
             return self.network_hosts.iter().any(|h| {
                 h == host
@@ -293,7 +397,17 @@ impl Permissions {
                     || (host == "localhost" && (h == "127.0.0.1" || h == "::1"))
             });
         }
-        self.network
+        // network = [...] allowlist form
+        let hosts = self.network.hosts();
+        if !hosts.is_empty() {
+            return hosts.iter().any(|h| {
+                h == host
+                    || (h == "localhost" && (host == "127.0.0.1" || host == "::1"))
+                    || (host == "localhost" && (h == "127.0.0.1" || h == "::1"))
+            });
+        }
+        // network = true/false
+        self.network.is_enabled()
     }
 }
 
@@ -385,4 +499,96 @@ pub fn resolve_entrypoint(
     };
 
     Ok((mode, abs))
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    use stui_plugin_sdk::EntryKind;
+
+    fn meta(body: &str) -> String {
+        format!(
+            r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+type = "metadata"
+{body}
+"#
+        )
+    }
+
+    #[test]
+    fn legacy_bool_form_parses_and_is_excluded_from_scope_dispatch() {
+        let toml_text = meta("\n[capabilities]\ncatalog = true\nmetadata = true\n");
+        let m: PluginManifest = toml::from_str(&toml_text).unwrap();
+        assert!(m.capabilities.catalog.is_enabled());
+        assert!(
+            m.capabilities.catalog.kinds().is_empty(),
+            "legacy bool form carries no kinds → excluded from scoped dispatch"
+        );
+        assert!(
+            m.capabilities._extra.contains_key("metadata"),
+            "other legacy keys fall into _extra"
+        );
+    }
+
+    #[test]
+    fn typed_form_parses_kinds() {
+        let toml_text =
+            meta("\n[capabilities]\n\n[capabilities.catalog]\nkinds = [\"artist\", \"album\", \"track\"]\n");
+        let m: PluginManifest = toml::from_str(&toml_text).unwrap();
+        assert_eq!(
+            m.capabilities.catalog.kinds(),
+            &[EntryKind::Artist, EntryKind::Album, EntryKind::Track]
+        );
+        assert!(m.capabilities.catalog.is_enabled());
+    }
+
+    #[test]
+    fn no_capabilities_section_still_parses() {
+        let toml_text = meta("");
+        let m: PluginManifest = toml::from_str(&toml_text).unwrap();
+        assert!(m.capabilities.catalog.kinds().is_empty());
+        assert!(!m.capabilities.catalog.is_enabled());
+        assert!(!m.capabilities.streams);
+    }
+
+    #[test]
+    fn catalog_false_parses_as_disabled() {
+        let toml_text = meta("\n[capabilities]\ncatalog = false\n");
+        let m: PluginManifest = toml::from_str(&toml_text).unwrap();
+        assert!(!m.capabilities.catalog.is_enabled());
+        assert!(m.capabilities.catalog.kinds().is_empty());
+    }
+
+    #[test]
+    fn all_real_plugin_manifests_parse() {
+        use std::fs;
+        // CARGO_MANIFEST_DIR points to runtime/, so ../plugins is the plugins dir
+        let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../plugins");
+        let entries = fs::read_dir(&plugins_dir)
+            .unwrap_or_else(|e| panic!("plugins/ dir at {}: {e}", plugins_dir.display()));
+        let mut checked = 0;
+        for entry in entries.flatten() {
+            let manifest_path = entry.path().join("plugin.toml");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let text = fs::read_to_string(&manifest_path).unwrap();
+            let parsed: Result<PluginManifest, _> = toml::from_str(&text);
+            assert!(
+                parsed.is_ok(),
+                "failed to parse {}: {:?}",
+                manifest_path.display(),
+                parsed.err()
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 10,
+            "expected to check at least 10 plugins, got {checked}"
+        );
+    }
 }

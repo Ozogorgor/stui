@@ -65,7 +65,7 @@ impl SandboxCtx {
     pub fn check(&self, cap: &Capability) -> Result<()> {
         match cap {
             Capability::Network => {
-                let has_network = self.permissions.network
+                let has_network = self.permissions.network.is_enabled()
                     || !self.permissions.network_hosts.is_empty();
                 if !has_network {
                     warn!(
@@ -185,7 +185,7 @@ pub async fn call_wasm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::{ExecutionMode, Permissions};
+    use crate::plugin::{ExecutionMode, NetworkPermission, Permissions};
 
     fn make_ctx(perms: Permissions) -> SandboxCtx {
         SandboxCtx {
@@ -203,7 +203,7 @@ mod tests {
     fn network_denied_when_no_permission() {
         // Plugin with network = false and no host allowlist must be blocked.
         let ctx = make_ctx(Permissions {
-            network: false,
+            network: NetworkPermission::Bool(false),
             network_hosts: vec![],
             filesystem: vec![],
         });
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn network_allowed_with_flag() {
         let ctx = make_ctx(Permissions {
-            network: true,
+            network: NetworkPermission::Bool(true),
             network_hosts: vec![],
             filesystem: vec![],
         });
@@ -227,7 +227,7 @@ mod tests {
     fn network_allowed_with_host_allowlist_even_without_flag() {
         // network_hosts allowlist is sufficient — network = true not required.
         let ctx = make_ctx(Permissions {
-            network: false,
+            network: NetworkPermission::Bool(false),
             network_hosts: vec!["api.example.com".to_string()],
             filesystem: vec![],
         });
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn filesystem_denied_outside_allowed_roots() {
         let ctx = make_ctx(Permissions {
-            network: false,
+            network: NetworkPermission::Bool(false),
             network_hosts: vec![],
             filesystem: vec![],
         });

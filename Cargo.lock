@@ -3334,6 +3334,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "stui-aria2",
+ "stui-plugin-sdk",
  "tar",
  "tempfile",
  "thiserror 1.0.69",

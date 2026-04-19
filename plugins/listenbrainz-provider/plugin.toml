@@ -10,7 +10,6 @@ abi_version = 1
 type        = "metadata"
 tags        = ["music", "metadata"]
 
-[config]
 [[config]]
 key       = "user_token"
 label     = "ListenBrainz User Token (optional)"

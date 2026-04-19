@@ -16,7 +16,6 @@ LASTFM_API_SECRET = ""                  # Required for scrobbling — same page 
 LASTFM_USERNAME = ""                    # Optional — for scrobbling and personal data
 LASTFM_PASSWORD = ""                    # Optional — for scrobbling (or use token)
 
-[config]
 [[config]]
 key       = "api_key"
 label     = "Last.fm API Key"
