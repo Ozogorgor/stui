@@ -196,6 +196,41 @@ fn catalog_entries_to_media(
 
 use crate::cache::RuntimeCache;
 
+/// Maximum number of concurrent WASM plugin calls allowed process-wide.
+///
+/// This semaphore is shared across all Engine clones (all clones hold an
+/// `Arc` to the same `Semaphore` instance), so the bound is truly global.
+///
+/// The per-call `Semaphore::new(8)` in `Engine::search()` will be removed
+/// when that legacy path is retired in Task 2.9.
+pub const MAX_CONCURRENT_PLUGIN_CALLS: usize = 8;
+
+// ── PluginCallError ───────────────────────────────────────────────────────────
+
+/// Error type for `Engine::supervisor_search`.
+#[derive(Debug)]
+pub enum PluginCallError {
+    /// No plugin with the given id is registered.
+    PluginNotFound(String),
+    /// The plugin does not support the requested scope.
+    UnsupportedScope,
+    /// The plugin call exceeded its timeout.
+    Timeout,
+    /// Any other failure (crash, serialisation error, etc.).
+    Other(String),
+}
+
+impl std::fmt::Display for PluginCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PluginNotFound(id) => write!(f, "plugin '{}' not found", id),
+            Self::UnsupportedScope   => write!(f, "plugin does not support this scope"),
+            Self::Timeout            => write!(f, "plugin call timed out"),
+            Self::Other(msg)         => write!(f, "{}", msg),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Engine {
     registry:     Arc<RwLock<PluginRegistry>>,
@@ -205,6 +240,12 @@ pub struct Engine {
     pub cache:    RuntimeCache,
     /// Per-scope plugin dispatch map, rebuilt after every load/unload.
     dispatch_map: Arc<RwLock<DispatchMap>>,
+    /// Process-wide semaphore limiting concurrent WASM plugin calls.
+    ///
+    /// All `Engine` clones share the same `Arc<Semaphore>` so the bound is
+    /// global regardless of how many clones exist.  Initialised with
+    /// `MAX_CONCURRENT_PLUGIN_CALLS` permits.
+    plugin_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl Engine {
@@ -215,6 +256,7 @@ impl Engine {
             data_dir,
             cache:        RuntimeCache::new(),
             dispatch_map: Arc::new(RwLock::new(DispatchMap::default())),
+            plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
         }
     }
 
@@ -228,6 +270,109 @@ impl Engine {
     /// Access the dispatch map (read-only).
     pub fn dispatch_map(&self) -> &Arc<RwLock<DispatchMap>> {
         &self.dispatch_map
+    }
+
+    /// Access the process-wide plugin call semaphore.
+    ///
+    /// `search_scoped` (Task 2.7) calls this to acquire a permit before each
+    /// WASM plugin call.  Advanced callers that spawn their own tasks may also
+    /// use it directly.
+    pub fn plugin_semaphore(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.plugin_semaphore
+    }
+
+    // ── Ergonomic dispatch_map wrappers ───────────────────────────────────
+
+    /// Return the ordered list of plugin ids registered for `scope`.
+    ///
+    /// Plugins that declared no kinds in their manifest (`catalog = true`
+    /// legacy form) are excluded — they never appear in any scope.
+    pub async fn plugins_for_scope(&self, scope: stui_plugin_sdk::SearchScope) -> Vec<String> {
+        self.dispatch_map.read().await.plugins_for(scope)
+    }
+
+    /// Return `true` when at least one plugin is registered for `scope`.
+    pub async fn scope_has_any_plugins(&self, scope: stui_plugin_sdk::SearchScope) -> bool {
+        !self.dispatch_map.read().await.is_empty_for(scope)
+    }
+
+    // ── supervisor_search ─────────────────────────────────────────────────
+
+    /// Call a single WASM plugin's search via its supervisor.
+    ///
+    /// 1. Acquires a permit from the shared `plugin_semaphore` so at most
+    ///    `MAX_CONCURRENT_PLUGIN_CALLS` calls run concurrently process-wide.
+    /// 2. Looks the plugin up by id in the registry.
+    /// 3. Converts `scope` to the legacy `tab` string expected by the ABI
+    ///    layer.  The ABI `SearchRequest` still uses a `tab: String` field;
+    ///    the SDK `SearchRequest` (with `scope: SearchScope`) is not yet
+    ///    wired through the WASM boundary — that happens in a later task.
+    /// 4. Calls `WasmSupervisor::search` and maps `AbiError` variants to
+    ///    `PluginCallError`.
+    /// 5. Converts each `abi::types::PluginEntry` to `ipc::v1::MediaEntry`.
+    ///
+    /// Used by `search_scoped` (Task 2.7).  The `scope` parameter is the
+    /// scope the caller is querying; it is not forwarded to the plugin ABI
+    /// yet (the ABI only speaks `tab`), but will be in a future ABI revision.
+    pub async fn supervisor_search(
+        &self,
+        plugin_id: &str,
+        query: &str,
+        scope: stui_plugin_sdk::SearchScope,
+    ) -> Result<Vec<crate::ipc::MediaEntry>, PluginCallError> {
+        // Acquire a process-wide permit before touching the plugin.
+        let _permit = self.plugin_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| PluginCallError::Other("semaphore closed".into()))?;
+
+        // Look up the supervisor under a short read-lock.  We clone the Arc
+        // so we can drop the lock before the potentially-long supervisor call.
+        let sup = {
+            let reg = self.registry.read().await;
+            // Verify the plugin exists in the registry first.
+            if reg.get(plugin_id).is_none() {
+                return Err(PluginCallError::PluginNotFound(plugin_id.into()));
+            }
+            reg.wasm_supervisor_for(plugin_id)
+        };
+
+        let sup = sup.ok_or_else(|| PluginCallError::Other(
+            format!("no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"),
+        ))?;
+
+        // Convert scope to the tab string the ABI layer expects.
+        // The existing `stui_search` ABI export uses a `tab: String` field;
+        // scope-aware dispatch through the ABI is deferred to a later task.
+        let tab_str = scope_to_tab_str(scope);
+
+        let req = crate::abi::SearchRequest {
+            query: query.to_string(),
+            tab: tab_str,
+            page: 0,
+            limit: 100,
+        };
+
+        let resp = sup.search(&req).await.map_err(map_abi_error)?;
+
+        // Convert abi::types::PluginEntry → ipc::v1::MediaEntry.
+        // We reuse the inline conversion pattern established in Engine::search
+        // (the legacy path) — provider name comes from the plugin's display
+        // name, which we look up under a second short read-lock.
+        let provider_name = {
+            let reg = self.registry.read().await;
+            reg.get(plugin_id)
+                .map(|p| p.manifest.plugin.name.clone())
+                .unwrap_or_else(|| plugin_id.to_string())
+        };
+
+        let entries = resp.items
+            .into_iter()
+            .map(|e| abi_entry_to_media_entry(e, &provider_name, scope))
+            .collect();
+
+        Ok(entries)
     }
 
     /// Rebuild the dispatch map from the current registry contents.
@@ -390,6 +535,8 @@ impl Engine {
         }
 
         let mut set = tokio::task::JoinSet::new();
+        // TODO(Task 2.9): remove this per-call semaphore once Engine::search is retired.
+        // The process-wide Engine::plugin_semaphore replaces it for all new call paths.
         let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent provider requests
         for plugin in &providers {
             if let Some(filter) = provider_filter {
@@ -858,5 +1005,267 @@ impl Engine {
         crate::quality::rank_with_health(all_streams, policy, Some(&health_map))
     }
 
+}
+
+// ── Free helpers for supervisor_search ───────────────────────────────────────
+
+/// Convert `SearchScope` to the `tab` string that the legacy ABI layer expects.
+///
+/// The ABI `SearchRequest` still carries `tab: String`; full scope plumbing
+/// through the WASM boundary is deferred.  This mapping is intentionally
+/// conservative: music kinds map to "music", video kinds to their canonical
+/// tab names.
+fn scope_to_tab_str(scope: stui_plugin_sdk::SearchScope) -> String {
+    use stui_plugin_sdk::SearchScope;
+    match scope {
+        SearchScope::Artist  => "music",
+        SearchScope::Album   => "music",
+        SearchScope::Track   => "music",
+        SearchScope::Movie   => "movies",
+        SearchScope::Series  => "series",
+        SearchScope::Episode => "series",
+    }.to_string()
+}
+
+/// Map an `AbiError` to a `PluginCallError`.
+///
+/// An `AbiError::Execution` whose message contains the well-known SDK error
+/// code `"unsupported_scope"` maps to `PluginCallError::UnsupportedScope`.
+/// A message that contains "timed out" maps to `Timeout`.
+/// Everything else maps to `Other`.
+fn map_abi_error(e: crate::abi::types::AbiError) -> PluginCallError {
+    use crate::abi::types::AbiError;
+    match e {
+        AbiError::Execution(ref msg) => {
+            if msg.contains(stui_plugin_sdk::error_codes::UNSUPPORTED_SCOPE) {
+                PluginCallError::UnsupportedScope
+            } else if msg.contains("timed out") {
+                PluginCallError::Timeout
+            } else {
+                PluginCallError::Other(msg.clone())
+            }
+        }
+        other => PluginCallError::Other(other.to_string()),
+    }
+}
+
+/// Convert an `abi::types::PluginEntry` to an `ipc::v1::MediaEntry`.
+///
+/// The ABI `PluginEntry` carries `year` / `rating` as `Option<String>`;
+/// `MediaEntry` also uses `Option<String>` for those fields so the mapping
+/// is straightforward.  `kind` and `source` are new fields added in Task 2.3
+/// and are populated here from the scope and provider name respectively.
+fn abi_entry_to_media_entry(
+    e:             crate::abi::types::PluginEntry,
+    provider_name: &str,
+    scope:         stui_plugin_sdk::SearchScope,
+) -> crate::ipc::MediaEntry {
+    use stui_plugin_sdk::{EntryKind, SearchScope};
+
+    let kind = match scope {
+        SearchScope::Artist  => EntryKind::Artist,
+        SearchScope::Album   => EntryKind::Album,
+        SearchScope::Track   => EntryKind::Track,
+        SearchScope::Movie   => EntryKind::Movie,
+        SearchScope::Series  => EntryKind::Series,
+        SearchScope::Episode => EntryKind::Episode,
+    };
+
+    // Derive a tab from scope for the MediaEntry.tab field (required field).
+    let tab = match scope {
+        SearchScope::Artist | SearchScope::Album | SearchScope::Track
+            => crate::ipc::MediaTab::Music,
+        SearchScope::Movie
+            => crate::ipc::MediaTab::Movies,
+        SearchScope::Series | SearchScope::Episode
+            => crate::ipc::MediaTab::Series,
+    };
+
+    crate::ipc::MediaEntry {
+        id:           e.id,
+        title:        e.title,
+        year:         e.year,
+        genre:        e.genre,
+        rating:       e.rating,
+        description:  e.description,
+        poster_url:   e.poster_url,
+        provider:     provider_name.to_string(),
+        tab,
+        media_type:   crate::ipc::MediaType::default(),
+        ratings:      std::collections::HashMap::new(),
+        imdb_id:      e.imdb_id,
+        tmdb_id:      None,
+        kind,
+        source:       provider_name.to_string(),
+        artist_name:  None,
+        album_name:   None,
+        track_number: None,
+        season:       None,
+        episode:      None,
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod supervisor_search_tests {
+    use super::*;
+    use stui_plugin_sdk::SearchScope;
+
+    // ── scope_to_tab_str ──────────────────────────────────────────────────────
+
+    #[test]
+    fn scope_to_tab_str_music_scopes() {
+        assert_eq!(scope_to_tab_str(SearchScope::Artist), "music");
+        assert_eq!(scope_to_tab_str(SearchScope::Album),  "music");
+        assert_eq!(scope_to_tab_str(SearchScope::Track),  "music");
+    }
+
+    #[test]
+    fn scope_to_tab_str_video_scopes() {
+        assert_eq!(scope_to_tab_str(SearchScope::Movie),   "movies");
+        assert_eq!(scope_to_tab_str(SearchScope::Series),  "series");
+        assert_eq!(scope_to_tab_str(SearchScope::Episode), "series");
+    }
+
+    // ── map_abi_error ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn map_abi_error_unsupported_scope() {
+        let e = crate::abi::types::AbiError::Execution(
+            format!("{}: track scope unsupported", stui_plugin_sdk::error_codes::UNSUPPORTED_SCOPE),
+        );
+        assert!(matches!(map_abi_error(e), PluginCallError::UnsupportedScope));
+    }
+
+    #[test]
+    fn map_abi_error_timeout() {
+        let e = crate::abi::types::AbiError::Execution(
+            "plugin 'foo' search timed out after 30s".into(),
+        );
+        assert!(matches!(map_abi_error(e), PluginCallError::Timeout));
+    }
+
+    #[test]
+    fn map_abi_error_other() {
+        let e = crate::abi::types::AbiError::Execution("some random failure".into());
+        assert!(matches!(map_abi_error(e), PluginCallError::Other(_)));
+    }
+
+    #[test]
+    fn map_abi_error_version_mismatch_becomes_other() {
+        let e = crate::abi::types::AbiError::VersionMismatch { plugin: 1, host: 2 };
+        assert!(matches!(map_abi_error(e), PluginCallError::Other(_)));
+    }
+
+    // ── abi_entry_to_media_entry ──────────────────────────────────────────────
+
+    #[test]
+    fn abi_entry_maps_fields_correctly() {
+        let entry = crate::abi::types::PluginEntry {
+            id:          "tt1234".into(),
+            title:       "Creep".into(),
+            year:        Some("1993".into()),
+            genre:       Some("Rock".into()),
+            rating:      Some("9.0".into()),
+            description: Some("A song".into()),
+            poster_url:  None,
+            imdb_id:     Some("tt1234".into()),
+        };
+        let me = abi_entry_to_media_entry(entry, "lastfm", SearchScope::Track);
+        assert_eq!(me.id, "tt1234");
+        assert_eq!(me.title, "Creep");
+        assert_eq!(me.year, Some("1993".into()));
+        assert_eq!(me.provider, "lastfm");
+        assert_eq!(me.source, "lastfm");
+        assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Track);
+        assert!(matches!(me.tab, crate::ipc::MediaTab::Music));
+        assert_eq!(me.imdb_id, Some("tt1234".into()));
+    }
+
+    #[test]
+    fn abi_entry_movie_scope_gets_movies_tab() {
+        let entry = crate::abi::types::PluginEntry {
+            id: "m1".into(), title: "Interstellar".into(),
+            year: None, genre: None, rating: None, description: None,
+            poster_url: None, imdb_id: None,
+        };
+        let me = abi_entry_to_media_entry(entry, "tmdb", SearchScope::Movie);
+        assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Movie);
+        assert!(matches!(me.tab, crate::ipc::MediaTab::Movies));
+    }
+
+    #[test]
+    fn abi_entry_series_scope_gets_series_tab() {
+        let entry = crate::abi::types::PluginEntry {
+            id: "s1".into(), title: "Breaking Bad".into(),
+            year: None, genre: None, rating: None, description: None,
+            poster_url: None, imdb_id: None,
+        };
+        let me = abi_entry_to_media_entry(entry, "tmdb", SearchScope::Series);
+        assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Series);
+        assert!(matches!(me.tab, crate::ipc::MediaTab::Series));
+    }
+
+    // ── Engine::plugins_for_scope / scope_has_any_plugins ─────────────────────
+
+    #[tokio::test]
+    async fn plugins_for_scope_returns_empty_on_fresh_engine() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let ids = engine.plugins_for_scope(SearchScope::Artist).await;
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scope_has_any_plugins_false_on_fresh_engine() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        assert!(!engine.scope_has_any_plugins(SearchScope::Movie).await);
+    }
+
+    // ── Engine::plugin_semaphore ──────────────────────────────────────────────
+
+    #[test]
+    fn plugin_semaphore_clones_share_same_arc() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let clone = engine.clone();
+        // Both point to the same semaphore (Arc identity).
+        assert!(Arc::ptr_eq(engine.plugin_semaphore(), clone.plugin_semaphore()));
+    }
+
+    #[test]
+    fn plugin_semaphore_starts_with_correct_capacity() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        assert_eq!(
+            engine.plugin_semaphore().available_permits(),
+            MAX_CONCURRENT_PLUGIN_CALLS,
+        );
+    }
+
+    // ── supervisor_search: unknown plugin id ──────────────────────────────────
+
+    #[tokio::test]
+    async fn supervisor_search_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+        if let Err(PluginCallError::PluginNotFound(id)) = result {
+            assert_eq!(id, "nonexistent-id");
+        }
+    }
 }
 
