@@ -28,7 +28,6 @@ package screens
 // by pointing at the screen's existing MPD slices; Task 5.3 replaces it.
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -71,12 +70,12 @@ type MusicLibraryScreen struct {
 	// It owns cursor/scroll state and generic j/k/h/l navigation.
 	browser catalogbrowser.Model
 
-	// stub is the DataSource wired into the browser. It points directly at
-	// the slices below so the browser can read item counts/names without an
-	// extra copy. Task 5.3 replaces mpdLibraryStub with a proper MpdDataSource.
-	stub *mpdLibraryStub
+	// source is the DataSource wired into the browser. Music Library still
+	// owns MPD list fetches; source.SetAll forwards the latest slices into
+	// the browser after each slice mutation. Task 6.2 will wire Search().
+	source *catalogbrowser.MpdDataSource
 
-	// Tag browser state (raw MPD data; also surfaced via stub → browser)
+	// Tag browser state (raw MPD data; also forwarded to source → browser)
 	artists        []ipc.MpdArtist
 	albums         []ipc.MpdAlbum
 	songs          []ipc.MpdSong
@@ -132,24 +131,24 @@ type MusicLibraryScreen struct {
 	loadingStart time.Time
 }
 
-// newLibraryBrowser constructs the catalogbrowser.Model backed by the given stub.
-func newLibraryBrowser(stub *mpdLibraryStub) catalogbrowser.Model {
+// newLibraryBrowser constructs the catalogbrowser.Model backed by an MpdDataSource.
+func newLibraryBrowser(src *catalogbrowser.MpdDataSource) catalogbrowser.Model {
 	cols := []catalogbrowser.ColumnDef{
 		{Kind: ipc.KindArtist, Label: "Artists"},
 		{Kind: ipc.KindAlbum, Label: "Albums"},
 		{Kind: ipc.KindTrack, Label: "Tracks"},
 	}
-	return catalogbrowser.New(stub, cols)
+	return catalogbrowser.New(src, cols)
 }
 
 // NewMusicLibraryScreen creates a new library screen and starts fetching artists.
 func NewMusicLibraryScreen(client *ipc.Client) MusicLibraryScreen {
 	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	stub := &mpdLibraryStub{}
+	src := catalogbrowser.NewMpdDataSource(client)
 	s := MusicLibraryScreen{
 		client:         client,
-		stub:           stub,
-		browser:        newLibraryBrowser(stub),
+		source:         src,
+		browser:        newLibraryBrowser(src),
 		loadingArtists: true,
 		spinner:        *components.NewSpinner("loading…", dimStyle),
 		loadingStart:   time.Now(),
@@ -176,12 +175,14 @@ func (s *MusicLibraryScreen) Init() tea.Cmd {
 	)
 }
 
-// syncStub copies the current MPD slices into the stub so the browser sees
-// up-to-date data. Called after any slice mutation.
+// syncStub forwards the current MPD slices into the MpdDataSource so the
+// browser sees up-to-date data. Called after any slice mutation.
 func (s *MusicLibraryScreen) syncStub() {
-	s.stub.artists = s.artists
-	s.stub.albums = s.albums
-	s.stub.songs = s.songs
+	s.source.SetAll(map[ipc.EntryKind][]catalogbrowser.Entry{
+		ipc.KindArtist: catalogbrowser.MapMpdArtists(s.artists),
+		ipc.KindAlbum:  catalogbrowser.MapMpdAlbums(s.albums),
+		ipc.KindTrack:  catalogbrowser.MapMpdSongs(s.songs),
+	})
 }
 
 // activePane returns the currently focused column as a 0-based index
@@ -1408,80 +1409,3 @@ func extractYear(s string) string {
 	return yearRegex.FindString(s)
 }
 
-// ── mpdLibraryStub ────────────────────────────────────────────────────────────
-//
-// mpdLibraryStub is a temporary implementation of catalogbrowser.DataSource
-// that wraps the MusicLibraryScreen's existing MPD slices. It converts the
-// concrete ipc.MpdArtist / ipc.MpdAlbum / ipc.MpdSong types into generic
-// catalogbrowser.Entry values so the browser component can render them.
-//
-// Task 5.3 will replace this with a proper MpdDataSource that owns its own
-// data lifecycle and drives IPC calls itself. Until then, the library screen
-// continues to own the MPD fetching, and this stub is a thin adapter.
-
-type mpdLibraryStub struct {
-	artists []ipc.MpdArtist
-	albums  []ipc.MpdAlbum
-	songs   []ipc.MpdSong
-}
-
-func (st *mpdLibraryStub) Items(kind ipc.EntryKind) []catalogbrowser.Entry {
-	switch kind {
-	case ipc.KindArtist:
-		entries := make([]catalogbrowser.Entry, len(st.artists))
-		for i, a := range st.artists {
-			entries[i] = catalogbrowser.Entry{
-				ID:    a.Name,
-				Kind:  ipc.KindArtist,
-				Title: a.Name,
-			}
-		}
-		return entries
-	case ipc.KindAlbum:
-		entries := make([]catalogbrowser.Entry, len(st.albums))
-		for i, a := range st.albums {
-			title := a.Title
-			if year := extractYear(a.Year); year != "" {
-				title = "(" + year + ") " + a.Title
-			}
-			entries[i] = catalogbrowser.Entry{
-				ID:         a.Title,
-				Kind:       ipc.KindAlbum,
-				Title:      title,
-				ArtistName: a.Artist,
-			}
-		}
-		return entries
-	case ipc.KindTrack:
-		entries := make([]catalogbrowser.Entry, len(st.songs))
-		for i, sg := range st.songs {
-			entries[i] = catalogbrowser.Entry{
-				ID:          sg.File,
-				Kind:        ipc.KindTrack,
-				Title:       sg.Title,
-				ArtistName:  sg.Artist,
-				AlbumName:   sg.Album,
-				Duration:    uint32(sg.Duration),
-			}
-		}
-		return entries
-	}
-	return nil
-}
-
-func (st *mpdLibraryStub) Search(_ context.Context, _ string, _ []ipc.EntryKind) tea.Cmd {
-	// Stub: no-op. Library screen manages its own MPD fetching.
-	return nil
-}
-
-func (st *mpdLibraryStub) HasMultipleSources() bool { return false }
-
-func (st *mpdLibraryStub) Snapshot() catalogbrowser.DataSourceState {
-	return catalogbrowser.DataSourceState{}
-}
-
-func (st *mpdLibraryStub) Restore(_ catalogbrowser.DataSourceState) {}
-
-func (st *mpdLibraryStub) Status() catalogbrowser.SearchStatus {
-	return catalogbrowser.SearchStatus{}
-}
