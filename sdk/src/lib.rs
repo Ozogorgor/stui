@@ -54,9 +54,13 @@ pub use kinds::{EntryKind, SearchScope};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
-    pub tab: String,
+    pub scope: SearchScope,
     pub page: u32,
     pub limit: u32,
+    #[serde(default)]
+    pub per_scope_limit: Option<u32>,
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -697,5 +701,20 @@ mod tests {
             val["__stui_headers"]["Content-Type"].as_str().unwrap(),
             "application/x-www-form-urlencoded"
         );
+    }
+
+    #[test]
+    fn sdk_search_request_carries_scope() {
+        let req = SearchRequest {
+            query: "creep".into(),
+            scope: SearchScope::Track,
+            page: 0,
+            limit: 50,
+            per_scope_limit: None,
+            locale: None,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        assert!(s.contains("\"scope\":\"track\""));
+        assert!(!s.contains("\"tab\""));
     }
 }
