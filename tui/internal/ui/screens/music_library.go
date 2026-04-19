@@ -19,8 +19,16 @@ package screens
 //	│   [dir]  Jazz                            │
 //	│          Bohemian Rhapsody.flac    5:55  │
 //	└──────────────────────────────────────────┘
+//
+// Refactor note (Task 5.2):
+// The 3-column rendering + generic navigation lives in catalogbrowser.Model.
+// This file keeps tag/dir mode selector, MPD IPC, dialog/action menus,
+// tag-normalization, and all library-specific keybinds.
+// A temporary mpdLibraryStub (bottom of file) implements catalogbrowser.DataSource
+// by pointing at the screen's existing MPD slices; Task 5.3 replaces it.
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -31,17 +39,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
+	"github.com/stui/stui/internal/ui/screens/catalogbrowser"
 	"github.com/stui/stui/pkg/log"
 	"github.com/stui/stui/pkg/theme"
-)
-
-// LibraryPane identifies which column is active in tag-browse mode.
-type LibraryPane int
-
-const (
-	LibPaneArtists LibraryPane = iota
-	LibPaneAlbums
-	LibPaneTracks
 )
 
 // libDialogCtx tells the dialog dismiss handler which option set the
@@ -67,17 +67,19 @@ type MusicLibraryScreen struct {
 	client  *ipc.Client
 	dirMode bool // false = tag browser, true = directory browser
 
-	// Tag browser state
-	activePane     LibraryPane
+	// browser is the reusable 3-column navigation component.
+	// It owns cursor/scroll state and generic j/k/h/l navigation.
+	browser catalogbrowser.Model
+
+	// stub is the DataSource wired into the browser. It points directly at
+	// the slices below so the browser can read item counts/names without an
+	// extra copy. Task 5.3 replaces mpdLibraryStub with a proper MpdDataSource.
+	stub *mpdLibraryStub
+
+	// Tag browser state (raw MPD data; also surfaced via stub → browser)
 	artists        []ipc.MpdArtist
 	albums         []ipc.MpdAlbum
 	songs          []ipc.MpdSong
-	artistCursor   int
-	albumCursor    int
-	songCursor     int
-	artistScroll   int
-	albumScroll    int
-	songScroll     int
 	loadingArtists bool
 	loadingAlbums  bool
 	loadingSongs   bool
@@ -130,11 +132,24 @@ type MusicLibraryScreen struct {
 	loadingStart time.Time
 }
 
+// newLibraryBrowser constructs the catalogbrowser.Model backed by the given stub.
+func newLibraryBrowser(stub *mpdLibraryStub) catalogbrowser.Model {
+	cols := []catalogbrowser.ColumnDef{
+		{Kind: ipc.KindArtist, Label: "Artists"},
+		{Kind: ipc.KindAlbum, Label: "Albums"},
+		{Kind: ipc.KindTrack, Label: "Tracks"},
+	}
+	return catalogbrowser.New(stub, cols)
+}
+
 // NewMusicLibraryScreen creates a new library screen and starts fetching artists.
 func NewMusicLibraryScreen(client *ipc.Client) MusicLibraryScreen {
 	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	stub := &mpdLibraryStub{}
 	s := MusicLibraryScreen{
 		client:         client,
+		stub:           stub,
+		browser:        newLibraryBrowser(stub),
 		loadingArtists: true,
 		spinner:        *components.NewSpinner("loading…", dimStyle),
 		loadingStart:   time.Now(),
@@ -161,6 +176,29 @@ func (s *MusicLibraryScreen) Init() tea.Cmd {
 	)
 }
 
+// syncStub copies the current MPD slices into the stub so the browser sees
+// up-to-date data. Called after any slice mutation.
+func (s *MusicLibraryScreen) syncStub() {
+	s.stub.artists = s.artists
+	s.stub.albums = s.albums
+	s.stub.songs = s.songs
+}
+
+// activePane returns the currently focused column as a 0-based index
+// matching the browser's column order (0=Artists, 1=Albums, 2=Tracks).
+func (s MusicLibraryScreen) activePane() int {
+	return s.browser.ActiveColumn()
+}
+
+// artistCursor returns the artist cursor from the browser.
+func (s MusicLibraryScreen) artistCursor() int { return s.browser.ColumnCursor(0) }
+
+// albumCursor returns the album cursor from the browser.
+func (s MusicLibraryScreen) albumCursor() int { return s.browser.ColumnCursor(1) }
+
+// songCursor returns the song cursor from the browser.
+func (s MusicLibraryScreen) songCursor() int { return s.browser.ColumnCursor(2) }
+
 // Update handles incoming messages and key events.
 func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 	switch m := msg.(type) {
@@ -175,6 +213,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		s.setWindowSize(m)
+		s.browser.SetSize(m.Width, m.Height)
 
 	case ipc.MpdLibraryResultMsg:
 		log.Info("library: MpdLibraryResultMsg",
@@ -207,8 +246,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		} else if m.ForArtist != "" {
 			// Albums for a specific artist arrived
 			s.albums = m.Albums
-			s.albumCursor = 0
-			s.albumScroll = 0
+			s.browser.SetCursor(1, 0) // reset album cursor
 			s.loadingAlbums = false
 			// Pre-fetch songs for the first album
 			if len(m.Albums) > 0 && s.client != nil {
@@ -226,6 +264,7 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 				s.client.MpdListAlbums(m.Artists[0].Name)
 			}
 		}
+		s.syncStub()
 
 	case ipc.MpdQueueResultMsg:
 		if m.Err == nil {
@@ -280,28 +319,74 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		s.normalizeRows = nil
 		return s, nil
 
+	case catalogbrowser.NavMsg:
+		// The browser posted a navigation event — react to it for MPD pre-fetching.
+		s = s.handleBrowserNav(m)
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Playlist name prompt intercepts all keys when active.
 		if s.playlistPrompt {
 			return s.handlePlaylistPrompt(m)
 		}
+		var keyCmd tea.Cmd
 		if s.dirMode {
 			s = s.handleDirKey(m.String())
 		} else {
-			s = s.handleTagKey(m.String())
+			s, keyCmd = s.handleTagKey(m.String())
 		}
+		// Fall through to statusPending flush logic below, batching keyCmd if needed.
+		if s.statusPending {
+			s.statusPending = false
+			text := s.statusMsg
+			statusCmd := func() tea.Msg { return ipc.StatusMsg{Text: text} }
+			if keyCmd != nil {
+				return s, tea.Batch(keyCmd, statusCmd)
+			}
+			return s, statusCmd
+		}
+		return s, keyCmd
 	}
 
-	// Forward a freshly-set status message to the global stui footer
-	// exactly once. statusMsg itself is kept so the local hintBar can echo
-	// it for statusTTL; the pending flag is what prevents re-emission on
-	// every subsequent Update.
+	// This fallthrough case only applies to non-KeyPressMsg types. For KeyPress,
+	// the above block handles the statusPending flush.
 	if s.statusPending {
 		s.statusPending = false
 		text := s.statusMsg
 		return s, func() tea.Msg { return ipc.StatusMsg{Text: text} }
 	}
 	return s, nil
+}
+
+// handleBrowserNav reacts to a catalogbrowser.NavMsg by issuing the
+// appropriate MPD pre-fetch when the cursor moves within a column.
+func (s MusicLibraryScreen) handleBrowserNav(nav catalogbrowser.NavMsg) MusicLibraryScreen {
+	if s.client == nil {
+		return s
+	}
+	switch nav.Column {
+	case 0: // Artist cursor moved — fetch albums for the new artist
+		if nav.Row < len(s.artists) {
+			s.loadingAlbums = true
+			s.albums = nil
+			s.songs = nil
+			s.browser.SetCursor(1, 0)
+			s.browser.SetCursor(2, 0)
+			s.syncStub()
+			s.client.MpdListAlbums(s.artists[nav.Row].Name)
+		}
+	case 1: // Album cursor moved — fetch songs for the new album
+		ac := s.artistCursor()
+		if nav.Row < len(s.albums) && ac < len(s.artists) {
+			s.loadingSongs = true
+			s.songs = nil
+			s.browser.SetCursor(2, 0)
+			s.syncStub()
+			a := s.albums[nav.Row]
+			s.client.MpdListSongs(s.artists[ac].Name, a.MpdTitle(), a.Date)
+		}
+	}
+	return s
 }
 
 // setStatus records a footer message, arms it for forwarding to the global
@@ -384,7 +469,9 @@ func (s MusicLibraryScreen) handlePlaylistPrompt(m tea.KeyPressMsg) (MusicLibrar
 }
 
 // handleTagKey processes key events in tag-browser mode.
-func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
+// Library-specific keys (R, D, x/X, enter, dialogs) are handled here.
+// Generic navigation (j/k/h/l) is delegated to the browser.
+func (s MusicLibraryScreen) handleTagKey(key string) (MusicLibraryScreen, tea.Cmd) {
 	// Dialog intercepts all keys when open.
 	if s.dialogOpen {
 		var chosen int
@@ -393,123 +480,17 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		if dismissed {
 			s = s.applyDialogChoice(chosen)
 		}
-		return s
+		return s, nil
 	}
 
 	switch key {
-	case "j", "down":
-		switch s.activePane {
-		case LibPaneArtists:
-			if s.artistCursor < len(s.artists)-1 {
-				s.artistCursor++
-				s.albumCursor = 0
-				s.albumScroll = 0
-				s.songCursor = 0
-				s.songScroll = 0
-				if s.client != nil && s.artistCursor < len(s.artists) {
-					s.loadingAlbums = true
-					s.albums = nil
-					s.songs = nil
-					s.client.MpdListAlbums(s.artists[s.artistCursor].Name)
-				}
-			}
-		case LibPaneAlbums:
-			if s.albumCursor < len(s.albums)-1 {
-				s.albumCursor++
-				s.songCursor = 0
-				s.songScroll = 0
-				if s.client != nil && s.albumCursor < len(s.albums) && s.artistCursor < len(s.artists) {
-					s.loadingSongs = true
-					s.songs = nil
-					a := s.albums[s.albumCursor]
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
-				}
-			}
-		case LibPaneTracks:
-			if s.songCursor < len(s.songs)-1 {
-				s.songCursor++
-			}
-		}
-
-	case "k", "up":
-		switch s.activePane {
-		case LibPaneArtists:
-			if s.artistCursor > 0 {
-				s.artistCursor--
-				s.albumCursor = 0
-				s.albumScroll = 0
-				s.songCursor = 0
-				s.songScroll = 0
-				if s.client != nil && s.artistCursor < len(s.artists) {
-					s.loadingAlbums = true
-					s.albums = nil
-					s.songs = nil
-					s.client.MpdListAlbums(s.artists[s.artistCursor].Name)
-				}
-			}
-		case LibPaneAlbums:
-			if s.albumCursor > 0 {
-				s.albumCursor--
-				s.songCursor = 0
-				s.songScroll = 0
-				if s.client != nil && s.albumCursor < len(s.albums) && s.artistCursor < len(s.artists) {
-					s.loadingSongs = true
-					s.songs = nil
-					a := s.albums[s.albumCursor]
-					s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
-				}
-			}
-		case LibPaneTracks:
-			if s.songCursor > 0 {
-				s.songCursor--
-			}
-		}
-
-	case "l", "right":
-		// Hotkey shortcut: skip the dialog and dive straight into the next
-		// pane. The dialog (Enter) is the advertised default; this is the
-		// power-user route.
-		switch s.activePane {
-		case LibPaneArtists:
-			s.activePane = LibPaneAlbums
-			if s.client != nil && len(s.artists) > 0 {
-				s.loadingAlbums = true
-				s.albums = nil
-				s.songs = nil
-				s.albumCursor = 0
-				s.albumScroll = 0
-				s.client.MpdListAlbums(s.artists[s.artistCursor].Name)
-			}
-		case LibPaneAlbums:
-			s.activePane = LibPaneTracks
-			if s.client != nil && len(s.albums) > 0 && len(s.artists) > 0 {
-				s.loadingSongs = true
-				s.songs = nil
-				s.songCursor = 0
-				s.songScroll = 0
-				a := s.albums[s.albumCursor]
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
-			}
-		}
-
 	case "enter":
 		// Guard: don't open dialogs until the first data has loaded.
-		// Prevents stray terminal events during startup from triggering
-		// a dialog loop when the saved state lands on tracks.
 		if !s.initDone {
-			break
+			return s, nil
 		}
-		// Default action surface: every pane opens a dialog so the user
-		// sees what's actionable instead of having to memorise hotkeys.
 		s = s.openPaneDialog()
-
-	case "h", "left":
-		switch s.activePane {
-		case LibPaneAlbums:
-			s.activePane = LibPaneArtists
-		case LibPaneTracks:
-			s.activePane = LibPaneAlbums
-		}
+		return s, nil
 
 	case "R":
 		if s.client != nil {
@@ -520,8 +501,10 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 			s.artists = nil
 			s.albums = nil
 			s.songs = nil
+			s.syncStub()
 			s.client.MpdListArtists()
 		}
+		return s, nil
 
 	case "D":
 		s.dirMode = true
@@ -533,12 +516,45 @@ func (s MusicLibraryScreen) handleTagKey(key string) MusicLibraryScreen {
 		if s.client != nil {
 			s.client.MpdBrowseDir("")
 		}
+		return s, nil
 
 	case "x", "X":
 		s = s.handleMarkExceptionTag()
-	}
+		return s, nil
 
-	return s
+	case "l", "right":
+		// l key: when moving from artist → albums pane, also trigger MPD
+		// pre-fetch (same as the old navigation did). We handle it here so
+		// we can fire the fetch BEFORE delegating to the browser (which
+		// updates the active column but doesn't know about MPD).
+		active := s.activePane()
+		if active == 0 && len(s.artists) > 0 && s.client != nil {
+			s.loadingAlbums = true
+			s.albums = nil
+			s.songs = nil
+			s.browser.SetCursor(1, 0)
+			s.browser.SetCursor(2, 0)
+			s.syncStub()
+			s.client.MpdListAlbums(s.artists[s.artistCursor()].Name)
+		} else if active == 1 && len(s.albums) > 0 && len(s.artists) > 0 && s.client != nil {
+			s.loadingSongs = true
+			s.songs = nil
+			s.browser.SetCursor(2, 0)
+			s.syncStub()
+			a := s.albums[s.albumCursor()]
+			s.client.MpdListSongs(s.artists[s.artistCursor()].Name, a.MpdTitle(), a.Date)
+		}
+		// Delegate to browser for the column-focus switch.
+		newBrowser, cmd := s.browser.HandleKey(key)
+		s.browser = newBrowser
+		return s, cmd
+
+	default:
+		// Delegate remaining navigation keys (j/k/up/down/h/left) to browser.
+		newBrowser, cmd := s.browser.HandleKey(key)
+		s.browser = newBrowser
+		return s, cmd
+	}
 }
 
 // handleDirKey processes key events in directory-browser mode.
@@ -632,16 +648,18 @@ func (s MusicLibraryScreen) handleMarkExceptionTag() MusicLibraryScreen {
 	if s.client == nil {
 		return s
 	}
-	switch s.activePane {
-	case LibPaneArtists:
-		if s.artistCursor < len(s.artists) {
-			name := s.artists[s.artistCursor].Name
+	switch s.activePane() {
+	case 0: // Artists
+		ac := s.artistCursor()
+		if ac < len(s.artists) {
+			name := s.artists[ac].Name
 			s.client.MarkTagException("artist", name)
 			s = s.setStatus(fmt.Sprintf("Protected artist: %s", name))
 		}
-	case LibPaneAlbums:
-		if s.albumCursor < len(s.albums) {
-			a := s.albums[s.albumCursor]
+	case 1: // Albums
+		ac := s.albumCursor()
+		if ac < len(s.albums) {
+			a := s.albums[ac]
 			raw := a.RawArtist
 			if raw == "" {
 				raw = a.Artist
@@ -658,9 +676,10 @@ func (s MusicLibraryScreen) handleMarkExceptionTag() MusicLibraryScreen {
 			}
 			s = s.setStatus(fmt.Sprintf("Protected: %s — %s", a.Artist, a.Title))
 		}
-	case LibPaneTracks:
-		if s.songCursor < len(s.songs) {
-			song := s.songs[s.songCursor]
+	case 2: // Tracks
+		sc := s.songCursor()
+		if sc < len(s.songs) {
+			song := s.songs[sc]
 			raw := song.RawArtist
 			if raw == "" {
 				raw = song.Artist
@@ -764,34 +783,34 @@ func (s MusicLibraryScreen) HandleRightMouse(x, localY int) MusicLibraryScreen {
 	// Decide which pane the click landed in, mirror handleTagMouse's hit-test.
 	switch {
 	case x < paneW:
-		scroll := libScroll(len(s.artists), s.artistCursor, listH)
+		scroll := s.browser.ColScroll(0, listH)
 		idx := scroll + dataRow
 		if idx < 0 || idx >= len(s.artists) {
 			return s
 		}
-		s.artistCursor = idx
-		s.activePane = LibPaneArtists
+		s.browser.SetCursor(0, idx)
+		s.browser.SetActiveColumn(0)
 		s = s.openPaneDialog()
 		// Right-click on a track gets the extended "Add to Playlist /
 		// Create Playlist" set; for artists the Enter set is enough since
 		// playlist actions don't apply at the artist level yet.
 	case x < 2*paneW+1:
-		scroll := libScroll(len(s.albums), s.albumCursor, listH)
+		scroll := s.browser.ColScroll(1, listH)
 		idx := scroll + dataRow
 		if idx < 0 || idx >= len(s.albums) {
 			return s
 		}
-		s.albumCursor = idx
-		s.activePane = LibPaneAlbums
+		s.browser.SetCursor(1, idx)
+		s.browser.SetActiveColumn(1)
 		s = s.openPaneDialog()
 	default:
-		scroll := libScroll(len(s.songs), s.songCursor, listH)
+		scroll := s.browser.ColScroll(2, listH)
 		idx := scroll + dataRow
 		if idx < 0 || idx >= len(s.songs) {
 			return s
 		}
-		s.songCursor = idx
-		s.activePane = LibPaneTracks
+		s.browser.SetCursor(2, idx)
+		s.browser.SetActiveColumn(2)
 		// Tracks keep the extended right-click dialog (4 actions) rather
 		// than the slimmer Enter set used by openPaneDialog.
 		song := s.songs[idx]
@@ -811,34 +830,37 @@ func (s MusicLibraryScreen) HandleRightMouse(x, localY int) MusicLibraryScreen {
 // album dialogs lead with the navigation option (Browse) so Enter still
 // feels like "go deeper" when that's all the user wanted.
 func (s MusicLibraryScreen) openPaneDialog() MusicLibraryScreen {
-	switch s.activePane {
-	case LibPaneArtists:
-		if len(s.artists) == 0 || s.artistCursor >= len(s.artists) {
+	switch s.activePane() {
+	case 0: // Artists
+		ac := s.artistCursor()
+		if len(s.artists) == 0 || ac >= len(s.artists) {
 			return s
 		}
-		name := s.artists[s.artistCursor].Name
+		name := s.artists[ac].Name
 		s.dialogContext = libDialogArtist
 		s.dialog = components.NewDialog(
 			"Artist: '"+truncate(name, 28)+"'",
 			[]string{"Browse albums", "Add all tracks to queue", "Replace queue with all", "Cancel"},
 		)
 		s.dialogOpen = true
-	case LibPaneAlbums:
-		if len(s.albums) == 0 || s.albumCursor >= len(s.albums) {
+	case 1: // Albums
+		ac := s.albumCursor()
+		if len(s.albums) == 0 || ac >= len(s.albums) {
 			return s
 		}
-		title := s.albums[s.albumCursor].Title
+		title := s.albums[ac].Title
 		s.dialogContext = libDialogAlbum
 		s.dialog = components.NewDialog(
 			"Album: '"+truncate(title, 28)+"'",
 			[]string{"Browse tracks", "Add album to queue", "Replace queue with album", "Add to playlist", "Create playlist", "Normalize tags on disk…", "Cancel"},
 		)
 		s.dialogOpen = true
-	case LibPaneTracks:
-		if len(s.songs) == 0 || s.songCursor >= len(s.songs) {
+	case 2: // Tracks
+		sc := s.songCursor()
+		if len(s.songs) == 0 || sc >= len(s.songs) {
 			return s
 		}
-		song := s.songs[s.songCursor]
+		song := s.songs[sc]
 		s.dialogSong = song
 		s.dialogContext = libDialogRightClick
 		s.dialog = components.NewDialog(
@@ -899,18 +921,19 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s = s.openPlaylistPromptDialog()
 		}
 	case libDialogArtist:
-		if s.artistCursor >= len(s.artists) {
+		ac := s.artistCursor()
+		if ac >= len(s.artists) {
 			return s
 		}
-		name := s.artists[s.artistCursor].Name
+		name := s.artists[ac].Name
 		switch chosen {
 		case 0: // Browse albums — same as the l/right shortcut
-			s.activePane = LibPaneAlbums
+			s.browser.SetActiveColumn(1)
 			s.loadingAlbums = true
 			s.albums = nil
 			s.songs = nil
-			s.albumCursor = 0
-			s.albumScroll = 0
+			s.browser.SetCursor(1, 0)
+			s.syncStub()
 			s.client.MpdListAlbums(name)
 		case 1: // Add all tracks to queue (needs runtime mpd findadd; not wired yet)
 			s = s.setStatus("Add all tracks: not implemented yet")
@@ -918,18 +941,20 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			s = s.setStatus("Replace queue with all: not implemented yet")
 		}
 	case libDialogAlbum:
-		if s.artistCursor >= len(s.artists) || s.albumCursor >= len(s.albums) {
+		ac := s.artistCursor()
+		alc := s.albumCursor()
+		if ac >= len(s.artists) || alc >= len(s.albums) {
 			return s
 		}
-		artist := s.artists[s.artistCursor].Name
-		album := s.albums[s.albumCursor]
+		artist := s.artists[ac].Name
+		album := s.albums[alc]
 		switch chosen {
 		case 0: // Browse tracks — same as the l/right shortcut
-			s.activePane = LibPaneTracks
+			s.browser.SetActiveColumn(2)
 			s.loadingSongs = true
 			s.songs = nil
-			s.songCursor = 0
-			s.songScroll = 0
+			s.browser.SetCursor(2, 0)
+			s.syncStub()
 			s.client.MpdListSongs(artist, album.MpdTitle(), album.Date)
 		case 1: // Add album to queue — relies on having songs already loaded
 			added := 0
@@ -979,7 +1004,7 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 			}
 		case 5: // Normalize tags on disk…
 			s.dialogContext = libDialogNormalizeScope
-			a := s.albums[s.albumCursor]
+			a := s.albums[alc]
 			s.normalizeScope = ipc.TagWriteScope{Kind: "album", Artist: artist, Album: a.Title, Date: a.Date}
 			s.dialog = components.NewDialog(
 				"Normalize tags on disk",
@@ -991,8 +1016,9 @@ func (s MusicLibraryScreen) applyDialogChoice(chosen int) MusicLibraryScreen {
 		switch chosen {
 		case 0: // This album — scope already set
 		case 1: // This artist
-			if s.artistCursor < len(s.artists) {
-				s.normalizeScope = ipc.TagWriteScope{Kind: "artist", Artist: s.artists[s.artistCursor].Name}
+			ac := s.artistCursor()
+			if ac < len(s.artists) {
+				s.normalizeScope = ipc.TagWriteScope{Kind: "artist", Artist: s.artists[ac].Name}
 			}
 		case 2: // Whole library
 			s.normalizeScope = ipc.TagWriteScope{Kind: "library"}
@@ -1024,11 +1050,11 @@ func (s MusicLibraryScreen) handleTagMouse(x, localY int) MusicLibraryScreen {
 		// Header row — switch active pane by X.
 		switch {
 		case x < paneW:
-			s.activePane = LibPaneArtists
+			s.browser.SetActiveColumn(0)
 		case x < 2*paneW+1:
-			s.activePane = LibPaneAlbums
+			s.browser.SetActiveColumn(1)
 		default:
-			s.activePane = LibPaneTracks
+			s.browser.SetActiveColumn(2)
 		}
 		return s
 	}
@@ -1037,52 +1063,51 @@ func (s MusicLibraryScreen) handleTagMouse(x, localY int) MusicLibraryScreen {
 		return s
 	}
 	// Determine clicked pane.
-	var clicked LibraryPane
+	var clicked int
 	switch {
 	case x < paneW:
-		clicked = LibPaneArtists
+		clicked = 0
 	case x < 2*paneW+1:
-		clicked = LibPaneAlbums
+		clicked = 1
 	default:
-		clicked = LibPaneTracks
+		clicked = 2
 	}
-	s.activePane = clicked
+	s.browser.SetActiveColumn(clicked)
 	switch clicked {
-	case LibPaneArtists:
-		scroll := libScroll(len(s.artists), s.artistCursor, listH)
+	case 0: // Artists
+		scroll := s.browser.ColScroll(0, listH)
 		idx := scroll + dataRow
-		if idx >= 0 && idx < len(s.artists) && idx != s.artistCursor {
-			s.artistCursor = idx
-			s.albumCursor = 0
-			s.albumScroll = 0
-			s.songCursor = 0
-			s.songScroll = 0
+		if idx >= 0 && idx < len(s.artists) && idx != s.artistCursor() {
+			s.browser.SetCursor(0, idx)
+			s.browser.SetCursor(1, 0)
+			s.browser.SetCursor(2, 0)
 			if s.client != nil {
 				s.loadingAlbums = true
 				s.albums = nil
 				s.songs = nil
-				s.client.MpdListAlbums(s.artists[s.artistCursor].Name)
+				s.syncStub()
+				s.client.MpdListAlbums(s.artists[idx].Name)
 			}
 		}
-	case LibPaneAlbums:
-		scroll := libScroll(len(s.albums), s.albumCursor, listH)
+	case 1: // Albums
+		scroll := s.browser.ColScroll(1, listH)
 		idx := scroll + dataRow
-		if idx >= 0 && idx < len(s.albums) && idx != s.albumCursor {
-			s.albumCursor = idx
-			s.songCursor = 0
-			s.songScroll = 0
-			if s.client != nil && s.artistCursor < len(s.artists) {
+		if idx >= 0 && idx < len(s.albums) && idx != s.albumCursor() {
+			s.browser.SetCursor(1, idx)
+			s.browser.SetCursor(2, 0)
+			if s.client != nil && s.artistCursor() < len(s.artists) {
 				s.loadingSongs = true
 				s.songs = nil
-				a := s.albums[s.albumCursor]
-				s.client.MpdListSongs(s.artists[s.artistCursor].Name, a.MpdTitle(), a.Date)
+				s.syncStub()
+				a := s.albums[idx]
+				s.client.MpdListSongs(s.artists[s.artistCursor()].Name, a.MpdTitle(), a.Date)
 			}
 		}
-	case LibPaneTracks:
-		scroll := libScroll(len(s.songs), s.songCursor, listH)
+	case 2: // Tracks
+		scroll := s.browser.ColScroll(2, listH)
 		idx := scroll + dataRow
 		if idx >= 0 && idx < len(s.songs) {
-			s.songCursor = idx
+			s.browser.SetCursor(2, idx)
 		}
 	}
 	return s
@@ -1114,13 +1139,6 @@ func (s MusicLibraryScreen) handleDirMouse(x, localY int) MusicLibraryScreen {
 	return s
 }
 
-// libScroll computes the scroll offset for a pane column, mirroring buildPaneLines.
-func libScroll(n, cursor, maxH int) int {
-	vl := components.NewVirtualizedList(n, cursor, maxH, components.WithScrollMode(components.ScrollModeCenter))
-	start, _ := vl.VisibleRange()
-	return start
-}
-
 // View renders the library screen within the given width/height constraints.
 func (s MusicLibraryScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
@@ -1133,21 +1151,17 @@ func (s MusicLibraryScreen) View(w, h int) string {
 	} else {
 		base = s.viewTag(w, h, accentStyle, dimStyle, textStyle)
 	}
-	// Overlay the action dialog, if open. The component knows how to
-	// centre itself with the lipgloss-style dotted whitespace fill, so
-	// the screen just hands it the available area.
+	// Overlay the action dialog, if open.
 	if s.dialogOpen {
 		base = s.dialog.Place(w, h)
 	}
 	return base
 }
 
-// viewTag renders the three-column tag browser.
+// viewTag renders the three-column tag browser by delegating to catalogbrowser.Model.
 func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle lipgloss.Style) string {
 	// While the artist list is still in-flight (or has timed out with no
-	// data), show a centered spinner across the whole library area —
-	// matches the Movies/Series tab loading pattern instead of stuffing
-	// the spinner under the Artists column.
+	// data), show a centered spinner across the whole library area.
 	if (s.loadingArtists || s.artistError != "") && len(s.artists) == 0 {
 		spinView := s.spinner.View()
 		if spinView == "" {
@@ -1161,111 +1175,59 @@ func (s MusicLibraryScreen) viewTag(w, h int, accentStyle, dimStyle, textStyle l
 		return CenteredMsg(w, h, msg)
 	}
 
-	// Total height budget = h. Subtract: 1 header row + 2 border rows
-	// (top + bottom of the bordered container). The hint/status text
-	// lives in the global footer (see ui.viewStatusBar) so we don't
-	// reserve a row for it here.
+	// Track Info is the optional 4th column. It appears whenever the
+	// Tracks pane is focused AND a track is selected.
+	sc := s.songCursor()
+	showInfo := s.activePane() == 2 && sc < len(s.songs) && len(s.songs) > 0
+
+	// Compute listH so buildTrackInfoLines can pad to the right height.
 	listH := h - 3
 	if listH < 1 {
 		listH = 1
 	}
 
-	// Track Info is the optional 4th column. It appears whenever the
-	// Tracks pane is focused AND a track is selected — gives the user
-	// a metadata sidebar without permanently squeezing the other panes.
-	showInfo := s.activePane == LibPaneTracks &&
-		s.songCursor < len(s.songs) && len(s.songs) > 0
-	cols := 3
+	// We need paneW to build the track info lines. Mirror the browser's
+	// calculation: total cols = 3 (or 4 with info), inner content w-6
+	// minus separators, divided by cols.
+	totalCols := 3
 	if showInfo {
-		cols = 4
+		totalCols = 4
 	}
-
-	// Inner content width of borderStyle.Width(w-2):
-	// outer = w-2, minus border(2) + padding(2) = content w-6.
-	// Then subtract (cols-1) separator │ chars between panes.
-	contentW := w - 6 - (cols - 1)
-	paneW := contentW / cols
+	contentW := w - 6 - (totalCols - 1)
+	paneW := contentW / totalCols
 	if paneW < 10 {
 		paneW = 10
 	}
 
-	borderStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(theme.T.Border()).
-		Padding(0, 1)
-
-	var sb strings.Builder
-
-	// Header
-	headerStr := s.tagHeader(accentStyle, dimStyle, paneW, showInfo)
-	sb.WriteString(headerStr + "\n")
-
-	// Build each column
-	artistLoadingText := s.spinner.View()
-	if artistLoadingText == "" {
-		artistLoadingText = "Loading…"
-	}
-	artistLines := s.buildPaneLines(
-		s.artistNames(), s.artistCursor, s.artistScroll, listH,
-		s.activePane == LibPaneArtists, s.loadingArtists, artistLoadingText, "No artists",
-		paneW, accentStyle, dimStyle, textStyle,
-	)
-	albumLines := s.buildPaneLines(
-		s.albumNames(), s.albumCursor, s.albumScroll, listH,
-		s.activePane == LibPaneAlbums, s.loadingAlbums, "Loading…", "No albums",
-		paneW, accentStyle, dimStyle, textStyle,
-	)
-	songLines := s.buildPaneLines(
-		s.songNames(), s.songCursor, s.songScroll, listH,
-		s.activePane == LibPaneTracks, s.loadingSongs, "Loading…", "No tracks",
-		paneW, accentStyle, dimStyle, textStyle,
-	)
-	var infoLines []string
+	// Prepare extra info column if needed.
+	var extraCol *catalogbrowser.ExtraColumn
 	if showInfo {
-		infoLines = s.buildTrackInfoLines(listH, paneW, accentStyle, dimStyle, textStyle)
-	}
-
-	sep := dimStyle.Render("│")
-	var paneContent strings.Builder
-	for i := 0; i < listH; i++ {
-		al := ""
-		bl := ""
-		sl := ""
-		il := ""
-		if i < len(artistLines) {
-			al = artistLines[i]
-		}
-		if i < len(albumLines) {
-			bl = albumLines[i]
-		}
-		if i < len(songLines) {
-			sl = songLines[i]
-		}
-		if showInfo {
-			if i < len(infoLines) {
-				il = infoLines[i]
-			}
-			paneContent.WriteString(al + sep + bl + sep + sl + sep + il + "\n")
-		} else {
-			paneContent.WriteString(al + sep + bl + sep + sl + "\n")
+		extraCol = &catalogbrowser.ExtraColumn{
+			Label: "Track Info",
+			Lines: s.buildTrackInfoLines(listH, paneW, accentStyle, dimStyle, textStyle),
 		}
 	}
 
-	// Wrap in border container. TrimRight the trailing "\n" so lipgloss
-	// doesn't add an extra empty content row inside the box.
-	body := strings.TrimRight(paneContent.String(), "\n")
-	borderedContent := borderStyle.Width(w - 2).Render(body)
-	sb.WriteString(borderedContent)
+	// Build per-column labels used in the browser's loading/empty display.
+	spinnerText := s.spinner.View()
+	if spinnerText == "" {
+		spinnerText = "Loading…"
+	}
 
-	return sb.String()
+	s.browser.SetSize(w, h)
+	return s.browser.View(
+		accentStyle, dimStyle, textStyle,
+		[]bool{s.loadingArtists, s.loadingAlbums, s.loadingSongs},
+		[]string{spinnerText, "Loading…", "Loading…"},
+		[]string{"No artists", "No albums", "No tracks"},
+		extraCol,
+	)
 }
 
 // FooterText is what the global status bar shows while this screen is
 // active. A recent status message wins for statusTTL — long enough for
 // the user to read "Added 'X' to queue" — then we fall back to the
-// default key-hint string. The screen used to render its own hintBar
-// row; that's been collapsed into the global footer so the chrome looks
-// the same as Movies/Series.
+// default key-hint string.
 func (s MusicLibraryScreen) FooterText() string {
 	if s.playlistPrompt {
 		action := "Add to playlist"
@@ -1283,58 +1245,25 @@ func (s MusicLibraryScreen) FooterText() string {
 	return "enter action · h/l navigate · ↑↓ cursor · D dir mode"
 }
 
-// tagHeader builds the column-header row. The fourth "Track Info" column
-// is only included when withInfo is true (i.e. the Tracks pane is focused
-// and a track is selected).
-func (s MusicLibraryScreen) tagHeader(accentStyle, dimStyle lipgloss.Style, paneW int, withInfo bool) string {
-	// buildPaneLines renders each row as "▶ " (or "  ") + label padded to
-	// paneW-2, so the label text starts 2 cells into the column. Headers
-	// must use the same 2-cell lead-in or they appear shifted left of the
-	// data beneath them.
-	render := func(label string, active bool) string {
-		padded := fmt.Sprintf("  %-*s", paneW-2, label)
-		if active {
-			return accentStyle.Render(padded)
-		}
-		return dimStyle.Render(padded)
-	}
-	sep := dimStyle.Render("│")
-	out := render("Artists", s.activePane == LibPaneArtists) +
-		sep +
-		render("Albums", s.activePane == LibPaneAlbums) +
-		sep +
-		render("Tracks", s.activePane == LibPaneTracks)
-	if withInfo {
-		// Track Info is informational; never "active" itself.
-		out += sep + render("Track Info", false)
-	}
-	return out
-}
-
 // buildTrackInfoLines renders the right-hand metadata column for the
-// currently selected track. Fields shown today are limited to what
-// MpdSong carries (Title/Artist/Album/Duration/File). Bitrate, sample
-// rate, codec, MusicBrainz/ListenBrainz/Last.fm/Discogs IDs, and play
-// count will appear here once the runtime exposes them via extended
-// IPC + the corresponding metadata plugins are enabled.
+// currently selected track.
 func (s MusicLibraryScreen) buildTrackInfoLines(
 	listH, paneW int,
 	accentStyle, dimStyle, textStyle lipgloss.Style,
 ) []string {
-	if s.songCursor < 0 || s.songCursor >= len(s.songs) {
+	sc := s.songCursor()
+	if sc < 0 || sc >= len(s.songs) {
 		return nil
 	}
-	song := s.songs[s.songCursor]
+	song := s.songs[sc]
 
-	// Year is sourced from the album row currently selected (cursor on
-	// album maps to album cursor — same album as the one whose songs are
-	// listed). Falls back to empty if the album row has no parsable year.
 	year := ""
-	if s.albumCursor < len(s.albums) {
-		year = extractYear(s.albums[s.albumCursor].Year)
+	alc := s.albumCursor()
+	if alc < len(s.albums) {
+		year = extractYear(s.albums[alc].Year)
 	}
 
-	innerW := paneW - 2 // 1ch padding either side
+	innerW := paneW - 2
 
 	row := func(label, value string) []string {
 		labelLine := dimStyle.Width(paneW).Render(fmt.Sprintf(" %s", label))
@@ -1342,8 +1271,6 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 		if val == "" {
 			val = "—"
 		}
-		// Hard-truncate raw value by rune count before styling.
-		// paneW is the total column width; subtract 2 for " " prefix + margin.
 		maxRunes := paneW - 2
 		if maxRunes < 3 {
 			maxRunes = 3
@@ -1366,19 +1293,16 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 	lines = append(lines, row("DURATION", fmtMusicDuration(song.Duration))...)
 	lines = append(lines, row("FILE", song.File)...)
 
-	// Footer hint about extended metadata pending plugin support.
 	lines = append(lines, "")
 	lines = append(lines,
 		dimStyle.Render(truncate(" plugin metadata coming soon", innerW)))
 
-	// Pad/truncate to listH so adjacent columns line up.
 	if len(lines) > listH {
 		lines = lines[:listH]
 	}
 	for len(lines) < listH {
 		lines = append(lines, "")
 	}
-	// Ensure each line is exactly paneW visible chars (so `│` separators line up).
 	for i, ln := range lines {
 		vis := lipgloss.Width(ln)
 		if vis < paneW {
@@ -1388,123 +1312,6 @@ func (s MusicLibraryScreen) buildTrackInfoLines(
 		}
 	}
 	return lines
-}
-
-// buildPaneLines renders one column of the tag browser.
-func (s MusicLibraryScreen) buildPaneLines(
-	items []string,
-	cursor, scroll, maxH int,
-	active, loading bool,
-	loadingText, emptyText string,
-	paneW int,
-	accentStyle, dimStyle, textStyle lipgloss.Style,
-) []string {
-	var lines []string
-
-	if loading {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %-*s", paneW-2, loadingText)))
-		for len(lines) < maxH {
-			lines = append(lines, strings.Repeat(" ", paneW))
-		}
-		return lines
-	}
-
-	if len(items) == 0 {
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %-*s", paneW-2, emptyText)))
-		for len(lines) < maxH {
-			lines = append(lines, strings.Repeat(" ", paneW))
-		}
-		return lines
-	}
-
-	// Scrolling
-	if len(items) > maxH {
-		scroll = cursor - maxH/2
-		if scroll < 0 {
-			scroll = 0
-		}
-		if scroll > len(items)-maxH {
-			scroll = len(items) - maxH
-		}
-	} else {
-		scroll = 0
-	}
-
-	end := scroll + maxH
-	if end > len(items) {
-		end = len(items)
-	}
-
-	for i := scroll; i < end; i++ {
-		isCursor := i == cursor
-		prefix := "  "
-		var style lipgloss.Style
-		if isCursor && active {
-			prefix = "▶ "
-			style = accentStyle
-		} else if isCursor {
-			prefix = "▶ "
-			style = textStyle
-		} else {
-			style = textStyle
-		}
-		label := truncate(items[i], paneW-2)
-		line := style.Render(fmt.Sprintf("%s%-*s", prefix, paneW-2, label))
-		lines = append(lines, line)
-	}
-
-	for len(lines) < maxH {
-		lines = append(lines, strings.Repeat(" ", paneW))
-	}
-	return lines
-}
-
-// artistNames returns the list of artist names for rendering.
-func (s MusicLibraryScreen) artistNames() []string {
-	names := make([]string, len(s.artists))
-	for i, a := range s.artists {
-		names[i] = a.Name
-	}
-	return names
-}
-
-// yearRegex finds the first 19xx or 20xx four-digit year anywhere in a
-// string. MPD/file metadata is wildly inconsistent — values can look like
-// "1996", "1996-11-01", "11/1996", "released 1996", or even "1996/2010"
-// (compilation/reissue). This grabs the first plausible year regardless
-// of position, ignoring leading garbage and slash-style date formats.
-var yearRegex = regexp.MustCompile(`(?:19|20)\d{2}`)
-
-// extractYear pulls a 4-digit year out of an arbitrary date string and
-// returns it (or "" if no plausible year is present).
-func extractYear(s string) string {
-	return yearRegex.FindString(s)
-}
-
-// albumNames returns album display strings. When a release year is
-// present, albums are prefixed as "(YYYY) Title" so same-titled releases
-// can be distinguished. Year is extracted via extractYear so any date
-// format MPD reports (1996, 1996-11-01, 11/1996, "released 1996") shows
-// up consistently.
-func (s MusicLibraryScreen) albumNames() []string {
-	names := make([]string, len(s.albums))
-	for i, a := range s.albums {
-		if year := extractYear(a.Year); year != "" {
-			names[i] = "(" + year + ") " + a.Title
-		} else {
-			names[i] = a.Title
-		}
-	}
-	return names
-}
-
-// songNames returns the list of song titles for rendering.
-func (s MusicLibraryScreen) songNames() []string {
-	names := make([]string, len(s.songs))
-	for i, sg := range s.songs {
-		names[i] = sg.Title
-	}
-	return names
 }
 
 // viewDir renders the directory browser view.
@@ -1518,8 +1325,6 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 	}
 	sb.WriteString(accentStyle.Render(crumb) + "\n")
 
-	// Reserve 1 row: breadcrumb. Hint/status text lives in the global
-	// footer (see ui.viewStatusBar), not inline.
 	listH := h - 1
 	if listH < 1 {
 		listH = 1
@@ -1535,7 +1340,6 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 		return sb.String()
 	}
 
-	// Scrolling
 	scroll := 0
 	if len(s.dirEntries) > listH {
 		scroll = s.dirCursor - listH/2
@@ -1594,4 +1398,90 @@ func (s MusicLibraryScreen) viewDir(w, h int, accentStyle, dimStyle, textStyle l
 	}
 
 	return sb.String()
+}
+
+// yearRegex finds the first 19xx or 20xx four-digit year anywhere in a string.
+var yearRegex = regexp.MustCompile(`(?:19|20)\d{2}`)
+
+// extractYear pulls a 4-digit year out of an arbitrary date string.
+func extractYear(s string) string {
+	return yearRegex.FindString(s)
+}
+
+// ── mpdLibraryStub ────────────────────────────────────────────────────────────
+//
+// mpdLibraryStub is a temporary implementation of catalogbrowser.DataSource
+// that wraps the MusicLibraryScreen's existing MPD slices. It converts the
+// concrete ipc.MpdArtist / ipc.MpdAlbum / ipc.MpdSong types into generic
+// catalogbrowser.Entry values so the browser component can render them.
+//
+// Task 5.3 will replace this with a proper MpdDataSource that owns its own
+// data lifecycle and drives IPC calls itself. Until then, the library screen
+// continues to own the MPD fetching, and this stub is a thin adapter.
+
+type mpdLibraryStub struct {
+	artists []ipc.MpdArtist
+	albums  []ipc.MpdAlbum
+	songs   []ipc.MpdSong
+}
+
+func (st *mpdLibraryStub) Items(kind ipc.EntryKind) []catalogbrowser.Entry {
+	switch kind {
+	case ipc.KindArtist:
+		entries := make([]catalogbrowser.Entry, len(st.artists))
+		for i, a := range st.artists {
+			entries[i] = catalogbrowser.Entry{
+				ID:    a.Name,
+				Kind:  ipc.KindArtist,
+				Title: a.Name,
+			}
+		}
+		return entries
+	case ipc.KindAlbum:
+		entries := make([]catalogbrowser.Entry, len(st.albums))
+		for i, a := range st.albums {
+			title := a.Title
+			if year := extractYear(a.Year); year != "" {
+				title = "(" + year + ") " + a.Title
+			}
+			entries[i] = catalogbrowser.Entry{
+				ID:         a.Title,
+				Kind:       ipc.KindAlbum,
+				Title:      title,
+				ArtistName: a.Artist,
+			}
+		}
+		return entries
+	case ipc.KindTrack:
+		entries := make([]catalogbrowser.Entry, len(st.songs))
+		for i, sg := range st.songs {
+			entries[i] = catalogbrowser.Entry{
+				ID:          sg.File,
+				Kind:        ipc.KindTrack,
+				Title:       sg.Title,
+				ArtistName:  sg.Artist,
+				AlbumName:   sg.Album,
+				Duration:    uint32(sg.Duration),
+			}
+		}
+		return entries
+	}
+	return nil
+}
+
+func (st *mpdLibraryStub) Search(_ context.Context, _ string, _ []ipc.EntryKind) tea.Cmd {
+	// Stub: no-op. Library screen manages its own MPD fetching.
+	return nil
+}
+
+func (st *mpdLibraryStub) HasMultipleSources() bool { return false }
+
+func (st *mpdLibraryStub) Snapshot() catalogbrowser.DataSourceState {
+	return catalogbrowser.DataSourceState{}
+}
+
+func (st *mpdLibraryStub) Restore(_ catalogbrowser.DataSourceState) {}
+
+func (st *mpdLibraryStub) Status() catalogbrowser.SearchStatus {
+	return catalogbrowser.SearchStatus{}
 }
