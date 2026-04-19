@@ -179,6 +179,13 @@ fn catalog_entries_to_media(
         ratings:     e.ratings,
         imdb_id:     e.imdb_id,
         tmdb_id:     e.tmdb_id,
+        kind:        Default::default(),
+        source:      String::new(),
+        artist_name: None,
+        album_name:  None,
+        track_number: None,
+        season:      None,
+        episode:     None,
     }).collect()
 }
 
@@ -403,6 +410,13 @@ impl Engine {
                                         ratings:     std::collections::HashMap::new(),
                                         imdb_id:     e.imdb_id,
                                         tmdb_id:     None,
+                                        kind:        Default::default(),
+                                        source:      String::new(),
+                                        artist_name: None,
+                                        album_name:  None,
+                                        track_number: None,
+                                        season:      None,
+                                        episode:     None,
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })

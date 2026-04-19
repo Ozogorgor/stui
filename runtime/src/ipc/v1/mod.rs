@@ -18,20 +18,39 @@
 pub mod stream;
 
 use serde::{Deserialize, Serialize};
+use stui_plugin_sdk::{EntryKind, SearchScope};
 
 // ── Streaming-event scaffold ─────────────────────────────────────────────────
 
-/// Minimal payload for `Event::ScopeResults`.
+/// Streaming result frame for a single search scope.
 ///
-/// This is a **placeholder** — Task 2.3 replaces the body with the real
-/// fields (`scope`, `entries`, `partial`, `error`, …).  Keep the struct
-/// here (not inside `stream.rs`) so Task 2.3 can extend it in-place
-/// without touching `stream.rs`.
+/// Sent once per scope per fan-out as results arrive.  `partial = true`
+/// means the runtime is still collecting from other providers; the TUI
+/// should accumulate and re-render.  `partial = false` is the terminal
+/// frame for this scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScopeResultsMsg {
-    /// Correlation ID echoing the originating `SearchRequest::id` cast to u64.
+    /// Correlation ID echoing the originating `SearchRequest::query_id`.
     pub query_id: u64,
-    // placeholder — Task 2.3 adds scope, entries, partial, error
+    /// Which scope this frame covers.
+    pub scope: SearchScope,
+    /// Results collected so far for this scope.
+    pub entries: Vec<MediaEntry>,
+    /// `true` if more frames for this scope may follow.
+    pub partial: bool,
+    /// Set when all providers for this scope failed or none were configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ScopeError>,
+}
+
+/// Error variants for a single-scope search failure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ScopeError {
+    /// Every provider attempted returned an error.
+    AllFailed,
+    /// No plugins are configured that cover this scope.
+    NoPluginsConfigured,
 }
 
 // ── Requests (Go → Rust) ─────────────────────────────────────────────────────
@@ -332,34 +351,25 @@ pub struct SetConfigRequest {
     pub value: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+/// Wire-format search request from the TUI to the runtime.
+///
+/// Replaces the old flat-filter form (`tab`, `provider`, `sort`, `genre`,
+/// `min_rating`, `year_from`, `year_to`).  Scope-based fan-out is handled
+/// by the engine; per-scope results stream back as `Event::ScopeResults`.
+///
+/// Legacy fields were dropped; call sites in `pipeline::search` now use
+/// defaults / stubs that will be rewritten in Task 2.9.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SearchRequest {
-    /// Correlation ID echoed back in the `SearchResponse`.
+    /// Correlation ID echoed back in every `ScopeResultsMsg` for this query.
     pub id: String,
     pub query: String,
-    pub tab: MediaTab,
-    /// `None` = fan out to all loaded providers.
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub offset: Option<usize>,
-    /// Sort order: "rating" | "newest" | "oldest" | "alphabetical" | "relevance".
-    /// Omit or set to null for default (rating).
-    #[serde(default)]
-    pub sort: Option<String>,
-    /// Genre substring filter (case-insensitive). Null = no filter.
-    #[serde(default)]
-    pub genre: Option<String>,
-    /// Minimum composite rating (0.0–10.0). Null = no minimum.
-    #[serde(default)]
-    pub min_rating: Option<f64>,
-    /// Earliest release year to include. Can be used independently or with `year_to`.
-    #[serde(default)]
-    pub year_from: Option<u32>,
-    /// Latest release year to include. Can be used independently or with `year_from`.
-    #[serde(default)]
-    pub year_to: Option<u32>,
+    /// Which scopes to search.  Empty = engine decides (all capabilities).
+    pub scopes: Vec<SearchScope>,
+    pub limit: u32,
+    pub offset: u32,
+    /// Monotonically increasing query counter used for in-flight de-duplication.
+    pub query_id: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1156,6 +1166,26 @@ pub struct MediaEntry {
     pub imdb_id: Option<String>,
     #[serde(default)]
     pub tmdb_id: Option<String>,
+    // ── Fields added in Task 2.3 ────────────────────────────────────────────
+    // `#[serde(default)]` keeps old wire payloads (without these fields) valid.
+    /// Typed entry kind (artist / album / track / movie / series / episode).
+    /// Defaults to `EntryKind::Track` for backward-compat with legacy wire data.
+    #[serde(default)]
+    pub kind: EntryKind,
+    /// Originating plugin / provider identifier for scoped-search entries.
+    /// Parallel to `provider`; migration to a single field happens in a later task.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
 }
 
 /// A single stream candidate as sent to the TUI.
@@ -1529,5 +1559,77 @@ impl Response {
             code,
             message: msg.into(),
         })
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod search_request_tests {
+    use super::*;
+    use stui_plugin_sdk::{EntryKind, SearchScope};
+
+    #[test]
+    fn ipc_search_request_with_scopes_roundtrips() {
+        let req = SearchRequest {
+            id: "q1".into(),
+            query: "creep".into(),
+            scopes: vec![SearchScope::Artist, SearchScope::Track],
+            limit: 50,
+            offset: 0,
+            query_id: 42,
+        };
+        let s = serde_json::to_vec(&req).unwrap();
+        let back: SearchRequest = serde_json::from_slice(&s).unwrap();
+        assert_eq!(back.scopes, vec![SearchScope::Artist, SearchScope::Track]);
+        assert_eq!(back.query_id, 42);
+    }
+
+    #[test]
+    fn scope_results_msg_has_all_fields() {
+        let msg = ScopeResultsMsg {
+            query_id: 42,
+            scope: SearchScope::Artist,
+            entries: vec![],
+            partial: true,
+            error: None,
+        };
+        let s = serde_json::to_string(&msg).unwrap();
+        assert!(s.contains("\"partial\":true"));
+        assert!(s.contains("\"scope\":\"artist\""));
+    }
+
+    #[test]
+    fn scope_error_tagged_variants() {
+        let e = ScopeError::NoPluginsConfigured;
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"type\":\"no_plugins_configured\""));
+    }
+
+    #[test]
+    fn media_entry_extended_fields_default() {
+        // With serde(default), a legacy wire payload (without new fields)
+        // should still deserialize successfully.
+        let legacy = r#"{
+            "id": "x",
+            "title": "t",
+            "year": null,
+            "genre": null,
+            "rating": null,
+            "description": null,
+            "poster_url": null,
+            "provider": "test",
+            "tab": "movies"
+        }"#;
+        let entry: Result<MediaEntry, _> = serde_json::from_str(legacy);
+        let entry = entry.expect("legacy MediaEntry JSON should deserialize");
+        // New fields should default to their zero values.
+        assert_eq!(entry.kind, EntryKind::Track);
+        assert_eq!(entry.source, "");
+        assert!(entry.artist_name.is_none());
+        assert!(entry.album_name.is_none());
+        assert!(entry.track_number.is_none());
+        assert!(entry.season.is_none());
+        assert!(entry.episode.is_none());
     }
 }

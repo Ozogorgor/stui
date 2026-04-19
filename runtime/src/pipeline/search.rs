@@ -2,11 +2,27 @@
 
 use std::sync::Arc;
 
+use stui_plugin_sdk::SearchScope;
+
 use crate::catalog::Catalog;
 use crate::catalog_engine::SortOrder;
 use crate::config::ConfigManager;
 use crate::engine::{Engine, SearchOptions, TraceEmitter};
 use crate::ipc::{self, MediaEntry, Response, SearchRequest, SearchResponse};
+
+/// Map a `SearchScope` to the closest legacy `MediaTab` value.
+///
+/// TODO(Task 2.9): remove when the engine fan-out is scope-aware.
+fn scope_to_legacy_tab(scope: &SearchScope) -> ipc::MediaTab {
+    match scope {
+        SearchScope::Movie              => ipc::MediaTab::Movies,
+        SearchScope::Series
+        | SearchScope::Episode          => ipc::MediaTab::Series,
+        SearchScope::Artist
+        | SearchScope::Album
+        | SearchScope::Track            => ipc::MediaTab::Music,
+    }
+}
 
 /// Handle a `search` IPC request.
 ///
@@ -23,29 +39,31 @@ pub async fn run_search(
 
     let adult_content_enabled = config.snapshot().await.adult_content_enabled;
 
-    let sort = match r.sort.as_deref() {
-        Some("newest")       => SortOrder::Newest,
-        Some("oldest")       => SortOrder::Oldest,
-        Some("alphabetical") => SortOrder::Alphabetical,
-        Some("relevance")    => SortOrder::Relevance,
-        _                    => SortOrder::Rating,
-    };
+    // TODO(Task 2.9): Legacy filter fields (sort, genre, min_rating, year_from,
+    // year_to, tab, provider) were dropped from SearchRequest in Task 2.3.
+    // Until Task 2.9 rewrites this pipeline, use harmless defaults so the build
+    // stays green.  The engine will fan-out to all providers / all tabs.
     let options = SearchOptions {
-        sort,
-        genre:      r.genre.clone(),
-        min_rating: r.min_rating,
-        year_from:  r.year_from,
-        year_to:    r.year_to,
+        sort: SortOrder::Rating,
+        genre: None,
+        min_rating: None,
+        year_from: None,
+        year_to: None,
         adult_content_enabled,
     };
+
+    // Derive a legacy MediaTab from the first scope, falling back to Movies.
+    let legacy_tab = r.scopes.first()
+        .map(|s| scope_to_legacy_tab(s))
+        .unwrap_or(ipc::MediaTab::Movies);
 
     let results = engine.search(
         &r.id,
         &r.query,
-        &r.tab,
-        r.provider.as_deref(),
-        r.limit.unwrap_or(50),
-        r.offset.unwrap_or(0),
+        &legacy_tab,
+        None,                        // provider filter removed from request
+        r.limit as usize,
+        r.offset as usize,
         options,
     ).await;
 
@@ -53,7 +71,7 @@ pub async fn run_search(
 
     if let Response::SearchResult(ref sr) = results {
         if sr.items.is_empty() {
-            let fallback = catalog_search(catalog, &r.id, &r.query, &r.tab).await;
+            let fallback = catalog_search(catalog, &r.id, &r.query, &legacy_tab).await;
             if let Response::SearchResult(ref fr) = fallback {
                 trace.search(0, elapsed_ms);
                 trace.resolve(fr.items.len());
@@ -96,6 +114,13 @@ pub async fn catalog_search(
             ratings: std::collections::HashMap::new(),
             imdb_id: None,
             tmdb_id: None,
+            kind: Default::default(),
+            source: String::new(),
+            artist_name: None,
+            album_name: None,
+            track_number: None,
+            season: None,
+            episode: None,
         })
         .collect();
     let total = matched.len();

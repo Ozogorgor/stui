@@ -604,6 +604,13 @@ where
                                 tab, media_type: e.media_type.clone(),
                                 imdb_id: e.imdb_id.clone(),
                                 tmdb_id: e.tmdb_id.clone(),
+                                kind: Default::default(),
+                                source: String::new(),
+                                artist_name: None,
+                                album_name: None,
+                                track_number: None,
+                                season: None,
+                                episode: None,
                             }
                         }).collect();
 

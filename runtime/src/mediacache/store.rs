@@ -219,6 +219,13 @@ mod tests {
             media_type: MediaType::Movie,
             imdb_id: None,
             tmdb_id: None,
+            kind: Default::default(),
+            source: String::new(),
+            artist_name: None,
+            album_name: None,
+            track_number: None,
+            season: None,
+            episode: None,
         };
         cache.tabs.insert("movies".to_string(), CachedTab {
             tab: "movies".to_string(),

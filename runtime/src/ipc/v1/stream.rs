@@ -69,11 +69,23 @@ pub async fn emit(tx: &EventSender, event: Event) {
 #[cfg(test)]
 mod stream_tests {
     use super::*;
-    use crate::ipc::v1::ScopeResultsMsg;
+    use crate::ipc::v1::{ScopeResultsMsg, MediaTab, MediaType};
+    use stui_plugin_sdk::SearchScope;
+
+    /// Build a minimal `ScopeResultsMsg` for tests — avoids repeating all fields.
+    fn minimal_scope_msg(query_id: u64) -> ScopeResultsMsg {
+        ScopeResultsMsg {
+            query_id,
+            scope: SearchScope::Track,
+            entries: vec![],
+            partial: false,
+            error: None,
+        }
+    }
 
     #[test]
     fn event_serializes_scope_results_type_tag() {
-        let event = Event::ScopeResults(ScopeResultsMsg { query_id: 42 });
+        let event = Event::ScopeResults(minimal_scope_msg(42));
         let s = serde_json::to_string(&event).unwrap();
         // Must carry the inner discriminant tag "scope_results"
         assert!(
@@ -86,7 +98,7 @@ mod stream_tests {
 
     #[test]
     fn event_round_trips_scope_results() {
-        let event = Event::ScopeResults(ScopeResultsMsg { query_id: 7 });
+        let event = Event::ScopeResults(minimal_scope_msg(7));
         let bytes = serde_json::to_vec(&event).unwrap();
         let back: Event = serde_json::from_slice(&bytes).unwrap();
         match back {
@@ -97,7 +109,7 @@ mod stream_tests {
     #[tokio::test]
     async fn emit_delivers_wire_line_to_channel() {
         let (tx, mut rx) = mpsc::channel::<String>(4);
-        emit(&tx, Event::ScopeResults(ScopeResultsMsg { query_id: 1 })).await;
+        emit(&tx, Event::ScopeResults(minimal_scope_msg(1))).await;
         let line = rx.recv().await.expect("should receive a line");
         assert!(line.ends_with('\n'), "wire line must end with newline");
         assert!(
@@ -115,6 +127,6 @@ mod stream_tests {
         let (tx, rx) = mpsc::channel::<String>(1);
         drop(rx); // close the receiver
         // Must not panic; warning is logged internally
-        emit(&tx, Event::ScopeResults(ScopeResultsMsg { query_id: 99 })).await;
+        emit(&tx, Event::ScopeResults(minimal_scope_msg(99))).await;
     }
 }
