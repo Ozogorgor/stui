@@ -77,6 +77,120 @@ func NewMusicScreen(client *ipc.Client) MusicScreen {
 // ActiveSubTab returns the currently visible sub-tab.
 func (s MusicScreen) ActiveSubTab() MusicSubTab { return s.active }
 
+// FocusedSearchable returns the Searchable for the currently-active
+// Music sub-tab, or nil if the active sub-tab does not implement
+// Searchable. The root model uses this to probe eligibility on `/`.
+// Tasks 6.2 (Library) and 6.3 (Browse) will cause this to return
+// non-nil once they implement the interface.
+func (s MusicScreen) FocusedSearchable() Searchable {
+	switch s.active {
+	case MusicLibrary:
+		if x, ok := any(s.library).(Searchable); ok {
+			return x
+		}
+	case MusicBrowse:
+		if x, ok := any(s.browse).(Searchable); ok {
+			return x
+		}
+	}
+	return nil
+}
+
+// searchableLibrary is implemented by MusicLibraryScreen once Task 6.2
+// lands. Using typed return values avoids routing through tea.Model
+// (which MusicLibraryScreen cannot satisfy because Init has a pointer
+// receiver and Update returns MusicLibraryScreen, not tea.Model).
+type searchableLibrary interface {
+	Searchable
+	OnScopeResults(ipc.ScopeResultsMsg) (MusicLibraryScreen, tea.Cmd)
+	OnMpdSearchResult(ipc.MpdSearchResult) (MusicLibraryScreen, tea.Cmd)
+	RestoreView() MusicLibraryScreen
+}
+
+// searchableBrowse is implemented by MusicBrowseScreen once Task 6.3
+// lands. Typed return values for the same reason as searchableLibrary.
+type searchableBrowse interface {
+	Searchable
+	OnScopeResults(ipc.ScopeResultsMsg) (MusicBrowseScreen, tea.Cmd)
+	OnMpdSearchResult(ipc.MpdSearchResult) (MusicBrowseScreen, tea.Cmd)
+	RestoreView() MusicBrowseScreen
+}
+
+// ApplyScopeResults forwards an ipc.ScopeResultsMsg to the active
+// Searchable sub-screen and returns the updated MusicScreen and command.
+// If the active sub-tab is not Searchable it is a no-op.
+func (s MusicScreen) ApplyScopeResults(msg ipc.ScopeResultsMsg) (MusicScreen, tea.Cmd) {
+	switch s.active {
+	case MusicLibrary:
+		if x, ok := any(s.library).(searchableLibrary); ok {
+			lib, cmd := x.OnScopeResults(msg)
+			s.library = lib
+			return s, cmd
+		}
+	case MusicBrowse:
+		if x, ok := any(s.browse).(searchableBrowse); ok {
+			br, cmd := x.OnScopeResults(msg)
+			s.browse = br
+			return s, cmd
+		}
+	}
+	return s, nil
+}
+
+// ApplyMpdSearchResult forwards an ipc.MpdSearchResult to the active
+// Searchable sub-screen and returns the updated MusicScreen and command.
+// If the active sub-tab is not Searchable it is a no-op.
+func (s MusicScreen) ApplyMpdSearchResult(msg ipc.MpdSearchResult) (MusicScreen, tea.Cmd) {
+	switch s.active {
+	case MusicLibrary:
+		if x, ok := any(s.library).(searchableLibrary); ok {
+			lib, cmd := x.OnMpdSearchResult(msg)
+			s.library = lib
+			return s, cmd
+		}
+	case MusicBrowse:
+		if x, ok := any(s.browse).(searchableBrowse); ok {
+			br, cmd := x.OnMpdSearchResult(msg)
+			s.browse = br
+			return s, cmd
+		}
+	}
+	return s, nil
+}
+
+// ApplyRestoreView calls RestoreView on the active Searchable sub-screen
+// and returns the updated MusicScreen. If the active sub-tab is not
+// Searchable it is a no-op.
+func (s MusicScreen) ApplyRestoreView() MusicScreen {
+	switch s.active {
+	case MusicLibrary:
+		if x, ok := any(s.library).(searchableLibrary); ok {
+			s.library = x.RestoreView()
+		}
+	case MusicBrowse:
+		if x, ok := any(s.browse).(searchableBrowse); ok {
+			s.browse = x.RestoreView()
+		}
+	}
+	return s
+}
+
+// StartSearchInActive delegates StartSearch to the active Searchable
+// sub-screen. Returns nil if the active sub-tab is not Searchable.
+func (s MusicScreen) StartSearchInActive(query string) tea.Cmd {
+	switch s.active {
+	case MusicLibrary:
+		if x, ok := any(s.library).(Searchable); ok {
+			return x.StartSearch(query)
+		}
+	case MusicBrowse:
+		if x, ok := any(s.browse).(Searchable); ok {
+			return x.StartSearch(query)
+		}
+	}
+	return nil
+}
+
 // FooterText is the hint/status string the global status bar should
 // surface for the currently-active sub-tab. Queue returns "" because
 // it suppresses the global footer entirely; everyone else publishes

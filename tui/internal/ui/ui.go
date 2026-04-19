@@ -489,6 +489,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Search results ────────────────────────────────────────────────────
 
+	// Streaming plugin-backed scope results — route to focused Searchable.
+	case ipc.ScopeResultsMsg:
+		var cmd tea.Cmd
+		m.musicScreen, cmd = m.musicScreen.ApplyScopeResults(msg)
+		// TODO(Task 6.4): route to grid-tab Searchable when implemented.
+		return m, cmd
+
+	// Synchronous MPD-backed search results — route to focused Searchable.
+	case ipc.MpdSearchResult:
+		var cmd tea.Cmd
+		m.musicScreen, cmd = m.musicScreen.ApplyMpdSearchResult(msg)
+		// TODO(Task 6.4): route to grid-tab Searchable when implemented.
+		return m, cmd
+
+	// Legacy single-response search — retained for Task 6.5 cleanup.
 	case ipc.SearchResultMsg:
 		m.state.IsLoading = false
 		m.state.LoadingStart = 0
@@ -1584,9 +1599,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case actions.ActionOpenHelp:
 			return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 		case actions.ActionOpenSearch:
-			m.state.Focus = state.FocusSearch
-			m.state.SearchActive = true
-			return m, m.search.Focus()
+			if s := focusedSearchable(&m); s != nil {
+				m.search.Placeholder = s.SearchPlaceholder()
+				m.state.Focus = state.FocusSearch
+				m.state.SearchActive = true
+				return m, m.search.Focus()
+			}
+			// Focused screen is not Searchable — ignore the keystroke.
 		case actions.ActionNextTab:
 			next := (int(m.state.ActiveTab) + 1) % len(state.Tabs())
 			m.switchTab(state.Tab(next))
@@ -1835,29 +1854,59 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.state.Focus == state.FocusSearch {
 		switch key {
 		case "esc":
+			// Restore the focused screen's pre-search state if it is Searchable.
+			if s := focusedSearchable(&m); s != nil {
+				m.applyRestoreView()
+			}
 			m.state.Focus = state.FocusTabs
 			m.search.Blur()
+			m.search.Reset()
 			m.state.SearchActive = false
 			m.screen = screenGrid
 			return m, nil
 		case "enter":
 			query := m.search.Value()
 			m.state.SearchQuery = query
+			if query == "" {
+				// Empty query — restore view and dismiss bar.
+				if s := focusedSearchable(&m); s != nil {
+					m.applyRestoreView()
+				}
+				m.state.Focus = state.FocusTabs
+				m.search.Blur()
+				m.search.Reset()
+				m.state.SearchActive = false
+				return m, nil
+			}
+			// Dispatch search through the focused Searchable if available;
+			// fall back to the legacy dispatchSearch path otherwise.
+			if s := focusedSearchable(&m); s != nil {
+				m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
+				return m, s.StartSearch(query)
+			}
 			m.state.Focus = state.FocusResults
 			m.search.Blur()
-			if query != "" {
-				m.state.IsLoading = true
-				m.state.LoadingStart = time.Now().Unix()
-				m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
-				m.dispatchSearch(query)
-				return m, m.loadingSpinner.Tick
-			}
+			m.state.IsLoading = true
+			m.state.LoadingStart = time.Now().Unix()
+			m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
+			m.dispatchSearch(query)
+			return m, m.loadingSpinner.Tick
 		default:
 			var cmd tea.Cmd
 			m.search, cmd = m.search.Update(msg)
+			// Forward live typing to the focused Searchable for debounced
+			// incremental search. StartSearch is a no-op until 6.2/6.3 land.
+			if s := focusedSearchable(&m); s != nil {
+				query := m.search.Value()
+				if query != "" {
+					return m, tea.Batch(cmd, s.StartSearch(query))
+				}
+				// Empty query (user deleted everything) → restore view.
+				m.applyRestoreView()
+				return m, cmd
+			}
 			return m, cmd
 		}
-		return m, nil
 	}
 
 	// Music tab owns all navigation while active
@@ -2043,10 +2092,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "/":
-		// Activate the inline search bar in the topbar.
-		m.state.Focus = state.FocusSearch
-		m.state.SearchActive = true
-		return m, m.search.Focus()
+		// Activate the inline search bar only when the focused screen is
+		// Searchable. Non-Searchable screens ignore the keystroke entirely.
+		if s := focusedSearchable(&m); s != nil {
+			m.search.Placeholder = s.SearchPlaceholder()
+			m.state.Focus = state.FocusSearch
+			m.state.SearchActive = true
+			return m, m.search.Focus()
+		}
 	case "?":
 		return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 	case "D":
@@ -2545,18 +2598,53 @@ func (m *Model) switchTab(t state.Tab) {
 	})
 }
 
+// dispatchSearch is the legacy fallback used when the focused screen is
+// NOT Searchable and the user presses Enter in the search bar. Once all
+// grid tabs implement Searchable (Task 6.4) this path will be unreachable
+// and Task 6.5 will delete it.
 func (m *Model) dispatchSearch(query string) {
 	if m.client == nil {
 		m.state.IsLoading = false
 		m.state.StatusMsg = "No runtime \u2014 start with API keys set"
 		return
 	}
-	// TODO(Chunk 6): migrate to streaming search. Client.Search now returns
-	// (qid, <-chan ipc.ScopeResultsMsg, error) — wire scope-results into the
-	// grid/list screen via a tea.Cmd that drains the channel and dispatches
-	// ipc.SearchResultMsg for backward-compatible handling.
+	// Streaming search is routed via screens.Searchable (see focusedSearchable).
+	// This legacy path is a no-op placeholder retained for Task 6.5 cleanup.
 	m.state.IsLoading = false
-	m.state.StatusMsg = "search pending Chunk 6 migration"
+	m.state.StatusMsg = fmt.Sprintf("search not yet available on this tab \u2014 results coming in Task 6.4")
+}
+
+// focusedSearchable returns the screens.Searchable for the currently-active
+// screen, or nil if the focused screen does not implement Searchable.
+//
+// Routing table:
+//
+//   - TabMusic: delegates to MusicScreen.FocusedSearchable(), which
+//     returns the active sub-tab's Searchable once Tasks 6.2/6.3 land.
+//   - Other tabs (Movies/Series/Library): always nil until Task 6.4.
+//
+// The root model uses this to gate the `/` keystroke and to route
+// ipc.ScopeResultsMsg / ipc.MpdSearchResult to the right screen.
+func focusedSearchable(m *Model) screens.Searchable {
+	switch m.state.ActiveTab {
+	case state.TabMusic:
+		return m.musicScreen.FocusedSearchable()
+	// TODO(Task 6.4): TabMovies, TabSeries, TabLibrary grid Searchable.
+	}
+	return nil
+}
+
+// applyRestoreView calls RestoreView on the active Searchable sub-screen
+// (routed through the concrete screen holder) and writes the updated
+// screen back into the correct typed field on the model.
+// It must be called before modifying Focus / SearchActive so that the
+// restore can observe the pre-transition state.
+func (m *Model) applyRestoreView() {
+	switch m.state.ActiveTab {
+	case state.TabMusic:
+		m.musicScreen = m.musicScreen.ApplyRestoreView()
+	// TODO(Task 6.4): restore view for grid tabs.
+	}
 }
 
 func (m Model) currentGridEntries() []ipc.CatalogEntry {
