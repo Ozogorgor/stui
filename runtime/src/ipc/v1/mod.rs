@@ -15,7 +15,24 @@
 
 #![allow(dead_code)]
 
+pub mod stream;
+
 use serde::{Deserialize, Serialize};
+
+// ── Streaming-event scaffold ─────────────────────────────────────────────────
+
+/// Minimal payload for `Event::ScopeResults`.
+///
+/// This is a **placeholder** — Task 2.3 replaces the body with the real
+/// fields (`scope`, `entries`, `partial`, `error`, …).  Keep the struct
+/// here (not inside `stream.rs`) so Task 2.3 can extend it in-place
+/// without touching `stream.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeResultsMsg {
+    /// Correlation ID echoing the originating `SearchRequest::id` cast to u64.
+    pub query_id: u64,
+    // placeholder — Task 2.3 adds scope, entries, partial, error
+}
 
 // ── Requests (Go → Rust) ─────────────────────────────────────────────────────
 

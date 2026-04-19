@@ -36,6 +36,10 @@
 
 pub mod v1;
 
+/// Re-export the streaming-event primitive for use by request handlers.
+pub use v1::stream::{emit as emit_event, Event, EventSender};
+pub use v1::ScopeResultsMsg;
+
 /// Current active protocol version.  Bump when introducing breaking changes
 /// (and add a new `v2` module to maintain backward compat with old clients).
 pub const CURRENT_VERSION: u32 = 1;
