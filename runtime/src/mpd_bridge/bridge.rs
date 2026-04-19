@@ -32,7 +32,7 @@ use crate::mediacache::normalize::{self, store as norm_store, NormalizationConfi
 use super::client::MpdConnection;
 
 /// Escape a string for use inside an MPD quoted argument (`"..."`).
-fn quote_mpd(s: &str) -> String {
+pub(super) fn quote_mpd(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for ch in s.chars() {
@@ -46,10 +46,10 @@ fn quote_mpd(s: &str) -> String {
 fn parse_u32(v: Option<&String>) -> u32 {
     v.and_then(|s| s.parse::<u32>().ok()).unwrap_or(0)
 }
-fn parse_f64(v: Option<&String>) -> f64 {
+pub(super) fn parse_f64(v: Option<&String>) -> f64 {
     v.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
 }
-fn str_or(v: Option<&String>) -> String {
+pub(super) fn str_or(v: Option<&String>) -> String {
     v.cloned().unwrap_or_default()
 }
 
@@ -107,8 +107,8 @@ struct MpdStatusWire<'a> {
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct MpdBridge {
-    config: MpdConfig,
-    conn:   Arc<Mutex<Option<MpdConnection>>>,
+    pub(super) config: MpdConfig,
+    pub(super) conn:   Arc<Mutex<Option<MpdConnection>>>,
     ipc_tx: tokio::sync::mpsc::Sender<String>,
     normalize_cfg: MusicNormalizeConfig,
 }
@@ -796,7 +796,7 @@ impl MpdBridge {
         }
     }
 
-    async fn get_or_connect<'a>(
+    pub(super) async fn get_or_connect<'a>(
         slot:   &'a mut Option<MpdConnection>,
         config: &MpdConfig,
     ) -> Result<&'a mut MpdConnection> {

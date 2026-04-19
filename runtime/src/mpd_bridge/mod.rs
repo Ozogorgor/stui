@@ -20,5 +20,6 @@
 pub mod client;
 pub mod bridge;
 pub mod mpd_conf;
+mod search;
 
 pub use bridge::MpdBridge;
