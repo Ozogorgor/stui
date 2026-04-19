@@ -1015,6 +1015,11 @@ async fn handle_line(
             },
         },
 
+        Request::MpdSearch(r) => {
+            // TODO(Task 3.2): Wire MpdSearch into bridge implementation
+            Response::error(Some(r.id), ErrorCode::InvalidRequest, "MpdSearch not yet implemented".to_string())
+        }
+
         // ── DSP requests ─────────────────────────────────────────────────────────
         Request::GetDspStatus => {
             let Some(d) = dsp else {

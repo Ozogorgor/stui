@@ -109,6 +109,8 @@ pub enum Request {
     MpdGetPlaylists(MpdGetPlaylistsRequest),
     /// Fetch tracks in a saved MPD playlist.
     MpdGetPlaylist(MpdGetPlaylistRequest),
+    /// Search the MPD library by artist, album, or track.
+    MpdSearch(MpdSearchRequest),
 
     /// Fetch the current plugin repository list.
     GetPluginRepos,
@@ -469,6 +471,8 @@ pub enum Response {
     MpdGetPlaylists(MpdGetPlaylistsResponse),
     /// Response to `MpdGetPlaylist` — tracks in a saved playlist.
     MpdGetPlaylist(MpdGetPlaylistResponse),
+    /// Response to `MpdSearch` — search results (artists, albums, tracks) + optional error.
+    MpdSearch(MpdSearchResult),
 
     /// Response to `GetPluginRepos`.
     PluginRepos(PluginReposResponse),
@@ -836,6 +840,47 @@ pub struct MpdGetPlaylistsResponse {
 pub struct MpdGetPlaylistResponse {
     pub id: String,
     pub tracks: Vec<MpdSongWire>,
+}
+
+// ── MPD search ───────────────────────────────────────────────────────────────
+
+/// Which MPD entity types to search.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MpdScope {
+    Artist,
+    Album,
+    Track,
+}
+
+/// Request to search the MPD library by artist, album, or track.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MpdSearchRequest {
+    pub id: String,
+    pub query: String,
+    pub scopes: Vec<MpdScope>,
+    pub limit: u32,
+    pub query_id: u64,
+}
+
+/// Result buckets from an MPD search.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MpdSearchResult {
+    pub id: String,
+    pub query_id: u64,
+    pub artists: Vec<MpdArtistWire>,
+    pub albums: Vec<MpdAlbumWire>,
+    pub tracks: Vec<MpdSongWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<MpdSearchError>,
+}
+
+/// Error variants for MPD search.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MpdSearchError {
+    NotConnected,
+    CommandFailed { message: String },
 }
 
 // ── Tag normalization — requests ─────────────────────────────────────────────
@@ -1631,5 +1676,42 @@ mod search_request_tests {
         assert!(entry.track_number.is_none());
         assert!(entry.season.is_none());
         assert!(entry.episode.is_none());
+    }
+
+    #[test]
+    fn mpd_search_request_roundtrips() {
+        let req = MpdSearchRequest {
+            id: "q2".into(),
+            query: "radiohead".into(),
+            scopes: vec![MpdScope::Artist, MpdScope::Album, MpdScope::Track],
+            limit: 200,
+            query_id: 7,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: MpdSearchRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.scopes.len(), 3);
+        assert_eq!(back.query_id, 7);
+    }
+
+    #[test]
+    fn mpd_search_result_has_typed_buckets() {
+        let r = MpdSearchResult {
+            id: "q2".into(),
+            query_id: 7,
+            artists: vec![],
+            albums: vec![],
+            tracks: vec![],
+            error: Some(MpdSearchError::NotConnected),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"artists\":[]"));
+        assert!(s.contains("\"type\":\"not_connected\""));
+    }
+
+    #[test]
+    fn mpd_scope_snake_case() {
+        assert_eq!(serde_json::to_string(&MpdScope::Artist).unwrap(), "\"artist\"");
+        assert_eq!(serde_json::to_string(&MpdScope::Album).unwrap(), "\"album\"");
+        assert_eq!(serde_json::to_string(&MpdScope::Track).unwrap(), "\"track\"");
     }
 }
