@@ -499,13 +499,15 @@ impl Engine {
         options: SearchOptions,
     ) -> Response {
         use crate::cache::search::SearchKey;
+        use stui_plugin_sdk::SearchScope;
 
         // ── Cache lookup ──────────────────────────────────────────────────
         // We only cache when there's no provider filter (i.e. a normal
         // cross-provider search), and only the first page (offset == 0).
         let cache_key = if provider_filter.is_none() && offset == 0 {
-            let tab_str = format!("{:?}", tab).to_lowercase();
-            Some(SearchKey::new(tab_str, query, 1))
+            // TODO(Task 2.9): legacy path, remove with Engine::search rewrite.
+            // Using placeholder scope value since this path is being replaced by search_scoped.
+            Some(SearchKey::new("legacy", query, SearchScope::Track, 1))
         } else { None };
 
         if let Some(ref key) = cache_key {

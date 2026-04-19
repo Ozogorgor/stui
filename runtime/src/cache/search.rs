@@ -1,6 +1,6 @@
 //! Search result cache — TTL 2 hours.
 //!
-//! Key: `(tab_name, normalised_query, page)`
+//! Key: `(plugin_id, normalised_query, scope, page)`
 //! Value: `Vec<CatalogEntry>`
 //!
 //! Normalisation: lowercase + trim + collapse whitespace.
@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use stui_plugin_sdk::SearchScope;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -26,17 +27,19 @@ const TTL: Duration = Duration::from_secs(2 * 60 * 60);
 #[allow(dead_code)] // pub API: used by engine search result cache
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchKey {
-    pub tab:   String,
-    pub query: String,
-    pub page:  u32,
+    plugin_id:  String,
+    query_norm: String,
+    scope:      SearchScope,
+    page:       u32,
 }
 
 impl SearchKey {
     #[allow(dead_code)] // pub API: used by engine search result cache
-    pub fn new(tab: impl Into<String>, query: &str, page: u32) -> Self {
+    pub fn new(plugin_id: &str, query: &str, scope: SearchScope, page: u32) -> Self {
         SearchKey {
-            tab:   tab.into(),
-            query: normalise(query),
+            plugin_id:  plugin_id.to_string(),
+            query_norm: normalise(query),
+            scope,
             page,
         }
     }
@@ -68,10 +71,10 @@ impl SearchCache {
         let map = self.inner.read().await;
         let entry = map.get(key)?;
         if entry.is_valid() {
-            debug!("search cache HIT tab={} q={:?} page={}", key.tab, key.query, key.page);
+            debug!("search cache HIT plugin={} scope={:?} q={:?} page={}", key.plugin_id, key.scope, key.query_norm, key.page);
             Some(entry.value.clone())
         } else {
-            debug!("search cache EXPIRED tab={} q={:?}", key.tab, key.query);
+            debug!("search cache EXPIRED plugin={} scope={:?} q={:?}", key.plugin_id, key.scope, key.query_norm);
             None
         }
     }
@@ -79,7 +82,7 @@ impl SearchCache {
     #[allow(dead_code)] // pub API: used by engine search result cache
     /// Store results for this key, replacing any existing entry.
     pub async fn insert(&self, key: SearchKey, items: Vec<CatalogEntry>) {
-        debug!("search cache INSERT tab={} q={:?} n={}", key.tab, key.query, items.len());
+        debug!("search cache INSERT plugin={} scope={:?} q={:?} n={}", key.plugin_id, key.scope, key.query_norm, items.len());
         self.inner.write().await.insert(key, Ttl::new(items, TTL));
     }
 
@@ -99,4 +102,30 @@ impl SearchCache {
 
 impl Default for SearchCache {
     fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_includes_scope_and_plugin() {
+        let k1 = SearchKey::new("discogs", "creep", SearchScope::Track, 0);
+        let k2 = SearchKey::new("discogs", "creep", SearchScope::Artist, 0);
+        assert_ne!(k1, k2, "same plugin+query but different scope → different key");
+    }
+
+    #[test]
+    fn key_normalizes_query() {
+        let k1 = SearchKey::new("discogs", "  Creep  ", SearchScope::Track, 0);
+        let k2 = SearchKey::new("discogs", "creep", SearchScope::Track, 0);
+        assert_eq!(k1, k2, "whitespace and case collapse to same key");
+    }
+
+    #[test]
+    fn key_per_plugin_isolation() {
+        let k1 = SearchKey::new("discogs", "creep", SearchScope::Track, 0);
+        let k2 = SearchKey::new("lastfm", "creep", SearchScope::Track, 0);
+        assert_ne!(k1, k2);
+    }
 }
