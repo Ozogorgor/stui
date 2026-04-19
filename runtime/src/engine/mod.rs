@@ -14,6 +14,9 @@
 
 #![allow(dead_code)]
 
+pub mod dispatch_map;
+pub use dispatch_map::{DispatchMap, PluginEntryInfo};
+
 pub mod pipeline;
 #[allow(unused_imports)]
 pub use pipeline::Pipeline;
@@ -195,20 +198,23 @@ use crate::cache::RuntimeCache;
 
 #[derive(Clone)]
 pub struct Engine {
-    registry:  Arc<RwLock<PluginRegistry>>,
-    cache_dir: std::path::PathBuf,
-    data_dir:  std::path::PathBuf,
+    registry:     Arc<RwLock<PluginRegistry>>,
+    cache_dir:    std::path::PathBuf,
+    data_dir:     std::path::PathBuf,
     /// In-memory TTL caches for search results, metadata, and stream URLs.
-    pub cache: RuntimeCache,
+    pub cache:    RuntimeCache,
+    /// Per-scope plugin dispatch map, rebuilt after every load/unload.
+    dispatch_map: Arc<RwLock<DispatchMap>>,
 }
 
 impl Engine {
     pub fn new(cache_dir: std::path::PathBuf, data_dir: std::path::PathBuf) -> Self {
         Self {
-            registry:  Arc::new(RwLock::new(PluginRegistry::default())),
+            registry:     Arc::new(RwLock::new(PluginRegistry::default())),
             cache_dir,
             data_dir,
-            cache:     RuntimeCache::new(),
+            cache:        RuntimeCache::new(),
+            dispatch_map: Arc::new(RwLock::new(DispatchMap::default())),
         }
     }
 
@@ -217,6 +223,23 @@ impl Engine {
     /// Access the plugin registry (read-only).
     pub fn registry(&self) -> &Arc<RwLock<PluginRegistry>> {
         &self.registry
+    }
+
+    /// Access the dispatch map (read-only).
+    pub fn dispatch_map(&self) -> &Arc<RwLock<DispatchMap>> {
+        &self.dispatch_map
+    }
+
+    /// Rebuild the dispatch map from the current registry contents.
+    ///
+    /// Called after every `load_plugin` / `unload_plugin` so that
+    /// `dispatch_map` is always consistent with the live plugin set.
+    async fn rebuild_dispatch_map(&self, reg: &PluginRegistry) {
+        let infos: Vec<PluginEntryInfo> = reg.all().map(|p| PluginEntryInfo {
+            id:    p.id.clone(),
+            kinds: p.manifest.capabilities.catalog.kinds().to_vec(),
+        }).collect();
+        *self.dispatch_map.write().await = DispatchMap::build(&infos);
     }
 
     pub async fn load_plugin(&self, plugin_dir: &Path) -> Result<Response> {
@@ -267,6 +290,7 @@ impl Engine {
         }
 
         reg.insert(loaded, ctx);
+        self.rebuild_dispatch_map(&reg).await;
 
         Ok(Response::PluginLoaded(PluginLoadedResponse {
             plugin_id: id,
@@ -279,6 +303,7 @@ impl Engine {
         match reg.remove(plugin_id) {
             Some(p) => {
                 info!(plugin_id = %plugin_id, plugin = %p.manifest.plugin.name, "plugin unloaded");
+                self.rebuild_dispatch_map(&reg).await;
                 Ok(Response::PluginUnloaded(PluginUnloadedResponse {
                     plugin_id: plugin_id.to_string(),
                 }))
