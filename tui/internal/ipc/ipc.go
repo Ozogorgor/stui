@@ -55,6 +55,10 @@ type Client struct {
 	NegotiatedIPCVersion uint32
 
 	logger *log.IPCLogger
+
+	// Streaming search subscription state.
+	nextQueryID atomic.Uint64
+	scopeSubs   sync.Map // key: uint64 query_id; value: *scopeSub
 }
 
 // send delivers msg to the UI event loop.

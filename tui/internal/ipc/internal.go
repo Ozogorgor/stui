@@ -309,5 +309,12 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.send(msg)
 		}
+	case "scope_results":
+		var msg ScopeResultsMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse scope_results", "error", err)
+		} else {
+			c.dispatchScopeResults(msg)
+		}
 	}
 }
