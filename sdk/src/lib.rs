@@ -40,11 +40,16 @@
 //! # Output: target/wasm32-wasip1/release/my_provider.wasm
 //! ```
 
+// ── Modules ─────────────────────────────────────────────────────────────────
+
+pub mod kinds;
+
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
 
 pub const STUI_ABI_VERSION: i32 = 1;
 
 use serde::{Deserialize, Serialize};
+pub use kinds::{EntryKind, SearchScope};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
