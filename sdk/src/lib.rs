@@ -74,18 +74,38 @@ pub struct SearchResponse {
     pub total: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginEntry {
     pub id: String,
+    pub kind: EntryKind,
     pub title: String,
-    pub year: Option<String>,
+    pub source: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub genre: Option<String>,
-    pub rating: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poster_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imdb_id: Option<String>,
-    #[serde(default)]
-    pub duration: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,5 +736,42 @@ mod tests {
         let s = serde_json::to_string(&req).unwrap();
         assert!(s.contains("\"scope\":\"track\""));
         assert!(!s.contains("\"tab\""));
+    }
+
+    #[test]
+    fn plugin_entry_has_kind_and_source() {
+        let entry = PluginEntry {
+            id: "spotify:track:abc".into(),
+            kind: EntryKind::Track,
+            title: "Creep".into(),
+            source: "lastfm-provider".into(),
+            year: Some(1993),
+            artist_name: Some("Radiohead".into()),
+            album_name: Some("Pablo Honey".into()),
+            track_number: Some(2),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&entry).unwrap();
+        assert!(s.contains("\"kind\":\"track\""));
+        assert!(s.contains("\"source\":\"lastfm-provider\""));
+    }
+
+    #[test]
+    fn plugin_entry_serializes_with_skip_none() {
+        let minimal = PluginEntry {
+            id: "test:1".into(),
+            kind: EntryKind::Movie,
+            title: "Test".into(),
+            source: "test-provider".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&minimal).unwrap();
+        // Should not contain null values for unset optional fields
+        assert!(!json.contains("null"));
+        // Should contain required fields
+        assert!(json.contains("\"id\":\"test:1\""));
+        assert!(json.contains("\"kind\":\"movie\""));
+        assert!(json.contains("\"title\":\"Test\""));
+        assert!(json.contains("\"source\":\"test-provider\""));
     }
 }
