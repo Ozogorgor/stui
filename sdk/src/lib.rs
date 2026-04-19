@@ -44,6 +44,15 @@
 
 pub mod kinds;
 
+pub mod error_codes {
+    //! Stable error-code string constants used in `PluginError::code`.
+    //! The runtime matches on these strings, so changing a value is a
+    //! wire-breaking change.
+
+    pub const UNSUPPORTED_SCOPE: &str = "unsupported_scope";
+    pub const INVALID_REQUEST: &str = "invalid_request";
+}
+
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
 
 pub const STUI_ABI_VERSION: i32 = 1;
@@ -773,5 +782,16 @@ mod tests {
         assert!(json.contains("\"kind\":\"movie\""));
         assert!(json.contains("\"title\":\"Test\""));
         assert!(json.contains("\"source\":\"test-provider\""));
+    }
+
+    #[test]
+    fn err_helper_with_unsupported_scope_code() {
+        let r: PluginResult<()> = PluginResult::err(
+            error_codes::UNSUPPORTED_SCOPE,
+            "track scope unsupported by this plugin",
+        );
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"code\":\"unsupported_scope\""));
+        assert!(s.contains("track scope unsupported"));
     }
 }
