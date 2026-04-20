@@ -16,6 +16,7 @@
 //!   JAVDB may require access via certain methods (VPN/proxy) in some regions.
 
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const BASE_URL: &str = "https://javdb.com";
 
@@ -45,6 +46,14 @@ impl StuiPlugin for JavdbProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
+        // Javdb only covers adult movies
+        if req.scope != SearchScope::Movie {
+            return PluginResult::err(
+                error_codes::UNSUPPORTED_SCOPE,
+                "javdb only supports movie scope",
+            );
+        }
+
         let query = req.query.trim();
         if query.is_empty() {
             return PluginResult::ok(SearchResponse {
@@ -61,7 +70,7 @@ impl StuiPlugin for JavdbProvider {
             Err(e) => return PluginResult::err("HTTP_ERROR", &e),
         };
 
-        let items = parse_search_results(&html, req.limit);
+        let items = parse_search_results(&html, req.limit, EntryKind::Movie);
         // When we hit the limit, indicate there may be more results
         // by adding 1 to signal pagination is needed
         let total = if req.limit > 0 && items.len() as u32 >= req.limit {
@@ -85,7 +94,7 @@ impl StuiPlugin for JavdbProvider {
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
-fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
+fn parse_search_results(html: &str, limit: u32, kind: EntryKind) -> Vec<PluginEntry> {
     let mut entries = Vec::new();
 
     let mut in_movie_box = false;
@@ -110,6 +119,8 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                 if !current_code.is_empty() && !current_title.is_empty() {
                     entries.push(PluginEntry {
                         id: current_code.clone(),
+                        kind,
+                        source: "javdb".to_string(),
                         title: current_title.clone(),
                         year: None,
                         genre: None,
@@ -122,6 +133,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                         },
                         imdb_id: None,
                         duration: None,
+                        ..Default::default()
                     });
 
                     if limit > 0 && entries.len() >= limit as usize {
