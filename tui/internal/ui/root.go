@@ -19,7 +19,7 @@ package ui
 //
 // Screens signal a transition by returning a special Cmd:
 //
-//   return m, screen.TransitionCmd(screens.NewSearchScreen(m.ipc), true)
+//   return m, screen.TransitionCmd(screens.NewHelpScreen(), true)
 //
 // RootModel catches TransitionCmd and swaps the active screen.
 //

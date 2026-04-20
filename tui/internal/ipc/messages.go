@@ -26,6 +26,8 @@ type IPCVersionMismatchMsg struct {
 type RuntimeErrorMsg struct{ Err error }
 
 // SearchResultMsg carries the result of a search request.
+// Retained for the person-mode search path in ui.go (dispatchPersonSearch).
+// The Rust runtime's Response::SearchResult retirement is deferred to Task 7.0.
 type SearchResultMsg struct {
 	ReqID  string
 	Result SearchResult
@@ -199,11 +201,6 @@ type StreamsRankedMsg struct {
 type StreamPolicyLoadedMsg struct {
 	Policy StreamPreferences
 	Err    error
-}
-
-// SearchResultSelectedMsg is dispatched when the user picks a result from SearchScreen.
-type SearchResultSelectedMsg struct {
-	Entry MediaEntry
 }
 
 // EpisodesLoadedMsg carries episode data for a season.

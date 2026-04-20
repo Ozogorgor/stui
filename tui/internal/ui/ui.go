@@ -561,7 +561,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.StatusMsg = fmt.Sprintf("Search error: %v", msg.Err)
 		return m, nil
 
-	// Legacy single-response search — retained for Task 6.5 cleanup.
+	// Person-mode search result — feeds the cast-member overlay.
+	// Produced by dispatchPersonSearch (no-runtime local path).
+	// TODO(Task 7.0): migrate dispatchPersonSearch to streaming ScopeResults.
 	case ipc.SearchResultMsg:
 		m.state.IsLoading = false
 		m.state.LoadingStart = 0
@@ -569,36 +571,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.StatusMsg = fmt.Sprintf("Search error: %v", msg.Err)
 			return m, nil
 		}
-		// Person mode search feeds into the detail overlay
 		if m.detail != nil && m.detail.PersonMode {
 			m.detail.PersonResults = convertSearchToCatalog(msg.Result.Items)
 			m.detail.PersonLoading = false
 			m.detail.PersonCursor = screens.GridCursor{}
 			return m, nil
 		}
-		// Normal search → list screen
-		m.state.Results = convertResults(msg.Result.Items)
-		m.state.Cursor = 0
-		m.screen = screenList
-		m.state.StatusMsg = fmt.Sprintf("%d results for \u201c%s\u201d", msg.Result.Total, m.state.SearchQuery)
-
-	// ── Screen-stack messages ───────────────────────────────────────────
-
-	case ipc.SearchResultSelectedMsg:
-		// User picked a result from SearchScreen — convert to CatalogEntry and open detail
-		e := msg.Entry
-		cat := ipc.CatalogEntry{
-			ID:          e.ID,
-			Title:       e.Title,
-			Year:        e.Year,
-			Genre:       e.Genre,
-			Rating:      e.Rating,
-			Description: e.Description,
-			PosterURL:   e.PosterURL,
-			Provider:    e.Provider,
-			Tab:         string(e.Tab),
-		}
-		return m, m.openDetail(cat)
 
 	case ipc.EpisodesLoadedMsg:
 		// Episode data arrived — forwarded automatically to EpisodeScreen via RootModel
@@ -2592,7 +2570,7 @@ func (m *Model) dispatchPersonSearch(name string) tea.Cmd {
 					matches = append(matches, e)
 				}
 			}
-			// Return results via SearchResultMsg so existing handler picks it up
+			// Return results via SearchResultMsg; handled by the person-mode branch in Update.
 			items := make([]ipc.MediaEntry, 0, len(matches))
 			for _, e := range matches {
 				items = append(items, ipc.MediaEntry{
@@ -2605,9 +2583,7 @@ func (m *Model) dispatchPersonSearch(name string) tea.Cmd {
 			return ipc.SearchResultMsg{Result: ipc.SearchResult{Items: items, Total: total}}
 		}
 	}
-	// TODO(Chunk 6): migrate to streaming search. Client.Search now returns
-	// (qid, <-chan ipc.ScopeResultsMsg, error) — wire scope-results into
-	// the person-mode detail overlay via a tea.Cmd that drains the channel.
+	// TODO(Task 7.0): migrate to streaming ScopeResults for the person-mode overlay.
 	_ = name
 	return nil
 }

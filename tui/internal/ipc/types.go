@@ -78,20 +78,6 @@ type SearchResult struct {
 	Offset int          `json:"offset"`
 }
 
-// SearchOptions holds optional sort and filter parameters for a search request.
-// All fields are zero-value safe: empty string / zero / nil means "no preference".
-type SearchOptions struct {
-	// Sort order: "rating" | "newest" | "oldest" | "alphabetical" | "relevance".
-	// Empty string defaults to "rating".
-	Sort string `json:"sort,omitempty"`
-	// Genre substring filter (case-insensitive). Empty = no filter.
-	Genre string `json:"genre,omitempty"`
-	// Minimum composite rating 0.0–10.0. Zero = no minimum.
-	MinRating float64 `json:"min_rating,omitempty"`
-	// Year range. Both must be non-zero for the filter to apply.
-	YearFrom int `json:"year_from,omitempty"`
-	YearTo   int `json:"year_to,omitempty"`
-}
 
 type MediaEntry struct {
 	ID          string   `json:"id"`

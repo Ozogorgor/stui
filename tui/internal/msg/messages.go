@@ -39,7 +39,8 @@ type RuntimeErrorMsg = ipc.RuntimeErrorMsg
 
 // ── Catalog / search ──────────────────────────────────────────────────────────
 
-// SearchResultMsg carries results from a plugin search fan-out.
+// SearchResultMsg carries the result of a single-response search request.
+// Retained for the person-mode search path; see ipc.SearchResultMsg.
 type SearchResultMsg = ipc.SearchResultMsg
 
 // GridUpdateMsg is pushed by the runtime whenever catalog data changes
@@ -113,9 +114,6 @@ type StreamsResolvedMsg = ipc.StreamsResolvedMsg
 
 // StreamInfo describes a single resolved stream candidate.
 type StreamInfo = ipc.StreamInfo
-
-// SearchResultSelectedMsg is sent when the user picks a search result.
-type SearchResultSelectedMsg = ipc.SearchResultSelectedMsg
 
 // EpisodesLoadedMsg carries episode metadata for a season.
 type EpisodesLoadedMsg = ipc.EpisodesLoadedMsg
