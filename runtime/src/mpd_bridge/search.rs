@@ -108,6 +108,20 @@ impl MpdBridge {
     /// and returns typed result buckets.  All commands share the same locked
     /// connection so the mutex is held for the duration of the call.
     ///
+    /// **Scope ordering is sequential by design.**  MPD exposes a single
+    /// TCP socket and does not support pipelining search commands from
+    /// concurrent tasks without a protocol-level command list.  Issuing
+    /// scopes one after another on the same locked guard is therefore the
+    /// correct concurrency model — not a limitation to be parallelised.
+    ///
+    /// **Fail-fast across scopes on first error** is a deliberate policy.
+    /// When an MPD `search` command fails, the protocol error leaves the
+    /// socket in an undefined state; the guard drops and the connection is
+    /// reset (see the `*guard = None` line below).  Any subsequent scope
+    /// would attempt to use the same poisoned socket and fail too, so it is
+    /// cleaner to stop immediately and return the successfully-fetched
+    /// buckets alongside the recorded error.
+    ///
     /// **Error semantics**
     ///
     /// - If the connection cannot be established, returns `NotConnected` with
