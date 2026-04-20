@@ -266,6 +266,10 @@ impl PluginType {
 ///
 /// Implement this trait, then call `stui_export_plugin!(YourPlugin)` to
 /// generate the WASM ABI glue automatically.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `Plugin` + `CatalogPlugin` instead. StuiPlugin remains for non-metadata plugins in stui_plugins/ pending the media-source plugin refactor."
+)]
 pub trait StuiPlugin {
     fn name(&self) -> &str;
     fn version(&self) -> &str;
@@ -276,6 +280,33 @@ pub trait StuiPlugin {
 
     /// Resolve an entry ID into a playable stream URL.
     fn resolve(&self, req: ResolveRequest) -> PluginResult<ResolveResponse>;
+}
+
+// ── Plugin + CatalogPlugin traits ────────────────────────────────────────────
+
+/// Root trait every plugin implements — identity + lifecycle.
+pub trait Plugin {
+    fn manifest(&self) -> &PluginManifest;
+    fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> { Ok(()) }
+    fn shutdown(&mut self) -> Result<(), PluginError> { Ok(()) }
+}
+
+/// Metadata catalog capability. Plugins opt into this trait when they expose
+/// `[capabilities.catalog]` in their manifest. All verbs except `search` are
+/// optional; default impls return `NOT_IMPLEMENTED`.
+pub trait CatalogPlugin: Plugin {
+    fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse>;
+
+    fn lookup(&self, _req: LookupRequest) -> PluginResult<LookupResponse>
+        { err_not_implemented() }
+    fn enrich(&self, _req: EnrichRequest) -> PluginResult<EnrichResponse>
+        { err_not_implemented() }
+    fn get_artwork(&self, _req: ArtworkRequest) -> PluginResult<ArtworkResponse>
+        { err_not_implemented() }
+    fn get_credits(&self, _req: CreditsRequest) -> PluginResult<CreditsResponse>
+        { err_not_implemented() }
+    fn related(&self, _req: RelatedRequest) -> PluginResult<RelatedResponse>
+        { err_not_implemented() }
 }
 
 // ── Host function imports (called by plugin at runtime) ───────────────────────
@@ -737,6 +768,7 @@ pub mod prelude {
     pub use crate::stui_export_plugin;
     pub use crate::url_encode;
     pub use crate::{plugin_debug, plugin_error, plugin_info, plugin_warn};
+    #[allow(deprecated)]
     pub use crate::{
         PluginEntry, PluginResult, PluginType, ResolveRequest, ResolveResponse, SearchRequest,
         SearchResponse, StuiPlugin, SubtitleTrack,
@@ -746,6 +778,15 @@ pub mod prelude {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_trait_compiles() {
+        #[allow(dead_code)]
+        fn assert_plugin<T: Plugin>() {}
+        #[allow(dead_code)]
+        fn assert_catalog<T: CatalogPlugin>() {}
+        // Compile-time only; no runtime assertions needed.
+    }
 
     // These tests run outside WASM (on the host), so the extern "C" functions
     // won't be called. We test the pure Rust mapping/parsing logic.
