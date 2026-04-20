@@ -1,0 +1,19 @@
+[package]
+name = "stui"
+version = "0.1.0"
+edition = "2021"
+description = "STUI plugin author CLI"
+
+[[bin]]
+name = "stui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow             = "1"
+clap               = { version = "4", features = ["derive"] }
+serde              = { version = "1", features = ["derive"] }
+toml               = "0.8"
+walkdir            = "2"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+stui-plugin-sdk    = { path = "../sdk" }

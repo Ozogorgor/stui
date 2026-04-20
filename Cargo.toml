@@ -4,6 +4,7 @@ members = [
     "runtime",
     "sdk",
     "aria2",
+    "cli",
     "plugins/*",
 ]
 exclude = [
