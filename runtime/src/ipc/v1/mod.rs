@@ -194,6 +194,18 @@ pub enum Request {
     ActionATagsApply(ActionATagsApplyRequest),
     /// Cancel an in-progress Action A run by job ID.
     ActionATagsCancel(ActionATagsCancelRequest),
+
+    // ── Plugin verb requests ──────────────────────────────────────────────
+    /// Look up a single entry by external ID via a named plugin.
+    Lookup(LookupIpcRequest),
+    /// Enrich a partial entry with additional metadata via a named plugin.
+    Enrich(EnrichIpcRequest),
+    /// Fetch artwork for an entry via a named plugin.
+    GetArtwork(ArtworkIpcRequest),
+    /// Fetch credits (cast + crew) for an entry via a named plugin.
+    GetCredits(CreditsIpcRequest),
+    /// Fetch related entries for an entry via a named plugin.
+    Related(RelatedIpcRequest),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -405,6 +417,63 @@ pub struct UnloadPluginRequest {
     pub plugin_id: String,
 }
 
+// ── Plugin verb IPC request structs ──────────────────────────────────────────
+
+/// IPC wrapper for a `Lookup` request routed to a specific plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LookupIpcRequest {
+    /// Correlation ID echoed back in `LookupIpcResponse`.
+    pub query_id: u64,
+    /// Plugin name to route this request to.
+    pub plugin: String,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::LookupRequest,
+}
+
+/// IPC wrapper for an `Enrich` request routed to a specific plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichIpcRequest {
+    /// Correlation ID echoed back in `EnrichIpcResponse`.
+    pub query_id: u64,
+    /// Plugin name to route this request to.
+    pub plugin: String,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::EnrichRequest,
+}
+
+/// IPC wrapper for a `GetArtwork` request routed to a specific plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtworkIpcRequest {
+    /// Correlation ID echoed back in `ArtworkIpcResponse`.
+    pub query_id: u64,
+    /// Plugin name to route this request to.
+    pub plugin: String,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::ArtworkRequest,
+}
+
+/// IPC wrapper for a `GetCredits` request routed to a specific plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreditsIpcRequest {
+    /// Correlation ID echoed back in `CreditsIpcResponse`.
+    pub query_id: u64,
+    /// Plugin name to route this request to.
+    pub plugin: String,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::CreditsRequest,
+}
+
+/// IPC wrapper for a `Related` request routed to a specific plugin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelatedIpcRequest {
+    /// Correlation ID echoed back in `RelatedIpcResponse`.
+    pub query_id: u64,
+    /// Plugin name to route this request to.
+    pub plugin: String,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::RelatedRequest,
+}
+
 // ── Responses (Rust → Go, in-band) ───────────────────────────────────────────
 
 /// Every in-band response sent from the runtime to the TUI.
@@ -565,6 +634,18 @@ pub enum Response {
     ActionATagsPreview(ActionATagsPreviewResponse),
     ActionATagsApply(ActionATagsApplyResponse),
     ActionATagsCancel(ActionATagsCancelResponse),
+
+    // ── Plugin verb responses ────────────────────────────────────────────────
+    /// Response to `Lookup`.
+    Lookup(LookupIpcResponse),
+    /// Response to `Enrich`.
+    Enrich(EnrichIpcResponse),
+    /// Response to `GetArtwork`.
+    GetArtwork(ArtworkIpcResponse),
+    /// Response to `GetCredits`.
+    GetCredits(CreditsIpcResponse),
+    /// Response to `Related`.
+    Related(RelatedIpcResponse),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -975,6 +1056,50 @@ pub struct ActionATagsApplyResponse {
 pub struct ActionATagsCancelResponse {
     pub id: String,
     pub cancelled: bool,
+}
+
+// ── Plugin verb IPC response structs ─────────────────────────────────────────
+
+/// Response to a `Lookup` IPC request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LookupIpcResponse {
+    /// Correlation ID echoing the originating `LookupIpcRequest::query_id`.
+    pub query_id: u64,
+    pub entry: crate::abi::types::PluginEntry,
+}
+
+/// Response to an `Enrich` IPC request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichIpcResponse {
+    /// Correlation ID echoing the originating `EnrichIpcRequest::query_id`.
+    pub query_id: u64,
+    pub entry: crate::abi::types::PluginEntry,
+}
+
+/// Response to a `GetArtwork` IPC request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtworkIpcResponse {
+    /// Correlation ID echoing the originating `ArtworkIpcRequest::query_id`.
+    pub query_id: u64,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::ArtworkResponse,
+}
+
+/// Response to a `GetCredits` IPC request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreditsIpcResponse {
+    /// Correlation ID echoing the originating `CreditsIpcRequest::query_id`.
+    pub query_id: u64,
+    #[serde(flatten)]
+    pub inner: crate::abi::types::CreditsResponse,
+}
+
+/// Response to a `Related` IPC request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelatedIpcResponse {
+    /// Correlation ID echoing the originating `RelatedIpcRequest::query_id`.
+    pub query_id: u64,
+    pub items: Vec<crate::abi::types::PluginEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
