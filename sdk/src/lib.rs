@@ -190,7 +190,7 @@ pub trait StuiPlugin {
     fn version(&self) -> &str;
     fn plugin_type(&self) -> PluginType;
 
-    /// Search for content matching `req.query` in the given `req.tab`.
+    /// Search for content matching `req.query` within the given `req.scope`.
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse>;
 
     /// Resolve an entry ID into a playable stream URL.
