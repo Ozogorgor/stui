@@ -32,7 +32,14 @@ pub fn run(release: bool) -> Result<()> {
     stui_plugin_sdk::capabilities::validate_manifest(&manifest)
         .context("plugin.toml failed manifest validation")?;
 
-    // ── Step 3: stub check (--release guard) ─────────────────────────────────
+    // ── Step 3: lint ─────────────────────────────────────────────────────────
+    //
+    // Run the full lint suite against the already-parsed manifest.  Lint
+    // failures are build failures — the `?` propagates immediately.
+    crate::cmd::lint::run_manifest(&manifest)
+        .context("lint failed; fix the reported issues and retry")?;
+
+    // ── Step 4: stub check (--release guard) ─────────────────────────────────
     //
     // TODO(Task 2.4 / future manifest expansion): once CatalogCapability gains
     // per-verb sub-tables with a `stub = true` flag (tracked in Task 1.7 follow-
@@ -48,11 +55,7 @@ pub fn run(release: bool) -> Result<()> {
         );
     }
 
-    // TODO(Task 2.4): call crate::cmd::lint::run() once Task 2.4 lands a real
-    // implementation.  Calling it now would always fail with "not yet implemented",
-    // so we skip it here and let Task 2.4 wire it back in.
-
-    // ── Step 4: report artifact path ─────────────────────────────────────────
+    // ── Step 5: report artifact path ─────────────────────────────────────────
 
     let profile = if release { "release" } else { "debug" };
     match wasm_artifact_path(&cwd, profile) {
