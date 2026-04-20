@@ -13,14 +13,16 @@
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query → returns trending (OMDB doesn't have trending, returns empty).
+//! Supported scopes: Movie, Series
+//! Empty query → returns empty (OMDB doesn't have trending).
 //! Non-empty query → returns search results.
 
 use serde::Deserialize;
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const BASE_URL: &str = "https://www.omdbapi.com/";
 
@@ -54,6 +56,18 @@ impl StuiPlugin for OmdbProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
+        // omdb supports movie and series scopes
+        let entry_kind = match req.scope {
+            SearchScope::Movie => EntryKind::Movie,
+            SearchScope::Series => EntryKind::Series,
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "omdb only supports movie and series scopes",
+                );
+            }
+        };
+
         let api_key = match self.api_key.get() {
             Some(k) => k,
             None => {
@@ -106,7 +120,7 @@ impl StuiPlugin for OmdbProvider {
             .unwrap_or_default()
             .into_iter()
             .take(req.limit as usize)
-            .map(|s| s.into_entry())
+            .map(|s| s.into_entry(entry_kind))
             .collect();
 
         let total = items.len() as u32;
@@ -152,11 +166,19 @@ struct SearchResult {
 }
 
 impl SearchResult {
-    fn into_entry(self) -> PluginEntry {
+    fn into_entry(self, kind: EntryKind) -> PluginEntry {
+        // OMDB year field may be "2023" or "2020–2023" for series; parse first part
+        let year = self.year
+            .split('–')
+            .next()
+            .and_then(|y| y.trim().parse::<u32>().ok());
+
         PluginEntry {
             id: self.imdb_id.clone(),
+            kind,
+            source: "omdb".to_string(),
             title: self.title,
-            year: Some(self.year),
+            year,
             genre: None,
             rating: None,
             description: None,
@@ -171,6 +193,7 @@ impl SearchResult {
                 None
             },
             duration: None,
+            ..Default::default()
         }
     }
 }

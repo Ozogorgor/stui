@@ -23,6 +23,8 @@ required  = true
 [permissions]
 network = true
 
+[capabilities.catalog]
+kinds = ["movie", "series"]
+
 [capabilities]
-catalog = true
 metadata = true
