@@ -325,6 +325,19 @@ func (s MusicLibraryScreen) Update(msg tea.Msg) (MusicLibraryScreen, tea.Cmd) {
 		s = s.handleBrowserNav(m)
 		return s, nil
 
+	case catalogbrowser.MpdSearchAppliedMsg:
+		// The DataSource already swapped items for the search result set.
+		// Reset column cursors so the new (shorter) result columns don't try
+		// to render an out-of-range index from the pre-search state.
+		s.browser.SetCursor(0, 0)
+		s.browser.SetCursor(1, 0)
+		s.browser.SetCursor(2, 0)
+		return s, nil
+
+	case catalogbrowser.MpdSearchFailedMsg:
+		s = s.setStatus(fmt.Sprintf("Search failed: %v", m.Err))
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Playlist name prompt intercepts all keys when active.
 		if s.playlistPrompt {

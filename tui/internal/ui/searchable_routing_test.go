@@ -87,12 +87,15 @@ func TestFocusedSearchable_MusicTabNoSearchableSubScreen(t *testing.T) {
 	}
 }
 
-func TestFocusedSearchable_MusicTabLibraryNoSearchable(t *testing.T) {
+func TestFocusedSearchable_MusicTabLibraryIsSearchable(t *testing.T) {
 	m := minimalModel(state.TabMusic)
 	m.musicScreen = m.musicScreen.WithActiveSubTab(screens.MusicLibrary)
 	got := focusedSearchable(&m)
-	if got != nil {
-		t.Errorf("TabMusic/Library: expected nil Searchable before Task 6.2, got %T", got)
+	if got == nil {
+		t.Fatal("TabMusic/Library: expected non-nil Searchable after Task 6.2")
+	}
+	if _, ok := got.(screens.MusicLibraryScreen); !ok {
+		t.Errorf("TabMusic/Library: expected MusicLibraryScreen, got %T", got)
 	}
 }
 
@@ -161,11 +164,12 @@ func TestMusicScreen_ApplyRestoreView_NoopWithoutSearchable(t *testing.T) {
 }
 
 func TestMusicScreen_StartSearchInActive_NilWithoutSearchable(t *testing.T) {
+	// Library is Searchable as of Task 6.2; Browse will be as of Task 6.3.
+	// Queue/Playlists remain non-Searchable — StartSearchInActive returns nil.
 	ms := screens.NewMusicScreen(nil)
 	subtabs := []screens.MusicSubTab{
 		screens.MusicBrowse,
 		screens.MusicQueue,
-		screens.MusicLibrary,
 		screens.MusicPlaylists,
 	}
 	for _, st := range subtabs {
@@ -174,6 +178,19 @@ func TestMusicScreen_StartSearchInActive_NilWithoutSearchable(t *testing.T) {
 		if cmd != nil {
 			t.Errorf("sub-tab %v: expected nil cmd from StartSearchInActive, got non-nil", st)
 		}
+	}
+}
+
+func TestMusicScreen_StartSearchInActive_LibraryDispatches(t *testing.T) {
+	// Library is Searchable post-Task 6.2: a non-empty query must dispatch
+	// a non-nil cmd via MpdDataSource.Search.
+	ms := screens.NewMusicScreen(nil).WithActiveSubTab(screens.MusicLibrary)
+	if cmd := ms.StartSearchInActive("radiohead"); cmd == nil {
+		t.Error("sub-tab Library: expected non-nil cmd from StartSearchInActive")
+	}
+	// Empty query: no-op even for Searchable sub-screen.
+	if cmd := ms.StartSearchInActive(""); cmd != nil {
+		t.Error("sub-tab Library: empty query should return nil cmd")
 	}
 }
 

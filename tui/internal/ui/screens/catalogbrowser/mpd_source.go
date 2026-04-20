@@ -96,6 +96,20 @@ func (s *MpdDataSource) Restore(st DataSourceState) {
 	s.status = SearchStatus{}
 }
 
+// RestoreSnapshot restores the view to the state captured when the most
+// recent search was dispatched. No-op if no search has been run (snapshot
+// is nil) or it was already cleared by Restore(). Used by the Searchable
+// RestoreView path when the user clears / esc's out of a search so the
+// library falls back to the pre-search listing without needing the caller
+// to track the snapshot itself.
+func (s *MpdDataSource) RestoreSnapshot() {
+	if s.snapshot != nil {
+		s.items = s.snapshot.Items
+		s.snapshot = nil
+		s.status = SearchStatus{}
+	}
+}
+
 // MpdSearchAppliedMsg is posted into the Bubbletea loop when MpdSearch
 // completes successfully. music_library's Update should observe it and
 // trigger a re-render. Task 6.2 wires the Searchable surface; until then
