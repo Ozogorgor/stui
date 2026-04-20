@@ -203,8 +203,8 @@ use crate::cache::RuntimeCache;
 /// This semaphore is shared across all Engine clones (all clones hold an
 /// `Arc` to the same `Semaphore` instance), so the bound is truly global.
 ///
-/// The per-call `Semaphore::new(8)` in `Engine::search()` will be removed
-/// when that legacy path is retired in Task 2.9.
+/// All engine call-sites (search_catalog_entries, search_scoped, supervisor_search)
+/// acquire from this shared semaphore before calling into a plugin.
 pub const MAX_CONCURRENT_PLUGIN_CALLS: usize = 8;
 
 // ── PluginCallError ───────────────────────────────────────────────────────────
@@ -354,9 +354,8 @@ impl Engine {
         let resp = sup.search(&req).await.map_err(map_abi_error)?;
 
         // Convert abi::types::PluginEntry → ipc::v1::MediaEntry.
-        // We reuse the inline conversion pattern established in Engine::search
-        // (the legacy path) — provider name comes from the plugin's display
-        // name, which we look up under a second short read-lock.
+        // Provider name comes from the plugin's display name, which we look
+        // up under a second short read-lock.
         let provider_name = {
             let reg = self.registry.read().await;
             reg.get(plugin_id)

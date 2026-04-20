@@ -22,11 +22,9 @@ use tracing::Instrument;
 /// `supervisor_search` returns `Vec<MediaEntry>`; adapting that boundary is
 /// non-trivial and is out of scope here.
 ///
-/// # Legacy path
-///
-/// `Engine::search` (the legacy synchronous path used by `catalog.rs` and
-/// `engine/pipeline.rs`) is kept alive and unmodified.  Only this
-/// user-facing pipeline has been migrated.
+/// The legacy `Engine::search` synchronous path (used by `catalog.rs` and
+/// `engine/pipeline.rs`) was retired in Task 7.0 #3.  This streaming path
+/// is now the sole search entry point for user-initiated queries.
 pub async fn run_search(engine: Engine, req: SearchRequest, event_tx: EventSender) {
     let span = tracing::info_span!(
         "run_search",

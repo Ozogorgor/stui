@@ -798,9 +798,8 @@ async fn handle_line(
 
         Request::Search(r)    => {
             // Fire-and-forget: results stream back as Event::ScopeResults messages
-            // keyed by query_id.  Response::SearchResult (synchronous path) is
-            // retired for user-initiated searches; it survives in Engine::search
-            // for catalog.rs and engine/pipeline.rs which migrate separately.
+            // keyed by query_id.  Response::SearchResult (synchronous path) has
+            // no Rust-side producers after Engine::search retirement (Task 7.0 #3).
             let engine_c   = Arc::clone(engine);
             let event_tx_c = event_tx.clone();
             let query_id = r.query_id;
