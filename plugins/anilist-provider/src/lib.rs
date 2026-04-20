@@ -12,14 +12,15 @@
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query + tab="series" → returns trending anime.
-//! Non-empty query + tab="series" → returns anime search results.
+//! Empty query + scope Movie/Series → returns trending anime.
+//! Non-empty query → returns anime search results.
 
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const GRAPHQL_URL: &str = "https://graphql.anilist.co";
 
@@ -49,17 +50,19 @@ impl StuiPlugin for AnilistProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
+        // Anilist only covers anime (series/movies) — reject other scopes
+        let entry_kind = match req.scope {
+            SearchScope::Movie => EntryKind::Movie,
+            SearchScope::Series => EntryKind::Series,
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "anilist only supports movie and series scopes",
+                );
+            }
+        };
+
         let query = req.query.trim();
-
-        // Only support series tab for anime
-        if tab != "series" {
-            return PluginResult::ok(SearchResponse {
-                items: vec![],
-                total: 0,
-            });
-        }
-
         let page = req.page.max(1) as i32;
         let per_page = req.limit.min(50) as i32;
 
@@ -110,7 +113,7 @@ impl StuiPlugin for AnilistProvider {
                 .media
                 .into_iter()
                 .take(per_page as usize)
-                .map(|m| m.into_entry())
+                .map(|m| m.into_entry(entry_kind))
                 .collect()
         } else {
             gql_resp
@@ -119,7 +122,7 @@ impl StuiPlugin for AnilistProvider {
                 .search
                 .into_iter()
                 .take(per_page as usize)
-                .map(|m| m.into_entry())
+                .map(|m| m.into_entry(entry_kind))
                 .collect()
         };
 
@@ -234,7 +237,7 @@ struct CoverImage {
 }
 
 impl AnimeMedia {
-    fn into_entry(self) -> PluginEntry {
+    fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let title = self
             .title
             .english
@@ -242,12 +245,15 @@ impl AnimeMedia {
             .or(self.title.native)
             .unwrap_or_default();
 
-        let year = self.season_year.map(|y| y.to_string());
-        let rating = self.average_score.map(|s| format!("{:.0}", s / 10.0));
+        let year = self.season_year;
+        // averageScore is 0–100; scale to 0.0–10.0
+        let rating = self.average_score.map(|s| s / 10.0);
         let poster_url = self.cover_image.extra_large.or(self.cover_image.large);
 
         PluginEntry {
             id: format!("anilist-{}", self.id),
+            kind,
+            source: "anilist".to_string(),
             title,
             year,
             genre: self.episodes.map(|e| format!("{} eps", e)),
@@ -256,6 +262,7 @@ impl AnimeMedia {
             poster_url,
             imdb_id: None,
             duration: None,
+            ..Default::default()
         }
     }
 }
