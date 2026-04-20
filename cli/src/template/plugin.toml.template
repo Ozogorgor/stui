@@ -4,10 +4,7 @@ name        = "{{PLUGIN_NAME}}"
 version     = "0.1.0"
 abi_version = 1
 description = "{{PLUGIN_NAME}} metadata provider"
-
-[meta]
-author  = "you"
-license = "MIT"
+author      = "you"
 
 [permissions]
 network = []  # add API hostnames here
