@@ -52,6 +52,11 @@ pub mod error_codes {
 
     pub const UNSUPPORTED_SCOPE: &str = "unsupported_scope";
     pub const INVALID_REQUEST: &str = "invalid_request";
+    pub const NOT_IMPLEMENTED: &str = "not_implemented";
+    pub const UNKNOWN_ID: &str = "unknown_id";
+    pub const RATE_LIMITED: &str = "rate_limited";
+    pub const TRANSIENT: &str = "transient";
+    pub const REMOTE_ERROR: &str = "remote_error";
 }
 
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
@@ -794,5 +799,15 @@ mod tests {
         let s = serde_json::to_string(&r).unwrap();
         assert!(s.contains("\"code\":\"unsupported_scope\""));
         assert!(s.contains("track scope unsupported"));
+    }
+
+    #[test]
+    fn new_error_codes_are_stable() {
+        use super::error_codes::*;
+        assert_eq!(NOT_IMPLEMENTED, "not_implemented");
+        assert_eq!(RATE_LIMITED, "rate_limited");
+        assert_eq!(UNKNOWN_ID, "unknown_id");
+        assert_eq!(TRANSIENT, "transient");
+        assert_eq!(REMOTE_ERROR, "remote_error");
     }
 }
