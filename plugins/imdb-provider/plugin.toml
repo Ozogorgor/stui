@@ -13,6 +13,8 @@ tags        = ["movies", "tv", "trending", "metadata"]
 [permissions]
 network = true
 
+[capabilities.catalog]
+kinds = ["movie", "series", "episode"]
+
 [capabilities]
-catalog = true
 metadata = true

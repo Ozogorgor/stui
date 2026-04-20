@@ -1,7 +1,7 @@
 //! imdb-provider — stui plugin that scrapes IMDB chart pages for trending content.
 
 use scraper::{Html, Selector};
-use stui_plugin_sdk::{plugin_warn, prelude::*, PluginType, StuiPlugin};
+use stui_plugin_sdk::{error_codes, plugin_warn, prelude::*, EntryKind, PluginType, SearchScope, StuiPlugin};
 
 const MOVIE_METER_URL: &str = "https://www.imdb.com/chart/moviemeter/";
 const TV_METER_URL: &str = "https://www.imdb.com/chart/tvmeter/";
@@ -33,10 +33,9 @@ impl StuiPlugin for ImdbProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
         let query = req.query.trim();
 
-        // IMDB only supports trending (empty query)
+        // IMDB chart scraper only supports trending (empty query)
         if !query.is_empty() {
             return PluginResult::ok(SearchResponse {
                 items: vec![],
@@ -44,14 +43,15 @@ impl StuiPlugin for ImdbProvider {
             });
         }
 
-        let url = match tab {
-            "movies" => MOVIE_METER_URL,
-            "series" => TV_METER_URL,
+        let (url, entry_kind) = match req.scope {
+            SearchScope::Movie => (MOVIE_METER_URL, EntryKind::Movie),
+            SearchScope::Series => (TV_METER_URL, EntryKind::Series),
+            SearchScope::Episode => (TV_METER_URL, EntryKind::Episode),
             _ => {
-                return PluginResult::ok(SearchResponse {
-                    items: vec![],
-                    total: 0,
-                })
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "imdb only supports movie, series, and episode scopes",
+                );
             }
         };
 
@@ -62,7 +62,7 @@ impl StuiPlugin for ImdbProvider {
             Err(e) => return PluginResult::err("HTTP_ERROR", &e),
         };
 
-        let entries = parse_chart(&body);
+        let entries = parse_chart(&body, entry_kind);
         let total = entries.len() as u32;
         plugin_info!("imdb: {} entries", entries.len());
 
@@ -77,7 +77,7 @@ impl StuiPlugin for ImdbProvider {
     }
 }
 
-fn parse_chart(html: &str) -> Vec<PluginEntry> {
+fn parse_chart(html: &str, kind: EntryKind) -> Vec<PluginEntry> {
     let mut entries = vec![];
 
     // IMDB chart rows — try multiple selector patterns for resilience
@@ -155,26 +155,31 @@ fn parse_chart(html: &str) -> Vec<PluginEntry> {
                     .map(|s| s.to_string())
             });
 
-        // Year
+        // Year as u32
         let year = row
             .select(&year_sel)
             .next()
-            .map(|e| {
+            .and_then(|e| {
                 e.text()
                     .collect::<String>()
                     .split_whitespace()
                     .find(|s| s.len() == 4 && s.chars().all(|c| c.is_numeric()))
-                    .map(|s| s.to_string())
-            })
-            .flatten()
-            .filter(|y| !y.is_empty());
+                    .and_then(|s| s.parse::<u32>().ok())
+            });
 
-        // Rating
+        // Rating as f32 (IMDB ratings are e.g. "7.5")
         let rating = row
             .select(&rating_sel)
             .next()
-            .map(|e| e.text().collect::<String>().trim().to_string())
-            .filter(|r| !r.is_empty() && r != "Rate");
+            .and_then(|e| {
+                let text = e.text().collect::<String>();
+                let trimmed = text.trim();
+                if trimmed.is_empty() || trimmed == "Rate" {
+                    None
+                } else {
+                    trimmed.parse::<f32>().ok()
+                }
+            });
 
         // Poster
         let poster_url = row
@@ -194,6 +199,8 @@ fn parse_chart(html: &str) -> Vec<PluginEntry> {
 
         entries.push(PluginEntry {
             id,
+            kind,
+            source: "imdb".to_string(),
             title,
             year,
             genre: None,
@@ -202,6 +209,7 @@ fn parse_chart(html: &str) -> Vec<PluginEntry> {
             poster_url,
             imdb_id,
             duration: None,
+            ..Default::default()
         });
     }
 
