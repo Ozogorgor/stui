@@ -15,14 +15,15 @@
 //! ## Plugin Interface
 //!
 //! This plugin implements:
-//!   search(query, tab, page) → returns anime entries
-//!   resolve(entry_id)        → not supported (returns error)
+//!   search(query, scope, page) → returns anime entries
+//!   resolve(entry_id)          → not supported (returns error)
 //!
-//! Empty query + tab="series" → returns trending anime.
-//! Non-empty query + tab="series" → returns search results.
+//! Empty query + scope Movie/Series → returns trending anime.
+//! Non-empty query → returns search results.
 
 use serde::Deserialize;
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const API_BASE: &str = "https://kitsu.io/api/edge";
 
@@ -52,16 +53,19 @@ impl StuiPlugin for KitsuProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
+        // Kitsu covers anime: series and movies
+        let entry_kind = match req.scope {
+            SearchScope::Movie => EntryKind::Movie,
+            SearchScope::Series => EntryKind::Series,
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "kitsu only supports movie and series scopes",
+                );
+            }
+        };
+
         let query = req.query.trim();
-
-        if tab != "series" {
-            return PluginResult::ok(SearchResponse {
-                items: vec![],
-                total: 0,
-            });
-        }
-
         let page = req.page.max(1);
         let per_page = req.limit.min(20).max(1) as u32;
         let offset = (page - 1).saturating_mul(per_page);
@@ -110,7 +114,7 @@ impl StuiPlugin for KitsuProvider {
         let items: Vec<PluginEntry> = anime_resp
             .data
             .into_iter()
-            .map(|a| a.into_entry())
+            .map(|a| a.into_entry(entry_kind))
             .collect();
 
         let total = anime_resp.meta.and_then(|m| m.count).unwrap_or_else(|| {
@@ -208,13 +212,14 @@ struct Image {
 }
 
 impl Anime {
-    fn into_entry(self) -> PluginEntry {
+    fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let attrs = self.attributes;
 
         let year = attrs
             .start_date
             .as_ref()
-            .and_then(|d| d.split('-').next().map(String::from));
+            .and_then(|d| d.split('-').next())
+            .and_then(|y| y.parse::<u32>().ok());
 
         // Note: show_type contains format ("TV", "movie", "OVA", etc.)
         // Currently unused - PluginEntry doesn't have a media_type field.
@@ -227,10 +232,17 @@ impl Anime {
             .as_ref()
             .and_then(|p| p.large.clone().or(p.small.clone()));
 
-        let rating = attrs.rating.map(|r| format!("{}%", r));
+        // Kitsu averageRating is 0–100; scale to 0.0–10.0
+        let rating = attrs
+            .rating
+            .as_deref()
+            .and_then(|r| r.parse::<f32>().ok())
+            .map(|r| r / 10.0);
 
         PluginEntry {
             id: self.id,
+            kind,
+            source: "kitsu".to_string(),
             title: attrs.title,
             year,
             // Genre is intentionally left empty - Kitsu doesn't provide genre in search results
@@ -240,6 +252,7 @@ impl Anime {
             poster_url,
             imdb_id: None,
             duration: None,
+            ..Default::default()
         }
     }
 }

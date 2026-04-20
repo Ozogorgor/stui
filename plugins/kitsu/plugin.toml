@@ -23,7 +23,9 @@ required  = false
 [permissions]
 network = true
 
+[capabilities.catalog]
+kinds = ["movie", "series"]
+
 [capabilities]
-catalog = true
 metadata = true
 anime = true
