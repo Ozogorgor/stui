@@ -43,6 +43,7 @@
 // ── Modules ─────────────────────────────────────────────────────────────────
 
 pub mod kinds;
+pub mod id_sources;
 
 pub mod error_codes {
     //! Stable error-code string constants used in `PluginError::code`.
