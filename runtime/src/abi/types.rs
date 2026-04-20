@@ -31,19 +31,26 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use stui_plugin_sdk::{EntryKind, SearchScope};
 
 /// Current ABI version. Bump this when making breaking changes.
 pub const STUI_ABI_VERSION: i32 = 1;
 
 // ── Requests (host → plugin, serialized to JSON in WASM memory) ──────────────
 
-/// Payload passed to `stui_search`.
+/// Payload passed to `stui_search`. Mirrors sdk::SearchRequest exactly so the
+/// host and plugin deserialize the same wire shape after plugin migration
+/// (Task 7.1).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
-    pub tab: String,       // "movies" | "series" | "music" | "library"
+    pub scope: SearchScope,
     pub page: u32,
     pub limit: u32,
+    #[serde(default)]
+    pub per_scope_limit: Option<u32>,
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 /// Payload passed to `stui_resolve`.
@@ -61,18 +68,31 @@ pub struct SearchResponse {
     pub total: u32,
 }
 
-/// A single media entry returned by a plugin search.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single media entry returned by a plugin search. Mirrors sdk::PluginEntry
+/// exactly — typed numeric fields, kind, source, and all per-kind optional
+/// fields — so the JSON written by the host and the JSON read by the plugin
+/// after Task 7.1 migration share the same wire shape.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginEntry {
     /// Provider-scoped unique id (used for resolve calls).
     pub id: String,
+    pub kind: EntryKind,
     pub title: String,
-    pub year: Option<String>,
-    pub genre: Option<String>,
-    pub rating: Option<String>,
-    pub description: Option<String>,
-    pub poster_url: Option<String>,
-    pub imdb_id: Option<String>,
+    pub source: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub year: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub genre: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub rating: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub poster_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub imdb_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub duration: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub artist_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub album_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub track_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub episode: Option<u32>,
 }
 
 /// Returned by `stui_resolve`.

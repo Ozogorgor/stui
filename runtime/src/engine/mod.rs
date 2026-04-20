@@ -306,17 +306,14 @@ impl Engine {
     /// 1. Acquires a permit from the shared `plugin_semaphore` so at most
     ///    `MAX_CONCURRENT_PLUGIN_CALLS` calls run concurrently process-wide.
     /// 2. Looks the plugin up by id in the registry.
-    /// 3. Converts `scope` to the legacy `tab` string expected by the ABI
-    ///    layer.  The ABI `SearchRequest` still uses a `tab: String` field;
-    ///    the SDK `SearchRequest` (with `scope: SearchScope`) is not yet
-    ///    wired through the WASM boundary — that happens in a later task.
+    /// 3. Builds `abi::types::SearchRequest` with `scope` directly — the ABI
+    ///    now mirrors `sdk::SearchRequest` exactly (Task 7.0), so no tab-string
+    ///    shim is needed.
     /// 4. Calls `WasmSupervisor::search` and maps `AbiError` variants to
     ///    `PluginCallError`.
     /// 5. Converts each `abi::types::PluginEntry` to `ipc::v1::MediaEntry`.
     ///
-    /// Used by `search_scoped` (Task 2.7).  The `scope` parameter is the
-    /// scope the caller is querying; it is not forwarded to the plugin ABI
-    /// yet (the ABI only speaks `tab`), but will be in a future ABI revision.
+    /// Used by `search_scoped` (Task 2.7).
     pub async fn supervisor_search(
         &self,
         plugin_id: &str,
@@ -345,16 +342,14 @@ impl Engine {
             format!("no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"),
         ))?;
 
-        // Convert scope to the tab string the ABI layer expects.
-        // The existing `stui_search` ABI export uses a `tab: String` field;
-        // scope-aware dispatch through the ABI is deferred to a later task.
-        let tab_str = scope_to_tab_str(scope);
-
+        // The ABI SearchRequest now carries scope directly (Task 7.0 sync).
         let req = crate::abi::SearchRequest {
             query: query.to_string(),
-            tab: tab_str,
+            scope,
             page: 0,
             limit: 100,
+            per_scope_limit: None,
+            locale: None,
         };
 
         let resp = sup.search(&req).await.map_err(map_abi_error)?;
@@ -372,7 +367,7 @@ impl Engine {
 
         let entries = resp.items
             .into_iter()
-            .map(|e| abi_entry_to_media_entry(e, &provider_name, scope))
+            .map(|e| abi_entry_to_media_entry(e, &provider_name))
             .collect();
 
         Ok(entries)
@@ -567,7 +562,6 @@ impl Engine {
                     // Route through supervisor: timeout + crash tracking.
                     let sup = reg.wasm_supervisor_for(&plugin_clone.id);
                     if let Some(sup) = sup {
-                        let tab_str  = format!("{:?}", t).to_lowercase();
                         let provider = plugin_clone.manifest.plugin.name.clone();
                         let tab_out  = t.clone();
                         let pname = provider.clone();
@@ -576,14 +570,30 @@ impl Engine {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
                                 let result = std::panic::AssertUnwindSafe(async move {
-                                let req = SearchRequest { query: q, tab: tab_str, page: 0, limit: 50 };
+                                // ABI SearchRequest now carries scope (Task 7.0).
+                                // The legacy Engine::search doesn't have a real scope
+                                // so we pick a plausible default from the tab.
+                                let scope = match t {
+                                    crate::ipc::MediaTab::Music    => stui_plugin_sdk::SearchScope::Track,
+                                    crate::ipc::MediaTab::Movies   => stui_plugin_sdk::SearchScope::Movie,
+                                    crate::ipc::MediaTab::Series   => stui_plugin_sdk::SearchScope::Series,
+                                    _ => stui_plugin_sdk::SearchScope::Track,
+                                };
+                                let req = SearchRequest {
+                                    query: q,
+                                    scope,
+                                    page: 0,
+                                    limit: 50,
+                                    per_scope_limit: None,
+                                    locale: None,
+                                };
                                 sup.search(&req).await
                                     .map(|r| r.items.into_iter().map(|e| MediaEntry {
                                         id:          e.id,
                                         title:       e.title,
-                                        year:        e.year,
+                                        year:        e.year.map(|y| y.to_string()),
                                         genre:       e.genre,
-                                        rating:      e.rating,
+                                        rating:      e.rating.map(|r| r.to_string()),
                                         description: e.description,
                                         poster_url:  e.poster_url,
                                         provider:    provider.clone(),
@@ -592,13 +602,13 @@ impl Engine {
                                         ratings:     std::collections::HashMap::new(),
                                         imdb_id:     e.imdb_id,
                                         tmdb_id:     None,
-                                        kind:        Default::default(),
-                                        source:      String::new(),
-                                        artist_name: None,
-                                        album_name:  None,
-                                        track_number: None,
-                                        season:      None,
-                                        episode:     None,
+                                        kind:        e.kind,
+                                        source:      e.source,
+                                        artist_name: e.artist_name,
+                                        album_name:  e.album_name,
+                                        track_number: e.track_number,
+                                        season:      e.season,
+                                        episode:     e.episode,
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })
@@ -1019,24 +1029,6 @@ impl Engine {
 
 // ── Free helpers for supervisor_search ───────────────────────────────────────
 
-/// Convert `SearchScope` to the `tab` string that the legacy ABI layer expects.
-///
-/// The ABI `SearchRequest` still carries `tab: String`; full scope plumbing
-/// through the WASM boundary is deferred.  This mapping is intentionally
-/// conservative: music kinds map to "music", video kinds to their canonical
-/// tab names.
-fn scope_to_tab_str(scope: stui_plugin_sdk::SearchScope) -> String {
-    use stui_plugin_sdk::SearchScope;
-    match scope {
-        SearchScope::Artist  => "music",
-        SearchScope::Album   => "music",
-        SearchScope::Track   => "music",
-        SearchScope::Movie   => "movies",
-        SearchScope::Series  => "series",
-        SearchScope::Episode => "series",
-    }.to_string()
-}
-
 /// Map an `AbiError` to a `PluginCallError`.
 ///
 /// An `AbiError::Execution` whose message contains the well-known SDK error
@@ -1061,42 +1053,36 @@ fn map_abi_error(e: crate::abi::types::AbiError) -> PluginCallError {
 
 /// Convert an `abi::types::PluginEntry` to an `ipc::v1::MediaEntry`.
 ///
-/// The ABI `PluginEntry` carries `year` / `rating` as `Option<String>`;
-/// `MediaEntry` also uses `Option<String>` for those fields so the mapping
-/// is straightforward.  `kind` and `source` are new fields added in Task 2.3
-/// and are populated here from the scope and provider name respectively.
+/// With Task 7.0 ABI sync, `PluginEntry` now carries `kind` and `source`
+/// directly from the plugin, typed numeric `year`/`rating`, and all per-kind
+/// optional fields.  `MediaEntry.year` and `.rating` remain `Option<String>`
+/// on the wire (Go side), so we stringify the numeric values here.
+///
+/// The `scope` parameter that was previously needed to derive `kind` is removed
+/// — the plugin supplies `kind` directly.  If a pre-7.1 plugin returns a
+/// default `EntryKind` (Track), that is a visible bug that forces the plugin
+/// author to migrate.
 fn abi_entry_to_media_entry(
     e:             crate::abi::types::PluginEntry,
     provider_name: &str,
-    scope:         stui_plugin_sdk::SearchScope,
 ) -> crate::ipc::MediaEntry {
-    use stui_plugin_sdk::{EntryKind, SearchScope};
-
-    let kind = match scope {
-        SearchScope::Artist  => EntryKind::Artist,
-        SearchScope::Album   => EntryKind::Album,
-        SearchScope::Track   => EntryKind::Track,
-        SearchScope::Movie   => EntryKind::Movie,
-        SearchScope::Series  => EntryKind::Series,
-        SearchScope::Episode => EntryKind::Episode,
-    };
-
-    // Derive a tab from scope for the MediaEntry.tab field (required field).
-    let tab = match scope {
-        SearchScope::Artist | SearchScope::Album | SearchScope::Track
-            => crate::ipc::MediaTab::Music,
-        SearchScope::Movie
-            => crate::ipc::MediaTab::Movies,
-        SearchScope::Series | SearchScope::Episode
-            => crate::ipc::MediaTab::Series,
+    // Derive MediaEntry.tab from the plugin-supplied kind so the TUI
+    // renders the entry in the correct tab.
+    let tab = match e.kind {
+        stui_plugin_sdk::EntryKind::Artist
+        | stui_plugin_sdk::EntryKind::Album
+        | stui_plugin_sdk::EntryKind::Track  => crate::ipc::MediaTab::Music,
+        stui_plugin_sdk::EntryKind::Movie    => crate::ipc::MediaTab::Movies,
+        stui_plugin_sdk::EntryKind::Series
+        | stui_plugin_sdk::EntryKind::Episode => crate::ipc::MediaTab::Series,
     };
 
     crate::ipc::MediaEntry {
         id:           e.id,
         title:        e.title,
-        year:         e.year,
+        year:         e.year.map(|y| y.to_string()),
         genre:        e.genre,
-        rating:       e.rating,
+        rating:       e.rating.map(|r| r.to_string()),
         description:  e.description,
         poster_url:   e.poster_url,
         provider:     provider_name.to_string(),
@@ -1105,13 +1091,13 @@ fn abi_entry_to_media_entry(
         ratings:      std::collections::HashMap::new(),
         imdb_id:      e.imdb_id,
         tmdb_id:      None,
-        kind,
-        source:       provider_name.to_string(),
-        artist_name:  None,
-        album_name:   None,
-        track_number: None,
-        season:       None,
-        episode:      None,
+        kind:         e.kind,
+        source:       e.source,
+        artist_name:  e.artist_name,
+        album_name:   e.album_name,
+        track_number: e.track_number,
+        season:       e.season,
+        episode:      e.episode,
     }
 }
 
@@ -1121,22 +1107,6 @@ fn abi_entry_to_media_entry(
 mod supervisor_search_tests {
     use super::*;
     use stui_plugin_sdk::SearchScope;
-
-    // ── scope_to_tab_str ──────────────────────────────────────────────────────
-
-    #[test]
-    fn scope_to_tab_str_music_scopes() {
-        assert_eq!(scope_to_tab_str(SearchScope::Artist), "music");
-        assert_eq!(scope_to_tab_str(SearchScope::Album),  "music");
-        assert_eq!(scope_to_tab_str(SearchScope::Track),  "music");
-    }
-
-    #[test]
-    fn scope_to_tab_str_video_scopes() {
-        assert_eq!(scope_to_tab_str(SearchScope::Movie),   "movies");
-        assert_eq!(scope_to_tab_str(SearchScope::Series),  "series");
-        assert_eq!(scope_to_tab_str(SearchScope::Episode), "series");
-    }
 
     // ── map_abi_error ─────────────────────────────────────────────────────────
 
@@ -1169,24 +1139,31 @@ mod supervisor_search_tests {
     }
 
     // ── abi_entry_to_media_entry ──────────────────────────────────────────────
+    // PluginEntry now uses typed numerics (year: Option<u32>, rating: Option<f32>)
+    // and carries kind + source directly from the plugin.
 
     #[test]
     fn abi_entry_maps_fields_correctly() {
         let entry = crate::abi::types::PluginEntry {
             id:          "tt1234".into(),
+            kind:        stui_plugin_sdk::EntryKind::Track,
             title:       "Creep".into(),
-            year:        Some("1993".into()),
+            source:      "lastfm".into(),
+            year:        Some(1993),
             genre:       Some("Rock".into()),
-            rating:      Some("9.0".into()),
+            rating:      Some(9.0),
             description: Some("A song".into()),
             poster_url:  None,
             imdb_id:     Some("tt1234".into()),
+            ..Default::default()
         };
-        let me = abi_entry_to_media_entry(entry, "lastfm", SearchScope::Track);
+        let me = abi_entry_to_media_entry(entry, "lastfm");
         assert_eq!(me.id, "tt1234");
         assert_eq!(me.title, "Creep");
+        // year is stringified from the numeric ABI field
         assert_eq!(me.year, Some("1993".into()));
         assert_eq!(me.provider, "lastfm");
+        // source comes from the plugin entry directly
         assert_eq!(me.source, "lastfm");
         assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Track);
         assert!(matches!(me.tab, crate::ipc::MediaTab::Music));
@@ -1194,27 +1171,49 @@ mod supervisor_search_tests {
     }
 
     #[test]
-    fn abi_entry_movie_scope_gets_movies_tab() {
+    fn abi_entry_movie_kind_gets_movies_tab() {
         let entry = crate::abi::types::PluginEntry {
-            id: "m1".into(), title: "Interstellar".into(),
-            year: None, genre: None, rating: None, description: None,
-            poster_url: None, imdb_id: None,
+            id:    "m1".into(),
+            kind:  stui_plugin_sdk::EntryKind::Movie,
+            title: "Interstellar".into(),
+            source: "tmdb".into(),
+            ..Default::default()
         };
-        let me = abi_entry_to_media_entry(entry, "tmdb", SearchScope::Movie);
+        let me = abi_entry_to_media_entry(entry, "tmdb");
         assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Movie);
         assert!(matches!(me.tab, crate::ipc::MediaTab::Movies));
     }
 
     #[test]
-    fn abi_entry_series_scope_gets_series_tab() {
+    fn abi_entry_series_kind_gets_series_tab() {
         let entry = crate::abi::types::PluginEntry {
-            id: "s1".into(), title: "Breaking Bad".into(),
-            year: None, genre: None, rating: None, description: None,
-            poster_url: None, imdb_id: None,
+            id:    "s1".into(),
+            kind:  stui_plugin_sdk::EntryKind::Series,
+            title: "Breaking Bad".into(),
+            source: "tmdb".into(),
+            ..Default::default()
         };
-        let me = abi_entry_to_media_entry(entry, "tmdb", SearchScope::Series);
+        let me = abi_entry_to_media_entry(entry, "tmdb");
         assert_eq!(me.kind, stui_plugin_sdk::EntryKind::Series);
         assert!(matches!(me.tab, crate::ipc::MediaTab::Series));
+    }
+
+    #[test]
+    fn abi_entry_per_kind_fields_forwarded() {
+        let entry = crate::abi::types::PluginEntry {
+            id:           "t1".into(),
+            kind:         stui_plugin_sdk::EntryKind::Track,
+            title:        "My Song".into(),
+            source:       "musicplugin".into(),
+            artist_name:  Some("Radiohead".into()),
+            album_name:   Some("OK Computer".into()),
+            track_number: Some(3),
+            ..Default::default()
+        };
+        let me = abi_entry_to_media_entry(entry, "musicplugin");
+        assert_eq!(me.artist_name, Some("Radiohead".into()));
+        assert_eq!(me.album_name,  Some("OK Computer".into()));
+        assert_eq!(me.track_number, Some(3));
     }
 
     // ── Engine::plugins_for_scope / scope_has_any_plugins ─────────────────────
