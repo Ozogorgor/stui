@@ -2,35 +2,31 @@
 //!
 //! The Rust SDK for building stui plugins.
 //!
-//! ## Quick start
+//! ## Quick Start
 //!
-//! ```rust
-//! use stui_plugin_sdk::prelude::*;
+//! ```ignore
+//! use stui_plugin_sdk::*;
 //!
-//! pub struct MyProvider;
+//! struct MyPlugin { manifest: PluginManifest }
 //!
-//! impl StuiPlugin for MyProvider {
-//!     fn name(&self) -> &str { "my-provider" }
-//!     fn version(&self) -> &str { "1.0.0" }
-//!     fn plugin_type(&self) -> PluginType { PluginType::Provider }
-//!
-//!     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-//!         // ... fetch content ...
-//!         PluginResult::Ok(SearchResponse { items: vec![], total: 0 })
-//!     }
-//!
-//!     fn resolve(&self, req: ResolveRequest) -> PluginResult<ResolveResponse> {
-//!         PluginResult::Ok(ResolveResponse {
-//!             stream_url: "https://...".into(),
-//!             quality: Some("1080p".into()),
-//!             subtitles: vec![],
-//!         })
-//!     }
+//! impl Plugin for MyPlugin {
+//!     fn manifest(&self) -> &PluginManifest { &self.manifest }
 //! }
 //!
-//! // Register the plugin — generates all required WASM exports
-//! stui_export_plugin!(MyProvider);
+//! impl CatalogPlugin for MyPlugin {
+//!     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
+//!         // ... your search logic ...
+//!         Ok(SearchResponse { items: vec![], total: 0 })
+//!     }
+//!     // lookup / enrich / get_artwork / get_credits / related default to NOT_IMPLEMENTED
+//! }
+//!
+//! stui_export_plugin!(MyPlugin);
 //! ```
+//!
+//! For non-metadata plugin kinds (streams, subtitles, torrents) see the
+//! legacy `StuiPlugin` trait below — it remains supported during the
+//! media-source plugin refactor.
 //!
 //! ## Compile to WASM
 //!
@@ -262,13 +258,12 @@ impl PluginType {
 
 // ── StuiPlugin trait ─────────────────────────────────────────────────────────
 
-/// The trait every stui plugin implements.
+/// A legacy trait for non-metadata plugins (streams, subtitles, torrents).
 ///
-/// Implement this trait, then call `stui_export_plugin!(YourPlugin)` to
-/// generate the WASM ABI glue automatically.
+/// New plugins should implement [`Plugin`] + [`CatalogPlugin`] instead.
 #[deprecated(
     since = "0.2.0",
-    note = "Use `Plugin` + `CatalogPlugin` instead. StuiPlugin remains for non-metadata plugins in stui_plugins/ pending the media-source plugin refactor."
+    note = "Use `Plugin` + `CatalogPlugin` for metadata plugins. Non-metadata use cases (streams, subtitles, torrents) will migrate to dedicated traits in a future refactor; `StuiPlugin` remains supported during that transition."
 )]
 pub trait StuiPlugin {
     fn name(&self) -> &str;
@@ -285,6 +280,9 @@ pub trait StuiPlugin {
 // ── Plugin + CatalogPlugin traits ────────────────────────────────────────────
 
 /// Root trait every plugin implements — identity + lifecycle.
+///
+/// Only [`Plugin::manifest`] is required; [`Plugin::init`] and
+/// [`Plugin::shutdown`] have default no-op implementations.
 pub trait Plugin {
     fn manifest(&self) -> &PluginManifest;
     fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> { Ok(()) }
@@ -781,11 +779,22 @@ mod tests {
 
     #[test]
     fn plugin_trait_compiles() {
-        #[allow(dead_code)]
+        // Minimal stub to prove Plugin + CatalogPlugin can actually be implemented.
+        struct Stub {
+            manifest: PluginManifest,
+        }
+        impl Plugin for Stub {
+            fn manifest(&self) -> &PluginManifest { &self.manifest }
+        }
+        impl CatalogPlugin for Stub {
+            fn search(&self, _req: SearchRequest) -> PluginResult<SearchResponse> {
+                PluginResult::Ok(SearchResponse { items: vec![], total: 0 })
+            }
+        }
         fn assert_plugin<T: Plugin>() {}
-        #[allow(dead_code)]
         fn assert_catalog<T: CatalogPlugin>() {}
-        // Compile-time only; no runtime assertions needed.
+        assert_plugin::<Stub>();
+        assert_catalog::<Stub>();
     }
 
     // These tests run outside WASM (on the host), so the extern "C" functions
