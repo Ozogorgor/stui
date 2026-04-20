@@ -188,6 +188,7 @@ fn parse_movie_page(html: &str, limit: u32) -> Vec<PluginEntry> {
 
                     entries.push(PluginEntry {
                         id: slug,
+                        source: "yify-subs".to_string(),
                         title,
                         year: None,
                         genre: None,
@@ -196,6 +197,7 @@ fn parse_movie_page(html: &str, limit: u32) -> Vec<PluginEntry> {
                         poster_url: None,
                         imdb_id: None,
                         duration: None,
+                        ..Default::default()
                     });
 
                     if limit > 0 && entries.len() >= limit as usize {
@@ -221,6 +223,7 @@ fn parse_browse_page(html: &str, limit: u32) -> Vec<PluginEntry> {
 
                 entries.push(PluginEntry {
                     id: format!("{}/movie-imdb/{}", BASE_URL, imdb),
+                    source: "yify-subs".to_string(),
                     title,
                     year: None,
                     genre: None,
@@ -229,6 +232,7 @@ fn parse_browse_page(html: &str, limit: u32) -> Vec<PluginEntry> {
                     poster_url: None,
                     imdb_id: Some(imdb),
                     duration: None,
+                    ..Default::default()
                 });
 
                 if limit > 0 && entries.len() >= limit as usize {
