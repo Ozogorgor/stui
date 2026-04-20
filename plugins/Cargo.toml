@@ -1,0 +1,24 @@
+# Virtual workspace for WASM plugin builds.
+# This is separate from the root workspace so that `cargo build --target
+# wasm32-wasip1 --workspace` (run from this directory) only compiles the
+# plugin crates + the SDK — it does NOT pull in `stui-runtime` or `stui-aria2`,
+# which depend on wasmtime/cranelift and other host-only crates that cannot be
+# compiled for wasm32-wasip1.
+[workspace]
+resolver = "2"
+members = [
+    "anilist-provider",
+    "discogs-provider",
+    "imdb-provider",
+    "javdb",
+    "kitsu",
+    "kitsunekko",
+    "lastfm-provider",
+    "listenbrainz-provider",
+    "omdb-provider",
+    "r18",
+    "subscene",
+    "tmdb-provider",
+    "torrentio-rpc",
+    "yify-subs",
+]
