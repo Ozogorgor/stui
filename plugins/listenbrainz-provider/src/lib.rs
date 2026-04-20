@@ -14,14 +14,16 @@
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query + tab="music" → returns trending/popular releases
-//! Non-empty query + tab="music" → returns search results
+//! Supported scopes: Artist, Album, Track
+//! Empty query → returns trending/popular releases
+//! Non-empty query → returns search results
 
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const API_BASE: &str = "https://api.listenbrainz.org";
 
@@ -51,23 +53,26 @@ impl StuiPlugin for ListenbrainzProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
+        // listenbrainz supports music scopes
+        let entry_kind = match req.scope {
+            SearchScope::Artist => EntryKind::Artist,
+            SearchScope::Album => EntryKind::Album,
+            SearchScope::Track => EntryKind::Track,
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "listenbrainz only supports artist, album, and track scopes",
+                );
+            }
+        };
+
         let query = req.query.trim();
-
-        // Only support music tab
-        if tab != "music" {
-            return PluginResult::ok(SearchResponse {
-                items: vec![],
-                total: 0,
-            });
-        }
-
         let limit = req.limit.min(50) as usize;
 
         if query.is_empty() {
-            self.get_charts(limit)
+            self.get_charts(limit, entry_kind)
         } else {
-            self.search_releases(query, limit)
+            self.search_releases(query, limit, entry_kind)
         }
     }
 
@@ -80,7 +85,7 @@ impl StuiPlugin for ListenbrainzProvider {
 }
 
 impl ListenbrainzProvider {
-    fn search_releases(&self, query: &str, limit: usize) -> PluginResult<SearchResponse> {
+    fn search_releases(&self, query: &str, limit: usize, entry_kind: EntryKind) -> PluginResult<SearchResponse> {
         let url = format!(
             "{}/search/musicbrainz?query={}&type=release&limit={}",
             API_BASE,
@@ -107,7 +112,7 @@ impl ListenbrainzProvider {
             .releases
             .into_iter()
             .take(limit)
-            .map(|r| r.into_entry())
+            .map(|r| r.into_entry(entry_kind))
             .collect();
 
         let total = entries.len() as u32;
@@ -119,7 +124,7 @@ impl ListenbrainzProvider {
         })
     }
 
-    fn get_charts(&self, limit: usize) -> PluginResult<SearchResponse> {
+    fn get_charts(&self, limit: usize, entry_kind: EntryKind) -> PluginResult<SearchResponse> {
         // Get top releases from the charts endpoint
         let url = format!(
             "{}/1/stats/shifts/top-recordings-for-week?listeners_threshold=10&limit={}",
@@ -156,7 +161,7 @@ impl ListenbrainzProvider {
             .releases
             .into_iter()
             .take(limit)
-            .map(|r| r.into_entry())
+            .map(|r| r.into_entry(entry_kind))
             .collect();
 
         let total = entries.len() as u32;
@@ -206,7 +211,7 @@ struct CoverArtUrls {
 }
 
 impl Release {
-    fn into_entry(self) -> PluginEntry {
+    fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let title = self
             .release_name
             .unwrap_or_else(|| "Unknown Release".to_string());
@@ -220,7 +225,7 @@ impl Release {
             .release_date
             .as_ref()
             .and_then(|d| d.get(0..4))
-            .map(|y| y.to_string());
+            .and_then(|y| y.parse::<u32>().ok());
 
         let poster_url = self
             .cover_art_urls
@@ -233,11 +238,15 @@ impl Release {
             Some(self.genres.join(", "))
         };
 
+        let id = self
+            .release_mbid
+            .map(|mbid| format!("lbz-{}", mbid))
+            .unwrap_or_else(|| format!("lbz-{}", url_encode(&title)));
+
         PluginEntry {
-            id: self
-                .release_mbid
-                .map(|mbid| format!("lbz-{}", mbid))
-                .unwrap_or_else(|| format!("lbz-{}", url_encode(&title))),
+            id,
+            kind,
+            source: "listenbrainz".to_string(),
             title: full_title,
             year,
             genre,
@@ -246,6 +255,9 @@ impl Release {
             poster_url,
             imdb_id: None,
             duration: None,
+            artist_name: Some(artist),
+            album_name: Some(title),
+            ..Default::default()
         }
     }
 }
