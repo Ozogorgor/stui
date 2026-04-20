@@ -39,8 +39,8 @@ pub async fn run_get_provider_settings(
     let providers: Vec<ProviderSchema> = registry
         .all_plugins()
         .filter(|p| {
-            let ptype = &p.manifest.plugin.plugin_type;
-            ptype.is_metadata_provider() || ptype.is_stream_provider() || ptype.is_subtitle_provider()
+            let meta = &p.manifest.plugin;
+            meta.is_metadata_provider() || meta.is_stream_provider() || meta.is_subtitle_provider()
         })
         .map(|plugin| {
             let plugin_name = &plugin.manifest.plugin.name;
@@ -80,7 +80,7 @@ pub async fn run_get_provider_settings(
                 id: plugin_name.clone(),
                 name: plugin.manifest.plugin.name.clone(),
                 description: plugin.manifest.plugin.description.clone().unwrap_or_default(),
-                plugin_type: plugin.manifest.plugin.plugin_type.to_string(),
+                plugin_type: plugin.manifest.plugin.plugin_type_str(),
                 active,
                 fields,
             }

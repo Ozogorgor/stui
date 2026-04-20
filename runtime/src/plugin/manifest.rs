@@ -1,12 +1,16 @@
-/// Plugin manifest — parsed from plugin.toml in each plugin directory.
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+//! Plugin manifest schema — parsed from `plugin.toml` in each plugin directory.
+//!
+//! Runtime owns the AUTHORITATIVE manifest types: this module carries the
+//! richer shape (VerbConfig, RateLimit, PluginConfigField, validate()) while
+//! the SDK's `stui_plugin_sdk::capabilities::{PluginManifest, ...}` remains a
+//! lighter author-facing parallel shape used by the CLI `stui plugin lint`
+//! (see Task 1.3). The two are kept intentionally separate — the SDK stubs
+//! do not roundtrip back into the runtime.
 
-use anyhow::{Context, Result};
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::EntryKind;
-
-// ── Manifest schema ──────────────────────────────────────────────────────────
 
 // ── CatalogCapability ─────────────────────────────────────────────────────────
 
@@ -26,22 +30,46 @@ pub enum CatalogCapability {
     /// Legacy form: `catalog = true` / `catalog = false`.
     /// Carries no scope information; excluded from scoped dispatch.
     Enabled(bool),
-    /// New typed form: `[capabilities.catalog] kinds = [...]`.
+    /// New typed form: `[capabilities.catalog]` with kinds + per-verb sub-tables.
     Typed {
         #[serde(default)]
         kinds: Vec<EntryKind>,
+        /// `search = true | false | VerbConfig`. The required catalog verb.
+        #[serde(default)]
+        search: Option<bool>,
+        /// Optional verb configs for lookup / enrich / artwork / credits / related.
+        #[serde(default)]
+        lookup: Option<LookupConfig>,
+        #[serde(default)]
+        enrich: Option<VerbConfig>,
+        #[serde(default)]
+        artwork: Option<ArtworkConfig>,
+        #[serde(default)]
+        credits: Option<VerbConfig>,
+        #[serde(default)]
+        related: Option<VerbConfig>,
     },
 }
 
 impl Default for CatalogCapability {
-    fn default() -> Self { Self::Typed { kinds: Vec::new() } }
+    fn default() -> Self {
+        Self::Typed {
+            kinds: Vec::new(),
+            search: None,
+            lookup: None,
+            enrich: None,
+            artwork: None,
+            credits: None,
+            related: None,
+        }
+    }
 }
 
 impl CatalogCapability {
     /// Declared search kinds (empty unless plugin uses the typed form).
     pub fn kinds(&self) -> &[EntryKind] {
         match self {
-            Self::Typed { kinds } => kinds.as_slice(),
+            Self::Typed { kinds, .. } => kinds.as_slice(),
             Self::Enabled(_) => &[],
         }
     }
@@ -49,10 +77,78 @@ impl CatalogCapability {
     /// True if the plugin has any catalog capability at all (typed or legacy-enabled).
     pub fn is_enabled(&self) -> bool {
         match self {
-            Self::Typed { kinds } => !kinds.is_empty(),
+            Self::Typed { kinds, .. } => !kinds.is_empty(),
             Self::Enabled(b) => *b,
         }
     }
+}
+
+// ── Per-verb config ───────────────────────────────────────────────────────────
+
+/// A per-verb capability declaration.
+///
+/// Accepts three TOML forms:
+/// - `verb = true` / `verb = false` → enabled / not-declared
+/// - `[capabilities.catalog.verb]` `stub = true` + `reason = "…"` → a declared stub
+/// - `[capabilities.catalog.verb]` with arbitrary typed fields → full config
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum VerbConfig {
+    /// `verb = true` / `verb = false`
+    Bool(bool),
+    /// Stub: plugin declares the verb but returns NOT_IMPLEMENTED.
+    /// `{ stub = true, reason = "…" }`
+    Stub { stub: bool, reason: Option<String> },
+    /// Full typed config with arbitrary fields.
+    Typed(toml::Value),
+}
+
+impl VerbConfig {
+    /// True if the verb is declared as a stub (always returns NOT_IMPLEMENTED).
+    pub fn is_stub(&self) -> bool {
+        matches!(self, Self::Stub { stub: true, .. })
+    }
+
+    /// True if the verb is enabled at all (bool:true, stub, or typed).
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Bool(b) => *b,
+            Self::Stub { stub, .. } => *stub,
+            Self::Typed(_) => true,
+        }
+    }
+}
+
+/// Lookup-verb config: declares `id_sources = [...]` of canonical id-sources
+/// this plugin supports for `Plugin::lookup`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct LookupConfig {
+    /// Either `lookup = true` (bool) or a list of id sources.
+    #[serde(default)]
+    pub id_sources: Vec<String>,
+    #[serde(default)]
+    pub stub: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+impl LookupConfig {
+    pub fn is_stub(&self) -> bool { self.stub }
+}
+
+/// Artwork-verb config: declares supported `sizes`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ArtworkConfig {
+    #[serde(default)]
+    pub sizes: Vec<String>,
+    #[serde(default)]
+    pub stub: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+impl ArtworkConfig {
+    pub fn is_stub(&self) -> bool { self.stub }
 }
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
@@ -91,6 +187,9 @@ pub struct PluginManifest {
     /// Structured capabilities declared in `[capabilities]`.
     #[serde(default)]
     pub capabilities: Capabilities,
+    /// Optional rate-limit declaration; see `PluginSupervisor`.
+    #[serde(default)]
+    pub rate_limit: Option<RateLimit>,
     /// Tolerate unknown top-level sections.
     #[serde(flatten)]
     pub _extra: HashMap<String, toml::Value>,
@@ -100,16 +199,14 @@ fn deserialize_config_fields<'de, D>(deserializer: D) -> Result<Vec<PluginConfig
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de;
     // Try as array first, fall back to ignoring (table/empty)
     let value = toml::Value::deserialize(deserializer)?;
     match value {
         toml::Value::Array(arr) => {
             let mut fields = Vec::new();
             for v in arr {
-                match v.try_into() {
-                    Ok(f) => fields.push(f),
-                    Err(_) => {} // skip malformed entries
+                if let Ok(f) = v.try_into() {
+                    fields.push(f);
                 }
             }
             Ok(fields)
@@ -135,6 +232,9 @@ pub struct PluginConfigField {
     pub required: bool,
     /// Default value (optional)
     pub default: Option<String>,
+    /// Optional env var that backs this field (precedence: user config > env var > [env] default > default).
+    #[serde(default)]
+    pub env_var: Option<String>,
 }
 
 impl PluginConfigField {
@@ -181,6 +281,7 @@ impl PluginManifest {
                     } else {
                         Some(default_value.clone())
                     },
+                    env_var: None,
                 }
             })
             .collect()
@@ -191,8 +292,13 @@ impl PluginManifest {
 pub struct PluginMeta {
     pub name: String,
     pub version: String,
-    #[serde(rename = "type")]
-    pub plugin_type: PluginType,
+    /// Legacy field: `[plugin] type = "metadata"`. NEW manifests must NOT set this.
+    /// Kept as Option so validate() can reject it with an actionable error.
+    /// Accepts backward-compat plugin-type strings in manifests from before the
+    /// canonical-schema flip. During migration, loading proceeds via
+    /// `plugin_type_or_default()` which infers metadata from [capabilities].
+    #[serde(default, rename = "type")]
+    pub plugin_type: Option<PluginType>,
     /// Entrypoint file (default: "plugin.wasm").
     #[serde(default = "default_entrypoint")]
     pub entrypoint: String,
@@ -205,6 +311,50 @@ pub struct PluginMeta {
     pub _author: Option<String>,
     #[serde(default, rename = "abi_version")]
     pub _abi_version: Option<u32>,
+}
+
+impl PluginMeta {
+    /// Return the plugin_type or a default for callers that need it.
+    /// The new canonical schema doesn't require it (inferred from capabilities),
+    /// but legacy code paths still read it.
+    pub fn plugin_type_or_default(&self) -> PluginType {
+        self.plugin_type.clone().unwrap_or(PluginType::MetadataProvider)
+    }
+
+    /// Display-friendly plugin type string. Mirrors the old
+    /// `PluginType::Display` behavior for legacy call sites. Returns
+    /// the empty string if the manifest omits [plugin] type.
+    pub fn plugin_type_str(&self) -> String {
+        self.plugin_type
+            .as_ref()
+            .map(|t| t.to_string())
+            .unwrap_or_default()
+    }
+
+    /// True if the manifest's plugin_type (if present) is metadata-provider-shaped.
+    /// Returns true when plugin_type is absent AND the manifest declares a
+    /// catalog capability, preserving the old "catalog = true ⇒ treat as metadata"
+    /// semantic for legacy dispatch.
+    pub fn is_metadata_provider(&self) -> bool {
+        self.plugin_type
+            .as_ref()
+            .map(|t| t.is_metadata_provider())
+            .unwrap_or(true)
+    }
+
+    pub fn is_stream_provider(&self) -> bool {
+        self.plugin_type
+            .as_ref()
+            .map(|t| t.is_stream_provider())
+            .unwrap_or(false)
+    }
+
+    pub fn is_subtitle_provider(&self) -> bool {
+        self.plugin_type
+            .as_ref()
+            .map(|t| t.is_subtitle_provider())
+            .unwrap_or(false)
+    }
 }
 
 fn default_entrypoint() -> String { "plugin.wasm".to_string() }
@@ -341,10 +491,14 @@ impl std::fmt::Display for PluginCapability {
     }
 }
 
+// ── Permissions ───────────────────────────────────────────────────────────────
+
 /// Network permission: either a boolean (`network = true`) or an allowlist
 /// (`network = ["api.example.com", ...]`).
 ///
-/// Both forms appear in existing plugin.toml files.
+/// Both forms still parse here so validate() can surface a useful error for
+/// legacy `network = true` manifests — but only the allowlist form passes
+/// validation in the new canonical schema.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum NetworkPermission {
@@ -409,6 +563,13 @@ impl Permissions {
         // network = true/false
         self.network.is_enabled()
     }
+
+    /// True if this permissions block was declared with legacy-form
+    /// `network = true|false` rather than an allowlist. Used by
+    /// `manifest::validate` to reject legacy forms.
+    pub fn network_is_bool_form(&self) -> bool {
+        matches!(self.network, NetworkPermission::Bool(_))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -418,88 +579,80 @@ pub struct AuthorMeta {
     pub homepage: Option<String>,
 }
 
-// ── Loaded plugin record ─────────────────────────────────────────────────────
+// ── RateLimit ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // pub API: used by engine and registry
-pub struct LoadedPlugin {
-    pub id: String, // uuid assigned at load time
-    pub manifest: PluginManifest,
-    pub dir: PathBuf,        // directory containing plugin.toml
-    pub entrypoint: PathBuf, // resolved absolute path to .wasm / .so / rpc binary
-    pub mode: ExecutionMode,
+/// Per-plugin rate-limit declaration consumed by `PluginSupervisor::TokenBucket`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RateLimit {
+    /// Steady-state requests per second (tokens generated per second).
+    pub rps: u32,
+    /// Maximum burst capacity — the bucket size.
+    #[serde(default = "default_burst")]
+    pub burst: u32,
 }
 
-impl LoadedPlugin {
-    /// Check whether this plugin advertises a specific capability.
-    ///
-    /// Use this for all capability-based dispatch instead of matching
-    /// on `PluginType` directly — it handles legacy type aliases correctly.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// if plugin.has_capability(PluginCapability::Streams) {
-    ///     // ask this plugin for stream URLs
-    /// }
-    /// ```
-    pub fn has_capability(&self, cap: PluginCapability) -> bool {
-        self.manifest
-            .plugin
-            .plugin_type
-            .capabilities()
-            .contains(&cap)
+fn default_burst() -> u32 { 1 }
+
+// ── Manifest validation ───────────────────────────────────────────────────────
+
+/// Validate a freshly-parsed manifest against the new canonical schema.
+///
+/// Returns a `ManifestValidationError` describing what's wrong so the loader
+/// can surface an actionable message.
+pub fn validate(manifest: &PluginManifest) -> Result<(), ManifestValidationError> {
+    // 1. Legacy field: [plugin] type = "..."
+    if manifest.plugin.plugin_type.is_some() {
+        return Err(ManifestValidationError::LegacyField(
+            "[plugin] type = \"...\" is no longer supported; plugin type is inferred from [capabilities.*]".to_string(),
+        ));
     }
-
-    #[allow(dead_code)] // pub API: used by engine and registry
-    /// All capabilities this plugin advertises.
-    pub fn capabilities(&self) -> Vec<PluginCapability> {
-        self.manifest.plugin.plugin_type.capabilities()
+    // 2. network permission must be an allowlist (not bool)
+    if let Some(perms) = &manifest.permissions {
+        if perms.network_is_bool_form() && perms.network_hosts.is_empty() {
+            return Err(ManifestValidationError::LegacyField(
+                "[permissions] network = true is no longer supported; use network = [\"host1\", ...]".to_string(),
+            ));
+        }
+        // 3. filesystem permission rejected for metadata plugins
+        if !perms.filesystem.is_empty() {
+            return Err(ManifestValidationError::LegacyField(
+                "[permissions] filesystem is not supported for metadata plugins".to_string(),
+            ));
+        }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecutionMode {
-    Wasm,
-    NativeLib,
-    Grpc(String), // address
-}
-
-// ── Loader ───────────────────────────────────────────────────────────────────
-
-/// Load and validate a plugin manifest from a directory.
-pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest> {
-    let manifest_path = plugin_dir.join("plugin.toml");
-    let raw = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: PluginManifest = toml::from_str(&raw).with_context(|| "parsing plugin.toml")?;
-    Ok(manifest)
-}
-
-/// Resolve the execution mode and entrypoint path for a loaded manifest.
-pub fn resolve_entrypoint(
-    plugin_dir: &Path,
-    manifest: &PluginManifest,
-) -> Result<(ExecutionMode, PathBuf)> {
-    let entry = &manifest.plugin.entrypoint;
-
-    // gRPC: entrypoint looks like "grpc://host:port"
-    if entry.starts_with("grpc://") {
-        return Ok((ExecutionMode::Grpc(entry.clone()), PathBuf::from(entry)));
+    // 4 & 5. If typed CatalogCapability is declared, enforce id_sources + search.
+    if let CatalogCapability::Typed {
+        lookup,
+        search,
+        ..
+    } = &manifest.capabilities.catalog
+    {
+        if let Some(lookup) = lookup {
+            for source in &lookup.id_sources {
+                if !stui_plugin_sdk::id_sources::is_canonical(source) {
+                    return Err(ManifestValidationError::UnknownIdSource(source.clone()));
+                }
+            }
+        }
+        // catalog.search must be declared true (required verb).
+        if !search.unwrap_or(false) {
+            return Err(ManifestValidationError::MissingRequiredVerb("search".to_string()));
+        }
     }
-
-    let abs = plugin_dir.join(entry);
-
-    let mode = if entry.ends_with(".wasm") {
-        ExecutionMode::Wasm
-    } else if entry.ends_with(".so") || entry.ends_with(".dylib") || entry.ends_with(".dll") {
-        ExecutionMode::NativeLib
-    } else {
-        anyhow::bail!("Unknown entrypoint format: {}", entry);
-    };
-
-    Ok((mode, abs))
+    Ok(())
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum ManifestValidationError {
+    #[error("legacy manifest field: {0}")]
+    LegacyField(String),
+    #[error("unknown id-source: {0} (see sdk::id_sources for canonical set)")]
+    UnknownIdSource(String),
+    #[error("required verb not declared: {0}")]
+    MissingRequiredVerb(String),
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod capability_tests {
@@ -507,12 +660,13 @@ mod capability_tests {
     use stui_plugin_sdk::EntryKind;
 
     fn meta(body: &str) -> String {
+        // Use a manifest WITHOUT `[plugin] type` so validation doesn't reject.
+        // Individual tests can override by taking raw TOML.
         format!(
             r#"
 [plugin]
 name = "test"
 version = "0.1.0"
-type = "metadata"
 {body}
 "#
         )
@@ -536,7 +690,7 @@ type = "metadata"
     #[test]
     fn typed_form_parses_kinds() {
         let toml_text =
-            meta("\n[capabilities]\n\n[capabilities.catalog]\nkinds = [\"artist\", \"album\", \"track\"]\n");
+            meta("\n[capabilities]\n\n[capabilities.catalog]\nkinds = [\"artist\", \"album\", \"track\"]\nsearch = true\n");
         let m: PluginManifest = toml::from_str(&toml_text).unwrap();
         assert_eq!(
             m.capabilities.catalog.kinds(),
@@ -590,5 +744,230 @@ type = "metadata"
             checked >= 10,
             "expected to check at least 10 plugins, got {checked}"
         );
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    /// Build a minimal-valid manifest: typed-catalog with kinds + search=true.
+    fn minimal_valid_toml(extra: &str) -> String {
+        format!(
+            r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["track"]
+search = true
+{extra}
+"#
+        )
+    }
+
+    #[test]
+    fn legacy_plugin_type_field_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+type = "metadata-provider"
+
+[capabilities.catalog]
+kinds = ["track"]
+search = true
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(matches!(err, ManifestValidationError::LegacyField(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn legacy_network_bool_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[permissions]
+network = true
+
+[capabilities.catalog]
+kinds = ["track"]
+search = true
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(matches!(err, ManifestValidationError::LegacyField(ref s) if s.contains("network")), "got {err:?}");
+    }
+
+    #[test]
+    fn legacy_filesystem_permission_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[permissions]
+network = ["api.example.com"]
+filesystem = ["/tmp"]
+
+[capabilities.catalog]
+kinds = ["track"]
+search = true
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(
+            matches!(err, ManifestValidationError::LegacyField(ref s) if s.contains("filesystem")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_id_source_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["track"]
+search = true
+
+[capabilities.catalog.lookup]
+id_sources = ["not-a-real-id-source"]
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(matches!(err, ManifestValidationError::UnknownIdSource(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn catalog_search_false_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["track"]
+search = false
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(
+            matches!(err, ManifestValidationError::MissingRequiredVerb(ref v) if v == "search"),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn catalog_search_absent_rejected() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["track"]
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        let err = validate(&m).unwrap_err();
+        assert!(
+            matches!(err, ManifestValidationError::MissingRequiredVerb(ref v) if v == "search"),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn valid_manifest_accepted() {
+        let toml_text = minimal_valid_toml("");
+        let m: PluginManifest = toml::from_str(&toml_text).unwrap();
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn valid_manifest_with_canonical_id_sources_accepted() {
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["movie"]
+search = true
+
+[capabilities.catalog.lookup]
+id_sources = ["tmdb", "imdb"]
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        assert!(validate(&m).is_ok());
+    }
+
+    #[test]
+    fn legacy_bool_catalog_still_validates_ok_no_typed_requirements() {
+        // `catalog = true` (legacy bool) doesn't trigger the search-verb check
+        // because it's not the typed form. validate() leaves it alone.
+        let toml_text = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[capabilities]
+catalog = true
+"#;
+        let m: PluginManifest = toml::from_str(toml_text).unwrap();
+        assert!(validate(&m).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod verb_config_tests {
+    use super::*;
+
+    #[test]
+    fn verb_config_bool_true_not_stub() {
+        let vc: VerbConfig = toml::from_str("v = true").map(|t: toml::Table| t["v"].clone()).unwrap().try_into().unwrap();
+        assert!(!vc.is_stub());
+        assert!(vc.is_enabled());
+    }
+
+    #[test]
+    fn verb_config_bool_false_not_stub_not_enabled() {
+        let vc: VerbConfig = toml::from_str("v = false").map(|t: toml::Table| t["v"].clone()).unwrap().try_into().unwrap();
+        assert!(!vc.is_stub());
+        assert!(!vc.is_enabled());
+    }
+
+    #[test]
+    fn verb_config_stub_is_stub_and_enabled() {
+        let tbl: toml::Table = toml::from_str("[v]\nstub = true\nreason = \"upstream lacks it\"").unwrap();
+        let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
+        assert!(vc.is_stub());
+        assert!(vc.is_enabled());
+    }
+
+    #[test]
+    fn verb_config_typed_table_enabled_not_stub() {
+        // A typed table with no explicit stub flag → Typed variant.
+        let tbl: toml::Table = toml::from_str("[v]\nkey = \"value\"").unwrap();
+        let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
+        assert!(vc.is_enabled());
+        assert!(!vc.is_stub());
+    }
+
+    #[test]
+    fn lookup_config_is_stub_when_flagged() {
+        let lc: LookupConfig = toml::from_str("stub = true\nreason = \"upstream lacks it\"").unwrap();
+        assert!(lc.is_stub());
+    }
+
+    #[test]
+    fn artwork_config_is_stub_when_flagged() {
+        let ac: ArtworkConfig = toml::from_str("stub = true").unwrap();
+        assert!(ac.is_stub());
     }
 }

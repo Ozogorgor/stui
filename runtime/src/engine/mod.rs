@@ -461,7 +461,7 @@ impl Engine {
                 id: p.id.clone(),
                 name: p.manifest.plugin.name.clone(),
                 version: p.manifest.plugin.version.clone(),
-                plugin_type: p.manifest.plugin.plugin_type.to_string(),
+                plugin_type: p.manifest.plugin.plugin_type_str(),
                 status: PluginStatus::Loaded,
                 tags: p.manifest.plugin.tags.clone(),
                 description: p.manifest.plugin.description.clone().unwrap_or_default(),

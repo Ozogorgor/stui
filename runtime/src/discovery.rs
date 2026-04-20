@@ -134,7 +134,7 @@ impl Discovery {
         let manifest = load_manifest(dir)?;
         let name = manifest.plugin.name.clone();
         let _version = manifest.plugin.version.clone();
-        let _ptype = manifest.plugin.plugin_type.to_string();
+        let _ptype = manifest.plugin.plugin_type_str();
 
         // Engine.load_plugin does full validation + sandbox setup
         // We use the engine's existing method directly
@@ -220,7 +220,7 @@ impl Discovery {
 
         let name = manifest.plugin.name.clone();
         let version = manifest.plugin.version.clone();
-        let ptype = manifest.plugin.plugin_type.to_string();
+        let ptype = manifest.plugin.plugin_type_str();
 
         match self.engine.load_plugin(dir).await {
             Ok(_) => {
