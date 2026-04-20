@@ -21,6 +21,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
+use tracing::Instrument as _;
 
 use stui_plugin_sdk::SearchScope;
 
@@ -81,36 +82,49 @@ async fn run_one_scope(
     out: EventSender,
 ) {
     let span = tracing::info_span!("search_scoped::scope", query_id, ?scope);
-    let _enter = span.enter();
 
-    let plugins = engine.plugins_for_scope(scope).await;
+    async move {
+        let plugins = engine.plugins_for_scope(scope).await;
 
-    if plugins.is_empty() {
-        emit(&out, Event::ScopeResults(ScopeResultsMsg {
-            query_id,
-            scope,
-            entries: Vec::new(),
-            partial: false,
-            error: Some(ScopeError::NoPluginsConfigured),
-        })).await;
-        return;
-    }
+        if plugins.is_empty() {
+            emit(&out, Event::ScopeResults(ScopeResultsMsg {
+                query_id,
+                scope,
+                entries: Vec::new(),
+                partial: false,
+                error: Some(ScopeError::NoPluginsConfigured),
+            })).await;
+            return;
+        }
 
-    // Spawn per-plugin tasks. Engine::supervisor_search acquires the shared
-    // plugin-call semaphore internally, so we don't acquire it here again.
-    let handles: Vec<JoinHandle<Result<Vec<MediaEntry>, PluginCallError>>> = plugins
-        .iter()
-        .map(|pid| {
-            let pid = pid.clone();
-            let q = query.clone();
-            let engine = engine.clone();
-            tokio::spawn(async move {
-                engine.supervisor_search(&pid, &q, scope).await
+        // Spawn per-plugin tasks. Engine::supervisor_search acquires the shared
+        // plugin-call semaphore internally, so we don't acquire it here again.
+        // Each task is instrumented with the parent scope span so tracing
+        // hierarchies (e.g. tokio-console, Jaeger) show them as children.
+        let handles: Vec<JoinHandle<Result<Vec<MediaEntry>, PluginCallError>>> = plugins
+            .iter()
+            .map(|pid| {
+                let pid = pid.clone();
+                let q = query.clone();
+                let engine = engine.clone();
+                let plugin_span = tracing::info_span!(
+                    parent: &tracing::Span::current(),
+                    "search_scoped::plugin",
+                    plugin_id = %pid,
+                );
+                tokio::spawn(
+                    async move {
+                        engine.supervisor_search(&pid, &q, scope).await
+                    }
+                    .instrument(plugin_span),
+                )
             })
-        })
-        .collect();
+            .collect();
 
-    run_scope_timing(handles, query_id, scope, cfg, out).await;
+        run_scope_timing(handles, query_id, scope, cfg, out).await;
+    }
+    .instrument(span)
+    .await
 }
 
 // ── Timing state machine (testable inner core) ────────────────────────────────
