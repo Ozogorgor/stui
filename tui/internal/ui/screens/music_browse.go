@@ -1,6 +1,12 @@
 package screens
 
-// music_browse.go — Browse sub-tab: catalog search for music entries.
+// music_browse.go — Browse sub-tab: catalog search for music entries via
+// plugin-backed streaming search (PluginDataSource + CatalogBrowser).
+//
+// Option B layout: s.catalog holds the flat entry list from GridUpdateMsg
+// (the initial browse view populated by the runtime). PluginDataSource is
+// active only during an active search; on RestoreView it snaps back to the
+// pre-search items. The local filtered() substring matcher is gone.
 
 import (
 	"fmt"
@@ -9,37 +15,29 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
+	"github.com/stui/stui/internal/ui/screens/catalogbrowser"
 	"github.com/stui/stui/pkg/theme"
 )
 
-// MusicBrowseScreen shows the music catalog with search filtering.
+// MusicBrowseScreen shows the music catalog with plugin-backed search.
 type MusicBrowseScreen struct {
 	Dims
 	client  *ipc.Client
 	catalog []ipc.CatalogEntry
 	cursor  int
 	scroll  int
-	query   string
+	source  *catalogbrowser.PluginDataSource
 }
 
-// NewMusicBrowseScreen creates a new browse screen.
+// NewMusicBrowseScreen creates a new browse screen. When client is non-nil a
+// PluginDataSource is wired in so that StartSearch can dispatch streaming
+// queries immediately without a separate init step.
 func NewMusicBrowseScreen(client *ipc.Client) MusicBrowseScreen {
-	return MusicBrowseScreen{client: client}
-}
-
-// filtered returns catalog entries matching the current query.
-func (s MusicBrowseScreen) filtered() []ipc.CatalogEntry {
-	if s.query == "" {
-		return s.catalog
+	s := MusicBrowseScreen{client: client}
+	if client != nil {
+		s.source = catalogbrowser.NewPluginDataSource(client)
 	}
-	q := strings.ToLower(s.query)
-	var out []ipc.CatalogEntry
-	for _, e := range s.catalog {
-		if strings.Contains(strings.ToLower(e.Title), q) {
-			out = append(out, e)
-		}
-	}
-	return out
+	return s
 }
 
 // Update handles incoming messages and key events.
@@ -56,8 +54,28 @@ func (s MusicBrowseScreen) Update(msg tea.Msg) (MusicBrowseScreen, tea.Cmd) {
 			s.scroll = 0
 		}
 
+	// ── Streaming search messages from PluginDataSource ───────────────────
+
+	case catalogbrowser.ScopeResultsAppliedMsg:
+		// DataSource has already applied items for one scope. Dispatch the
+		// Followup cmd to read the next message from the stream channel.
+		return s, m.Followup
+
+	case catalogbrowser.SearchChannelClosedMsg:
+		// All scopes finalized; nothing structural to update.
+		return s, nil
+
+	case catalogbrowser.SearchDispatchFailedMsg:
+		// The search could not be dispatched; nothing to display without a
+		// status field on this screen — just swallow and let the user retry.
+		return s, nil
+
+	case catalogbrowser.StaleScopeDroppedMsg:
+		// A stale result arrived; continue draining the stream.
+		return s, m.Followup
+
 	case tea.KeyPressMsg:
-		results := s.filtered()
+		results := s.catalog
 		switch m.String() {
 		case "j", "down":
 			if s.cursor < len(results)-1 {
@@ -83,7 +101,7 @@ func (s MusicBrowseScreen) Update(msg tea.Msg) (MusicBrowseScreen, tea.Cmd) {
 
 // HandleMouse handles a left-click within the browse screen's own coordinate space.
 func (s MusicBrowseScreen) HandleMouse(x, localY int) MusicBrowseScreen {
-	results := s.filtered()
+	results := s.catalog
 	// listHeight = View's h - 1, where h = terminal_height - 2 → listHeight = s.height - 3
 	listHeight := s.height - 3
 	if listHeight < 1 {
@@ -116,7 +134,7 @@ func (s MusicBrowseScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
-	results := s.filtered()
+	results := s.catalog
 
 	if len(results) == 0 {
 		emptyMsg := "No music in catalog — providers load on startup"

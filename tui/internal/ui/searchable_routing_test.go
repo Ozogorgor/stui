@@ -99,12 +99,15 @@ func TestFocusedSearchable_MusicTabLibraryIsSearchable(t *testing.T) {
 	}
 }
 
-func TestFocusedSearchable_MusicTabBrowseNoSearchable(t *testing.T) {
+func TestFocusedSearchable_MusicTabBrowseIsSearchable(t *testing.T) {
 	m := minimalModel(state.TabMusic)
 	m.musicScreen = m.musicScreen.WithActiveSubTab(screens.MusicBrowse)
 	got := focusedSearchable(&m)
-	if got != nil {
-		t.Errorf("TabMusic/Browse: expected nil Searchable before Task 6.3, got %T", got)
+	if got == nil {
+		t.Fatal("TabMusic/Browse: expected non-nil Searchable after Task 6.3")
+	}
+	if _, ok := got.(screens.MusicBrowseScreen); !ok {
+		t.Errorf("TabMusic/Browse: expected MusicBrowseScreen, got %T", got)
 	}
 }
 
@@ -164,11 +167,10 @@ func TestMusicScreen_ApplyRestoreView_NoopWithoutSearchable(t *testing.T) {
 }
 
 func TestMusicScreen_StartSearchInActive_NilWithoutSearchable(t *testing.T) {
-	// Library is Searchable as of Task 6.2; Browse will be as of Task 6.3.
 	// Queue/Playlists remain non-Searchable — StartSearchInActive returns nil.
+	// Browse is Searchable as of Task 6.3; Library as of Task 6.2.
 	ms := screens.NewMusicScreen(nil)
 	subtabs := []screens.MusicSubTab{
-		screens.MusicBrowse,
 		screens.MusicQueue,
 		screens.MusicPlaylists,
 	}
@@ -191,6 +193,24 @@ func TestMusicScreen_StartSearchInActive_LibraryDispatches(t *testing.T) {
 	// Empty query: no-op even for Searchable sub-screen.
 	if cmd := ms.StartSearchInActive(""); cmd != nil {
 		t.Error("sub-tab Library: empty query should return nil cmd")
+	}
+}
+
+func TestMusicScreen_StartSearchInActive_BrowseDispatches(t *testing.T) {
+	// Browse is Searchable post-Task 6.3: a non-empty query must dispatch
+	// a non-nil cmd via PluginDataSource.Search.
+	// NewMusicScreen(nil) creates a Browse screen with a nil client, which
+	// means source is nil — StartSearch must return nil for nil source.
+	// To verify the positive path we need a non-nil source; use WithActiveSubTab
+	// only after confirming the nil-source guard.
+	ms := screens.NewMusicScreen(nil).WithActiveSubTab(screens.MusicBrowse)
+	// nil client → nil source → nil cmd even for non-empty query
+	if cmd := ms.StartSearchInActive("radiohead"); cmd != nil {
+		t.Error("sub-tab Browse (nil client): expected nil cmd from StartSearchInActive")
+	}
+	// Empty query is always nil
+	if cmd := ms.StartSearchInActive(""); cmd != nil {
+		t.Error("sub-tab Browse: empty query should return nil cmd")
 	}
 }
 

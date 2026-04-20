@@ -88,6 +88,23 @@ func (s *PluginDataSource) Restore(st DataSourceState) {
 	s.active = 0
 }
 
+// RestoreSnapshot restores the view to the state captured when the most
+// recent search was dispatched. No-op if no search has been run (snapshot
+// is nil) or it was already cleared by Restore(). Used by the Searchable
+// RestoreView path when the user clears / esc's out of a search so the
+// browse view falls back to the pre-search state without needing the caller
+// to track the snapshot itself.
+func (s *PluginDataSource) RestoreSnapshot() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snapshot != nil {
+		s.items = s.snapshot.Items
+		s.snapshot = nil
+		s.status = SearchStatus{}
+		s.active = 0
+	}
+}
+
 // ScopeResultsAppliedMsg is posted to the Bubbletea loop after each
 // applied ScopeResultsMsg. The Followup cmd, when non-nil, must be
 // dispatched by the receiver — it reads the next message from the
