@@ -21,12 +21,12 @@
 //!     // lookup / enrich / get_artwork / get_credits / related default to NOT_IMPLEMENTED
 //! }
 //!
-//! stui_export_plugin!(MyPlugin);
+//! stui_export_catalog_plugin!(MyPlugin);
 //! ```
 //!
-//! For non-metadata plugin kinds (streams, subtitles, torrents) see the
-//! legacy `StuiPlugin` trait below — it remains supported during the
-//! media-source plugin refactor.
+//! For non-metadata plugin kinds (streams, subtitles, torrents) use
+//! [`stui_export_plugin!`] with the legacy `StuiPlugin` trait — it remains
+//! supported during the media-source plugin refactor.
 //!
 //! ## Compile to WASM
 //!
@@ -644,14 +644,13 @@ struct ExecResponse {
 
 // ── ABI glue macro ────────────────────────────────────────────────────────────
 
-/// Internal macro that implements a single `CatalogPlugin` ABI export.
+/// Internal; always invoked by `stui_export_plugin!` / `stui_export_catalog_plugin!` — do not call directly.
 ///
 /// Expands to a `#[no_mangle] pub extern "C" fn $fn_name(ptr: i32, len: i32) -> i64`
 /// that deserialises `$req_ty` from the input buffer, dispatches via
 /// `<$plugin_ty as $crate::CatalogPlugin>::$method`, and serialises the result.
-///
-/// `$err_resp_ty` is the `Ok`-variant type used only in the parse-error path
-/// (needed so `PluginResult::<$err_resp_ty>::err(...)` resolves without ambiguity).
+/// `$resp_ty` is the `Ok`-variant type, used in the parse-error path so that
+/// `PluginResult::<$resp_ty>::err(...)` resolves without ambiguity.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __catalog_abi_fn {
@@ -680,7 +679,12 @@ macro_rules! __catalog_abi_fn {
     };
 }
 
-/// Registers your plugin and generates all required WASM ABI exports.
+/// Legacy — use [`stui_export_catalog_plugin!`] for metadata (CatalogPlugin) plugins.
+///
+/// Registers a legacy `StuiPlugin` plugin and generates all required WASM ABI exports,
+/// including `stui_resolve` which requires the deprecated [`StuiPlugin`] trait. Use
+/// this macro only for non-metadata plugin kinds (streams, subtitles, torrents) during
+/// the transition period.
 ///
 /// # Example
 /// ```rust
@@ -810,6 +814,127 @@ macro_rules! stui_export_plugin {
     };
 }
 
+/// Export a metadata (CatalogPlugin) plugin to WASM.
+///
+/// Emits the standard ABI entry points and FFI wrappers for all 6 CatalogPlugin verbs
+/// (`stui_search`, `stui_lookup`, `stui_enrich`, `stui_get_artwork`, `stui_get_credits`,
+/// `stui_related`) plus `stui_abi_version`, `stui_alloc`, `stui_free`.
+///
+/// Use [`stui_export_plugin!`] instead for legacy `StuiPlugin` plugins (non-metadata
+/// kinds like streams / subtitles / torrents during the transition).
+///
+/// # Example
+/// ```rust
+/// stui_export_catalog_plugin!(MyPlugin);
+/// ```
+///
+/// This generates:
+/// - `stui_abi_version() -> i32`
+/// - `stui_alloc(len: i32) -> i32`
+/// - `stui_free(ptr: i32, len: i32)`
+/// - `stui_search(ptr: i32, len: i32) -> i64`
+/// - `stui_lookup(ptr: i32, len: i32) -> i64`
+/// - `stui_enrich(ptr: i32, len: i32) -> i64`
+/// - `stui_get_artwork(ptr: i32, len: i32) -> i64`
+/// - `stui_get_credits(ptr: i32, len: i32) -> i64`
+/// - `stui_related(ptr: i32, len: i32) -> i64`
+///
+/// Unlike [`stui_export_plugin!`], this macro does NOT emit `stui_resolve`, so the
+/// plugin type does not need to implement the deprecated [`StuiPlugin`] trait.
+#[macro_export]
+macro_rules! stui_export_catalog_plugin {
+    ($plugin_ty:ty) => {
+        // Safety: WASM is single-threaded; we use a global instance.
+        static PLUGIN_INSTANCE: std::sync::OnceLock<$plugin_ty> = std::sync::OnceLock::new();
+
+        fn get_plugin() -> &'static $plugin_ty {
+            PLUGIN_INSTANCE.get_or_init(|| <$plugin_ty>::default())
+        }
+
+        /// ABI version — host checks this before calling any other function.
+        #[no_mangle]
+        pub extern "C" fn stui_abi_version() -> i32 {
+            $crate::STUI_ABI_VERSION
+        }
+
+        /// Memory allocation — host uses this to write request JSON.
+        #[no_mangle]
+        pub extern "C" fn stui_alloc(len: i32) -> i32 {
+            let mut buf = Vec::<u8>::with_capacity(len as usize);
+            let ptr = buf.as_mut_ptr() as i32;
+            std::mem::forget(buf);
+            ptr
+        }
+
+        /// Memory free — host calls this after reading response JSON.
+        #[no_mangle]
+        pub extern "C" fn stui_free(ptr: i32, len: i32) {
+            unsafe {
+                let _ = Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize);
+            }
+        }
+
+        // ── CatalogPlugin verb exports ────────────────────────────────────────
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_search,
+            method   = search,
+            req_ty   = $crate::SearchRequest,
+            resp_ty  = $crate::SearchResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_lookup,
+            method   = lookup,
+            req_ty   = $crate::LookupRequest,
+            resp_ty  = $crate::LookupResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_enrich,
+            method   = enrich,
+            req_ty   = $crate::EnrichRequest,
+            resp_ty  = $crate::EnrichResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_artwork,
+            method   = get_artwork,
+            req_ty   = $crate::ArtworkRequest,
+            resp_ty  = $crate::ArtworkResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_credits,
+            method   = get_credits,
+            req_ty   = $crate::CreditsRequest,
+            resp_ty  = $crate::CreditsResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_related,
+            method   = related,
+            req_ty   = $crate::RelatedRequest,
+            resp_ty  = $crate::RelatedResponse,
+        }
+
+        // Note: stui_resolve is intentionally absent — catalog-only plugins do not
+        // implement the deprecated StuiPlugin trait and have no resolve endpoint.
+    };
+}
+
 /// Write a serialised result into WASM linear memory and return a fat pointer.
 ///
 /// # Memory model
@@ -843,6 +968,7 @@ pub mod prelude {
     pub use crate::exec;
     pub use crate::http_get;
     pub use crate::http_post_json;
+    pub use crate::stui_export_catalog_plugin;
     pub use crate::stui_export_plugin;
     pub use crate::url_encode;
     pub use crate::{plugin_debug, plugin_error, plugin_info, plugin_warn};
@@ -875,6 +1001,26 @@ mod tests {
         fn assert_catalog<T: CatalogPlugin>() {}
         assert_plugin::<Stub>();
         assert_catalog::<Stub>();
+    }
+
+    /// Proves that a type implementing only `Plugin + CatalogPlugin` (no `StuiPlugin`)
+    /// satisfies the bounds required by `stui_export_catalog_plugin!`. If this test
+    /// compiles, Chunk 3 real-plugin expansions will expand cleanly without needing
+    /// the deprecated `StuiPlugin` impl.
+    #[test]
+    fn catalog_only_plugin_satisfies_bounds() {
+        struct TestStub { m: PluginManifest }
+        impl Plugin for TestStub {
+            fn manifest(&self) -> &PluginManifest { &self.m }
+        }
+        impl CatalogPlugin for TestStub {
+            fn search(&self, _req: SearchRequest) -> PluginResult<SearchResponse> {
+                PluginResult::Ok(SearchResponse { items: vec![], total: 0 })
+            }
+        }
+        fn assert_catalog_only<T: CatalogPlugin>() {}
+        assert_catalog_only::<TestStub>();
+        // No StuiPlugin impl on TestStub — this compiling proves catalog-only works.
     }
 
     // These tests run outside WASM (on the host), so the extern "C" functions
@@ -1038,8 +1184,3 @@ mod tests {
     }
 }
 
-// Note: the optional macro-expansion smoke test (Step 4) was skipped because
-// `stui_export_plugin!` also emits `stui_resolve` which requires `StuiPlugin`.
-// A `CatalogPlugin`-only test struct cannot satisfy that requirement without
-// implementing the deprecated trait.  The real-plugin expansion in Chunk 3 will
-// serve as the integration-level test.
