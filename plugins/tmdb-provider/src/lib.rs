@@ -15,15 +15,16 @@
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query + tab → returns trending content for that tab.
-//! Non-empty query → returns search results for that tab.
+//! Empty query + scope → returns trending content for that scope.
+//! Non-empty query → returns search results for that scope.
 
 use serde::Deserialize;
 use std::sync::OnceLock;
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const BASE_URL: &str = "https://api.themoviedb.org/3";
 const POSTER_SIZE: &str = "w342";
@@ -70,36 +71,40 @@ impl StuiPlugin for TmdbProvider {
             }
         };
 
-        let tab = req.tab.as_str();
         let query = req.query.trim();
 
-        // Determine endpoint: trending if empty query, search otherwise
-        let endpoint = if query.is_empty() {
-            match tab {
-                "movies" => "/trending/movie/week".to_string(),
-                "series" => "/trending/tv/week".to_string(),
-                _ => "/trending/movie/week".to_string(),
+        // Determine endpoint based on scope
+        let (endpoint, entry_kind) = match req.scope {
+            SearchScope::Movie => {
+                let ep = if query.is_empty() {
+                    "/trending/movie/week".to_string()
+                } else {
+                    format!("/search/movie?query={}", urlencoding::encode(query))
+                };
+                (ep, EntryKind::Movie)
             }
-        } else {
-            let encoded = urlencoding::encode(query);
-            match tab {
-                "movies" => format!("/search/movie?query={}", encoded),
-                "series" => format!("/search/tv?query={}", encoded),
-                _ => format!("/search/movie?query={}", encoded),
+            SearchScope::Series => {
+                let ep = if query.is_empty() {
+                    "/trending/tv/week".to_string()
+                } else {
+                    format!("/search/tv?query={}", urlencoding::encode(query))
+                };
+                (ep, EntryKind::Series)
             }
-        };
-
-        let tab_for_entry = if query.is_empty() {
-            match tab {
-                "movies" => "movies",
-                "series" => "series",
-                _ => "movies",
+            SearchScope::Episode => {
+                // Episode scope: search TV, tag results as Episode
+                let ep = if query.is_empty() {
+                    "/trending/tv/week".to_string()
+                } else {
+                    format!("/search/tv?query={}", urlencoding::encode(query))
+                };
+                (ep, EntryKind::Episode)
             }
-        } else {
-            match tab {
-                "movies" => "movies",
-                "series" => "series",
-                _ => "movies",
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "tmdb does not support this scope",
+                );
             }
         };
 
@@ -130,8 +135,8 @@ impl StuiPlugin for TmdbProvider {
             .into_iter()
             .take(req.limit as usize)
             .map(|item| match item {
-                SearchResult::Movie(m) => m.into_entry(IMAGE_BASE_URL),
-                SearchResult::Tv(t) => t.into_entry(IMAGE_BASE_URL),
+                SearchResult::Movie(m) => m.into_entry(IMAGE_BASE_URL, entry_kind),
+                SearchResult::Tv(t) => t.into_entry(IMAGE_BASE_URL, entry_kind),
             })
             .collect();
 
@@ -198,14 +203,18 @@ struct TvItem {
 }
 
 impl MovieItem {
-    fn into_entry(self, image_base: &str) -> PluginEntry {
+    fn into_entry(self, image_base: &str, kind: EntryKind) -> PluginEntry {
         let year = self
             .release_date
             .as_deref()
             .and_then(|d| d.split('-').next())
-            .map(|y| y.to_string());
+            .and_then(|y| y.parse::<u32>().ok());
         let genre = self.genre_ids.first().map(|&g| genre_name(g).to_string());
-        let rating = format!("{:.1}", self.vote_average);
+        let rating = if self.vote_average > 0.0 {
+            Some(self.vote_average)
+        } else {
+            None
+        };
         let poster_url = self
             .poster_path
             .as_deref()
@@ -213,27 +222,34 @@ impl MovieItem {
 
         PluginEntry {
             id: format!("tmdb-movie-{}", self.id),
+            kind,
+            source: "tmdb".to_string(),
             title: self.title,
             year,
             genre,
-            rating: Some(rating),
+            rating,
             description: self.overview,
             poster_url,
             imdb_id: None,
             duration: None,
+            ..Default::default()
         }
     }
 }
 
 impl TvItem {
-    fn into_entry(self, image_base: &str) -> PluginEntry {
+    fn into_entry(self, image_base: &str, kind: EntryKind) -> PluginEntry {
         let year = self
             .first_air_date
             .as_deref()
             .and_then(|d| d.split('-').next())
-            .map(|y| y.to_string());
+            .and_then(|y| y.parse::<u32>().ok());
         let genre = self.genre_ids.first().map(|&g| genre_name(g).to_string());
-        let rating = format!("{:.1}", self.vote_average);
+        let rating = if self.vote_average > 0.0 {
+            Some(self.vote_average)
+        } else {
+            None
+        };
         let poster_url = self
             .poster_path
             .as_deref()
@@ -241,14 +257,17 @@ impl TvItem {
 
         PluginEntry {
             id: format!("tmdb-tv-{}", self.id),
+            kind,
+            source: "tmdb".to_string(),
             title: self.name,
             year,
             genre,
-            rating: Some(rating),
+            rating,
             description: self.overview,
             poster_url,
             imdb_id: None,
             duration: None,
+            ..Default::default()
         }
     }
 }
