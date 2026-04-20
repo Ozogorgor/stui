@@ -54,6 +54,11 @@ type bingeTickMsg struct{}
 // seq must match m.cfgSaveSeq; stale ticks are discarded.
 type configSaveTickMsg struct{ seq int }
 
+// searchDebounceFireMsg is sent 150 ms after a live-typing keystroke to
+// trigger an incremental search. The token must match m.searchDebounceToken;
+// stale ticks (from superseded keystrokes) are discarded without firing.
+type searchDebounceFireMsg struct{ token uint64 }
+
 func bingeTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return bingeTickMsg{} })
 }
@@ -220,6 +225,11 @@ type Model struct {
 	cfgPath    string
 	cfgSaveSeq int
 	watcher    *config.Watcher
+
+	// Live-search debounce — each keystroke increments the token and fires a
+	// 150ms tick. The tick handler drops stale tokens so only the last
+	// keystroke in a burst actually triggers a StartSearch call.
+	searchDebounceToken uint64
 }
 
 func New(opts Options, cfg config.Config) Model {
@@ -878,6 +888,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.watcher.NotifyWrite()
 		}
 		_ = config.Save(m.cfgPath, m.cfg)
+		return m, nil
+
+	case searchDebounceFireMsg:
+		// Stale token means a newer keystroke has already queued a fresh tick;
+		// drop this one without firing.
+		if msg.token != m.searchDebounceToken {
+			return m, nil
+		}
+		if s := focusedSearchable(&m); s != nil {
+			query := m.search.Value()
+			if query != "" {
+				return m, s.StartSearch(query)
+			}
+			m.applyRestoreView()
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -1930,16 +1955,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.search, cmd = m.search.Update(msg)
-			// Forward live typing to the focused Searchable for debounced
-			// incremental search. StartSearch is a no-op until 6.2/6.3 land.
-			if s := focusedSearchable(&m); s != nil {
-				query := m.search.Value()
-				if query != "" {
-					return m, tea.Batch(cmd, s.StartSearch(query))
-				}
-				// Empty query (user deleted everything) → restore view.
-				m.applyRestoreView()
-				return m, cmd
+			// Debounce live typing: increment the token and schedule a 150ms
+			// tick. If the user types again before the tick fires, the token
+			// advances and the earlier tick is silently dropped in the
+			// searchDebounceFireMsg handler.
+			if focusedSearchable(&m) != nil {
+				m.searchDebounceToken++
+				tok := m.searchDebounceToken
+				debounceCmd := tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
+					return searchDebounceFireMsg{token: tok}
+				})
+				return m, tea.Batch(cmd, debounceCmd)
 			}
 			return m, cmd
 		}

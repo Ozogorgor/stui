@@ -248,3 +248,38 @@ func TestSearchableInterface_EmptyScopes(t *testing.T) {
 		t.Errorf("empty SearchScopes: got %d, want 0", len(scopes))
 	}
 }
+
+// ── searchDebounceFireMsg token-compare tests ─────────────────────────────────
+
+// TestDebounce_StaleTokenDropped verifies that a searchDebounceFireMsg whose
+// token does not match m.searchDebounceToken is silently discarded.
+// The token-compare branch is pure (no I/O) so it is directly testable.
+func TestDebounce_StaleTokenDropped(t *testing.T) {
+	m := minimalModel(state.TabMusic)
+	m.searchDebounceToken = 5
+
+	// A tick from a superseded keystroke (token = 3) must be a no-op.
+	staleMsg := searchDebounceFireMsg{token: 3}
+	_, cmd := m.Update(staleMsg)
+	if cmd != nil {
+		t.Error("stale debounce token: expected nil cmd, got non-nil")
+	}
+	// Token must remain unchanged — dropping a stale message should not
+	// advance or reset the counter.
+	if m.searchDebounceToken != 5 {
+		t.Errorf("stale debounce: token changed from 5 to %d", m.searchDebounceToken)
+	}
+}
+
+// TestDebounce_CurrentTokenNoSearchable verifies that a matching token with no
+// focused Searchable (non-Music tab) still returns a nil cmd (no panic).
+func TestDebounce_CurrentTokenNoSearchable(t *testing.T) {
+	m := minimalModel(state.TabCollections)
+	m.searchDebounceToken = 1
+
+	msg := searchDebounceFireMsg{token: 1}
+	_, cmd := m.Update(msg)
+	if cmd != nil {
+		t.Error("matching token, no Searchable: expected nil cmd, got non-nil")
+	}
+}
