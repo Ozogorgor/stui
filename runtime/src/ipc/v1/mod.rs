@@ -1202,6 +1202,8 @@ pub struct MediaEntry {
     pub poster_url: Option<String>,
     pub provider: String,
     pub tab: MediaTab,
+    /// Grid-layer tab classifier (`Movies`, `Series`, etc.).
+    /// See note on `kind` below for how these two fields coexist.
     #[serde(default)]
     pub media_type: MediaType,
     /// Per-source raw scores forwarded to the TUI for detail display.
@@ -1213,7 +1215,18 @@ pub struct MediaEntry {
     pub tmdb_id: Option<String>,
     // ── Fields added in Task 2.3 ────────────────────────────────────────────
     // `#[serde(default)]` keeps old wire payloads (without these fields) valid.
-    /// Typed entry kind (artist / album / track / movie / series / episode).
+    /// Typed entry kind for scoped search results (`Artist`, `Album`, `Track`,
+    /// `Movie`, `Series`, `Episode`).  This field and `media_type` coexist
+    /// intentionally:
+    ///
+    /// - `kind` is set by the scoped-search path and distinguishes
+    ///   Artist/Album/Track within a single search response.
+    /// - `media_type` is the tab classifier consumed by the grid layer
+    ///   (`Movies`, `Series`, etc.) and predates scoped search.
+    ///
+    /// Consolidating the two into a single field is tracked as Task 7.0
+    /// deferral #6 and will happen once plugin migration is complete.
+    ///
     /// Defaults to `EntryKind::Track` for backward-compat with legacy wire data.
     #[serde(default)]
     pub kind: EntryKind,
