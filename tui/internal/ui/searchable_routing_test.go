@@ -61,18 +61,20 @@ func minimalModel(tab state.Tab) Model {
 	return m
 }
 
-func TestFocusedSearchable_NonMusicTabsReturnNil(t *testing.T) {
-	nonMusicTabs := []state.Tab{
-		state.TabMovies,
-		state.TabSeries,
-		state.TabLibrary,
+// TestFocusedSearchable_NonMusicNonGridTabsReturnNil confirms that tabs
+// without a Searchable implementation still return nil. After Task 6.4 the
+// only such tab is TabCollections — Movies/Series/Library adopt Searchable
+// via the gridSearchable adapter (see TestFocusedSearchable_GridTabsAreSearchable
+// in grid_search_test.go).
+func TestFocusedSearchable_NonMusicNonGridTabsReturnNil(t *testing.T) {
+	nonSearchableTabs := []state.Tab{
 		state.TabCollections,
 	}
-	for _, tab := range nonMusicTabs {
+	for _, tab := range nonSearchableTabs {
 		m := minimalModel(tab)
 		got := focusedSearchable(&m)
 		if got != nil {
-			t.Errorf("tab %q: expected nil Searchable (not yet implemented by Task 6.4), got %T", tab, got)
+			t.Errorf("tab %q: expected nil Searchable, got %T", tab, got)
 		}
 	}
 }

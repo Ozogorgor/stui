@@ -111,6 +111,17 @@ type Model struct {
 	grids      map[string][]ipc.CatalogEntry
 	gridCursor screens.GridCursor
 
+	// gridSearchSnapshot captures the pre-search grid contents per tab so
+	// that applyRestoreView can restore the original view on Esc / cleared
+	// query. Keys are state.Tab values for grid tabs (Movies/Series/Library).
+	// Absence of a key means no search is active for that tab.
+	gridSearchSnapshot map[state.Tab][]ipc.CatalogEntry
+
+	// gridSearchActiveQID tracks the most recent query_id per grid tab.
+	// Streamed gridScopeAppliedMsg with a mismatched QueryID is considered
+	// stale (a newer search was dispatched) and the entries are dropped.
+	gridSearchActiveQID map[state.Tab]uint64
+
 	// Top-level screen
 	screen screenMode
 
@@ -279,15 +290,17 @@ func New(opts Options, cfg config.Config) Model {
 	)
 
 	m := Model{
-		opts:              opts,
-		state:             appState,
-		keys:              keybinds.Default(),
-		grids:             seedGrids,
-		search:            ti,
-		screen:            screenGrid,
-		reqSeq:            new(atomic.Uint64),
-		loadingSpinner:    loadingSpinner,
-		visualizer:        components.NewVisualizer(components.VisualizerConfig{
+		opts:                opts,
+		state:               appState,
+		keys:                keybinds.Default(),
+		grids:               seedGrids,
+		gridSearchSnapshot:  make(map[state.Tab][]ipc.CatalogEntry),
+		gridSearchActiveQID: make(map[state.Tab]uint64),
+		search:              ti,
+		screen:              screenGrid,
+		reqSeq:              new(atomic.Uint64),
+		loadingSpinner:      loadingSpinner,
+		visualizer: components.NewVisualizer(components.VisualizerConfig{
 			Backend:     components.BackendFromString(cfg.Visualizer.Backend),
 			Bars:        cfg.Visualizer.Bars,
 			Height:      cfg.Visualizer.Height,
@@ -490,18 +503,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Search results ────────────────────────────────────────────────────
 
 	// Streaming plugin-backed scope results — route to focused Searchable.
+	// Music sub-screens consume ipc.ScopeResultsMsg directly via
+	// MusicScreen.ApplyScopeResults. Grid tabs (Movies/Series/Library)
+	// receive their scope data via gridScopeAppliedMsg instead — the
+	// streaming loop in readNextGridScope wraps each channel read into a
+	// gridScopeAppliedMsg, so ipc.ScopeResultsMsg itself is Music-only.
 	case ipc.ScopeResultsMsg:
 		var cmd tea.Cmd
 		m.musicScreen, cmd = m.musicScreen.ApplyScopeResults(msg)
-		// TODO(Task 6.4): route to grid-tab Searchable when implemented.
 		return m, cmd
 
 	// Synchronous MPD-backed search results — route to focused Searchable.
+	// MPD searches are Music-only, so no grid branch is needed here.
 	case ipc.MpdSearchResult:
 		var cmd tea.Cmd
 		m.musicScreen, cmd = m.musicScreen.ApplyMpdSearchResult(msg)
-		// TODO(Task 6.4): route to grid-tab Searchable when implemented.
 		return m, cmd
+
+	// Streaming grid search scope results — emitted by readNextGridScope.
+	// We drop stale results (mismatched QueryID) but keep draining the
+	// channel so it closes cleanly. For Movies/Series (single scope) we
+	// overwrite m.grids[tab]; for Library (Movie+Series) we accumulate by
+	// replacing only the per-scope slice of entries.
+	case gridScopeAppliedMsg:
+		activeQID, ok := m.gridSearchActiveQID[msg.Tab]
+		if !ok || activeQID != msg.QueryID {
+			// Stale — a newer search superseded this one. Continue draining.
+			return m, msg.Followup
+		}
+		converted := mediaEntriesToCatalog(msg.Entries)
+		tabID := msg.Tab.MediaTabID()
+		if msg.Tab == state.TabLibrary {
+			// Library accumulates Movie + Series. Keep any entries from the
+			// other scope, replace only the current-scope bucket.
+			existing := m.grids[tabID]
+			filtered := make([]ipc.CatalogEntry, 0, len(existing)+len(converted))
+			targetKind := scopeKind(msg.Scope)
+			for _, e := range existing {
+				if e.Kind != targetKind {
+					filtered = append(filtered, e)
+				}
+			}
+			filtered = append(filtered, converted...)
+			m.grids[tabID] = filtered
+		} else {
+			m.grids[tabID] = converted
+		}
+		return m, msg.Followup
+
+	case gridSearchClosedMsg:
+		// Channel closed — all requested scopes finalized. No structural
+		// change needed; the last gridScopeAppliedMsg already wrote the
+		// final entries.
+		return m, nil
+
+	case gridSearchFailedMsg:
+		m.state.StatusMsg = fmt.Sprintf("Search error: %v", msg.Err)
+		return m, nil
 
 	// Legacy single-response search — retained for Task 6.5 cleanup.
 	case ipc.SearchResultMsg:
@@ -1878,19 +1936,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.state.SearchActive = false
 				return m, nil
 			}
-			// Dispatch search through the focused Searchable if available;
-			// fall back to the legacy dispatchSearch path otherwise.
+			// Dispatch search through the focused Searchable. The search
+			// bar is only ever activated when focusedSearchable is non-nil
+			// (see the `/` / ActionOpenSearch handlers), so the nil case
+			// here is defensive — fall through silently.
 			if s := focusedSearchable(&m); s != nil {
 				m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
 				return m, s.StartSearch(query)
 			}
-			m.state.Focus = state.FocusResults
+			m.state.Focus = state.FocusTabs
 			m.search.Blur()
-			m.state.IsLoading = true
-			m.state.LoadingStart = time.Now().Unix()
-			m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
-			m.dispatchSearch(query)
-			return m, m.loadingSpinner.Tick
+			m.search.Reset()
+			m.state.SearchActive = false
+			return m, nil
 		default:
 			var cmd tea.Cmd
 			m.search, cmd = m.search.Update(msg)
@@ -2598,30 +2656,17 @@ func (m *Model) switchTab(t state.Tab) {
 	})
 }
 
-// dispatchSearch is the legacy fallback used when the focused screen is
-// NOT Searchable and the user presses Enter in the search bar. Once all
-// grid tabs implement Searchable (Task 6.4) this path will be unreachable
-// and Task 6.5 will delete it.
-func (m *Model) dispatchSearch(query string) {
-	if m.client == nil {
-		m.state.IsLoading = false
-		m.state.StatusMsg = "No runtime \u2014 start with API keys set"
-		return
-	}
-	// Streaming search is routed via screens.Searchable (see focusedSearchable).
-	// This legacy path is a no-op placeholder retained for Task 6.5 cleanup.
-	m.state.IsLoading = false
-	m.state.StatusMsg = fmt.Sprintf("search not yet available on this tab \u2014 results coming in Task 6.4")
-}
-
 // focusedSearchable returns the screens.Searchable for the currently-active
 // screen, or nil if the focused screen does not implement Searchable.
 //
 // Routing table:
 //
-//   - TabMusic: delegates to MusicScreen.FocusedSearchable(), which
-//     returns the active sub-tab's Searchable once Tasks 6.2/6.3 land.
-//   - Other tabs (Movies/Series/Library): always nil until Task 6.4.
+//   - TabMusic: delegates to MusicScreen.FocusedSearchable(), which returns
+//     the active sub-tab's Searchable (Tasks 6.2/6.3).
+//   - TabMovies / TabSeries / TabLibrary: grids adopt Searchable via the
+//     gridSearchable adapter (Task 6.4). Results stream back through
+//     gridScopeAppliedMsg into Model.Update, which writes to m.grids.
+//   - TabCollections: not Searchable.
 //
 // The root model uses this to gate the `/` keystroke and to route
 // ipc.ScopeResultsMsg / ipc.MpdSearchResult to the right screen.
@@ -2629,7 +2674,8 @@ func focusedSearchable(m *Model) screens.Searchable {
 	switch m.state.ActiveTab {
 	case state.TabMusic:
 		return m.musicScreen.FocusedSearchable()
-	// TODO(Task 6.4): TabMovies, TabSeries, TabLibrary grid Searchable.
+	case state.TabMovies, state.TabSeries, state.TabLibrary:
+		return gridSearchable{m: m, tab: m.state.ActiveTab}
 	}
 	return nil
 }
@@ -2639,11 +2685,21 @@ func focusedSearchable(m *Model) screens.Searchable {
 // screen back into the correct typed field on the model.
 // It must be called before modifying Focus / SearchActive so that the
 // restore can observe the pre-transition state.
+//
+// For grid tabs (Movies/Series/Library), the adapter has no persistent
+// state of its own — the snapshot lives on Model. Restoring means writing
+// the saved snapshot back into m.grids[tab] and clearing bookkeeping.
 func (m *Model) applyRestoreView() {
 	switch m.state.ActiveTab {
 	case state.TabMusic:
 		m.musicScreen = m.musicScreen.ApplyRestoreView()
-	// TODO(Task 6.4): restore view for grid tabs.
+	case state.TabMovies, state.TabSeries, state.TabLibrary:
+		tab := m.state.ActiveTab
+		if snap, has := m.gridSearchSnapshot[tab]; has {
+			m.grids[tab.MediaTabID()] = snap
+			delete(m.gridSearchSnapshot, tab)
+		}
+		delete(m.gridSearchActiveQID, tab)
 	}
 }
 
@@ -3086,7 +3142,7 @@ func (m Model) viewMpdFooter() string {
 	volStr := dimStyle.Render(fmt.Sprintf(" %d%% ", np.Volume))
 
 	// Seekbar — fill remaining space
-	contentW := w - 8 // account for StatusBarStyle margins/padding/border
+	contentW := w - 8                                                  // account for StatusBarStyle margins/padding/border
 	fixedW := 2 + lipgloss.Width(timeStr) + lipgloss.Width(volStr) + 2 // icon + gaps
 	trackMaxW := (contentW - fixedW) / 2
 	if trackMaxW < 10 {
