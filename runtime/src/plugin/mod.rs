@@ -17,7 +17,7 @@ pub use manifest::{
     Permissions, PluginCapability, PluginConfigField, PluginManifest, PluginMeta, PluginType,
     RateLimit, VerbConfig,
 };
-pub use loader::{load_from_dir, load_manifest, resolve_entrypoint, ExecutionMode, LoadedPlugin, LoaderError};
+pub use loader::{load_from_dir, load_manifest, parse_manifest, resolve_entrypoint, ExecutionMode, LoadedPlugin, LoaderError};
 pub use state::{PluginState, PluginStatus, StateStore};
 pub use dispatcher::{Dispatcher, LoadedPluginSummary};
 pub use supervisor::PluginSupervisor;

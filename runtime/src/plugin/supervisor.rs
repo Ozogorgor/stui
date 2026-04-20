@@ -18,8 +18,8 @@ use crate::abi::supervisor::WasmSupervisor;
 /// in `abi::supervisor::WasmSupervisor`. The supervisor crate owns plugin
 /// lifecycle; this module owns access-pacing + future per-plugin throttling.
 pub struct PluginSupervisor {
-    pub wasm: Arc<WasmSupervisor>,
-    pub rate_limit: Option<TokenBucket>,
+    pub(crate) wasm: Arc<WasmSupervisor>,
+    pub(crate) rate_limit: Option<TokenBucket>,
 }
 
 impl PluginSupervisor {

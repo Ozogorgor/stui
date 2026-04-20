@@ -69,7 +69,7 @@ impl Dispatcher {
             }
 
             if let Some(lookup) = lookup {
-                if !lookup.is_stub() {
+                if lookup.is_enabled() && !lookup.is_stub() {
                     for id_source in &lookup.id_sources {
                         for k in kinds {
                             d.by_lookup
@@ -91,7 +91,7 @@ impl Dispatcher {
                 }
             }
             if let Some(ac) = artwork {
-                if !ac.is_stub() {
+                if ac.is_enabled() && !ac.is_stub() {
                     for k in kinds {
                         d.by_artwork.entry(*k).or_default().push(p.name.clone());
                     }
@@ -275,5 +275,47 @@ mod tests {
         let d = Dispatcher::rebuild(&[p]);
         assert!(d.plugins_for_scope(SearchScope::Movie).is_empty());
         assert!(d.plugins_for_lookup("tmdb", EntryKind::Movie).is_empty());
+    }
+
+    #[test]
+    fn empty_lookup_config_not_routed() {
+        // A plugin declares `[capabilities.catalog.lookup]` with an empty body
+        // (no id_sources). is_enabled() returns false → must NOT be in by_lookup.
+        let p = plugin(
+            "p",
+            typed(
+                &[EntryKind::Movie],
+                true,
+                Some(LookupConfig { id_sources: vec![], stub: false, reason: None }),
+                None, None, None, None,
+            ),
+        );
+        let d = Dispatcher::rebuild(&[p]);
+        assert!(
+            d.plugins_for_lookup("tmdb", EntryKind::Movie).is_empty(),
+            "empty LookupConfig (no id_sources) must not appear in by_lookup"
+        );
+    }
+
+    #[test]
+    fn empty_artwork_config_not_routed() {
+        // A plugin declares `[capabilities.catalog.artwork]` with an empty body
+        // (no sizes). is_enabled() returns false → must NOT be in by_artwork.
+        let p = plugin(
+            "p",
+            typed(
+                &[EntryKind::Movie],
+                true,
+                None,
+                None,
+                Some(ArtworkConfig { sizes: vec![], stub: false, reason: None }),
+                None, None,
+            ),
+        );
+        let d = Dispatcher::rebuild(&[p]);
+        assert!(
+            d.plugins_for_artwork(EntryKind::Movie).is_empty(),
+            "empty ArtworkConfig (no sizes) must not appear in by_artwork"
+        );
     }
 }

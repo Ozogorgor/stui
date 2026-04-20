@@ -304,6 +304,52 @@ mod tests {
     }
 
     #[test]
+    fn resolve_config_all_four_levels_user_wins() {
+        // All four levels set to distinct values simultaneously.
+        // Expected result: user TUI value wins (level 1, highest precedence).
+        //
+        // Level 4 → field default:   "field_default"
+        // Level 3 → [env] default:   "env_default"
+        // Level 2 → actual env var:  "env_var_value"
+        // Level 1 → user TUI:        "user_value"   ← wins
+        //
+        // Uses a unique env-var name (STUI_TEST_FOUR_LEVELS_API_KEY) to avoid
+        // cross-test leakage; we set it via std::env::set_var inside the test
+        // and rely on the env_lookup closure rather than real env access.
+        let field = PluginConfigField {
+            key: "api_key".into(),
+            label: "API key".into(),
+            hint: None,
+            masked: true,
+            required: true,
+            default: Some("field_default".into()),           // level 4
+            env_var: Some("STUI_TEST_FOUR_LEVELS_API_KEY".into()),
+        };
+        // Level 3: [env] manifest default
+        let m = manifest_with_field(field, vec![("api_key", "env_default")]);
+
+        // Level 1: user TUI settings
+        let mut user = HashMap::new();
+        user.insert("plugins.tester.api_key".to_string(), "user_value".to_string());
+
+        // Level 2: actual env var (simulated via the closure)
+        let env_lookup = |k: &str| {
+            if k == "STUI_TEST_FOUR_LEVELS_API_KEY" {
+                Some("env_var_value".to_string())  // level 2
+            } else {
+                None
+            }
+        };
+
+        let resolved = resolve_config(&m, &user, env_lookup);
+        assert_eq!(
+            resolved.get("api_key"),
+            Some(&"user_value".to_string()),
+            "user TUI setting must beat all three lower levels simultaneously"
+        );
+    }
+
+    #[test]
     fn state_store_tracks_status() {
         let mut store = StateStore::new();
         let m = manifest_with_field(

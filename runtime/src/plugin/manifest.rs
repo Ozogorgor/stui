@@ -134,6 +134,10 @@ pub struct LookupConfig {
 
 impl LookupConfig {
     pub fn is_stub(&self) -> bool { self.stub }
+
+    /// True if the lookup verb is actively enabled: not stubbed and declares
+    /// at least one id-source to route on.
+    pub fn is_enabled(&self) -> bool { !self.stub && !self.id_sources.is_empty() }
 }
 
 /// Artwork-verb config: declares supported `sizes`.
@@ -149,6 +153,10 @@ pub struct ArtworkConfig {
 
 impl ArtworkConfig {
     pub fn is_stub(&self) -> bool { self.stub }
+
+    /// True if the artwork verb is actively enabled: not stubbed and declares
+    /// at least one supported size.
+    pub fn is_enabled(&self) -> bool { !self.stub && !self.sizes.is_empty() }
 }
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
@@ -591,6 +599,9 @@ pub struct RateLimit {
     pub burst: u32,
 }
 
+/// Default burst of 1 means a plugin declaring `rps = N` without a burst
+/// override only gets the steady-state N calls/sec — no "catch-up" bursting.
+/// Plugins that want burst capacity must declare `burst = N` explicitly.
 fn default_burst() -> u32 { 1 }
 
 // ── Manifest validation ───────────────────────────────────────────────────────
@@ -969,5 +980,19 @@ mod verb_config_tests {
     fn artwork_config_is_stub_when_flagged() {
         let ac: ArtworkConfig = toml::from_str("stub = true").unwrap();
         assert!(ac.is_stub());
+    }
+
+    #[test]
+    fn verbconfig_stub_with_false_field_reports_not_stub() {
+        // Edge case: `stub = false` in a table means the untagged deserializer
+        // selects the Stub variant (because the `stub` key is present), but
+        // is_stub() still returns false because stub == false.
+        // This is surprising but correct — documented here to prevent regressions.
+        let tbl: toml::Table = toml::from_str("[v]\nstub = false\nreason = \"legacy placeholder\"").unwrap();
+        let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
+        // Sanity: the Stub variant was selected by the untagged deserializer.
+        assert!(matches!(vc, VerbConfig::Stub { .. }));
+        // But is_stub() says not a stub — behaviour is correct and intentional.
+        assert_eq!(vc.is_stub(), false);
     }
 }

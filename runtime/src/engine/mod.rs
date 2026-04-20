@@ -43,7 +43,7 @@ use crate::ipc::{
     PluginLoadedResponse, PluginStatus, PluginUnloadedResponse, ResolveResponse, Response,
 };
 use crate::plugin::{ExecutionMode, LoadedPlugin};
-use crate::plugin as plugin;
+use crate::plugin;
 use crate::sandbox::SandboxCtx;
 use crate::{resolver, scraper};
 
