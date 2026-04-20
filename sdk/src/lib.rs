@@ -644,6 +644,42 @@ struct ExecResponse {
 
 // ── ABI glue macro ────────────────────────────────────────────────────────────
 
+/// Internal macro that implements a single `CatalogPlugin` ABI export.
+///
+/// Expands to a `#[no_mangle] pub extern "C" fn $fn_name(ptr: i32, len: i32) -> i64`
+/// that deserialises `$req_ty` from the input buffer, dispatches via
+/// `<$plugin_ty as $crate::CatalogPlugin>::$method`, and serialises the result.
+///
+/// `$err_resp_ty` is the `Ok`-variant type used only in the parse-error path
+/// (needed so `PluginResult::<$err_resp_ty>::err(...)` resolves without ambiguity).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __catalog_abi_fn {
+    (
+        plugin   = $plugin_ty:ty,
+        getter   = $getter:expr,
+        fn_name  = $fn_name:ident,
+        method   = $method:ident,
+        req_ty   = $req_ty:ty,
+        resp_ty  = $resp_ty:ty,
+    ) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(ptr: i32, len: i32) -> i64 {
+            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+            let req: $req_ty = match serde_json::from_slice(input) {
+                Ok(r) => r,
+                Err(e) => {
+                    return $crate::__write_result(
+                        &$crate::PluginResult::<$resp_ty>::err("PARSE_ERROR", e.to_string()),
+                    );
+                }
+            };
+            let result = <$plugin_ty as $crate::CatalogPlugin>::$method($getter(), req);
+            $crate::__write_result(&result)
+        }
+    };
+}
+
 /// Registers your plugin and generates all required WASM ABI exports.
 ///
 /// # Example
@@ -656,7 +692,12 @@ struct ExecResponse {
 /// - `stui_alloc(len: i32) -> i32`
 /// - `stui_free(ptr: i32, len: i32)`
 /// - `stui_search(ptr: i32, len: i32) -> i64`
-/// - `stui_resolve(ptr: i32, len: i32) -> i64`
+/// - `stui_lookup(ptr: i32, len: i32) -> i64`
+/// - `stui_enrich(ptr: i32, len: i32) -> i64`
+/// - `stui_get_artwork(ptr: i32, len: i32) -> i64`
+/// - `stui_get_credits(ptr: i32, len: i32) -> i64`
+/// - `stui_related(ptr: i32, len: i32) -> i64`
+/// - `stui_resolve(ptr: i32, len: i32) -> i64`  *(legacy StuiPlugin path)*
 #[macro_export]
 macro_rules! stui_export_plugin {
     ($plugin_ty:ty) => {
@@ -690,24 +731,63 @@ macro_rules! stui_export_plugin {
             }
         }
 
-        /// Search entry point. Input: SearchRequest JSON. Output: packed (ptr<<32)|len.
-        #[no_mangle]
-        pub extern "C" fn stui_search(ptr: i32, len: i32) -> i64 {
-            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
-            let req: $crate::SearchRequest = match serde_json::from_slice(input) {
-                Ok(r) => r,
-                Err(e) => {
-                    return $crate::__write_result(
-                        &$crate::PluginResult::<$crate::SearchResponse>::err(
-                            "PARSE_ERROR",
-                            e.to_string(),
-                        ),
-                    )
-                }
-            };
-            let result = get_plugin().search(req);
-            $crate::__write_result(&result)
+        // ── CatalogPlugin verb exports ────────────────────────────────────────
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_search,
+            method   = search,
+            req_ty   = $crate::SearchRequest,
+            resp_ty  = $crate::SearchResponse,
         }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_lookup,
+            method   = lookup,
+            req_ty   = $crate::LookupRequest,
+            resp_ty  = $crate::LookupResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_enrich,
+            method   = enrich,
+            req_ty   = $crate::EnrichRequest,
+            resp_ty  = $crate::EnrichResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_artwork,
+            method   = get_artwork,
+            req_ty   = $crate::ArtworkRequest,
+            resp_ty  = $crate::ArtworkResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_credits,
+            method   = get_credits,
+            req_ty   = $crate::CreditsRequest,
+            resp_ty  = $crate::CreditsResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_related,
+            method   = related,
+            req_ty   = $crate::RelatedRequest,
+            resp_ty  = $crate::RelatedResponse,
+        }
+
+        // ── Legacy StuiPlugin resolve export (untouched) ──────────────────────
 
         /// Resolve entry point. Input: ResolveRequest JSON. Output: packed (ptr<<32)|len.
         #[no_mangle]
@@ -957,3 +1037,9 @@ mod tests {
         assert!(s.contains("uuid-1"));
     }
 }
+
+// Note: the optional macro-expansion smoke test (Step 4) was skipped because
+// `stui_export_plugin!` also emits `stui_resolve` which requires `StuiPlugin`.
+// A `CatalogPlugin`-only test struct cannot satisfy that requirement without
+// implementing the deprecated trait.  The real-plugin expansion in Chunk 3 will
+// serve as the integration-level test.
