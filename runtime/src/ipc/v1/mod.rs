@@ -412,6 +412,11 @@ pub struct UnloadPluginRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
+    /// Synchronous search result — kept for the Go `dispatchPersonSearch` path
+    /// (Task 7.0 item 17).  No Rust-side producers remain after `Engine::search`
+    /// retirement (Task 7.0 item 3).  Will be removed alongside the Go consumer.
+    // NOTE: #[deprecated] cannot be placed on enum variants in stable Rust; the
+    // removal is tracked as Task 7.0 item 17 (dispatchPersonSearch migration).
     SearchResult(SearchResponse),
     ResolveResult(ResolveResponse),
     StreamsResult(StreamsResponse),
