@@ -3340,6 +3340,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs 5.0.1",
  "serde",
  "stui-plugin-sdk",
  "toml 0.8.23",
