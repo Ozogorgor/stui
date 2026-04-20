@@ -1,6 +1,10 @@
 package ipc
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/stui/stui/pkg/log"
+)
 
 // scopeSub tracks a single streaming search subscription.
 // It is keyed by query_id in Client.scopeSubs.
@@ -46,7 +50,9 @@ func (c *Client) SubscribeScopeResults(queryID uint64, scopes []SearchScope) <-c
 func (c *Client) dispatchScopeResults(msg ScopeResultsMsg) {
 	v, ok := c.scopeSubs.Load(msg.QueryID)
 	if !ok {
-		// No subscriber — stale or already GC'd query id. Drop silently.
+		// No subscriber — stale or already GC'd query id. Drop with a debug log
+		// so that unexpected drops are visible at verbose log levels.
+		log.Debug("ipc: dropping scope_results for unknown query id", "qid", msg.QueryID)
 		return
 	}
 	sub := v.(*scopeSub)
