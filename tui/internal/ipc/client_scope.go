@@ -66,8 +66,13 @@ func (c *Client) dispatchScopeResults(msg ScopeResultsMsg) {
 		sub.mu.Unlock()
 
 		if lastOne {
-			close(sub.ch)
+			// Delete before close: under the current single-writer invariant
+			// this is functionally equivalent to close-then-delete, but the
+			// Delete-first order is safer against a future multi-dispatcher
+			// refactor where a second goroutine could observe the closed
+			// channel via a concurrent Load before the Delete completes.
 			c.scopeSubs.Delete(msg.QueryID)
+			close(sub.ch)
 		}
 	}
 }
