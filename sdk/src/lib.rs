@@ -44,6 +44,18 @@
 
 pub mod kinds;
 pub mod id_sources;
+pub mod capabilities;
+pub use capabilities::{
+    InitContext, PluginLogger, PluginInitError,
+    LookupRequest, LookupResponse,
+    EnrichRequest, EnrichResponse,
+    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
+    CreditsRequest, CreditsResponse,
+    CastMember, CastRole, CrewMember, CrewRole,
+    RelatedRequest, RelatedResponse, RelationKind,
+    err_not_implemented, normalize_crew_role,
+    validate_manifest, ManifestValidationError,
+};
 
 pub mod error_codes {
     //! Stable error-code string constants used in `PluginError::code`.
@@ -65,6 +77,66 @@ pub const STUI_ABI_VERSION: i32 = 1;
 
 use serde::{Deserialize, Serialize};
 pub use kinds::{EntryKind, SearchScope};
+
+// ── Manifest types ────────────────────────────────────────────────────────────
+// Stub definitions for Task 1.3; extended in Task 1.7 (runtime manifest.rs).
+
+/// Network permission: either a list of allowed hosts or a legacy boolean.
+/// The `Bool(bool)` variant is rejected by `validate_manifest` (legacy field).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NetworkPermission {
+    /// Canonical form: explicit allowlist of hosts/patterns.
+    Hosts(Vec<String>),
+    /// Legacy form: `network = true` — rejected by slim validator.
+    Bool(bool),
+}
+
+/// Plugin permissions block from manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Permissions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkPermission>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<String>,
+}
+
+/// Catalog capability declaration. Extended in Task 1.7 to carry per-verb sub-tables.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CatalogCapability {
+    /// Id-sources the plugin can perform lookups against.
+    #[serde(default)]
+    pub id_sources: Vec<String>,
+}
+
+/// Top-level `[capabilities]` block.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Capabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<CatalogCapability>,
+}
+
+/// Top-level plugin metadata block (`[plugin]`).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginMeta {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+}
+
+/// The parsed `plugin.toml` manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginManifest {
+    pub plugin: PluginMeta,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Permissions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Capabilities>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
