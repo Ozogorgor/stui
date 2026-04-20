@@ -11,6 +11,7 @@
 //!   R18 may require age verification and may be blocked in some regions.
 
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const BASE_URL: &str = "https://www.r18.com";
 
@@ -40,6 +41,14 @@ impl StuiPlugin for R18Provider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
+        // r18 only covers adult movies
+        if req.scope != SearchScope::Movie {
+            return PluginResult::err(
+                error_codes::UNSUPPORTED_SCOPE,
+                "r18 only supports movie scope",
+            );
+        }
+
         let query = req.query.trim();
         if query.is_empty() {
             return PluginResult::ok(SearchResponse {
@@ -63,7 +72,7 @@ impl StuiPlugin for R18Provider {
             Err(e) => return PluginResult::err("HTTP_ERROR", &e),
         };
 
-        let items = parse_search_results(&html, req.limit);
+        let items = parse_search_results(&html, req.limit, EntryKind::Movie);
         // r18 search doesn't provide total count. Use u32::MAX when we hit the
         // limit to signal that more results may exist.
         let total = if req.limit > 0 && items.len() >= req.limit as usize {
@@ -83,7 +92,7 @@ impl StuiPlugin for R18Provider {
 
 // ── Parsing ───────────────────────────────────────────────────────────────────
 
-fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
+fn parse_search_results(html: &str, limit: u32, kind: EntryKind) -> Vec<PluginEntry> {
     let mut entries = Vec::new();
 
     for line in html.lines() {
@@ -94,6 +103,8 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                 if let Some(title) = extract_title(line) {
                     entries.push(PluginEntry {
                         id,
+                        kind,
+                        source: "r18".to_string(),
                         title,
                         year: None,
                         genre: None,
@@ -102,6 +113,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                         poster_url: extract_poster(line),
                         imdb_id: None,
                         duration: None,
+                        ..Default::default()
                     });
 
                     if limit > 0 && entries.len() >= limit as usize {
