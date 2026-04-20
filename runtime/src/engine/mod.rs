@@ -371,6 +371,126 @@ impl Engine {
         Ok(entries)
     }
 
+    // ── Generic per-verb helper ───────────────────────────────────────────
+
+    /// Internal helper shared by all per-verb supervisor helpers.
+    ///
+    /// Acquires the process-wide semaphore permit, looks up the WASM
+    /// supervisor for `plugin_id`, invokes the async `call` closure with
+    /// the `Arc<WasmSupervisor>`, and maps any `AbiError` to
+    /// `PluginCallError`.
+    ///
+    /// The closure receives an owned `Arc<WasmSupervisor>` so it can hold
+    /// a reference across the await point without borrowing `self`.
+    async fn call_plugin_verb<F, Fut, R>(
+        &self,
+        plugin_id: &str,
+        call: F,
+    ) -> Result<R, PluginCallError>
+    where
+        F:   FnOnce(Arc<WasmSupervisor>) -> Fut,
+        Fut: std::future::Future<Output = Result<R, crate::abi::types::AbiError>>,
+    {
+        // Acquire a process-wide permit before touching any plugin.
+        let _permit = self.plugin_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| PluginCallError::Other("semaphore closed".into()))?;
+
+        // Look up the supervisor under a short read-lock.  Clone the Arc so
+        // the lock is released before the potentially-long supervisor call.
+        let sup = {
+            let reg = self.registry.read().await;
+            if reg.get(plugin_id).is_none() {
+                return Err(PluginCallError::PluginNotFound(plugin_id.into()));
+            }
+            reg.wasm_supervisor_for(plugin_id)
+        };
+
+        let sup = sup.ok_or_else(|| PluginCallError::Other(
+            format!("no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"),
+        ))?;
+
+        call(sup).await.map_err(map_abi_error)
+    }
+
+    // ── supervisor_lookup / enrich / get_artwork / get_credits / related ──
+
+    /// Call a single WASM plugin's `lookup` verb via its supervisor.
+    ///
+    /// Returns the single [`crate::abi::types::PluginEntry`] from
+    /// [`crate::abi::types::LookupResponse::entry`].
+    pub async fn supervisor_lookup(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::LookupRequest,
+    ) -> Result<crate::abi::types::PluginEntry, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.lookup(&req).await.map(|resp| resp.entry)
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `enrich` verb via its supervisor.
+    ///
+    /// Returns the enriched [`crate::abi::types::PluginEntry`] from
+    /// [`crate::abi::types::EnrichResponse::entry`].
+    pub async fn supervisor_enrich(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::EnrichRequest,
+    ) -> Result<crate::abi::types::PluginEntry, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.enrich(&req).await.map(|resp| resp.entry)
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `get_artwork` verb via its supervisor.
+    ///
+    /// Returns the full [`crate::abi::types::ArtworkResponse`]; callers decide
+    /// which artwork variant to use.
+    pub async fn supervisor_get_artwork(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::ArtworkRequest,
+    ) -> Result<crate::abi::types::ArtworkResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.get_artwork(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `get_credits` verb via its supervisor.
+    ///
+    /// Returns the full [`crate::abi::types::CreditsResponse`] (cast + crew).
+    pub async fn supervisor_get_credits(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::CreditsRequest,
+    ) -> Result<crate::abi::types::CreditsResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.get_credits(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `related` verb via its supervisor.
+    ///
+    /// Returns the list of related entries extracted from
+    /// [`crate::abi::types::RelatedResponse::items`].
+    pub async fn supervisor_related(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::RelatedRequest,
+    ) -> Result<Vec<crate::abi::types::PluginEntry>, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.related(&req).await.map(|resp| resp.items)
+        })
+        .await
+    }
+
     /// Rebuild the dispatch map from the current registry contents.
     ///
     /// Called after every `load_plugin` / `unload_plugin` so that
@@ -1214,6 +1334,138 @@ mod supervisor_search_tests {
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
         if let Err(PluginCallError::PluginNotFound(id)) = result {
             assert_eq!(id, "nonexistent-id");
+        }
+    }
+
+    // ── supervisor verb helpers: unknown plugin id → PluginNotFound ───────────
+
+    #[tokio::test]
+    async fn supervisor_lookup_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let req = crate::abi::types::LookupRequest {
+            id:        "tt1234".into(),
+            id_source: "imdb".into(),
+            kind:      stui_plugin_sdk::EntryKind::Track,
+            locale:    None,
+        };
+        let result = engine.supervisor_lookup("no-such-plugin", req).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+        if let Err(PluginCallError::PluginNotFound(id)) = result {
+            assert_eq!(id, "no-such-plugin");
+        }
+    }
+
+    #[tokio::test]
+    async fn supervisor_enrich_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let req = crate::abi::types::EnrichRequest {
+            partial:          crate::abi::types::PluginEntry::default(),
+            prefer_id_source: None,
+        };
+        let result = engine.supervisor_enrich("no-such-plugin", req).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn supervisor_get_artwork_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let req = crate::abi::types::ArtworkRequest {
+            id:        "e1".into(),
+            id_source: "tmdb".into(),
+            kind:      stui_plugin_sdk::EntryKind::Album,
+            size:      crate::abi::types::ArtworkSize::Any,
+        };
+        let result = engine.supervisor_get_artwork("no-such-plugin", req).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn supervisor_get_credits_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let req = crate::abi::types::CreditsRequest {
+            id:        "e1".into(),
+            id_source: "tmdb".into(),
+            kind:      stui_plugin_sdk::EntryKind::Movie,
+        };
+        let result = engine.supervisor_get_credits("no-such-plugin", req).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn supervisor_related_unknown_id_returns_not_found() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        let req = crate::abi::types::RelatedRequest {
+            id:        "e1".into(),
+            id_source: "tmdb".into(),
+            kind:      stui_plugin_sdk::EntryKind::Track,
+            relation:  crate::abi::types::RelationKind::Any,
+            limit:     10,
+        };
+        let result = engine.supervisor_related("no-such-plugin", req).await;
+        assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
+    }
+
+    // ── Type-check: all 5 helpers have the correct fn signatures ─────────────
+    //
+    // This function is never called — it only ensures the helpers compile
+    // with the correct return-type signatures at `cargo test --lib engine`.
+
+    #[allow(dead_code)]
+    fn _type_check_verb_signatures(engine: &Engine) {
+        use std::future::Future;
+        use crate::abi::types::{
+            LookupRequest, EnrichRequest, ArtworkRequest, ArtworkSize,
+            CreditsRequest, RelatedRequest, RelationKind,
+            PluginEntry, ArtworkResponse, CreditsResponse,
+        };
+
+        fn _lookup(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
+            e.supervisor_lookup("p", LookupRequest {
+                id: "".into(), id_source: "".into(),
+                kind: stui_plugin_sdk::EntryKind::Track, locale: None,
+            })
+        }
+        fn _enrich(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
+            e.supervisor_enrich("p", EnrichRequest {
+                partial: PluginEntry::default(),
+                prefer_id_source: None,
+            })
+        }
+        fn _artwork(e: &Engine) -> impl Future<Output = Result<ArtworkResponse, PluginCallError>> + '_ {
+            e.supervisor_get_artwork("p", ArtworkRequest {
+                id: "".into(), id_source: "".into(),
+                kind: stui_plugin_sdk::EntryKind::Track,
+                size: ArtworkSize::Any,
+            })
+        }
+        fn _credits(e: &Engine) -> impl Future<Output = Result<CreditsResponse, PluginCallError>> + '_ {
+            e.supervisor_get_credits("p", CreditsRequest {
+                id: "".into(), id_source: "".into(),
+                kind: stui_plugin_sdk::EntryKind::Track,
+            })
+        }
+        fn _related(e: &Engine) -> impl Future<Output = Result<Vec<PluginEntry>, PluginCallError>> + '_ {
+            e.supervisor_related("p", RelatedRequest {
+                id: "".into(), id_source: "".into(),
+                kind: stui_plugin_sdk::EntryKind::Track,
+                relation: RelationKind::Any,
+                limit: 10,
+            })
         }
     }
 }
