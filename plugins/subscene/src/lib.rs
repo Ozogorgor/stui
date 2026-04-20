@@ -172,6 +172,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                 if !current_url.is_empty() && !current_title.is_empty() {
                     entries.push(PluginEntry {
                         id: current_url.clone(),
+                        source: "subscene".to_string(),
                         title: current_title.clone(),
                         year: None,
                         genre: None,
@@ -184,6 +185,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                         poster_url: None,
                         imdb_id: None,
                         duration: None,
+                        ..Default::default()
                     });
                 }
                 in_tr = false;
