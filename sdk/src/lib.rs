@@ -76,6 +76,7 @@ pub mod error_codes {
 pub const STUI_ABI_VERSION: i32 = 1;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 pub use kinds::{EntryKind, SearchScope};
 
 // ── Manifest types ────────────────────────────────────────────────────────────
@@ -167,6 +168,8 @@ pub struct PluginEntry {
     pub kind: EntryKind,
     pub title: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub external_ids: HashMap<String, String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year: Option<u32>,
@@ -881,5 +884,26 @@ mod tests {
         assert_eq!(UNKNOWN_ID, "unknown_id");
         assert_eq!(TRANSIENT, "transient");
         assert_eq!(REMOTE_ERROR, "remote_error");
+    }
+
+    #[test]
+    fn plugin_entry_carries_external_ids() {
+        use std::collections::HashMap;
+        let mut external = HashMap::new();
+        external.insert("imdb".to_string(), "tt1234567".to_string());
+        external.insert("musicbrainz".to_string(), "uuid-1".to_string());
+
+        let entry = PluginEntry {
+            id: "tmdb-100".into(),
+            kind: EntryKind::Movie,
+            title: "Test".into(),
+            source: "tmdb".into(),
+            external_ids: external,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&entry).unwrap();
+        assert!(s.contains("\"external_ids\""));
+        assert!(s.contains("tt1234567"));
+        assert!(s.contains("uuid-1"));
     }
 }
