@@ -182,4 +182,16 @@ pub use v1::{
     ActionATagsCancelResponse,
     TagDiffRowWire,
     TagWriteScope,
+
+    // Plugin verb IPC types
+    LookupIpcRequest,
+    LookupIpcResponse,
+    EnrichIpcRequest,
+    EnrichIpcResponse,
+    ArtworkIpcRequest,
+    ArtworkIpcResponse,
+    CreditsIpcRequest,
+    CreditsIpcResponse,
+    RelatedIpcRequest,
+    RelatedIpcResponse,
 };

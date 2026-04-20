@@ -1321,6 +1321,48 @@ async fn handle_line(
                 cancelled,
             })
         }
+
+        // ── Plugin verb dispatch ──────────────────────────────────────────────
+
+        Request::Lookup(req) => {
+            let ipc::LookupIpcRequest { query_id, plugin, inner } = req;
+            match engine.supervisor_lookup(&plugin, inner).await {
+                Ok(entry) => Response::Lookup(ipc::LookupIpcResponse { query_id, entry }),
+                Err(e) => Response::error(None, ErrorCode::Internal, e.to_string()),
+            }
+        }
+
+        Request::Enrich(req) => {
+            let ipc::EnrichIpcRequest { query_id, plugin, inner } = req;
+            match engine.supervisor_enrich(&plugin, inner).await {
+                Ok(entry) => Response::Enrich(ipc::EnrichIpcResponse { query_id, entry }),
+                Err(e) => Response::error(None, ErrorCode::Internal, e.to_string()),
+            }
+        }
+
+        Request::GetArtwork(req) => {
+            let ipc::ArtworkIpcRequest { query_id, plugin, inner } = req;
+            match engine.supervisor_get_artwork(&plugin, inner).await {
+                Ok(inner) => Response::GetArtwork(ipc::ArtworkIpcResponse { query_id, inner }),
+                Err(e) => Response::error(None, ErrorCode::Internal, e.to_string()),
+            }
+        }
+
+        Request::GetCredits(req) => {
+            let ipc::CreditsIpcRequest { query_id, plugin, inner } = req;
+            match engine.supervisor_get_credits(&plugin, inner).await {
+                Ok(inner) => Response::GetCredits(ipc::CreditsIpcResponse { query_id, inner }),
+                Err(e) => Response::error(None, ErrorCode::Internal, e.to_string()),
+            }
+        }
+
+        Request::Related(req) => {
+            let ipc::RelatedIpcRequest { query_id, plugin, inner } = req;
+            match engine.supervisor_related(&plugin, inner).await {
+                Ok(items) => Response::Related(ipc::RelatedIpcResponse { query_id, items }),
+                Err(e) => Response::error(None, ErrorCode::Internal, e.to_string()),
+            }
+        }
     }
 }
 
