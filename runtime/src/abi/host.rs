@@ -35,26 +35,76 @@ pub struct WasmInstance {
 }
 
 impl WasmInstance {
-    /// Call the plugin's `stui_search` export.
-    pub async fn search(&mut self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+    /// Generic helper: serialize `req` to JSON, call the named export, and
+    /// deserialize the `PluginResult<Resp>` returned by the plugin.
+    async fn call_verb<Req, Resp>(&mut self, fn_name: &str, req: &Req) -> Result<Resp, AbiError>
+    where
+        Req: serde::Serialize,
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
         let json = serde_json::to_string(req)?;
-        let raw = self.inner.call_export("stui_search", &json).await?;
-        let result: PluginResult<SearchResponse> = serde_json::from_str(&raw)?;
+        let raw = self.inner.call_export(fn_name, &json).await?;
+        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
         match result {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
     }
 
-    /// Call the plugin's `stui_resolve` export.
-    pub async fn resolve(&mut self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
-        let json = serde_json::to_string(req)?;
-        let raw = self.inner.call_export("stui_resolve", &json).await?;
-        let result: PluginResult<ResolveResponse> = serde_json::from_str(&raw)?;
+    /// Low-level entry point: call a named export with pre-serialized JSON and
+    /// deserialize the `PluginResult<Resp>` envelope from the raw response.
+    ///
+    /// Used by `WasmSupervisor::call_verb` so it can pre-serialize the request
+    /// before acquiring the instance lock, avoiding cross-await borrow issues.
+    pub(super) async fn call_export_typed<Resp>(
+        &mut self,
+        fn_name: &str,
+        json: &str,
+    ) -> Result<Resp, AbiError>
+    where
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
+        let raw = self.inner.call_export(fn_name, json).await?;
+        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
         match result {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
+    }
+
+    /// Call the plugin's `stui_search` export.
+    pub async fn search(&mut self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+        self.call_verb("stui_search", req).await
+    }
+
+    /// Call the plugin's `stui_resolve` export.
+    pub async fn resolve(&mut self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
+        self.call_verb("stui_resolve", req).await
+    }
+
+    /// Call the plugin's `stui_lookup` export.
+    pub async fn lookup(&mut self, req: &LookupRequest) -> Result<LookupResponse, AbiError> {
+        self.call_verb("stui_lookup", req).await
+    }
+
+    /// Call the plugin's `stui_enrich` export.
+    pub async fn enrich(&mut self, req: &EnrichRequest) -> Result<EnrichResponse, AbiError> {
+        self.call_verb("stui_enrich", req).await
+    }
+
+    /// Call the plugin's `stui_get_artwork` export.
+    pub async fn get_artwork(&mut self, req: &ArtworkRequest) -> Result<ArtworkResponse, AbiError> {
+        self.call_verb("stui_get_artwork", req).await
+    }
+
+    /// Call the plugin's `stui_get_credits` export.
+    pub async fn get_credits(&mut self, req: &CreditsRequest) -> Result<CreditsResponse, AbiError> {
+        self.call_verb("stui_get_credits", req).await
+    }
+
+    /// Call the plugin's `stui_related` export.
+    pub async fn related(&mut self, req: &RelatedRequest) -> Result<RelatedResponse, AbiError> {
+        self.call_verb("stui_related", req).await
     }
 }
 

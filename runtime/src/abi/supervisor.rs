@@ -34,7 +34,16 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 use super::host::{WasmHost, WasmInstance};
-use super::types::{AbiError, ResolveRequest, ResolveResponse, SearchRequest, SearchResponse};
+use super::types::{
+    AbiError,
+    ArtworkRequest, ArtworkResponse,
+    CreditsRequest, CreditsResponse,
+    EnrichRequest, EnrichResponse,
+    LookupRequest, LookupResponse,
+    RelatedRequest, RelatedResponse,
+    ResolveRequest, ResolveResponse,
+    SearchRequest, SearchResponse,
+};
 use crate::sandbox::SandboxCtx;
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -142,8 +151,21 @@ impl WasmSupervisor {
         self.stats.lock().await.clone()
     }
 
-    /// Call `stui_search` with timeout and crash tracking.
-    pub async fn search(&self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+    /// Generic helper: enforce timeout + crash tracking for any verb.
+    ///
+    /// Serializes `req` up-front (before acquiring the instance lock) so the
+    /// closure passed to `tokio::time::timeout` captures only owned data — no
+    /// lifetime problems cross the await point.
+    async fn call_verb<Req, Resp>(
+        &self,
+        fn_name:   &str,
+        verb_name: &str,
+        req: &Req,
+    ) -> Result<Resp, AbiError>
+    where
+        Req:  serde::Serialize,
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
         if self.is_failed() {
             return Err(AbiError::Execution(format!(
                 "plugin '{}' has permanently failed — reload STUI or reinstall the plugin",
@@ -151,41 +173,9 @@ impl WasmSupervisor {
             )));
         }
 
-        let timeout = Duration::from_secs(self.config.call_timeout_secs);
-        let result = {
-            let mut guard = self.instance.lock().await;
-            match guard.as_mut() {
-                None => return Err(AbiError::Execution(format!(
-                    "plugin '{}' is reloading, try again shortly",
-                    self.plugin_name,
-                ))),
-                Some(inst) => tokio::time::timeout(timeout, inst.search(req)).await,
-            }
-        };
-
-        match result {
-            Ok(Ok(r))        => Ok(r),
-            Ok(Err(e))       => { self.on_crash(&format!("trap: {e}")).await; Err(e) }
-            Err(_elapsed)    => {
-                let msg = format!(
-                    "plugin '{}' search timed out after {}s",
-                    self.plugin_name, self.config.call_timeout_secs,
-                );
-                warn!("{msg}");
-                self.on_crash("call timeout").await;
-                Err(AbiError::Execution(msg))
-            }
-        }
-    }
-
-    /// Call `stui_resolve` with timeout and crash tracking.
-    pub async fn resolve(&self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
-        if self.is_failed() {
-            return Err(AbiError::Execution(format!(
-                "plugin '{}' has permanently failed",
-                self.plugin_name,
-            )));
-        }
+        // Serialize before acquiring the instance lock — no borrow of `req`
+        // crosses the async boundary.
+        let json = serde_json::to_string(req).map_err(AbiError::Serde)?;
 
         let timeout = Duration::from_secs(self.config.call_timeout_secs);
         let result = {
@@ -195,7 +185,10 @@ impl WasmSupervisor {
                     "plugin '{}' is reloading, try again shortly",
                     self.plugin_name,
                 ))),
-                Some(inst) => tokio::time::timeout(timeout, inst.resolve(req)).await,
+                Some(inst) => {
+                    let fn_name = fn_name.to_string();
+                    tokio::time::timeout(timeout, inst.call_export_typed(&fn_name, &json)).await
+                }
             }
         };
 
@@ -204,14 +197,49 @@ impl WasmSupervisor {
             Ok(Err(e))    => { self.on_crash(&format!("trap: {e}")).await; Err(e) }
             Err(_elapsed) => {
                 let msg = format!(
-                    "plugin '{}' resolve timed out after {}s",
-                    self.plugin_name, self.config.call_timeout_secs,
+                    "plugin '{}' {} timed out after {}s",
+                    self.plugin_name, verb_name, self.config.call_timeout_secs,
                 );
                 warn!("{msg}");
                 self.on_crash("call timeout").await;
                 Err(AbiError::Execution(msg))
             }
         }
+    }
+
+    /// Call `stui_search` with timeout and crash tracking.
+    pub async fn search(&self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+        self.call_verb("stui_search", "search", req).await
+    }
+
+    /// Call `stui_resolve` with timeout and crash tracking.
+    pub async fn resolve(&self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
+        self.call_verb("stui_resolve", "resolve", req).await
+    }
+
+    /// Call `stui_lookup` with timeout and crash tracking.
+    pub async fn lookup(&self, req: &LookupRequest) -> Result<LookupResponse, AbiError> {
+        self.call_verb("stui_lookup", "lookup", req).await
+    }
+
+    /// Call `stui_enrich` with timeout and crash tracking.
+    pub async fn enrich(&self, req: &EnrichRequest) -> Result<EnrichResponse, AbiError> {
+        self.call_verb("stui_enrich", "enrich", req).await
+    }
+
+    /// Call `stui_get_artwork` with timeout and crash tracking.
+    pub async fn get_artwork(&self, req: &ArtworkRequest) -> Result<ArtworkResponse, AbiError> {
+        self.call_verb("stui_get_artwork", "get_artwork", req).await
+    }
+
+    /// Call `stui_get_credits` with timeout and crash tracking.
+    pub async fn get_credits(&self, req: &CreditsRequest) -> Result<CreditsResponse, AbiError> {
+        self.call_verb("stui_get_credits", "get_credits", req).await
+    }
+
+    /// Call `stui_related` with timeout and crash tracking.
+    pub async fn related(&self, req: &RelatedRequest) -> Result<RelatedResponse, AbiError> {
+        self.call_verb("stui_related", "related", req).await
     }
 
     // ── Internals ─────────────────────────────────────────────────────────
