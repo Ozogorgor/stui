@@ -41,7 +41,6 @@ use crate::abi::{SearchRequest, WasmSupervisor, WasmSupervisorConfig};
 use crate::ipc::{
     ErrorCode, MediaEntry, MediaTab, PluginInfo, PluginListResponse,
     PluginLoadedResponse, PluginStatus, PluginUnloadedResponse, ResolveResponse, Response,
-    SearchResponse,
 };
 use crate::plugin::{ExecutionMode, LoadedPlugin};
 use crate::plugin as plugin;
@@ -476,77 +475,39 @@ impl Engine {
         Response::PluginList(PluginListResponse { plugins })
     }
 
-    // ── Search ────────────────────────────────────────────────────────────
+    // ── Search (catalog fan-out) ──────────────────────────────────────────
 
+    /// Fan out `query` across all Catalog-capable providers for `tab`, merge,
+    /// dedup, and return the sorted `CatalogEntry` list.
+    ///
+    /// This is the internal helper that `catalog.rs` (trending refresh) and
+    /// `engine/pipeline.rs` (paged search) both use.  It replaces the retired
+    /// `Engine::search` which wrapped the same logic in `Response::SearchResult`.
+    ///
+    /// Callers are responsible for their own paging — slice the returned `Vec`
+    /// with `skip(offset).take(limit)` as appropriate.
     #[tracing::instrument(
-        name = "engine.search",
+        name = "engine.search_catalog_entries",
         skip(self, tab, options),
-        fields(query = %query, req_id = %req_id),
+        fields(query = %query),
     )]
-    pub async fn search(
+    pub async fn search_catalog_entries(
         &self,
-        req_id: &str,
         query: &str,
         tab: &MediaTab,
-        provider_filter: Option<&str>,
-        limit: usize,
-        offset: usize,
         options: SearchOptions,
-    ) -> Response {
-        use crate::cache::search::SearchKey;
-        use stui_plugin_sdk::SearchScope;
-
-        // ── Cache lookup ──────────────────────────────────────────────────
-        // We only cache when there's no provider filter (i.e. a normal
-        // cross-provider search), and only the first page (offset == 0).
-        let cache_key = if provider_filter.is_none() && offset == 0 {
-            // TODO(Chunk 7 / "Retire Engine::search"): replace this placeholder
-            // once catalog.rs and engine/pipeline.rs migrate to search_scoped.
-            // The key uses "legacy" as a synthetic plugin-id because the legacy
-            // path fans out to all providers; per-plugin keying is not available here.
-            Some(SearchKey::new("legacy", query, SearchScope::Track, 1))
-        } else { None };
-
-        if let Some(ref key) = cache_key {
-            if let Some(cached) = self.cache.search.get(key).await {
-                // Apply sort and filters to the already-merged cache entries.
-                let processed = apply_search_options(&options, cached);
-                let total = processed.len();
-                let paged: Vec<_> = processed.into_iter().skip(offset).take(limit).collect();
-                let items = catalog_entries_to_media(paged, tab);
-                return Response::SearchResult(SearchResponse {
-                    id: req_id.to_string(),
-                    items,
-                    total,
-                    offset,
-                });
-            }
-        }
-
+    ) -> Vec<crate::catalog::CatalogEntry> {
         // ── Live fan-out ──────────────────────────────────────────────────
         let reg = self.registry.read().await;
         let providers = reg.find_providers_for_tab(tab);
 
         if providers.is_empty() {
-            return Response::SearchResult(SearchResponse {
-                id: req_id.to_string(),
-                items: vec![],
-                total: 0,
-                offset,
-            });
+            return vec![];
         }
 
         let mut set = tokio::task::JoinSet::new();
-        // Use the shared process-wide plugin_semaphore (Task 2.9 Option B).
-        // This replaces the old per-call Semaphore::new(8), aligning legacy
-        // Engine::search with the concurrency budget used by search_scoped.
-        // Engine::search can be fully retired once catalog.rs and
-        // engine/pipeline.rs migrate (tracked as a Chunk 7 task).
         let sem = Arc::clone(&self.plugin_semaphore);
         for plugin in &providers {
-            if let Some(filter) = provider_filter {
-                if plugin.manifest.plugin.name != filter { continue; }
-            }
             // Skip plugins tagged "adult" when adult content is disabled.
             if !options.adult_content_enabled
                 && plugin.manifest.plugin.tags.iter().any(|t| t.eq_ignore_ascii_case("adult"))
@@ -559,7 +520,6 @@ impl Engine {
 
             match plugin_clone.mode {
                 ExecutionMode::Wasm => {
-                    // Route through supervisor: timeout + crash tracking.
                     let sup = reg.wasm_supervisor_for(&plugin_clone.id);
                     if let Some(sup) = sup {
                         let provider = plugin_clone.manifest.plugin.name.clone();
@@ -569,10 +529,8 @@ impl Engine {
                         set.spawn(async move {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
-                                let result = std::panic::AssertUnwindSafe(async move {
-                                // ABI SearchRequest now carries scope (Task 7.0).
-                                // The legacy Engine::search doesn't have a real scope
-                                // so we pick a plausible default from the tab.
+                            let result = std::panic::AssertUnwindSafe(async move {
+                                // Derive scope from tab; catalog walk uses Track as default.
                                 let scope = match t {
                                     crate::ipc::MediaTab::Music    => stui_plugin_sdk::SearchScope::Track,
                                     crate::ipc::MediaTab::Movies   => stui_plugin_sdk::SearchScope::Movie,
@@ -654,7 +612,6 @@ impl Engine {
         }
 
         // ── Aggregate ────────────────────────────────────────────────────
-        // Convert raw MediaEntry results to CatalogEntry for dedup + rating computation.
         let tab_str = format!("{:?}", tab).to_lowercase();
         let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
             crate::catalog::CatalogEntry {
@@ -679,24 +636,8 @@ impl Engine {
         // weighted-median composite rating from all per-source scores.
         let merged = crate::catalog_engine::CatalogAggregator::new().merge(raw_entries);
 
-        // ── Populate cache ────────────────────────────────────────────────
-        // Store the merged (unsorted, unfiltered) entries so that subsequent
-        // requests with different sort/filter options can reuse the same cache.
-        if let Some(key) = cache_key {
-            self.cache.search.insert(key, merged.clone()).await;
-        }
-
         // Apply sort and filters for this specific request.
-        let processed = apply_search_options(&options, merged);
-        let total = processed.len();
-        let paged: Vec<_> = processed.into_iter().skip(offset).take(limit).collect();
-
-        Response::SearchResult(SearchResponse {
-            id:     req_id.to_string(),
-            items:  catalog_entries_to_media(paged, tab),
-            total,
-            offset,
-        })
+        apply_search_options(&options, merged)
     }
 
     // ── Resolve ───────────────────────────────────────────────────────────

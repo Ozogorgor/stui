@@ -230,44 +230,13 @@ impl Catalog {
         let tab_str = tab_key(&tab);
         info!(tab = tab_str, "refreshing grid via engine search");
 
-        // Use engine's search with empty query for trending
-        // The engine fans out to all WASM plugins with Catalog capability
-        let response = self.engine.search(
-            "",              // empty query = trending
-            "",              // req_id
+        // Fan out an empty query (= trending) across all Catalog-capable plugins.
+        // search_catalog_entries already deduplicates and merges provider results.
+        let merged = self.engine.search_catalog_entries(
+            "",    // empty query = trending
             &tab,
-            None,            // provider_filter (all providers)
-            50,              // limit
-            0,               // offset
             crate::engine::SearchOptions::default(),
         ).await;
-
-        let entries = match response {
-            crate::ipc::Response::SearchResult(sr) => {
-                sr.items.into_iter().map(|e| CatalogEntry {
-                    id: e.id,
-                    title: e.title,
-                    year: e.year,
-                    genre: e.genre,
-                    rating: e.rating,
-                    description: e.description,
-                    poster_url: e.poster_url,
-                    poster_art: None,
-                    provider: e.provider,
-                    tab: tab_str.to_string(),
-                    imdb_id: None,
-                    tmdb_id: None,
-                    media_type: e.media_type,
-                    ratings: std::collections::HashMap::new(),
-                }).collect::<Vec<_>>()
-            }
-            _ => {
-                warn!(tab = tab_str, "unexpected response from engine search");
-                vec![]
-            }
-        };
-
-        let merged = dedup_and_merge(entries);
 
         if merged.is_empty() {
             warn!(tab = tab_str, "engine search returned empty results");
@@ -309,6 +278,7 @@ impl Catalog {
     }
 }
 
+#[cfg(test)] // only used in tests
 fn dedup_and_merge(entries: Vec<CatalogEntry>) -> Vec<CatalogEntry> {
     use crate::catalog_engine::CatalogAggregator;
     let aggregator = CatalogAggregator::new();

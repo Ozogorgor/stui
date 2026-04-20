@@ -6,6 +6,9 @@ members = [
     "aria2",
     "plugins/*",
 ]
+exclude = [
+    "plugins/target",
+]
 
 # ── Shared dependency versions ────────────────────────────────────────────────
 # Using workspace.dependencies lets us keep all version pins in one place.

@@ -139,33 +139,16 @@ impl Pipeline {
             adult_content_enabled: opts.adult_content_enabled,
             ..Default::default()
         };
-        let response = self.engine.search("", query, tab, None, 50, offset, search_opts).await;
-        if let crate::ipc::Response::SearchResult(sr) = response {
-            self.health.record_success("engine", 0);
-            self.bus.emit(RuntimeEvent::SearchResultsReady {
-                query:    query.to_string(),
-                tab:      format!("{tab:?}"),
-                provider: "all".to_string(),
-                count:    sr.items.len(),
-            });
-            sr.items.into_iter().map(|e| crate::catalog::CatalogEntry {
-                id: e.id, title: e.title, year: e.year, genre: e.genre,
-                rating: e.rating, description: e.description,
-                poster_url: e.poster_url, poster_art: None,
-                provider: e.provider,
-                tab: format!("{:?}", e.tab).to_lowercase(),
-                imdb_id: None, tmdb_id: None,
-                media_type: e.media_type,
-                ratings: std::collections::HashMap::new(),
-            }).collect()
-        } else {
-            self.health.record_failure("engine", crate::providers::health::FailureKind::Error);
-            self.bus.emit(RuntimeEvent::ProviderError {
-                provider: "engine".to_string(),
-                message:  "search returned unexpected response".to_string(),
-            });
-            vec![]
-        }
+        let all_entries = self.engine.search_catalog_entries(query, tab, search_opts).await;
+        let count = all_entries.len();
+        self.health.record_success("engine", 0);
+        self.bus.emit(RuntimeEvent::SearchResultsReady {
+            query:    query.to_string(),
+            tab:      format!("{tab:?}"),
+            provider: "all".to_string(),
+            count,
+        });
+        all_entries.into_iter().skip(offset).take(50).collect()
     }
 
     // ── Stage 2: stream resolution ────────────────────────────────────────
