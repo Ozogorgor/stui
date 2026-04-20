@@ -137,6 +137,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
 
                     entries.push(PluginEntry {
                         id: full_url,
+                        source: "kitsunekko".to_string(),
                         title: title.clone(),
                         year: None,
                         genre: None,
@@ -145,6 +146,7 @@ fn parse_search_results(html: &str, limit: u32) -> Vec<PluginEntry> {
                         poster_url: None,
                         imdb_id: None,
                         duration: None,
+                        ..Default::default()
                     });
 
                     if limit > 0 && entries.len() >= limit as usize {
