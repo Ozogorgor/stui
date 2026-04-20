@@ -7,21 +7,22 @@
 //!
 //! Endpoints used:
 //!   GET /?method=track.search&track={query}  → search tracks
-//!   GET /?method=artist.gettoptracks&artist={}  → top tracks by artist
 //!   GET /?method=chart.gettoptracks           → trending tracks
 //!
 //! API key required (free at https://libre.fm/api/register).
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query + tab="music" → returns trending tracks (charts)
-//! Non-empty query + tab="music" → returns search results
+//! Supported scopes: Artist, Album, Track
+//! Empty query → returns trending tracks (charts)
+//! Non-empty query → returns search results
 
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const API_BASE: &str = "https://libre.fm/2.0";
 
@@ -51,23 +52,26 @@ impl StuiPlugin for LastfmProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
+        // lastfm supports music scopes: artist, album, track
+        let entry_kind = match req.scope {
+            SearchScope::Artist => EntryKind::Artist,
+            SearchScope::Album => EntryKind::Album,
+            SearchScope::Track => EntryKind::Track,
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "lastfm only supports artist, album, and track scopes",
+                );
+            }
+        };
+
         let query = req.query.trim();
-
-        // Only support music tab
-        if tab != "music" {
-            return PluginResult::ok(SearchResponse {
-                items: vec![],
-                total: 0,
-            });
-        }
-
         let limit = req.limit.min(50) as usize;
 
         if query.is_empty() {
-            self.get_charts(limit)
+            self.get_charts(limit, entry_kind)
         } else {
-            self.search_tracks(query, limit)
+            self.search_tracks(query, limit, entry_kind)
         }
     }
 
@@ -84,7 +88,7 @@ impl LastfmProvider {
             .ok_or_else(|| "LASTFM_API_KEY not configured".to_string())
     }
 
-    fn search_tracks(&self, query: &str, limit: usize) -> PluginResult<SearchResponse> {
+    fn search_tracks(&self, query: &str, limit: usize, entry_kind: EntryKind) -> PluginResult<SearchResponse> {
         let api_key = match self.get_api_key() {
             Ok(k) => k,
             Err(e) => return PluginResult::err("CONFIG_ERROR", &e),
@@ -119,7 +123,7 @@ impl LastfmProvider {
             .track
             .into_iter()
             .take(limit)
-            .filter_map(|t| t.into_entry())
+            .filter_map(|t| t.into_entry(entry_kind))
             .collect();
 
         let total = entries.len() as u32;
@@ -131,7 +135,7 @@ impl LastfmProvider {
         })
     }
 
-    fn get_charts(&self, limit: usize) -> PluginResult<SearchResponse> {
+    fn get_charts(&self, limit: usize, entry_kind: EntryKind) -> PluginResult<SearchResponse> {
         let api_key = match self.get_api_key() {
             Ok(k) => k,
             Err(e) => return PluginResult::err("CONFIG_ERROR", &e),
@@ -162,7 +166,7 @@ impl LastfmProvider {
             .track
             .into_iter()
             .take(limit)
-            .filter_map(|t| t.into_entry())
+            .filter_map(|t| t.into_entry(entry_kind))
             .collect();
 
         let total = entries.len() as u32;
@@ -218,9 +222,10 @@ struct TrackImage {
 }
 
 impl Track {
-    fn into_entry(self) -> Option<PluginEntry> {
-        let title = self.name;
-        let artist = self.artist;
+    fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
+        let track_name = self.name.clone();
+        let artist = self.artist.clone();
+        let album = self.album.clone();
 
         let poster_url = self
             .image
@@ -234,12 +239,14 @@ impl Track {
         let description = Some(format!(
             "Artist: {} | Album: {}",
             artist,
-            self.album.unwrap_or_else(|| "Unknown".to_string())
+            album.unwrap_or_else(|| "Unknown".to_string())
         ));
 
         Some(PluginEntry {
-            id: format!("lastfm-{}", url_encode(&format!("{} - {}", artist, title))),
-            title: format!("{} - {}", artist, title),
+            id: format!("lastfm-{}", url_encode(&format!("{} - {}", artist, track_name))),
+            kind,
+            source: "lastfm".to_string(),
+            title: track_name.clone(),
             year: None,
             genre,
             rating: None,
@@ -247,6 +254,8 @@ impl Track {
             poster_url,
             imdb_id: None,
             duration: None,
+            artist_name: Some(artist),
+            ..Default::default()
         })
     }
 }
@@ -286,9 +295,10 @@ struct ChartArtist {
 }
 
 impl ChartTrack {
-    fn into_entry(self) -> Option<PluginEntry> {
-        let title = self.name;
-        let artist = self.artist.name;
+    fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
+        let track_name = self.name.clone();
+        let artist = self.artist.name.clone();
+        let album = self.album.clone();
 
         let poster_url = self
             .image
@@ -313,15 +323,17 @@ impl ChartTrack {
         let description = Some(format!(
             "Artist: {} | Album: {}",
             artist,
-            self.album.unwrap_or_else(|| "Unknown".to_string())
+            album.unwrap_or_else(|| "Unknown".to_string())
         ));
 
         Some(PluginEntry {
             id: format!(
                 "lastfm-chart-{}",
-                url_encode(&format!("{} - {}", artist, title))
+                url_encode(&format!("{} - {}", artist, track_name))
             ),
-            title: format!("{} - {}", artist, title),
+            kind,
+            source: "lastfm".to_string(),
+            title: track_name.clone(),
             year: None,
             genre,
             rating: None,
@@ -329,6 +341,8 @@ impl ChartTrack {
             poster_url,
             imdb_id: None,
             duration: None,
+            artist_name: Some(artist),
+            ..Default::default()
         })
     }
 }

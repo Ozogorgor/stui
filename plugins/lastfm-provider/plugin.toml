@@ -50,7 +50,9 @@ network = [
   "Last.fm is deprecated — all requests now go through libre.fm",
 ]
 
+[capabilities.catalog]
+kinds = ["artist", "album", "track"]
+
 [capabilities]
-catalog = true
 metadata = true
 music = true
