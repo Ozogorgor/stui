@@ -74,7 +74,7 @@ pub struct SearchResponse {
 /// exactly — typed numeric fields, kind, source, and all per-kind optional
 /// fields — so the JSON written by the host and the JSON read by the plugin
 /// after Task 7.1 migration share the same wire shape.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginEntry {
     /// Provider-scoped unique id (used for resolve calls).
     pub id: String,
@@ -130,7 +130,7 @@ pub enum PluginResult<T> {
 // ── Lookup ────────────────────────────────────────────────────────────────────
 
 /// Payload passed to `stui_lookup`. Mirrors sdk::LookupRequest exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LookupRequest {
     pub id: String,
     pub id_source: String,
@@ -139,7 +139,7 @@ pub struct LookupRequest {
 }
 
 /// Returned by `stui_lookup`. Mirrors sdk::LookupResponse exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LookupResponse {
     pub entry: PluginEntry,
 }
@@ -147,14 +147,14 @@ pub struct LookupResponse {
 // ── Enrich ────────────────────────────────────────────────────────────────────
 
 /// Payload passed to `stui_enrich`. Mirrors sdk::EnrichRequest exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnrichRequest {
     pub partial: PluginEntry,
     pub prefer_id_source: Option<String>,
 }
 
 /// Returned by `stui_enrich`. Mirrors sdk::EnrichResponse exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnrichResponse {
     pub entry: PluginEntry,
     /// 0.0..=1.0 — plugin's own match-confidence score.
@@ -164,6 +164,7 @@ pub struct EnrichResponse {
 // ── Artwork ───────────────────────────────────────────────────────────────────
 
 /// Requested artwork resolution. Mirrors sdk::ArtworkSize exactly.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtworkSize {
@@ -174,7 +175,7 @@ pub enum ArtworkSize {
 }
 
 /// Payload passed to `stui_artwork`. Mirrors sdk::ArtworkRequest exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtworkRequest {
     pub id: String,
     pub id_source: String,
@@ -183,7 +184,7 @@ pub struct ArtworkRequest {
 }
 
 /// One resolved artwork URL with its metadata. Mirrors sdk::ArtworkVariant exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtworkVariant {
     pub size: ArtworkSize,
     pub url: String,
@@ -193,7 +194,7 @@ pub struct ArtworkVariant {
 }
 
 /// Returned by `stui_artwork`. Mirrors sdk::ArtworkResponse exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtworkResponse {
     pub variants: Vec<ArtworkVariant>,
 }
@@ -201,7 +202,7 @@ pub struct ArtworkResponse {
 // ── Credits ───────────────────────────────────────────────────────────────────
 
 /// Payload passed to `stui_credits`. Mirrors sdk::CreditsRequest exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreditsRequest {
     pub id: String,
     pub id_source: String,
@@ -209,7 +210,7 @@ pub struct CreditsRequest {
 }
 
 /// On-screen role for a cast member. Mirrors sdk::CastRole exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CastRole {
     Actor,
@@ -220,7 +221,7 @@ pub enum CastRole {
 }
 
 /// A single cast credit. Mirrors sdk::CastMember exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CastMember {
     pub name: String,
     pub role: CastRole,
@@ -232,7 +233,7 @@ pub struct CastMember {
 }
 
 /// Behind-the-camera role. Mirrors sdk::CrewRole exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrewRole {
     Director,
@@ -255,7 +256,7 @@ pub enum CrewRole {
 }
 
 /// A single crew credit. Mirrors sdk::CrewMember exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrewMember {
     pub name: String,
     pub role: CrewRole,
@@ -265,7 +266,7 @@ pub struct CrewMember {
 }
 
 /// Returned by `stui_credits`. Mirrors sdk::CreditsResponse exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreditsResponse {
     pub cast: Vec<CastMember>,
     pub crew: Vec<CrewMember>,
@@ -274,7 +275,8 @@ pub struct CreditsResponse {
 // ── Related ───────────────────────────────────────────────────────────────────
 
 /// Relationship kind requested. Mirrors sdk::RelationKind exactly.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationKind {
     SameArtist,
@@ -287,7 +289,7 @@ pub enum RelationKind {
 }
 
 /// Payload passed to `stui_related`. Mirrors sdk::RelatedRequest exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelatedRequest {
     pub id: String,
     pub id_source: String,
@@ -297,7 +299,7 @@ pub struct RelatedRequest {
 }
 
 /// Returned by `stui_related`. Mirrors sdk::RelatedResponse exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelatedResponse {
     pub items: Vec<PluginEntry>,
 }
@@ -383,9 +385,7 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: LookupRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.id, req.id);
-        assert_eq!(back.id_source, req.id_source);
-        assert_eq!(back.locale, req.locale);
+        assert_eq!(back, req);
     }
 
     #[test]
@@ -393,8 +393,7 @@ mod tests {
         let resp = LookupResponse { entry: sample_entry() };
         let json = serde_json::to_string(&resp).unwrap();
         let back: LookupResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.entry.id, resp.entry.id);
-        assert_eq!(back.entry.title, resp.entry.title);
+        assert_eq!(back, resp);
     }
 
     // ── EnrichRequest / EnrichResponse ────────────────────────────────────
@@ -407,8 +406,7 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: EnrichRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.partial.id, req.partial.id);
-        assert_eq!(back.prefer_id_source, req.prefer_id_source);
+        assert_eq!(back, req);
     }
 
     #[test]
@@ -419,8 +417,7 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         let back: EnrichResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.entry.id, resp.entry.id);
-        assert!((back.confidence - resp.confidence).abs() < f32::EPSILON);
+        assert_eq!(back, resp);
     }
 
     // ── ArtworkRequest / ArtworkResponse ──────────────────────────────────
@@ -441,8 +438,7 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: ArtworkRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.id, req.id);
-        assert_eq!(back.size, ArtworkSize::Standard);
+        assert_eq!(back, req);
     }
 
     #[test]
@@ -458,23 +454,21 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         let back: ArtworkResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.variants.len(), 1);
-        assert_eq!(back.variants[0].url, resp.variants[0].url);
-        assert_eq!(back.variants[0].width, Some(500));
+        assert_eq!(back, resp);
     }
 
     // ── CreditsRequest / CreditsResponse ──────────────────────────────────
 
+    /// Verify `CastRole::Other("Narrator")` serializes as `{"other":"Narrator"}`
+    /// (serde externally-tagged tuple variant with rename_all = "snake_case").
+    /// Both the ABI and SDK produce this shape — it is the canonical wire format.
     #[test]
     fn cast_role_other_round_trip() {
         let role = CastRole::Other("Narrator".into());
         let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#"{"other":"Narrator"}"#);
         let back: CastRole = serde_json::from_str(&json).unwrap();
-        if let CastRole::Other(s) = back {
-            assert_eq!(s, "Narrator");
-        } else {
-            panic!("expected CastRole::Other");
-        }
+        assert_eq!(back, role);
     }
 
     #[test]
@@ -488,11 +482,7 @@ mod tests {
         let role = CrewRole::Other("Foley Artist".into());
         let json = serde_json::to_string(&role).unwrap();
         let back: CrewRole = serde_json::from_str(&json).unwrap();
-        if let CrewRole::Other(s) = back {
-            assert_eq!(s, "Foley Artist");
-        } else {
-            panic!("expected CrewRole::Other");
-        }
+        assert_eq!(back, role);
     }
 
     #[test]
@@ -504,8 +494,7 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: CreditsRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.id, req.id);
-        assert_eq!(back.id_source, req.id_source);
+        assert_eq!(back, req);
     }
 
     #[test]
@@ -528,10 +517,7 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         let back: CreditsResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.cast.len(), 1);
-        assert_eq!(back.cast[0].name, "Jane Doe");
-        assert_eq!(back.crew.len(), 1);
-        assert_eq!(back.crew[0].name, "John Smith");
+        assert_eq!(back, resp);
         // external_ids must be omitted from JSON when empty
         assert!(!json.contains("external_ids"));
     }
@@ -555,10 +541,7 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: RelatedRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.id, req.id);
-        assert_eq!(back.limit, 10);
-        let back_rel = serde_json::to_string(&back.relation).unwrap();
-        assert_eq!(back_rel, "\"sequel\"");
+        assert_eq!(back, req);
     }
 
     #[test]
@@ -566,7 +549,6 @@ mod tests {
         let resp = RelatedResponse { items: vec![sample_entry()] };
         let json = serde_json::to_string(&resp).unwrap();
         let back: RelatedResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.items.len(), 1);
-        assert_eq!(back.items[0].id, "tt1234567");
+        assert_eq!(back, resp);
     }
 }
