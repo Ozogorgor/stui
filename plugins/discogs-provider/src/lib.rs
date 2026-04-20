@@ -12,14 +12,16 @@
 //!
 //! ## Plugin Interface
 //!
-//! This plugin implements the UPP search interface:
-//!   search(query, tab, page) → returns catalog entries
+//! This plugin implements the stui search interface:
+//!   search(query, scope, page) → returns catalog entries
 //!
-//! Empty query + tab="music" → returns featured/new releases
-//! Non-empty query + tab="music" → returns search results
+//! Supported scopes: Artist, Album (release), Track (single)
+//! Empty query → new releases / featured content
+//! Non-empty query → search results
 
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::prelude::*;
+use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
 
 const API_BASE: &str = "https://api.discogs.com";
 
@@ -49,24 +51,27 @@ impl StuiPlugin for DiscogsProvider {
     }
 
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        let tab = req.tab.as_str();
+        // Map scope to Discogs search type + entry kind
+        let (search_type, entry_kind) = match req.scope {
+            SearchScope::Artist => ("artist", EntryKind::Artist),
+            SearchScope::Album => ("release", EntryKind::Album),
+            SearchScope::Track => ("release", EntryKind::Track),
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "discogs only supports artist, album, and track scopes",
+                );
+            }
+        };
+
         let query = req.query.trim();
-
-        // Only support music tab
-        if tab != "music" {
-            return PluginResult::ok(SearchResponse {
-                items: vec![],
-                total: 0,
-            });
-        }
-
         let page = req.page.max(1);
         let per_page = req.limit.min(50) as usize;
 
         if query.is_empty() {
-            self.get_new_releases(page, per_page)
+            self.get_new_releases(page, per_page, entry_kind)
         } else {
-            self.search_releases(query, page, per_page)
+            self.search_catalog(query, search_type, page, per_page, entry_kind)
         }
     }
 
@@ -82,11 +87,13 @@ impl DiscogsProvider {
             .ok_or_else(|| "DISCOGS_API_KEY not set".to_string())
     }
 
-    fn search_releases(
+    fn search_catalog(
         &self,
         query: &str,
+        search_type: &str,
         page: u32,
         per_page: usize,
+        entry_kind: EntryKind,
     ) -> PluginResult<SearchResponse> {
         let api_key = match self.get_api_key() {
             Ok(k) => k,
@@ -94,14 +101,15 @@ impl DiscogsProvider {
         };
 
         let url = format!(
-            "{}/database/search?q={}&type=release&page={}&per_page={}",
+            "{}/database/search?q={}&type={}&page={}&per_page={}",
             API_BASE,
             url_encode(query),
+            search_type,
             page,
             per_page
         );
 
-        plugin_info!("discogs: searching '{}' (page {})", query, page);
+        plugin_info!("discogs: searching '{}' type={} (page {})", query, search_type, page);
 
         let response = match http_get_auth(&url, &api_key) {
             Ok(r) => r,
@@ -119,9 +127,9 @@ impl DiscogsProvider {
         let entries: Vec<PluginEntry> = search_resp
             .results
             .into_iter()
-            .filter(|r| r.type_ == "release" && r.id > 0)
+            .filter(|r| r.id > 0)
             .take(per_page)
-            .map(|r| r.into_entry())
+            .map(|r| r.into_entry(entry_kind))
             .collect();
 
         let total = search_resp
@@ -137,7 +145,12 @@ impl DiscogsProvider {
         })
     }
 
-    fn get_new_releases(&self, page: u32, per_page: usize) -> PluginResult<SearchResponse> {
+    fn get_new_releases(
+        &self,
+        page: u32,
+        per_page: usize,
+        entry_kind: EntryKind,
+    ) -> PluginResult<SearchResponse> {
         let api_key = match self.get_api_key() {
             Ok(k) => k,
             Err(e) => return PluginResult::err("CONFIG_ERROR", &e),
@@ -166,9 +179,9 @@ impl DiscogsProvider {
         let entries: Vec<PluginEntry> = search_resp
             .results
             .into_iter()
-            .filter(|r| r.type_ == "release" && r.id > 0)
+            .filter(|r| r.id > 0)
             .take(per_page)
-            .map(|r| r.into_entry())
+            .map(|r| r.into_entry(entry_kind))
             .collect();
 
         let total = entries.len() as u32;
@@ -232,13 +245,13 @@ struct DiscogsRelease {
 }
 
 impl DiscogsRelease {
-    fn into_entry(self) -> PluginEntry {
+    fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let title = self.title;
 
-        // Format year as string if available
-        let year = self.year.map(|y| y.to_string());
+        // Year as u32
+        let year = self.year.and_then(|y| if y > 0 { Some(y as u32) } else { None });
 
-        // Combine genre and style for genre field
+        // Combine genre and style
         let mut genres = self.genre.clone();
         genres.extend(self.style);
         let genre = if genres.is_empty() {
@@ -247,10 +260,8 @@ impl DiscogsRelease {
             Some(genres.into_iter().take(3).collect::<Vec<_>>().join(", "))
         };
 
-        // Use cover_image or thumb
         let poster_url = self.cover_image.or(self.thumb);
 
-        // Build description from format, country, label
         let mut desc_parts = vec![];
         if !self.format.is_empty() {
             desc_parts.push(self.format.join(", "));
@@ -269,6 +280,8 @@ impl DiscogsRelease {
 
         PluginEntry {
             id: format!("discogs-{}", self.id),
+            kind,
+            source: "discogs".to_string(),
             title,
             year,
             genre,
@@ -277,6 +290,7 @@ impl DiscogsRelease {
             poster_url,
             imdb_id: None,
             duration: None,
+            ..Default::default()
         }
     }
 }

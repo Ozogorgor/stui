@@ -27,7 +27,9 @@ network = [
   "s.discogs.com",
 ]
 
+[capabilities.catalog]
+kinds = ["artist", "album", "track"]
+
 [capabilities]
-catalog = true
 metadata = true
 music = true
