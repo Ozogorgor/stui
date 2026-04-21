@@ -92,6 +92,18 @@ Open items from search-refactor Task 7.0 that didn't land in that branch:
 
 ### From plugin refactor (Chunk 7 smoke)
 
+- **`stui plugin build --release` does not gate on declared stubs.**
+  Plan Task 7.5 expects `--release` to reject manifests that carry
+  `verb = { stub = true, ... }`, as the gate for external plugins
+  uploaded to the Tier-3 registry. Today `--release` just swaps the
+  cargo profile to `release` and runs the same linter that tolerates
+  stubs with a warning. Add a strict pass in `cli/src/` commands/build
+  that, when `--release` is set, promotes declared-stub warnings to
+  errors. Bundled plugins keep shipping stubs via the regular
+  `plugin build` path; the gate only bites when an author publishes.
+
+
+
 - **Rate-limit declarations are unenforced.** `plugin.toml
   [permissions.rate_limit]` is parsed into `RateLimit` and
   `PluginSupervisor::new` constructs a `TokenBucket` from it, but
