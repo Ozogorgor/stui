@@ -13,11 +13,54 @@ use crate::{PluginEntry, PluginResult};
 
 /// Context passed to `Plugin::init`. Carries resolved env, config, cache dir,
 /// and a logger handle.
+///
+/// The `logger` field is NOT serializable — it is attached on the plugin side
+/// after deserializing the wire-format [`InitRequest`] via
+/// [`InitContext::from_request`].
 pub struct InitContext<'a> {
     pub env: &'a HashMap<String, String>,
     pub config: &'a HashMap<String, toml::Value>,
     pub cache_dir: &'a PathBuf,
     pub logger: &'a dyn PluginLogger,
+}
+
+impl<'a> InitContext<'a> {
+    /// Build an `InitContext` from a deserialized [`InitRequest`] plus a
+    /// logger handle. The plugin side reassembles the context this way because
+    /// the `logger` trait-object cannot cross the ABI boundary.
+    pub fn from_request(req: &'a InitRequest, logger: &'a dyn PluginLogger) -> Self {
+        Self {
+            env: &req.env,
+            config: &req.config,
+            cache_dir: &req.cache_dir,
+            logger,
+        }
+    }
+}
+
+/// Wire-format payload for `stui_init`. This is the serializable subset of
+/// [`InitContext`] — the `logger` is attached after deserialization via
+/// [`InitContext::from_request`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InitRequest {
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub config: HashMap<String, toml::Value>,
+    #[serde(default)]
+    pub cache_dir: PathBuf,
+}
+
+/// Default `PluginLogger` used on the plugin side after deserializing an
+/// [`InitRequest`]. Routes to `host_log` when running under WASM, falls back
+/// to `eprintln!` on the host (tests).
+pub struct DefaultPluginLogger;
+
+impl PluginLogger for DefaultPluginLogger {
+    fn debug(&self, msg: &str) { crate::host_log(1, msg); }
+    fn info(&self, msg: &str)  { crate::host_log(2, msg); }
+    fn warn(&self, msg: &str)  { crate::host_log(3, msg); }
+    fn error(&self, msg: &str) { crate::host_log(4, msg); }
 }
 
 /// Logging surface exposed to plugins (backed by `stui_log` host import at runtime,
@@ -39,6 +82,35 @@ pub enum PluginInitError {
         hint: Option<String>,
     },
     Fatal(String),
+}
+
+/// Wire-format envelope for the plugin-side response from `stui_init`.
+///
+/// Mirrors the shape of [`crate::PluginResult`] but with a fixed success
+/// type of `()` — `init` never carries a success payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum InitResultEnvelope {
+    Ok,
+    Err(PluginInitError),
+}
+
+impl From<Result<(), PluginInitError>> for InitResultEnvelope {
+    fn from(r: Result<(), PluginInitError>) -> Self {
+        match r {
+            Ok(())  => Self::Ok,
+            Err(e)  => Self::Err(e),
+        }
+    }
+}
+
+impl From<InitResultEnvelope> for Result<(), PluginInitError> {
+    fn from(e: InitResultEnvelope) -> Self {
+        match e {
+            InitResultEnvelope::Ok     => Ok(()),
+            InitResultEnvelope::Err(e) => Err(e),
+        }
+    }
 }
 
 // ── Lookup ────────────────────────────────────────────────────────────────────
@@ -276,6 +348,74 @@ mod tests {
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains("\"kind\":\"missing_config\""));
         assert!(s.contains("api_key"));
+    }
+
+    #[test]
+    fn init_request_round_trips_through_json() {
+        let mut env = HashMap::new();
+        env.insert("TMDB_API_KEY".into(), "secret".into());
+
+        let mut config: HashMap<String, toml::Value> = HashMap::new();
+        config.insert("api_key".into(), toml::Value::String("secret".into()));
+
+        let req = InitRequest {
+            env,
+            config,
+            cache_dir: std::path::PathBuf::from("/tmp/cache/tmdb"),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        let back: InitRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.env.get("TMDB_API_KEY").map(String::as_str), Some("secret"));
+        assert_eq!(
+            back.config.get("api_key").and_then(|v| v.as_str()),
+            Some("secret"),
+        );
+        assert_eq!(back.cache_dir, std::path::PathBuf::from("/tmp/cache/tmdb"));
+    }
+
+    #[test]
+    fn init_result_envelope_round_trips_ok() {
+        let e: InitResultEnvelope = Ok::<(), PluginInitError>(()).into();
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"status\":\"ok\""), "got {s}");
+        let back: InitResultEnvelope = serde_json::from_str(&s).unwrap();
+        let r: Result<(), PluginInitError> = back.into();
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn init_result_envelope_round_trips_missing_config() {
+        let e: InitResultEnvelope = Err::<(), _>(PluginInitError::MissingConfig {
+            fields: vec!["api_key".into()],
+            hint: None,
+        }).into();
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"status\":\"err\""));
+        let back: InitResultEnvelope = serde_json::from_str(&s).unwrap();
+        let r: Result<(), PluginInitError> = back.into();
+        match r {
+            Err(PluginInitError::MissingConfig { fields, .. }) => {
+                assert_eq!(fields, vec!["api_key".to_string()]);
+            }
+            _ => panic!("expected MissingConfig"),
+        }
+    }
+
+    #[test]
+    fn init_context_from_request_attaches_logger() {
+        // Non-WASM host path: DefaultPluginLogger is a ZST that routes to
+        // eprintln! outside of WASM, so this test just verifies the shape
+        // and that the borrow-through fields match.
+        let req = InitRequest {
+            env: HashMap::from([("K".to_string(), "V".to_string())]),
+            config: HashMap::new(),
+            cache_dir: std::path::PathBuf::from("/tmp"),
+        };
+        let logger = DefaultPluginLogger;
+        let ctx = InitContext::from_request(&req, &logger);
+        assert_eq!(ctx.env.get("K").map(String::as_str), Some("V"));
+        assert_eq!(ctx.cache_dir, &std::path::PathBuf::from("/tmp"));
     }
 
     #[test]

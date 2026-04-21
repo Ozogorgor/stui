@@ -52,7 +52,8 @@ pub use manifest::{
     ManifestValidationError,
 };
 pub use capabilities::{
-    InitContext, PluginLogger, PluginInitError,
+    InitContext, InitRequest, InitResultEnvelope,
+    PluginLogger, DefaultPluginLogger, PluginInitError,
     LookupRequest, LookupResponse,
     EnrichRequest, EnrichResponse,
     ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
@@ -601,6 +602,9 @@ struct ExecResponse {
 /// `<$plugin_ty as $crate::CatalogPlugin>::$method`, and serialises the result.
 /// `$resp_ty` is the `Ok`-variant type, used in the parse-error path so that
 /// `PluginResult::<$resp_ty>::err(...)` resolves without ambiguity.
+///
+/// `$getter` must return a shared reference (`&$plugin_ty`) — all verb calls
+/// take `&self`, so the singleton is borrowed immutably here.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __catalog_abi_fn {
@@ -623,7 +627,8 @@ macro_rules! __catalog_abi_fn {
                     );
                 }
             };
-            let result = <$plugin_ty as $crate::CatalogPlugin>::$method($getter(), req);
+            let borrow = $getter();
+            let result = <$plugin_ty as $crate::CatalogPlugin>::$method(&*borrow, req);
             $crate::__write_result(&result)
         }
     };
@@ -655,11 +660,19 @@ macro_rules! __catalog_abi_fn {
 #[macro_export]
 macro_rules! stui_export_plugin {
     ($plugin_ty:ty) => {
-        // Safety: WASM is single-threaded; we use a global instance.
-        static PLUGIN_INSTANCE: std::sync::OnceLock<$plugin_ty> = std::sync::OnceLock::new();
+        // WASM is single-threaded so contention never occurs, but the static
+        // must be `Sync` to satisfy Rust's bound on statics when the crate is
+        // compiled for host targets (e.g. `cargo check --workspace`).
+        // `Mutex` gives us that `Sync` for free and `MutexGuard: Deref<Target=T>`
+        // preserves the `&*borrow` shape used by `__catalog_abi_fn!`.
+        static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
+            std::sync::OnceLock::new();
 
-        fn get_plugin() -> &'static $plugin_ty {
-            PLUGIN_INSTANCE.get_or_init(|| <$plugin_ty>::default())
+        fn get_plugin() -> std::sync::MutexGuard<'static, $plugin_ty> {
+            PLUGIN_INSTANCE
+                .get_or_init(|| std::sync::Mutex::new(<$plugin_ty>::default()))
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
         }
 
         /// ABI version — host checks this before calling any other function.
@@ -758,7 +771,9 @@ macro_rules! stui_export_plugin {
                     )
                 }
             };
-            let result = get_plugin().resolve(req);
+            let borrow = get_plugin();
+            #[allow(deprecated)]
+            let result = <$plugin_ty as $crate::StuiPlugin>::resolve(&*borrow, req);
             $crate::__write_result(&result)
         }
     };
@@ -794,11 +809,21 @@ macro_rules! stui_export_plugin {
 #[macro_export]
 macro_rules! stui_export_catalog_plugin {
     ($plugin_ty:ty) => {
-        // Safety: WASM is single-threaded; we use a global instance.
-        static PLUGIN_INSTANCE: std::sync::OnceLock<$plugin_ty> = std::sync::OnceLock::new();
+        // WASM is single-threaded so there is never real contention, but the
+        // static must be `Sync` to satisfy Rust's bound on statics when the
+        // crate is compiled for host targets (e.g. `cargo check --workspace`
+        // or host-side unit tests). `Mutex<T>` supplies `Sync`, and
+        // `MutexGuard: Deref<Target=T>` preserves the `&*borrow` / `&mut *inst`
+        // shapes used below.
+        static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
+            std::sync::OnceLock::new();
 
-        fn get_plugin() -> &'static $plugin_ty {
-            PLUGIN_INSTANCE.get_or_init(|| <$plugin_ty>::default())
+        fn __plugin_cell() -> &'static std::sync::Mutex<$plugin_ty> {
+            PLUGIN_INSTANCE.get_or_init(|| std::sync::Mutex::new(<$plugin_ty>::default()))
+        }
+
+        fn get_plugin() -> std::sync::MutexGuard<'static, $plugin_ty> {
+            __plugin_cell().lock().unwrap_or_else(|p| p.into_inner())
         }
 
         /// ABI version — host checks this before calling any other function.
@@ -822,6 +847,35 @@ macro_rules! stui_export_catalog_plugin {
             unsafe {
                 let _ = Vec::from_raw_parts(ptr as *mut u8, len as usize, len as usize);
             }
+        }
+
+        // ── Plugin::init export ───────────────────────────────────────────────
+
+        /// Init entry point. Input: InitRequest JSON. Output: packed (ptr<<32)|len
+        /// of an `InitResultEnvelope` JSON.
+        ///
+        /// The host calls this once after instantiation and translates the
+        /// response into a `PluginStatus` (Loaded / NeedsConfig / Failed).
+        #[no_mangle]
+        pub extern "C" fn stui_init(ptr: i32, len: i32) -> i64 {
+            let input = unsafe {
+                std::slice::from_raw_parts(ptr as *const u8, len as usize)
+            };
+            let req: $crate::InitRequest = match serde_json::from_slice(input) {
+                Ok(r) => r,
+                Err(e) => {
+                    let env: $crate::InitResultEnvelope = $crate::InitResultEnvelope::Err(
+                        $crate::PluginInitError::Fatal(format!("init request parse error: {e}")),
+                    );
+                    return $crate::__write_result(&env);
+                }
+            };
+            let logger = $crate::DefaultPluginLogger;
+            let ctx = $crate::InitContext::from_request(&req, &logger);
+            let mut inst = __plugin_cell().lock().unwrap_or_else(|p| p.into_inner());
+            let result = <$plugin_ty as $crate::Plugin>::init(&mut *inst, &ctx);
+            let env: $crate::InitResultEnvelope = result.into();
+            $crate::__write_result(&env)
         }
 
         // ── CatalogPlugin verb exports ────────────────────────────────────────
