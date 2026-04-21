@@ -92,6 +92,21 @@ Open items from search-refactor Task 7.0 that didn't land in that branch:
 
 ### From plugin refactor (Chunk 7 smoke)
 
+- **Rate-limit declarations are unenforced.** `plugin.toml
+  [permissions.rate_limit]` is parsed into `RateLimit` and
+  `PluginSupervisor::new` constructs a `TokenBucket` from it, but
+  `PluginSupervisor::acquire()` is never awaited from any of the
+  `Engine::supervisor_*` verb helpers. Every plugin currently runs
+  un-throttled regardless of manifest settings. Wire the acquire into
+  the shared `call_verb` pathway so all five per-verb entry points
+  inherit it once, plus map a `not acquired within N seconds` outcome
+  to a `PluginError { code: "rate_limited", retry_after_ms }` surface
+  so plan Task 7.3's rate-limit smoke can pass as written. The
+  low-level `TokenBucket` already has paused-clock unit tests; only
+  the wire-through + error code are missing.
+
+
+
 - **IPC plugin-routing by UUID only; add by-name fallback.** The
   `Request::{Lookup,Enrich,GetArtwork,GetCredits,Related}` variants carry
   a `plugin: String` field that `supervisor_*` resolves against
