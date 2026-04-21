@@ -352,6 +352,7 @@ pub fn http_post_json(url: &str, body: &str) -> Result<String, String> {
     );
     #[cfg(target_arch = "wasm32")]
     {
+        #[link(wasm_import_module = "stui")]
         extern "C" {
             fn stui_http_post(ptr: *const u8, len: i32) -> i64;
         }
@@ -519,6 +520,7 @@ pub fn http_post_form(url: &str, body: &str) -> Result<String, String> {
     );
     #[cfg(target_arch = "wasm32")]
     {
+        #[link(wasm_import_module = "stui")]
         extern "C" {
             fn stui_http_post(ptr: *const u8, len: i32) -> i64;
         }
@@ -564,6 +566,7 @@ pub fn exec(cmd: &str, args: &[&str], timeout_ms: u32) -> Result<String, String>
     );
     #[cfg(target_arch = "wasm32")]
     {
+        #[link(wasm_import_module = "stui")]
         extern "C" {
             fn stui_exec(ptr: *const u8, len: i32, timeout_ms: i32) -> i64;
         }
