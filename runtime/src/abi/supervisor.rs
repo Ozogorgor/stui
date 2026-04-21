@@ -35,7 +35,7 @@ use tracing::{error, info, warn};
 
 use super::host::{WasmHost, WasmInstance};
 use super::types::{
-    AbiError,
+    AbiError, InitError, InitRequest,
     ArtworkRequest, ArtworkResponse,
     CreditsRequest, CreditsResponse,
     EnrichRequest, EnrichResponse,
@@ -149,6 +149,64 @@ impl WasmSupervisor {
     /// Snapshot of current health metrics.
     pub async fn stats(&self) -> WasmSupervisorStats {
         self.stats.lock().await.clone()
+    }
+
+    /// Call `stui_init` with timeout enforcement.
+    ///
+    /// Init is one-shot: it runs once after instantiation. Unlike verb calls
+    /// we do NOT treat a `PluginInitError` as a crash — a plugin reporting
+    /// `MissingConfig` or `Fatal` is behaving correctly at the ABI level,
+    /// and the engine translates the outcome into a `PluginStatus`.
+    ///
+    /// Plumbing failures (timeout, serde, missing export) DO count as
+    /// crashes so a chronically broken plugin gets torn down.
+    pub async fn init(&self, req: &InitRequest) -> Result<(), InitError> {
+        if self.is_failed() {
+            return Err(InitError::Abi(AbiError::Execution(format!(
+                "plugin '{}' has permanently failed — reload STUI or reinstall the plugin",
+                self.plugin_name,
+            ))));
+        }
+
+        // Serialize before acquiring the instance lock — no borrow of `req`
+        // crosses the async boundary.
+        let json = serde_json::to_string(req)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+
+        let timeout = Duration::from_secs(self.config.call_timeout_secs);
+        let result = {
+            let mut guard = self.instance.lock().await;
+            match guard.as_mut() {
+                None => return Err(InitError::Abi(AbiError::Execution(format!(
+                    "plugin '{}' is reloading, try again shortly",
+                    self.plugin_name,
+                )))),
+                Some(inst) => {
+                    tokio::time::timeout(timeout, inst.call_init_with_json(&json)).await
+                }
+            }
+        };
+
+        match result {
+            Ok(Ok(()))  => Ok(()),
+            Ok(Err(e))  => {
+                // Only count plumbing errors as crashes — a plugin reporting
+                // its own InitError::Plugin is working as intended.
+                if matches!(&e, InitError::Abi(_)) {
+                    self.on_crash(&format!("init abi error: {e}")).await;
+                }
+                Err(e)
+            }
+            Err(_elapsed) => {
+                let msg = format!(
+                    "plugin '{}' init timed out after {}s",
+                    self.plugin_name, self.config.call_timeout_secs,
+                );
+                warn!("{msg}");
+                self.on_crash("init timeout").await;
+                Err(InitError::Abi(AbiError::Execution(msg)))
+            }
+        }
     }
 
     /// Generic helper: enforce timeout + crash tracking for any verb.

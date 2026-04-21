@@ -72,6 +72,44 @@ impl WasmInstance {
         }
     }
 
+    /// Call the plugin's `stui_init` export.
+    ///
+    /// Init has a different response shape than verb calls —
+    /// [`InitResultEnvelope`] has no success payload and its error side
+    /// carries a [`PluginInitError`] (not a [`PluginError`]). The result is
+    /// surfaced as [`InitError`] so the caller can distinguish plumbing
+    /// failures (network, memory) from plugin-reported init problems
+    /// (missing config).
+    pub async fn init(&mut self, req: &InitRequest) -> Result<(), InitError> {
+        let json = serde_json::to_string(req).map_err(AbiError::Serde)?;
+        let raw = self.inner.call_export("stui_init", &json).await
+            .map_err(InitError::Abi)?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        match Result::<(), PluginInitError>::from(env) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(InitError::Plugin(e)),
+        }
+    }
+
+    /// Low-level init caller — used by `WasmSupervisor::init` so the
+    /// supervisor can pre-serialize the request before acquiring the
+    /// instance lock, avoiding cross-await borrow issues. Callers should
+    /// prefer [`WasmInstance::init`].
+    pub(super) async fn call_init_with_json(
+        &mut self,
+        json: &str,
+    ) -> Result<(), InitError> {
+        let raw = self.inner.call_export("stui_init", json).await
+            .map_err(InitError::Abi)?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        match Result::<(), PluginInitError>::from(env) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(InitError::Plugin(e)),
+        }
+    }
+
     /// Call the plugin's `stui_search` export.
     pub async fn search(&mut self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
         self.call_verb("stui_search", req).await

@@ -356,6 +356,27 @@ pub enum AbiError {
     Memory(String),
 }
 
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+// Re-export the wire types from the SDK so callers don't double-import.
+pub use stui_plugin_sdk::{InitRequest, InitResultEnvelope, PluginInitError};
+
+/// Error returned from `WasmHost::init` / `WasmSupervisor::init`.
+///
+/// Split from [`AbiError`] because init has a distinct failure mode:
+/// the plugin itself can report `MissingConfig` / `Fatal` via
+/// [`PluginInitError`] without a traptime failure. Plumbing / ABI errors
+/// (memory, missing export, serde failure, timeout) remain in the
+/// `Abi` variant.
+#[derive(Debug, thiserror::Error)]
+pub enum InitError {
+    #[error(transparent)]
+    Abi(#[from] AbiError),
+
+    #[error("plugin init reported: {0:?}")]
+    Plugin(PluginInitError),
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
