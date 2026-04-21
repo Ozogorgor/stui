@@ -92,6 +92,19 @@ Open items from search-refactor Task 7.0 that didn't land in that branch:
 
 ### From plugin refactor (Chunk 7 smoke)
 
+- **IPC plugin-routing by UUID only; add by-name fallback.** The
+  `Request::{Lookup,Enrich,GetArtwork,GetCredits,Related}` variants carry
+  a `plugin: String` field that `supervisor_*` resolves against
+  `PluginRegistry::get(plugin_id)` — a UUID keyed at load time. Every
+  IPC caller (the TUI today, any ad-hoc client tomorrow) has to issue
+  `Request::ListPlugins` first and maintain a name→UUID map, which makes
+  scripting awkward. Add a name lookup in `Engine::supervisor_lookup`
+  and siblings: if `plugin_id` doesn't resolve as a UUID, iterate
+  `reg.all()` looking for a manifest name match. Preserve UUID priority
+  so TUI behaviour doesn't change; name-routing is a strict superset.
+
+
+
 - **Supervisor mis-classifies `PluginResult::Err` responses as WASM traps.**
   Every bundled plugin correctly returns
   `PluginResult::err(UNSUPPORTED_SCOPE, ...)` when the engine dispatches
