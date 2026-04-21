@@ -23,9 +23,10 @@ type Pool struct {
 	cancel   context.CancelFunc // aborts all in-flight HTTP requests; used by resetPoolForTest
 	queue    chan string
 	refresh  chan struct{}
-	inFlight sync.Map   // url -> struct{}
+	inFlight sync.Map     // url -> struct{}
 	client   *http.Client
-	wg       sync.WaitGroup // tracks active downloads; used by resetPoolForTest
+	wg       sync.WaitGroup // counts URLs accepted into the queue; wg.Wait() guarantees all submitted-and-accepted downloads have completed
+	gwg      sync.WaitGroup // tracks worker + debouncer goroutine lifetimes; used by resetPoolForTest
 }
 
 var (
@@ -44,14 +45,16 @@ func Global() *Pool {
 }
 
 // resetPoolForTest cancels all in-flight downloads on the current global pool,
-// waits for workers to exit, then replaces the singleton so each test starts
-// fresh. Cancelling is faster than draining and ensures no goroutine is still
-// writing to a TempDir that Go's test framework is about to clean up.
+// waits for all worker and debouncer goroutines to exit, then replaces the
+// singleton so each test starts fresh. Cancelling is faster than draining and
+// ensures no goroutine is still writing to a TempDir that Go's test framework
+// is about to clean up.
 // Only callable from tests in this package.
 func resetPoolForTest() {
 	if global != nil {
-		global.cancel()  // abort in-flight HTTP requests immediately
-		global.wg.Wait() // wait for all workers to acknowledge cancellation
+		global.cancel()   // signal ctx cancellation to workers + debouncer
+		global.gwg.Wait() // wait for worker + debouncer goroutines to exit
+		global.wg.Wait()  // wait for any downloads that beat the ctx check
 	}
 	globalOnce = sync.Once{}
 	global = nil
@@ -72,12 +75,16 @@ func (p *Pool) start() {
 	// Spawn a debouncer: every refreshDebounce window, if any completion
 	// landed, emit one struct{} to the observable refresh channel.
 	raw := make(chan struct{}, 256)
+	p.gwg.Add(1)
 	go func() {
+		defer p.gwg.Done()
 		var pending bool
 		tick := time.NewTicker(refreshDebounce)
 		defer tick.Stop()
 		for {
 			select {
+			case <-p.ctx.Done():
+				return
 			case <-raw:
 				pending = true
 			case <-tick.C:
@@ -93,26 +100,36 @@ func (p *Pool) start() {
 	}()
 
 	for i := 0; i < poolWorkers; i++ {
+		p.gwg.Add(1)
 		go p.worker(raw)
 	}
 }
 
 func (p *Pool) worker(doneSignal chan<- struct{}) {
-	for url := range p.queue {
-		// Check cache again under worker — another worker might have raced.
-		if _, hit := CachedPath(url); hit {
+	defer p.gwg.Done()
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case url, ok := <-p.queue:
+			if !ok {
+				return
+			}
+			// Check cache again under worker — another worker might have raced.
+			if _, hit := CachedPath(url); hit {
+				p.inFlight.Delete(url)
+				p.wg.Done()
+				continue
+			}
+			if err := p.download(url); err == nil {
+				select {
+				case doneSignal <- struct{}{}:
+				default:
+				}
+			}
 			p.inFlight.Delete(url)
 			p.wg.Done()
-			continue
 		}
-		if err := p.download(url); err == nil {
-			select {
-			case doneSignal <- struct{}{}:
-			default:
-			}
-		}
-		p.inFlight.Delete(url)
-		p.wg.Done()
 	}
 }
 
@@ -129,15 +146,19 @@ func (p *Pool) Enqueue(url string) {
 	if _, loaded := p.inFlight.LoadOrStore(url, struct{}{}); loaded {
 		return
 	}
-	p.wg.Add(1)
 	// Non-blocking send; dropping rather than stalling the UI thread is
 	// acceptable for a best-effort poster cache. The in-flight map is
 	// cleaned up so a later enqueue can retry.
+	// wg.Add(1) fires before the send to ensure no worker can call wg.Done()
+	// before the counter is incremented. The default branch undoes the Add
+	// when the URL is dropped, so wg.Wait() remains a reliable barrier for
+	// all submitted-and-accepted downloads.
+	p.wg.Add(1)
 	select {
 	case p.queue <- url:
 	default:
-		p.inFlight.Delete(url)
 		p.wg.Done()
+		p.inFlight.Delete(url)
 	}
 }
 

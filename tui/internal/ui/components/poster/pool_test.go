@@ -33,15 +33,17 @@ func fixtureServer(t *testing.T) (*httptest.Server, *int32, *int32) {
 		atomic.AddInt32(&inFlight, -1)
 	}))
 	// Drain + cancel the pool BEFORE srv.Close so no worker goroutine is
-	// still writing files when Go's TempDir cleanup runs. LIFO order means
-	// this cleanup fires first (registered after srv.Close).
+	// still writing files when Go's TempDir cleanup runs. t.Cleanup is LIFO,
+	// so we register srv.Close first and the cancel/wait second — the cancel
+	// cleanup runs first, then srv.Close.
+	t.Cleanup(srv.Close)
 	t.Cleanup(func() {
 		if global != nil {
 			global.cancel()
-			global.wg.Wait()
+			global.gwg.Wait() // wait for worker + debouncer goroutines to exit
+			global.wg.Wait()  // wait for any downloads that beat the ctx check
 		}
 	})
-	t.Cleanup(srv.Close)
 	return srv, &peak, &total
 }
 
