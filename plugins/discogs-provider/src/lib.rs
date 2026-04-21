@@ -48,18 +48,19 @@ impl DiscogsPlugin {
         inst
     }
 
-    fn api_key(&self) -> Result<&str, PluginError> {
+    /// Resolve the Discogs personal-access token. Returns `None` when
+    /// unset — Discogs API v2.0 allows unauthenticated requests (25 req/min);
+    /// a token is only needed to unlock the 60 req/min tier plus user-scoped
+    /// endpoints.
+    fn api_key(&self) -> Option<&str> {
         if let Some(k) = self.api_key.get() {
-            return Ok(k.as_str());
+            return Some(k.as_str());
         }
         let env_key = cache_get("__env:DISCOGS_API_KEY").unwrap_or_default();
         if env_key.is_empty() {
-            return Err(PluginError {
-                code: error_codes::INVALID_REQUEST.to_string(),
-                message: "Discogs api_key not configured".to_string(),
-            });
+            return None;
         }
-        Ok(self.api_key.get_or_init(|| env_key).as_str())
+        Some(self.api_key.get_or_init(|| env_key).as_str())
     }
 }
 
@@ -71,16 +72,13 @@ impl Plugin for DiscogsPlugin {
     fn manifest(&self) -> &PluginManifest { &self.manifest }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
+        // api_key is optional; absent → unauthenticated path is fine.
         let key = ctx.config.get("api_key").and_then(|v| v.as_str()).map(str::to_string)
             .or_else(|| ctx.env.get("DISCOGS_API_KEY").cloned())
             .unwrap_or_default();
-        if key.is_empty() {
-            return Err(PluginInitError::MissingConfig {
-                fields: vec!["api_key".to_string()],
-                hint: Some("Free at discogs.com/settings/developers".to_string()),
-            });
+        if !key.is_empty() {
+            let _ = self.api_key.set(key);
         }
-        let _ = self.api_key.set(key);
         Ok(())
     }
 }
@@ -110,6 +108,15 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
         plugin_error!("discogs: parse error: {}", e);
         PluginError { code: "parse_error".to_string(), message: format!("Discogs JSON parse failure: {e}") }
     })
+}
+
+/// Build the `&key=<token>` URL suffix when a personal-access token is
+/// configured; empty string otherwise (unauthenticated path).
+fn auth_suffix_for(key: Option<&str>) -> String {
+    match key.filter(|k| !k.is_empty()) {
+        Some(k) => format!("&key={k}"),
+        None    => String::new(),
+    }
 }
 
 /// Return `genre` and `description` strings with a clean split:
@@ -161,10 +168,7 @@ impl CatalogPlugin for DiscogsPlugin {
             }
         };
 
-        let api_key = match self.api_key() {
-            Ok(k) => k.to_string(),
-            Err(e) => return PluginResult::Err(e),
-        };
+        let auth_suffix = auth_suffix_for(self.api_key());
 
         let page     = req.page.max(1);
         let per_page = if req.limit == 0 { 20 } else { req.limit.min(50) } as usize;
@@ -172,11 +176,11 @@ impl CatalogPlugin for DiscogsPlugin {
 
         let url = if query.is_empty() {
             format!(
-                "{API_BASE}/database/search?sort=date_added,desc&type={search_type}&page={page}&per_page={per_page}&key={api_key}"
+                "{API_BASE}/database/search?sort=date_added,desc&type={search_type}&page={page}&per_page={per_page}{auth_suffix}"
             )
         } else {
             format!(
-                "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}&key={api_key}",
+                "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}{auth_suffix}",
                 urlencoding::encode(query),
             )
         };
@@ -210,10 +214,7 @@ impl CatalogPlugin for DiscogsPlugin {
                 format!("discogs lookup: unsupported id_source: {}", req.id_source),
             );
         }
-        let api_key = match self.api_key() {
-            Ok(k) => k.to_string(),
-            Err(e) => return PluginResult::Err(e),
-        };
+        let auth_suffix = auth_suffix_for(self.api_key());
 
         let (path, entry_kind) = match req.kind {
             EntryKind::Artist => (format!("/artists/{}", urlencoding::encode(&req.id)), EntryKind::Artist),
@@ -225,7 +226,9 @@ impl CatalogPlugin for DiscogsPlugin {
                 );
             }
         };
-        let url = format!("{API_BASE}{path}?key={api_key}");
+        // `?` starts the query string even when there's no token; Discogs ignores
+        // the trailing empty query just fine.
+        let url = format!("{API_BASE}{path}?_=1{auth_suffix}");
         plugin_info!("discogs: lookup {} ({:?})", req.id, req.kind);
 
         let body = match http_get(&url) {
@@ -494,6 +497,19 @@ mod tests {
     #[test]
     fn new_for_test_caches_api_key() {
         let p = DiscogsPlugin::new_for_test("fake");
-        assert_eq!(p.api_key().unwrap(), "fake");
+        assert_eq!(p.api_key(), Some("fake"));
+    }
+
+    #[test]
+    fn api_key_absent_is_unauthenticated_path() {
+        let p = DiscogsPlugin::new();
+        assert_eq!(p.api_key(), None);
+    }
+
+    #[test]
+    fn auth_suffix_is_empty_when_key_absent() {
+        assert_eq!(auth_suffix_for(None),     "");
+        assert_eq!(auth_suffix_for(Some("")), "");
+        assert_eq!(auth_suffix_for(Some("abc")), "&key=abc");
     }
 }
