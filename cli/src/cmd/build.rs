@@ -41,18 +41,19 @@ pub fn run(release: bool) -> Result<()> {
 
     // ── Step 4: stub check (--release guard) ─────────────────────────────────
     //
-    // TODO(Task 2.4 / future manifest expansion): once CatalogCapability gains
-    // per-verb sub-tables with a `stub = true` flag (tracked in Task 1.7 follow-
-    // on), replace `has_stubs` with a real implementation.  The current SDK
-    // `CatalogCapability` only carries `id_sources: Vec<String>` — there are no
-    // verb-config shapes to inspect, so stub detection is not possible from the
-    // SDK types today.  `--release` rejection is therefore a no-op until the SDK
-    // schema is extended.
+    // Tier-3 registry gate: external plugins must not ship with declared
+    // stubs. Bundled plugins (built without `--release`) are allowed to
+    // ship stubs; the lint step above emits a warning for them but lets
+    // them through.
 
-    if release && has_stubs(&manifest) {
-        anyhow::bail!(
-            "--release build rejected: plugin has stubbed verbs. Remove stubs or drop --release."
-        );
+    if release {
+        let stubs = declared_stubs(&manifest);
+        if !stubs.is_empty() {
+            anyhow::bail!(
+                "--release build rejected: plugin has stubbed verbs {:?}. Remove `stub = true` from [capabilities.catalog] or drop --release.",
+                stubs,
+            );
+        }
     }
 
     // ── Step 5: report artifact path ─────────────────────────────────────────
@@ -94,18 +95,27 @@ fn wasm_artifact_path(
     )
 }
 
-/// Returns `true` if the manifest declares any stubbed verbs.
+/// Return the names of every verb the manifest declares as a stub via
+/// `{ stub = true, reason = "..." }`. Empty vec = no stubs.
 ///
-/// NOTE: The current SDK `CatalogCapability` only carries `id_sources:
-/// Vec<String>` — it has no per-verb sub-tables, no `stub = true` field, and no
-/// `is_stub()` methods.  Until the SDK schema is extended (tracked in the Task
-/// 1.7 follow-on), this function always returns `false` and the `--release`
-/// rejection gate is effectively disabled.
-///
-/// TODO(Task 2.4+): implement once `CatalogCapability` gains verb-config types
-/// that can express `stub = true`.
-fn has_stubs(_manifest: &stui_plugin_sdk::PluginManifest) -> bool {
-    false
+/// Checks each optional verb on `[capabilities.catalog]` (`lookup`,
+/// `enrich`, `artwork`, `credits`, `related`) using the `is_stub()` helpers
+/// on the corresponding config types. `search` cannot be stubbed — it's
+/// a plain `Option<bool>` and is required for any catalog plugin.
+fn declared_stubs(manifest: &stui_plugin_sdk::PluginManifest) -> Vec<&'static str> {
+    use stui_plugin_sdk::CatalogCapability;
+
+    let mut stubs = Vec::new();
+    if let CatalogCapability::Typed { lookup, enrich, artwork, credits, related, .. } =
+        &manifest.capabilities.catalog
+    {
+        if let Some(l) = lookup  { if l.is_stub() { stubs.push("lookup");  } }
+        if let Some(e) = enrich  { if e.is_stub() { stubs.push("enrich");  } }
+        if let Some(a) = artwork { if a.is_stub() { stubs.push("artwork"); } }
+        if let Some(c) = credits { if c.is_stub() { stubs.push("credits"); } }
+        if let Some(r) = related { if r.is_stub() { stubs.push("related"); } }
+    }
+    stubs
 }
 
 #[cfg(test)]
@@ -117,8 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn has_stubs_no_capabilities() {
-        // A manifest with no [capabilities] block → no stubs.
+    fn declared_stubs_empty_when_no_capabilities() {
         let manifest = parse_manifest(
             r#"
 [plugin]
@@ -127,12 +136,11 @@ name    = "test"
 version = "0.1.0"
 "#,
         );
-        assert!(!has_stubs(&manifest));
+        assert!(declared_stubs(&manifest).is_empty());
     }
 
     #[test]
-    fn has_stubs_catalog_with_id_sources_no_stubs() {
-        // A manifest with [capabilities.catalog] and id_sources but no stub verbs.
+    fn declared_stubs_empty_when_verbs_all_live() {
         let manifest = parse_manifest(
             r#"
 [plugin]
@@ -141,17 +149,16 @@ name    = "test"
 version = "0.1.0"
 
 [capabilities.catalog]
-id_sources = ["musicbrainz", "spotify"]
+kinds   = ["movie"]
+search  = true
+lookup  = { id_sources = ["imdb"] }
 "#,
         );
-        assert!(!has_stubs(&manifest));
+        assert!(declared_stubs(&manifest).is_empty());
     }
 
     #[test]
-    fn has_stubs_returns_false_even_when_toml_has_stub_keys() {
-        // Until CatalogCapability gains per-verb sub-tables, the SDK drops
-        // unknown keys on deserialization and has_stubs can't detect them.
-        // This test documents that known limitation explicitly.
+    fn declared_stubs_catches_stubbed_related() {
         let manifest = parse_manifest(
             r#"
 [plugin]
@@ -160,11 +167,34 @@ name    = "test"
 version = "0.1.0"
 
 [capabilities.catalog]
-id_sources = ["musicbrainz"]
+kinds   = ["album"]
+search  = true
+related = { stub = true, reason = "recommendations endpoint pending" }
 "#,
         );
-        // Currently always false — see has_stubs doc-comment.
-        assert!(!has_stubs(&manifest));
+        assert_eq!(declared_stubs(&manifest), vec!["related"]);
+    }
+
+    #[test]
+    fn declared_stubs_catches_multiple_verbs() {
+        let manifest = parse_manifest(
+            r#"
+[plugin]
+id      = "test"
+name    = "test"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds   = ["album"]
+search  = true
+lookup  = { stub = true, reason = "lookup pending" }
+enrich  = { stub = true, reason = "enrich pending" }
+"#,
+        );
+        let s = declared_stubs(&manifest);
+        assert!(s.contains(&"lookup"));
+        assert!(s.contains(&"enrich"));
+        assert_eq!(s.len(), 2);
     }
 
     /// Verify that cargo's dash→underscore normalization is applied when
