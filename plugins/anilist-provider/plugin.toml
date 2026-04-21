@@ -11,7 +11,7 @@ homepage     = "https://anilist.co"
 [permissions]
 network = ["graphql.anilist.co", "s4.anilist.co"]
 
-[permissions.rate_limit]
+[rate_limit]
 # AniList allows ~90 req/min in practice. 0.5 rps leaves headroom for bursts.
 requests_per_second = 0.5
 burst               = 5

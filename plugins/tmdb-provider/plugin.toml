@@ -23,7 +23,7 @@ env_var   = "TMDB_API_KEY"
 [permissions]
 network = ["api.themoviedb.org", "image.tmdb.org"]
 
-[permissions.rate_limit]
+[rate_limit]
 requests_per_second = 4
 burst               = 10
 

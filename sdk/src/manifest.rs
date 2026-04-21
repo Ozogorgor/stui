@@ -426,7 +426,11 @@ pub struct AuthorMeta {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RateLimit {
     /// Steady-state requests per second (tokens generated per second).
-    pub rps: u32,
+    ///
+    /// Fractional values are supported and meaningful: `0.4` = 24 req/min
+    /// (Discogs unauthenticated tier), `0.1` = 6 req/min (libre.fm).
+    #[serde(rename = "requests_per_second")]
+    pub rps: f32,
     /// Maximum burst capacity — the bucket size.
     #[serde(default = "default_burst")]
     pub burst: u32,

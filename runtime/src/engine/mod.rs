@@ -538,10 +538,11 @@ impl Engine {
             let pname     = name.clone();
             let sup_ctx   = ctx.clone();
             let pid       = id.clone();
+            let sup_rate_limit = loaded.manifest.rate_limit.clone();
 
             // Load happens async; if it fails we log and continue — the
             // plugin is registered but marked unavailable until reload.
-            match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg).await {
+            match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg, sup_rate_limit.as_ref()).await {
                 Ok(sup) => {
                     // Call `Plugin::init` once after instantiation. Failures here
                     // do NOT register the supervisor — calls would all bounce. The

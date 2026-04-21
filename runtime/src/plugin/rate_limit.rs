@@ -35,15 +35,16 @@ impl TokenBucket {
     /// Build a new bucket with `rps` refill and `burst` capacity.
     ///
     /// `burst` is clamped to at least 1 (a bucket of 0 would never emit).
-    /// `rps = 0` means no refill — the bucket drains once and stays empty,
-    /// effectively disabling calls. Callers should treat `rps = 0` as "disabled".
-    pub fn new(rps: u32, burst: u32) -> Self {
+    /// `rps <= 0` means no refill — the bucket drains once and stays empty,
+    /// effectively disabling calls. Fractional `rps` is supported:
+    /// e.g. `0.4` = 24 req/min (Discogs free tier), `0.1` = 6 req/min.
+    pub fn new(rps: f32, burst: u32) -> Self {
         let burst = burst.max(1) as f64;
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 tokens: burst,
                 burst,
-                rps: rps as f64,
+                rps: rps.max(0.0) as f64,
                 last: Instant::now(),
             })),
         }
@@ -90,7 +91,7 @@ mod tests {
     /// roughly (5 - burst) / rps = 0.4s of simulated time, i.e. ~400ms.
     #[tokio::test(start_paused = true)]
     async fn ten_rps_burst_one_paces_five_acquires_over_400ms() {
-        let bucket = TokenBucket::new(10, 1);
+        let bucket = TokenBucket::new(10.0, 1);
         let start = Instant::now();
 
         for _ in 0..5 {
@@ -116,7 +117,7 @@ mod tests {
     /// Bucket with burst=3 should allow 3 acquires instantly, then throttle.
     #[tokio::test(start_paused = true)]
     async fn burst_limits_instant_acquires() {
-        let bucket = TokenBucket::new(1, 3);
+        let bucket = TokenBucket::new(1.0, 3);
         let start = Instant::now();
 
         // Three instant acquires (bucket starts full).
@@ -142,8 +143,49 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn zero_burst_is_clamped_to_one() {
-        let bucket = TokenBucket::new(100, 0);
+        let bucket = TokenBucket::new(100.0, 0);
         // First acquire should be instant despite burst=0 (clamped to 1).
         bucket.acquire().await;
+    }
+
+    /// Discogs-style fractional rps: 0.4 tokens/sec (= 24 req/min) with burst=5.
+    /// After draining the burst, the 6th acquire waits 1/0.4 = 2.5s.
+    #[tokio::test(start_paused = true)]
+    async fn fractional_rps_spaces_refills() {
+        let bucket = TokenBucket::new(0.4, 5);
+        let start = Instant::now();
+        for _ in 0..5 {
+            bucket.acquire().await;
+        }
+        assert!(start.elapsed() < Duration::from_millis(50), "burst should be instant");
+        bucket.acquire().await;
+        let total = start.elapsed();
+        // 1 token needs 1 / 0.4 = 2.5s to accrue.
+        assert!(
+            total >= Duration::from_millis(2_495),
+            "sixth acquire should wait ~2.5s, got {:?}",
+            total
+        );
+    }
+
+    /// Negative / near-zero rps is treated as disabled: no future acquire
+    /// completes past the burst.
+    #[tokio::test(start_paused = true)]
+    async fn negative_rps_clamped_to_disabled() {
+        let bucket = TokenBucket::new(-1.0, 1);
+        bucket.acquire().await; // burst
+        // The next acquire would sleep for the disabled-bucket timeout
+        // (~1 hour). Race it against a small sleep and verify it doesn't
+        // complete quickly.
+        let racer = async {
+            bucket.acquire().await;
+            "acquired"
+        };
+        let ticker = async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            "ticker-won"
+        };
+        let winner = tokio::select! { v = racer => v, v = ticker => v };
+        assert_eq!(winner, "ticker-won", "negative rps should disable refills");
     }
 }

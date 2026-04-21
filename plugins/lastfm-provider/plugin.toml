@@ -27,7 +27,7 @@ env_var  = "LASTFM_API_KEY"
 [permissions]
 network = ["libre.fm", "lastfm-img2.akamaized.net", "lastfm.freetls.fastly.net"]
 
-[permissions.rate_limit]
+[rate_limit]
 # libre.fm / last.fm public endpoints tolerate ~5 req/min in practice; keep
 # well under that and let burst cover brief spikes.
 requests_per_second = 0.1

@@ -11,7 +11,7 @@ homepage     = "https://musicbrainz.org"
 [permissions]
 network = ["musicbrainz.org", "coverartarchive.org"]
 
-[permissions.rate_limit]
+[rate_limit]
 # MusicBrainz enforces 1 req/s for authenticated User-Agent requests; go slightly
 # under to leave headroom for bursts and avoid 503s.
 requests_per_second = 1

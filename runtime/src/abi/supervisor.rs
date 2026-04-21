@@ -45,6 +45,8 @@ use super::types::{
     ResolveRequest, ResolveResponse,
     SearchRequest, SearchResponse,
 };
+use crate::plugin::rate_limit::TokenBucket;
+use crate::plugin::RateLimit;
 use crate::sandbox::SandboxCtx;
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -110,6 +112,9 @@ pub struct WasmSupervisor {
     crash_times: Arc<Mutex<Vec<Instant>>>,
     stats:       Arc<Mutex<WasmSupervisorStats>>,
     failed:      Arc<AtomicBool>,
+    /// Optional rate-limiter from the manifest's `[rate_limit]` block.
+    /// `None` means the plugin runs un-throttled.
+    rate_limit:  Option<TokenBucket>,
 }
 
 impl std::fmt::Debug for WasmSupervisor {
@@ -123,13 +128,20 @@ impl std::fmt::Debug for WasmSupervisor {
 
 impl WasmSupervisor {
     /// Load the plugin from disk and return a ready supervisor.
+    ///
+    /// `rate_limit` is the manifest's `[rate_limit]` block (if any); when
+    /// present a [`TokenBucket`] is built from it and every verb call
+    /// acquires a token before running. `None` means the plugin is
+    /// un-throttled.
     pub async fn load(
         wasm_path:   PathBuf,
         plugin_name: String,
         ctx:         SandboxCtx,
         config:      WasmSupervisorConfig,
+        rate_limit:  Option<&RateLimit>,
     ) -> Result<Self, AbiError> {
         let instance = WasmHost::load(&wasm_path, &plugin_name, &ctx, config.max_memory_mb).await?;
+        let bucket = rate_limit.map(|rl| TokenBucket::new(rl.rps, rl.burst));
         Ok(Self {
             wasm_path,
             plugin_name,
@@ -139,6 +151,7 @@ impl WasmSupervisor {
             crash_times: Arc::new(Mutex::new(Vec::new())),
             stats:       Arc::new(Mutex::new(WasmSupervisorStats { is_alive: true, ..Default::default() })),
             failed:      Arc::new(AtomicBool::new(false)),
+            rate_limit:  bucket,
         })
     }
 
@@ -230,6 +243,14 @@ impl WasmSupervisor {
                 "plugin '{}' has permanently failed — reload STUI or reinstall the plugin",
                 self.plugin_name,
             )));
+        }
+
+        // Honour the manifest's `[rate_limit]` declaration BEFORE starting
+        // the call-timeout clock: the wait for a token is a queue delay, not
+        // a plugin-execution delay, so it shouldn't count toward
+        // `call_timeout_secs`. Plugins without a rate_limit block skip this.
+        if let Some(bucket) = &self.rate_limit {
+            bucket.acquire().await;
         }
 
         // Serialize before acquiring the instance lock — no borrow of `req`
