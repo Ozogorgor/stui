@@ -15,6 +15,7 @@ import (
 	"github.com/stui/stui/internal/state"
 	"github.com/stui/stui/internal/ui/actions"
 	"github.com/stui/stui/internal/ui/components"
+	"github.com/stui/stui/internal/ui/components/poster"
 	"github.com/stui/stui/internal/ui/screen"
 	"github.com/stui/stui/internal/ui/screens"
 	"github.com/stui/stui/pkg/bidi"
@@ -343,16 +344,24 @@ func (m *Model) SetProgram(p *tea.Program) { m.program = p }
 
 func (m Model) Init() tea.Cmd {
 	if m.opts.NoRuntime {
-		return tea.Batch(m.loadingSpinner.Tick, func() tea.Msg { return ipc.RuntimeReadyMsg{} })
+		return tea.Batch(
+			m.loadingSpinner.Tick,
+			func() tea.Msg { return ipc.RuntimeReadyMsg{} },
+			func() tea.Msg { return poster.PollRefresh()() },
+		)
 	}
 
-	return tea.Batch(m.loadingSpinner.Tick, func() tea.Msg {
-		client, err := ipc.Start(m.opts.RuntimePath)
-		if err != nil {
-			return ipc.RuntimeErrorMsg{Err: err}
-		}
-		return runtimeStartedMsg{client: client}
-	})
+	return tea.Batch(
+		m.loadingSpinner.Tick,
+		func() tea.Msg {
+			client, err := ipc.Start(m.opts.RuntimePath)
+			if err != nil {
+				return ipc.RuntimeErrorMsg{Err: err}
+			}
+			return runtimeStartedMsg{client: client}
+		},
+		func() tea.Msg { return poster.PollRefresh()() },
+	)
 }
 
 // fromIPC wraps a message that arrived via the IPC channel so that the
@@ -487,6 +496,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.Plugins = append(m.state.Plugins, msg.PluginName)
 		}
 		return m, cmd
+
+	case poster.PostersUpdatedMsg:
+		// Re-arm the poll so we keep listening. No model-state change —
+		// the next View() pass picks up newly-cached posters directly.
+		return m, func() tea.Msg { return poster.PollRefresh()() }
 
 	case components.ToastDismissMsg:
 		m.activeToast = nil
