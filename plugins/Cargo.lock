@@ -108,6 +108,8 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
+ "toml",
+ "urlencoding",
 ]
 
 [[package]]
@@ -515,6 +517,8 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
+ "toml",
+ "urlencoding",
 ]
 
 [[package]]
@@ -534,6 +538,8 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
+ "toml",
+ "urlencoding",
 ]
 
 [[package]]
@@ -607,6 +613,17 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "musicbrainz-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stui-plugin-sdk",
+ "toml",
+ "urlencoding",
 ]
 
 [[package]]

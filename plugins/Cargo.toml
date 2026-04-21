@@ -15,6 +15,7 @@ members = [
     "kitsunekko",
     "lastfm-provider",
     "listenbrainz-provider",
+    "musicbrainz-provider",
     "omdb-provider",
     "r18",
     "subscene",
