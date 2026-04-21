@@ -437,9 +437,128 @@ pub fn http_get(url: &str) -> Result<String, String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Host-side tests route through `sdk::testing::MockHost` fixtures
+        // when any are registered. Unrecognised URLs fall through to the
+        // "no fixture" error so forgotten registrations are loud.
+        if let Some(body) = crate::testing::try_fixture(url) {
+            return Ok(body);
+        }
         Err(format!(
             "http_get only available in WASM context (url: {url})"
         ))
+    }
+}
+
+// ── Host-side test harness ────────────────────────────────────────────────────
+
+/// Host-side test utilities — fixture registration for the SDK's HTTP
+/// helpers so plugin authors can unit-test verb dispatch without a live
+/// upstream API.
+///
+/// ```
+/// use stui_plugin_sdk::{http_get, testing::MockHost};
+///
+/// let _host = MockHost::new()
+///     .with_fixture_response(
+///         "https://api.example.com/x?query=inception",
+///         r#"{"results":[{"id":1,"title":"Inception"}]}"#,
+///     );
+/// let body = http_get("https://api.example.com/x?query=inception").unwrap();
+/// assert!(body.contains("\"Inception\""));
+/// ```
+///
+/// Fixtures are stored in a thread-local, so tests in the same thread
+/// share state — drop or `.reset()` between cases if needed. The
+/// `MockHost` value itself is a thin handle; holding or dropping it does
+/// NOT clear fixtures (so fluent builders in test helpers work as
+/// expected).
+pub mod testing {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static FIXTURES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    }
+
+    /// Handle for registering canned HTTP responses. See module doc.
+    pub struct MockHost;
+
+    impl Default for MockHost {
+        fn default() -> Self { Self::new() }
+    }
+
+    impl MockHost {
+        /// Build a fresh handle; existing fixtures in the thread-local are
+        /// preserved. Call [`MockHost::reset`] first if you want a clean
+        /// slate.
+        pub fn new() -> Self { MockHost }
+
+        /// Register a canned JSON response for a given URL (exact match).
+        /// Returns `self` so calls can be chained.
+        pub fn with_fixture_response(
+            self,
+            url: impl Into<String>,
+            body: impl Into<String>,
+        ) -> Self {
+            FIXTURES.with(|m| {
+                m.borrow_mut().insert(url.into(), body.into());
+            });
+            self
+        }
+
+        /// Clear every registered fixture on the current thread. Intended
+        /// for test tear-down; omit if your tests run on fresh threads or
+        /// only register once per case.
+        pub fn reset() {
+            FIXTURES.with(|m| m.borrow_mut().clear());
+        }
+    }
+
+    /// Internal hook: [`crate::http_get`] on non-WASM targets consults
+    /// this to resolve fixtures before returning its "no live host" error.
+    pub(crate) fn try_fixture(url: &str) -> Option<String> {
+        FIXTURES.with(|m| m.borrow().get(url).cloned())
+    }
+}
+
+#[cfg(test)]
+mod mockhost_tests {
+    use super::http_get;
+    use super::testing::MockHost;
+
+    fn reset() { MockHost::reset(); }
+
+    #[test]
+    fn fixture_satisfies_http_get() {
+        reset();
+        let _ = MockHost::new().with_fixture_response("https://a/x", r#"{"k":"v"}"#);
+        assert_eq!(http_get("https://a/x").unwrap(), r#"{"k":"v"}"#);
+    }
+
+    #[test]
+    fn unregistered_url_still_errors() {
+        reset();
+        let err = http_get("https://never-registered.example").unwrap_err();
+        assert!(err.contains("only available in WASM"));
+    }
+
+    #[test]
+    fn multiple_fixtures_chain() {
+        reset();
+        let _ = MockHost::new()
+            .with_fixture_response("https://a", "A")
+            .with_fixture_response("https://b", "B");
+        assert_eq!(http_get("https://a").unwrap(), "A");
+        assert_eq!(http_get("https://b").unwrap(), "B");
+    }
+
+    #[test]
+    fn reset_clears_everything() {
+        reset();
+        let _ = MockHost::new().with_fixture_response("https://x", "body");
+        assert!(http_get("https://x").is_ok());
+        MockHost::reset();
+        assert!(http_get("https://x").is_err());
     }
 }
 

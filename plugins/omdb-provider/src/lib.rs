@@ -474,4 +474,49 @@ mod tests {
         let p = OmdbPlugin::new_for_test("fake");
         assert_eq!(p.api_key().unwrap(), "fake");
     }
+
+    /// End-to-end demonstration of `sdk::testing::MockHost`: stub OMDb's
+    /// `?s=...&type=movie&apikey=...` endpoint with canned JSON and verify
+    /// that `search()` parses and routes entries all the way through.
+    #[test]
+    fn search_roundtrips_through_mock_host() {
+        use stui_plugin_sdk::{testing::MockHost, SearchRequest, SearchScope};
+
+        MockHost::reset();
+        let fixture = r#"{
+            "Search":[
+                {"Title":"Inception","Year":"2010","imdbID":"tt1375666","Type":"movie","Poster":"https://p/1.jpg"},
+                {"Title":"Inception: The Cobol Job","Year":"2010","imdbID":"tt5295894","Type":"movie","Poster":"N/A"}
+            ],
+            "totalResults":"2",
+            "Response":"True"
+        }"#;
+        let _h = MockHost::new().with_fixture_response(
+            // Must match OMDb's URL shape exactly; includes the api_key we
+            // stashed via `new_for_test`.
+            "https://www.omdbapi.com/?s=inception&type=movie&apikey=fake",
+            fixture,
+        );
+
+        let plugin = OmdbPlugin::new_for_test("fake");
+        let req = SearchRequest {
+            query: "inception".into(),
+            scope: SearchScope::Movie,
+            page: 1,
+            limit: 0,
+            per_scope_limit: None,
+            locale: None,
+        };
+        let resp = match plugin.search(req) {
+            stui_plugin_sdk::PluginResult::Ok(r) => r,
+            stui_plugin_sdk::PluginResult::Err(e) => panic!("search Err {}: {}", e.code, e.message),
+        };
+        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.total, 2);
+        assert_eq!(resp.items[0].title, "Inception");
+        assert_eq!(resp.items[0].imdb_id.as_deref(), Some("tt1375666"));
+        assert_eq!(resp.items[0].poster_url.as_deref(), Some("https://p/1.jpg"));
+        // Second entry has Poster=N/A which `opt_non_na` strips out.
+        assert_eq!(resp.items[1].poster_url, None);
+    }
 }
