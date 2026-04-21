@@ -64,12 +64,31 @@ impl WasmInstance {
     where
         Resp: for<'de> serde::Deserialize<'de>,
     {
-        let raw = self.inner.call_export(fn_name, json).await?;
-        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
-        match result {
+        match self.call_export_envelope::<Resp>(fn_name, json).await? {
             PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
+    }
+
+    /// Variant of [`call_export_typed`] that returns the full
+    /// `PluginResult<Resp>` envelope without collapsing the error variant
+    /// into an [`AbiError`].
+    ///
+    /// The supervisor needs this so it can distinguish a plumbing failure
+    /// (trap, serde mismatch, missing export — `Err(AbiError)`) from a
+    /// plugin-reported application error (`Ok(PluginResult::Err)`). Only the
+    /// former should count toward the crash window and trigger a reload.
+    pub(super) async fn call_export_envelope<Resp>(
+        &mut self,
+        fn_name: &str,
+        json: &str,
+    ) -> Result<PluginResult<Resp>, AbiError>
+    where
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
+        let raw = self.inner.call_export(fn_name, json).await?;
+        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
+        Ok(result)
     }
 
     /// Call the plugin's `stui_init` export.

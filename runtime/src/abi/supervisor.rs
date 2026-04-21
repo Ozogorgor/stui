@@ -40,6 +40,7 @@ use super::types::{
     CreditsRequest, CreditsResponse,
     EnrichRequest, EnrichResponse,
     LookupRequest, LookupResponse,
+    PluginResult,
     RelatedRequest, RelatedResponse,
     ResolveRequest, ResolveResponse,
     SearchRequest, SearchResponse,
@@ -245,14 +246,33 @@ impl WasmSupervisor {
                 ))),
                 Some(inst) => {
                     let fn_name = fn_name.to_string();
-                    tokio::time::timeout(timeout, inst.call_export_typed(&fn_name, &json)).await
+                    tokio::time::timeout(timeout, inst.call_export_envelope::<Resp>(&fn_name, &json)).await
                 }
             }
         };
 
+        // Three distinct outcomes must be handled differently:
+        //
+        //  • `Ok(Ok(PluginResult::Ok(r)))` — success.
+        //  • `Ok(Ok(PluginResult::Err(e)))` — the plugin RETURNED normally but
+        //    reported an application-level error (e.g. UNSUPPORTED_SCOPE when
+        //    the engine fans out a scope the plugin doesn't handle). This is
+        //    NOT a crash — the plugin is behaving correctly at the ABI layer.
+        //    Surface the error without incrementing `crashes_in_window`.
+        //  • `Ok(Err(AbiError))` — plumbing failure: trap, memory, missing
+        //    export, serde mismatch. Legitimate crash; `on_crash` schedules a
+        //    reload.
+        //  • `Err(_elapsed)` — timeout. Also a crash.
         match result {
-            Ok(Ok(r))     => Ok(r),
-            Ok(Err(e))    => { self.on_crash(&format!("trap: {e}")).await; Err(e) }
+            Ok(Ok(PluginResult::Ok(r))) => Ok(r),
+            Ok(Ok(PluginResult::Err(e))) => {
+                // Plugin-reported application error; do not reload.
+                Err(AbiError::Execution(format!("{}: {}", e.code, e.message)))
+            }
+            Ok(Err(e)) => {
+                self.on_crash(&format!("trap: {e}")).await;
+                Err(e)
+            }
             Err(_elapsed) => {
                 let msg = format!(
                     "plugin '{}' {} timed out after {}s",
