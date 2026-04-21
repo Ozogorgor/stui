@@ -573,8 +573,8 @@ impl Engine {
                     // `plugin::state::resolve_config` with TUI overrides currently
                     // empty (StateStore integration lands in a later chunk). The
                     // effective map is surfaced as both `env` (string-typed) and
-                    // `config` (toml::Value::String) so plugins can read either
-                    // shape during the migration window.
+                    // `config` (serde_json::Value::String) so plugins can read
+                    // either shape without pulling the `toml` crate.
                     let resolved = crate::plugin::state::resolve_config(
                         &loaded.manifest,
                         &HashMap::new(),
@@ -584,7 +584,7 @@ impl Engine {
                         env: resolved.clone(),
                         config: resolved
                             .into_iter()
-                            .map(|(k, v)| (k, toml::Value::String(v)))
+                            .map(|(k, v)| (k, serde_json::Value::String(v)))
                             .collect(),
                         cache_dir: ctx.cache_dir.clone(),
                     };

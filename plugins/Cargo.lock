@@ -9,7 +9,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
 ]
 
 [[package]]
@@ -19,7 +18,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 
@@ -58,7 +56,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 
@@ -69,7 +66,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 
@@ -86,7 +82,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 
@@ -97,7 +92,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 
@@ -219,7 +213,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stui-plugin-sdk",
- "toml",
  "urlencoding",
 ]
 

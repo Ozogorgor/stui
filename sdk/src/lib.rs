@@ -51,6 +51,23 @@ pub use manifest::{
     RateLimit, PluginConfigField,
     ManifestValidationError,
 };
+
+/// Parse a plugin's canonical `plugin.toml` text into a [`PluginManifest`].
+///
+/// Plugins typically call this with `include_str!("../plugin.toml")` inside
+/// their `new()` constructor so the manifest is embedded at compile time.
+/// Using this helper lets plugins drop their direct `toml` crate dependency
+/// — the SDK owns the only `toml::from_str` call site for the canonical
+/// manifest schema.
+///
+/// ```no_run
+/// use stui_plugin_sdk::parse_manifest;
+/// let manifest = parse_manifest(include_str!("../plugin.toml"))
+///     .expect("plugin.toml failed to parse at compile time");
+/// ```
+pub fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
+    toml::from_str(text).map_err(|e| e.to_string())
+}
 pub use capabilities::{
     InitContext, InitRequest, InitResultEnvelope,
     PluginLogger, DefaultPluginLogger, PluginInitError,

@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use stui_plugin_sdk::{
+    parse_manifest,
     error_codes, http_post_json,
     id_sources, normalize_crew_role,
     plugin_error, plugin_info,
@@ -35,7 +36,7 @@ pub struct AnilistPlugin {
 
 impl AnilistPlugin {
     pub fn new() -> Self {
-        let manifest: PluginManifest = toml::from_str(include_str!("../plugin.toml"))
+        let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
         Self { manifest }
     }

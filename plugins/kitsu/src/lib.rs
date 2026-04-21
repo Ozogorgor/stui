@@ -7,6 +7,7 @@
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
+    parse_manifest,
     cache_get, error_codes, http_get,
     id_sources,
     plugin_error, plugin_info,
@@ -29,7 +30,7 @@ pub struct KitsuPlugin {
 
 impl KitsuPlugin {
     pub fn new() -> Self {
-        let manifest: PluginManifest = toml::from_str(include_str!("../plugin.toml"))
+        let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
         Self { manifest }
     }

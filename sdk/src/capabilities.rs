@@ -17,9 +17,14 @@ use crate::{PluginEntry, PluginResult};
 /// The `logger` field is NOT serializable — it is attached on the plugin side
 /// after deserializing the wire-format [`InitRequest`] via
 /// [`InitContext::from_request`].
+///
+/// `config` is a `HashMap<String, serde_json::Value>` so plugins can read
+/// values via the same serde-json helpers they already use for HTTP
+/// response parsing (`.as_str()`, `.as_i64()`, `.as_bool()`), without
+/// pulling the `toml` crate just to touch their own config.
 pub struct InitContext<'a> {
     pub env: &'a HashMap<String, String>,
-    pub config: &'a HashMap<String, toml::Value>,
+    pub config: &'a HashMap<String, serde_json::Value>,
     pub cache_dir: &'a PathBuf,
     pub logger: &'a dyn PluginLogger,
 }
@@ -46,7 +51,7 @@ pub struct InitRequest {
     #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
-    pub config: HashMap<String, toml::Value>,
+    pub config: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub cache_dir: PathBuf,
 }
@@ -355,8 +360,8 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("TMDB_API_KEY".into(), "secret".into());
 
-        let mut config: HashMap<String, toml::Value> = HashMap::new();
-        config.insert("api_key".into(), toml::Value::String("secret".into()));
+        let mut config: HashMap<String, serde_json::Value> = HashMap::new();
+        config.insert("api_key".into(), serde_json::Value::String("secret".into()));
 
         let req = InitRequest {
             env,
