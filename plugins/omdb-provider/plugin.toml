@@ -1,30 +1,35 @@
-# omdb-provider — plugin manifest
-# Install at: ~/.stui/plugins/omdb-provider/
-
 [plugin]
-name        = "omdb"
-version     = "0.1.0"
-description = "Open Movie Database — movie/TV info, ratings, posters"
-author      = "stui"
-abi_version = 1
-type        = "metadata"
-tags        = ["movies", "tv", "metadata"]
+id           = "omdb"
+name         = "omdb"
+version      = "1.0.0"
+abi_version  = 1
+description  = "Open Movie Database — movie/TV info, ratings, posters"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://www.omdbapi.com"
 
 [env]
-OMDB_API_KEY = ""                         # Free at www.omdbapi.com/apikey.aspx
+OMDB_API_KEY = ""
 
 [[config]]
 key       = "api_key"
 label     = "OMDB API Key"
-hint      = "Get free at www.omdbapi.com/apikey.aspx"
+hint      = "Get a free key at www.omdbapi.com/apikey.aspx"
 masked    = true
 required  = true
+env_var   = "OMDB_API_KEY"
 
 [permissions]
-network = true
+network = ["www.omdbapi.com"]
+
+[permissions.rate_limit]
+requests_per_second = 1
+burst               = 5
 
 [capabilities.catalog]
 kinds = ["movie", "series"]
 
-[capabilities]
-metadata = true
+search  = true
+lookup  = { id_sources = ["imdb"] }
+# OMDb has no enrich / artwork / credits / related endpoints; those verbs are
+# omitted so they fall through to the trait's NOT_IMPLEMENTED default.
