@@ -584,9 +584,14 @@ version = "0.1.0"
             );
             checked += 1;
         }
+        // After the Chunk 6 cleanup, plugins/ carries the 7 bundled metadata
+        // plugins: tmdb, omdb, anilist, kitsu, discogs, lastfm, musicbrainz.
+        // The threshold is intentionally loose so a single in-progress drop
+        // doesn't red-flag this test, but it still guards against an empty
+        // plugins/ dir silently passing.
         assert!(
-            checked >= 10,
-            "expected to check at least 10 plugins, got {checked}"
+            checked >= 7,
+            "expected to check at least 7 bundled plugins, got {checked}"
         );
     }
 }
