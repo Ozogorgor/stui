@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"sync"
 
 	"charm.land/lipgloss/v2"
 
@@ -28,6 +29,33 @@ const (
 	CardPosterRows = 9 // Height of the poster area in terminal rows
 	CardMinWidth   = 14
 )
+
+// Package-level registry of ImageView instances keyed by the cached poster
+// path. Reusing instances lets ImageView's internal chafa cache do its job
+// across frames — without this, every re-render re-shells chafa for every
+// visible card, which bottlenecks scrolling.
+var (
+	cardImageViewsMu sync.Mutex
+	cardImageViews   = map[string]*ImageView{}
+)
+
+// cardImageView returns the (possibly cached) ImageView for a given cached
+// poster path + dimensions. Width/height updates on the existing instance
+// are a no-op if unchanged and only invalidate the chafa cache when they
+// differ — both handled by ImageView.SetSize.
+func cardImageView(path string, w, h int) *ImageView {
+	cardImageViewsMu.Lock()
+	defer cardImageViewsMu.Unlock()
+	iv, ok := cardImageViews[path]
+	if !ok {
+		iv = NewImageView(w, h)
+		iv.SetImage(path)
+		cardImageViews[path] = iv
+		return iv
+	}
+	iv.SetSize(w, h)
+	return iv
+}
 
 // CardWidth calculates the width of each card given terminal width.
 func CardWidth(termWidth int) int {
@@ -47,7 +75,8 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	// ── Poster area ───────────────────────────────────────────────────────
 	//
 	// Precedence:
-	//  1. PosterArt — runtime pre-rendered block art (future caching path).
+	//  1. PosterArt — runtime-side pre-rendered block art; already read today,
+//     future caching work will populate it more eagerly.
 	//  2. PosterURL + on-disk cache hit — render through ImageView (chafa).
 	//  3. PosterURL + cache miss — enqueue for background download, show
 	//     existing placeholder so the user sees SOMETHING immediately.
@@ -58,9 +87,7 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 		poster = *entry.PosterArt
 	case entry.PosterURL != nil && *entry.PosterURL != "":
 		if cached, hit := posterpkg.CachedPath(*entry.PosterURL); hit {
-			iv := NewImageView(w, posterH)
-			iv.SetImage(cached)
-			poster = iv.View()
+			poster = cardImageView(cached, w, posterH).View()
 		} else {
 			posterpkg.Global().Enqueue(*entry.PosterURL)
 			poster = renderPlaceholderPoster(entry, w, posterH)
