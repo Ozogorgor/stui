@@ -35,7 +35,7 @@ Both land in the same files, so one spec, one implementation pass.
   ┌─ components/poster/ (new) ─────────┐
   │  Pool: 4 workers draining a queue  │
   │  skip if cache hit; else download  │
-  │  → ~/.stui/cache/posters/<hash>    │
+  │  → <stui-cache>/posters/<hash>.ext │
   │  emit a debounced refresh tick     │
   │  when any download completes       │
   └────────────────────────────────────┘
@@ -50,6 +50,8 @@ Two pure functions — no state, no network, easy to unit-test.
 ```go
 // CacheKey returns a stable filename for a poster URL.
 // Format: <sha256-hex>.<extension preserved from URL path>.
+// The URL's query string + fragment are stripped before extension
+// detection (so `?v=123` cache-busts don't fool the whitelist).
 // Extension whitelist: jpg, jpeg, png, webp, gif. Unknown → "jpg".
 func CacheKey(url string) string
 
@@ -83,6 +85,11 @@ func (p *Pool) Enqueue(url string)
 // ONE download has completed since the last receive. Debounced to 150ms so
 // a burst of completions coalesces into a single notify. The caller is a
 // long-lived tea.Cmd that re-runs on each receive.
+//
+// Buffered capacity 1 with non-blocking send on the pool side: if a signal
+// is already pending and nobody has drained it yet, further completions
+// are silently coalesced rather than blocking the workers. A slow TUI
+// consumer therefore CANNOT stall the pool.
 func (p *Pool) RefreshChan() <-chan struct{}
 ```
 
