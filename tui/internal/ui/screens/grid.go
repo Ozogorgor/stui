@@ -130,35 +130,19 @@ func RenderGrid(
 	}
 	endRow := min(startRow+visibleRows, totalRows)
 
-	// Build scrollbar track (one char per visible row).
+	// Build scrollbar (one styled char per visible row). The component
+	// always renders the track — we only allocate the column when
+	// totalRows > visibleRows; otherwise gridWidth keeps its full span.
+	//
+	// Note: we intentionally use components.ScrollbarChars (returns
+	// []string — one char per row) rather than components.ScrollbarStyle
+	// (a single concatenated string). The grid's per-row render loop below
+	// interleaves scrollbar chars into each row, so the per-row shape is
+	// load-bearing.
 	var sbChars []string
 	if needsScrollbar {
-		thumbH := max(1, visibleRows*visibleRows/max(1, totalRows))
-		thumbTop := 0
-		if totalRows > visibleRows {
-			thumbTop = startRow * (visibleRows - thumbH) / max(1, totalRows-visibleRows)
-		}
-		accentStr := lipgloss.NewStyle().Foreground(theme.T.Accent()).Render
-		trackStr := lipgloss.NewStyle().Foreground(theme.T.Border()).Render
-		for i := range visibleRows {
-			inThumb := i >= thumbTop && i < thumbTop+thumbH
-			if !inThumb {
-				sbChars = append(sbChars, trackStr("│"))
-				continue
-			}
-			if thumbH == 1 {
-				sbChars = append(sbChars, accentStr("█"))
-				continue
-			}
-			switch i {
-			case thumbTop:
-				sbChars = append(sbChars, accentStr("▐"))
-			case thumbTop + thumbH - 1:
-				sbChars = append(sbChars, accentStr("▌"))
-			default:
-				sbChars = append(sbChars, accentStr("█"))
-			}
-		}
+		sbStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
+		sbChars = components.ScrollbarChars(startRow, visibleRows, totalRows, sbStyle)
 	}
 
 	// Render grid rows.
