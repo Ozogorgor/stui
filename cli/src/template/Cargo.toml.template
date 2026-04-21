@@ -1,0 +1,17 @@
+[package]
+name = "{{PLUGIN_NAME}}-provider"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# TODO: change to a git dep or crates.io dep before shipping; `path = "../sdk"`
+# only works for plugins scaffolded in-tree next to the sdk crate.
+stui-plugin-sdk = { path = "../sdk" }
+serde           = { version = "1", features = ["derive"] }
+serde_json      = "1"
+toml            = "0.8"
+
+[dev-dependencies]

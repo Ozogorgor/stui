@@ -35,26 +35,114 @@ pub struct WasmInstance {
 }
 
 impl WasmInstance {
-    /// Call the plugin's `stui_search` export.
-    pub async fn search(&mut self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+    /// Generic helper: serialize `req` to JSON, call the named export, and
+    /// deserialize the `PluginResult<Resp>` returned by the plugin.
+    async fn call_verb<Req, Resp>(&mut self, fn_name: &str, req: &Req) -> Result<Resp, AbiError>
+    where
+        Req: serde::Serialize,
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
         let json = serde_json::to_string(req)?;
-        let raw = self.inner.call_export("stui_search", &json).await?;
-        let result: PluginResult<SearchResponse> = serde_json::from_str(&raw)?;
+        let raw = self.inner.call_export(fn_name, &json).await?;
+        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
         match result {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
     }
 
-    /// Call the plugin's `stui_resolve` export.
-    pub async fn resolve(&mut self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
-        let json = serde_json::to_string(req)?;
-        let raw = self.inner.call_export("stui_resolve", &json).await?;
-        let result: PluginResult<ResolveResponse> = serde_json::from_str(&raw)?;
+    /// Low-level entry point: call a named export with pre-serialized JSON and
+    /// deserialize the `PluginResult<Resp>` envelope from the raw response.
+    ///
+    /// Used by `WasmSupervisor::call_verb` so it can pre-serialize the request
+    /// before acquiring the instance lock, avoiding cross-await borrow issues.
+    pub(super) async fn call_export_typed<Resp>(
+        &mut self,
+        fn_name: &str,
+        json: &str,
+    ) -> Result<Resp, AbiError>
+    where
+        Resp: for<'de> serde::Deserialize<'de>,
+    {
+        let raw = self.inner.call_export(fn_name, json).await?;
+        let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
         match result {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
+    }
+
+    /// Call the plugin's `stui_init` export.
+    ///
+    /// Init has a different response shape than verb calls —
+    /// [`InitResultEnvelope`] has no success payload and its error side
+    /// carries a [`PluginInitError`] (not a [`PluginError`]). The result is
+    /// surfaced as [`InitError`] so the caller can distinguish plumbing
+    /// failures (network, memory) from plugin-reported init problems
+    /// (missing config).
+    pub async fn init(&mut self, req: &InitRequest) -> Result<(), InitError> {
+        let json = serde_json::to_string(req).map_err(AbiError::Serde)?;
+        let raw = self.inner.call_export("stui_init", &json).await
+            .map_err(InitError::Abi)?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        match Result::<(), PluginInitError>::from(env) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(InitError::Plugin(e)),
+        }
+    }
+
+    /// Low-level init caller — used by `WasmSupervisor::init` so the
+    /// supervisor can pre-serialize the request before acquiring the
+    /// instance lock, avoiding cross-await borrow issues. Callers should
+    /// prefer [`WasmInstance::init`].
+    pub(super) async fn call_init_with_json(
+        &mut self,
+        json: &str,
+    ) -> Result<(), InitError> {
+        let raw = self.inner.call_export("stui_init", json).await
+            .map_err(InitError::Abi)?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        match Result::<(), PluginInitError>::from(env) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(InitError::Plugin(e)),
+        }
+    }
+
+    /// Call the plugin's `stui_search` export.
+    pub async fn search(&mut self, req: &SearchRequest) -> Result<SearchResponse, AbiError> {
+        self.call_verb("stui_search", req).await
+    }
+
+    /// Call the plugin's `stui_resolve` export.
+    pub async fn resolve(&mut self, req: &ResolveRequest) -> Result<ResolveResponse, AbiError> {
+        self.call_verb("stui_resolve", req).await
+    }
+
+    /// Call the plugin's `stui_lookup` export.
+    pub async fn lookup(&mut self, req: &LookupRequest) -> Result<LookupResponse, AbiError> {
+        self.call_verb("stui_lookup", req).await
+    }
+
+    /// Call the plugin's `stui_enrich` export.
+    pub async fn enrich(&mut self, req: &EnrichRequest) -> Result<EnrichResponse, AbiError> {
+        self.call_verb("stui_enrich", req).await
+    }
+
+    /// Call the plugin's `stui_get_artwork` export.
+    pub async fn get_artwork(&mut self, req: &ArtworkRequest) -> Result<ArtworkResponse, AbiError> {
+        self.call_verb("stui_get_artwork", req).await
+    }
+
+    /// Call the plugin's `stui_get_credits` export.
+    pub async fn get_credits(&mut self, req: &CreditsRequest) -> Result<CreditsResponse, AbiError> {
+        self.call_verb("stui_get_credits", req).await
+    }
+
+    /// Call the plugin's `stui_related` export.
+    pub async fn related(&mut self, req: &RelatedRequest) -> Result<RelatedResponse, AbiError> {
+        self.call_verb("stui_related", req).await
     }
 }
 
@@ -79,7 +167,7 @@ impl WasmHost {
     ) -> Result<WasmInstance, AbiError> {
         info!(plugin = %plugin_name, path = %wasm_path.display(), max_memory_mb, "loading WASM plugin");
         let inner = WasmInner::load(wasm_path, plugin_name, ctx, max_memory_mb).await?;
-        let abi_version = inner.abi_version();
+        let abi_version = inner.abi_version().await;
         if abi_version != STUI_ABI_VERSION {
             return Err(AbiError::VersionMismatch {
                 plugin: abi_version,
@@ -535,16 +623,14 @@ mod inner_impl {
             })
         }
 
-        pub fn abi_version(&self) -> i32 {
-            // try_lock() is callable from sync context (returns TryLockResult, not a Future).
-            // If the store is held by a long-running auth wait, fall back to 0.
-            match self.store.try_lock() {
-                Ok(mut store) => self.instance
-                    .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
-                    .ok()
-                    .and_then(|f| f.call(&mut *store, ()).ok())
-                    .unwrap_or(-1),
-                Err(_) => 0,
+        /// Invoke the plugin's `stui_abi_version` export. Async because the
+        /// store runs in async mode (`config.async_support(true)`), which
+        /// makes sync `call()` panic at the wasmtime layer.
+        pub async fn abi_version(&self) -> i32 {
+            let mut store = self.store.lock().await;
+            match self.instance.get_typed_func::<(), i32>(&mut *store, "stui_abi_version") {
+                Ok(f) => f.call_async(&mut *store, ()).await.unwrap_or(-1),
+                Err(_) => -1,
             }
         }
 
@@ -719,7 +805,7 @@ mod stub_impl {
             Ok(WasmInner { plugin_name: plugin_name.to_string() })
         }
 
-        pub fn abi_version(&self) -> i32 {
+        pub async fn abi_version(&self) -> i32 {
             // Return the host version so the version check passes in stub mode.
             // Real plugins need the real host.
             STUI_ABI_VERSION

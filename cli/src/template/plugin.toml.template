@@ -1,0 +1,22 @@
+[plugin]
+id          = "{{PLUGIN_NAME}}"
+name        = "{{PLUGIN_NAME}}"
+version     = "0.1.0"
+abi_version = 1
+description = "{{PLUGIN_NAME}} metadata provider"
+author      = "you"
+
+[permissions]
+network = []  # add API hostnames here
+
+[permissions.rate_limit]
+requests_per_second = 1
+
+[capabilities.catalog]
+kinds  = ["movie"]   # scope the plugin handles; replace with real kinds
+search = true        # required verb — implemented as empty-result stub
+# lookup  = false     # uncomment + implement once ready
+# enrich  = false
+# artwork = false
+# credits = false
+# related = false

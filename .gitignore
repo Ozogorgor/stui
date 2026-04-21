@@ -44,3 +44,7 @@ plugins/**/target/
 plugins/**/*.so
 plugins/**/*.dll
 plugins/**/*.dylib
+# Dev-install symlinks produced by smoke-testing (stui plugin install --dev
+# expects a plugin.wasm next to plugin.toml; we symlink target/.../*.wasm in,
+# which should never land in git).
+plugins/**/plugin.wasm

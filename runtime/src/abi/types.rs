@@ -30,6 +30,8 @@
 //! stui_cache_set(kp: i32, kl: i32, vp: i32, vl: i32)
 //! ```
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::{EntryKind, SearchScope};
 
@@ -72,7 +74,7 @@ pub struct SearchResponse {
 /// exactly — typed numeric fields, kind, source, and all per-kind optional
 /// fields — so the JSON written by the host and the JSON read by the plugin
 /// after Task 7.1 migration share the same wire shape.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginEntry {
     /// Provider-scoped unique id (used for resolve calls).
     pub id: String,
@@ -125,6 +127,183 @@ pub enum PluginResult<T> {
     Err(PluginError),
 }
 
+// ── Lookup ────────────────────────────────────────────────────────────────────
+
+/// Payload passed to `stui_lookup`. Mirrors sdk::LookupRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookupRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    pub locale: Option<String>,
+}
+
+/// Returned by `stui_lookup`. Mirrors sdk::LookupResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LookupResponse {
+    pub entry: PluginEntry,
+}
+
+// ── Enrich ────────────────────────────────────────────────────────────────────
+
+/// Payload passed to `stui_enrich`. Mirrors sdk::EnrichRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnrichRequest {
+    pub partial: PluginEntry,
+    pub prefer_id_source: Option<String>,
+}
+
+/// Returned by `stui_enrich`. Mirrors sdk::EnrichResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnrichResponse {
+    pub entry: PluginEntry,
+    /// 0.0..=1.0 — plugin's own match-confidence score.
+    pub confidence: f32,
+}
+
+// ── Artwork ───────────────────────────────────────────────────────────────────
+
+/// Requested artwork resolution. Mirrors sdk::ArtworkSize exactly.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtworkSize {
+    Thumbnail,
+    Standard,
+    HiRes,
+    Any,
+}
+
+/// Payload passed to `stui_artwork`. Mirrors sdk::ArtworkRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtworkRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    pub size: ArtworkSize,
+}
+
+/// One resolved artwork URL with its metadata. Mirrors sdk::ArtworkVariant exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtworkVariant {
+    pub size: ArtworkSize,
+    pub url: String,
+    pub mime: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+/// Returned by `stui_artwork`. Mirrors sdk::ArtworkResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtworkResponse {
+    pub variants: Vec<ArtworkVariant>,
+}
+
+// ── Credits ───────────────────────────────────────────────────────────────────
+
+/// Payload passed to `stui_credits`. Mirrors sdk::CreditsRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreditsRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+}
+
+/// On-screen role for a cast member. Mirrors sdk::CastRole exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CastRole {
+    Actor,
+    Vocalist,
+    FeaturedArtist,
+    GuestAppearance,
+    Other(String),
+}
+
+/// A single cast credit. Mirrors sdk::CastMember exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CastMember {
+    pub name: String,
+    pub role: CastRole,
+    pub character: Option<String>,
+    pub instrument: Option<String>,
+    pub billing_order: Option<u32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub external_ids: HashMap<String, String>,
+}
+
+/// Behind-the-camera role. Mirrors sdk::CrewRole exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrewRole {
+    Director,
+    Writer,
+    Producer,
+    ExecutiveProducer,
+    Cinematographer,
+    Editor,
+    Composer,
+    Songwriter,
+    Lyricist,
+    Arranger,
+    Instrumentalist,
+    ProductionDesigner,
+    ArtDirector,
+    CostumeDesigner,
+    SoundDesigner,
+    VfxSupervisor,
+    Other(String),
+}
+
+/// A single crew credit. Mirrors sdk::CrewMember exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CrewMember {
+    pub name: String,
+    pub role: CrewRole,
+    pub department: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub external_ids: HashMap<String, String>,
+}
+
+/// Returned by `stui_credits`. Mirrors sdk::CreditsResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreditsResponse {
+    pub cast: Vec<CastMember>,
+    pub crew: Vec<CrewMember>,
+}
+
+// ── Related ───────────────────────────────────────────────────────────────────
+
+/// Relationship kind requested. Mirrors sdk::RelationKind exactly.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationKind {
+    SameArtist,
+    SameDirector,
+    SameStudio,
+    Similar,
+    Sequel,
+    Compilation,
+    Any,
+}
+
+/// Payload passed to `stui_related`. Mirrors sdk::RelatedRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelatedRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    pub relation: RelationKind,
+    pub limit: u32,
+}
+
+/// Returned by `stui_related`. Mirrors sdk::RelatedResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelatedResponse {
+    pub items: Vec<PluginEntry>,
+}
+
 // ── Host import payloads ──────────────────────────────────────────────────────
 
 /// HTTP response returned by the `stui_http_get` host import.
@@ -175,4 +354,222 @@ pub enum AbiError {
 
     #[error("memory error: {0}")]
     Memory(String),
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+// Re-export the wire types from the SDK so callers don't double-import.
+pub use stui_plugin_sdk::{InitRequest, InitResultEnvelope, PluginInitError};
+
+/// Error returned from `WasmHost::init` / `WasmSupervisor::init`.
+///
+/// Split from [`AbiError`] because init has a distinct failure mode:
+/// the plugin itself can report `MissingConfig` / `Fatal` via
+/// [`PluginInitError`] without a traptime failure. Plumbing / ABI errors
+/// (memory, missing export, serde failure, timeout) remain in the
+/// `Abi` variant.
+#[derive(Debug, thiserror::Error)]
+pub enum InitError {
+    #[error(transparent)]
+    Abi(#[from] AbiError),
+
+    #[error("plugin init reported: {0:?}")]
+    Plugin(PluginInitError),
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stui_plugin_sdk::EntryKind;
+
+    fn sample_entry() -> PluginEntry {
+        PluginEntry {
+            id: "tt1234567".into(),
+            kind: EntryKind::Movie,
+            title: "Test Movie".into(),
+            source: "test_source".into(),
+            ..Default::default()
+        }
+    }
+
+    // ── LookupRequest / LookupResponse ────────────────────────────────────
+
+    #[test]
+    fn lookup_request_round_trip() {
+        let req = LookupRequest {
+            id: "tt0000001".into(),
+            id_source: "imdb".into(),
+            kind: EntryKind::Movie,
+            locale: Some("en-US".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: LookupRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn lookup_response_round_trip() {
+        let resp = LookupResponse { entry: sample_entry() };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: LookupResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resp);
+    }
+
+    // ── EnrichRequest / EnrichResponse ────────────────────────────────────
+
+    #[test]
+    fn enrich_request_round_trip() {
+        let req = EnrichRequest {
+            partial: sample_entry(),
+            prefer_id_source: Some("tmdb".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: EnrichRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn enrich_response_round_trip() {
+        let resp = EnrichResponse {
+            entry: sample_entry(),
+            confidence: 0.95,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: EnrichResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resp);
+    }
+
+    // ── ArtworkRequest / ArtworkResponse ──────────────────────────────────
+
+    #[test]
+    fn artwork_size_snake_case() {
+        assert_eq!(serde_json::to_string(&ArtworkSize::HiRes).unwrap(), "\"hi_res\"");
+        assert_eq!(serde_json::to_string(&ArtworkSize::Thumbnail).unwrap(), "\"thumbnail\"");
+    }
+
+    #[test]
+    fn artwork_request_round_trip() {
+        let req = ArtworkRequest {
+            id: "tt0000002".into(),
+            id_source: "tmdb".into(),
+            kind: EntryKind::Movie,
+            size: ArtworkSize::Standard,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ArtworkRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn artwork_response_round_trip() {
+        let resp = ArtworkResponse {
+            variants: vec![ArtworkVariant {
+                size: ArtworkSize::Standard,
+                url: "https://example.com/art.jpg".into(),
+                mime: "image/jpeg".into(),
+                width: Some(500),
+                height: Some(750),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: ArtworkResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resp);
+    }
+
+    // ── CreditsRequest / CreditsResponse ──────────────────────────────────
+
+    /// Verify `CastRole::Other("Narrator")` serializes as `{"other":"Narrator"}`
+    /// (serde externally-tagged tuple variant with rename_all = "snake_case").
+    /// Both the ABI and SDK produce this shape — it is the canonical wire format.
+    #[test]
+    fn cast_role_other_round_trip() {
+        let role = CastRole::Other("Narrator".into());
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#"{"other":"Narrator"}"#);
+        let back: CastRole = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, role);
+    }
+
+    #[test]
+    fn crew_role_snake_case() {
+        let s = serde_json::to_string(&CrewRole::VfxSupervisor).unwrap();
+        assert_eq!(s, "\"vfx_supervisor\"");
+    }
+
+    #[test]
+    fn crew_role_other_round_trip() {
+        let role = CrewRole::Other("Foley Artist".into());
+        let json = serde_json::to_string(&role).unwrap();
+        let back: CrewRole = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, role);
+    }
+
+    #[test]
+    fn credits_request_round_trip() {
+        let req = CreditsRequest {
+            id: "tt0000003".into(),
+            id_source: "tmdb".into(),
+            kind: EntryKind::Movie,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: CreditsRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn credits_response_round_trip() {
+        let resp = CreditsResponse {
+            cast: vec![CastMember {
+                name: "Jane Doe".into(),
+                role: CastRole::Actor,
+                character: Some("Hero".into()),
+                instrument: None,
+                billing_order: Some(1),
+                external_ids: HashMap::new(),
+            }],
+            crew: vec![CrewMember {
+                name: "John Smith".into(),
+                role: CrewRole::Director,
+                department: Some("Directing".into()),
+                external_ids: HashMap::new(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: CreditsResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resp);
+        // external_ids must be omitted from JSON when empty
+        assert!(!json.contains("external_ids"));
+    }
+
+    // ── RelatedRequest / RelatedResponse ──────────────────────────────────
+
+    #[test]
+    fn relation_kind_snake_case() {
+        assert_eq!(serde_json::to_string(&RelationKind::SameArtist).unwrap(), "\"same_artist\"");
+        assert_eq!(serde_json::to_string(&RelationKind::SameDirector).unwrap(), "\"same_director\"");
+    }
+
+    #[test]
+    fn related_request_round_trip() {
+        let req = RelatedRequest {
+            id: "tt0000004".into(),
+            id_source: "tmdb".into(),
+            kind: EntryKind::Movie,
+            relation: RelationKind::Sequel,
+            limit: 10,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: RelatedRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn related_response_round_trip() {
+        let resp = RelatedResponse { items: vec![sample_entry()] };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: RelatedResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, resp);
+    }
 }

@@ -1,0 +1,30 @@
+[plugin]
+id           = "musicbrainz"
+name         = "musicbrainz"
+version      = "1.0.0"
+abi_version  = 1
+description  = "MusicBrainz — open music encyclopedia (artists, albums, tracks)"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://musicbrainz.org"
+
+[permissions]
+network = ["musicbrainz.org", "coverartarchive.org"]
+
+[permissions.rate_limit]
+# MusicBrainz enforces 1 req/s for authenticated User-Agent requests; go slightly
+# under to leave headroom for bursts and avoid 503s.
+requests_per_second = 1
+burst               = 2
+
+[capabilities.catalog]
+kinds = ["artist", "album", "track"]
+
+search  = true
+lookup  = { id_sources = ["musicbrainz"] }
+enrich  = true
+artwork = { sizes = ["thumbnail", "standard", "hires"] }
+credits = true
+# `related` is declared as a stub until MB's recommendations surface exists.
+# stui plugin lint emits a warning but passes; bundled plugins may ship stubs.
+related = { stub = true, reason = "related-releases endpoint pending" }

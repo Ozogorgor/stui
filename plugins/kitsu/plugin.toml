@@ -1,31 +1,33 @@
-# kitsu — plugin manifest
-# Install at: ~/.stui/plugins/kitsu/
-
 [plugin]
-name        = "kitsu"
-version     = "0.1.0"
-description = "Kitsu — anime metadata, search, trending"
-author      = "stui"
-abi_version = 1
-type        = "metadata"
-tags        = ["anime", "tv", "metadata"]
+id           = "kitsu"
+name         = "kitsu"
+version      = "1.0.0"
+abi_version  = 1
+description  = "Kitsu — anime metadata (movies + series)"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://kitsu.io"
 
 [env]
-KITSU_API_KEY = ""                    # optional — get at kitsu.io/settings/applications
+KITSU_API_KEY = ""
 
 [[config]]
-key       = "api_key"
-label     = "Kitsu API Key (optional)"
-hint      = "Get free at kitsu.io/settings/applications"
-masked    = true
-required  = false
+key      = "api_key"
+label    = "Kitsu API Key (optional)"
+hint     = "Free at kitsu.io/settings/applications; unauthenticated also works"
+masked   = true
+required = false
+env_var  = "KITSU_API_KEY"
 
 [permissions]
-network = true
+network = ["kitsu.io"]
+
+[permissions.rate_limit]
+requests_per_second = 1
+burst               = 5
 
 [capabilities.catalog]
 kinds = ["movie", "series"]
 
-[capabilities]
-metadata = true
-anime = true
+search = true
+lookup = { id_sources = ["kitsu", "myanimelist"] }

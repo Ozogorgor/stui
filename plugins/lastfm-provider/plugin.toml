@@ -1,58 +1,44 @@
-# lastfm-provider — plugin manifest
-# Install at: ~/.stui/plugins/lastfm-provider/
-
 [plugin]
-name        = "lastfm"
-version     = "0.1.0"
-description = "Last.fm — music scrobbling, charts, recommendations, and loved tracks"
-author      = "stui"
-abi_version = 1
-type        = "metadata"
-tags        = ["music", "scrobbling", "social"]
+id           = "lastfm"
+name         = "lastfm"
+version      = "1.0.0"
+abi_version  = 1
+description  = "Last.fm / Libre.fm — music discovery and charts"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://libre.fm"
+
+# Last.fm's official API is deprecated and its endpoints redirect to
+# Libre.fm, a compatible free alternative. This plugin talks to Libre.fm
+# directly and still uses a Last.fm-format api_key (Libre.fm accepts any
+# non-empty token for public endpoints — a real key is optional).
 
 [env]
-LASTFM_API_KEY = ""                     # Required — https://www.last.fm/api/account/create
-LASTFM_API_SECRET = ""                  # Required for scrobbling — same page as API key
-LASTFM_USERNAME = ""                    # Optional — for scrobbling and personal data
-LASTFM_PASSWORD = ""                    # Optional — for scrobbling (or use token)
+LASTFM_API_KEY = ""
 
 [[config]]
-key       = "api_key"
-label     = "Last.fm API Key"
-hint      = "Get free at https://www.last.fm/api/account/create"
-masked    = true
-required  = true
-
-[[config]]
-key       = "api_secret"
-label     = "Last.fm API Secret"
-hint      = "Same page as API key"
-masked    = true
-required  = true
-
-[[config]]
-key       = "username"
-label     = "Username (for scrobbling)"
-hint      = "Optional — enables scrobbling"
-masked    = false
-required  = false
-
-[[config]]
-key       = "token"
-label     = "Auth Token (alternative to password)"
-hint      = "Get token from https://www.last.fm/api/auth/?api_key=YOUR_KEY"
-masked    = true
-required  = false
+key      = "api_key"
+label    = "Last.fm / Libre.fm API Key"
+hint     = "Free at last.fm/api/account/create (accepted by libre.fm)"
+masked   = true
+required = true
+env_var  = "LASTFM_API_KEY"
 
 [permissions]
-network = [
-  "ws.audioscrobbler.com",
-  "Last.fm is deprecated — all requests now go through libre.fm",
-]
+network = ["libre.fm", "lastfm-img2.akamaized.net", "lastfm.freetls.fastly.net"]
+
+[permissions.rate_limit]
+# libre.fm / last.fm public endpoints tolerate ~5 req/min in practice; keep
+# well under that and let burst cover brief spikes.
+requests_per_second = 0.1
+burst               = 2
 
 [capabilities.catalog]
 kinds = ["artist", "album", "track"]
 
-[capabilities]
-metadata = true
-music = true
+search = true
+enrich = true
+# Lookup intentionally omitted: Last.fm's API exposes `artist.getInfo` /
+# `album.getInfo` / `track.getInfo` keyed by (name, artist) rather than a
+# canonical id, so id-based lookup would require a fake "{artist}|{track}"
+# id that doesn't round-trip. enrich covers the realistic use case.

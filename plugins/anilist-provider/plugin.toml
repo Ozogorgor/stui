@@ -1,21 +1,27 @@
-# anilist-provider — plugin manifest
-# Install at: ~/.stui/plugins/anilist-provider/
-
 [plugin]
-name        = "anilist"
-version     = "0.1.0"
-description = "AniList — anime metadata, trending, search"
-author      = "stui"
-abi_version = 1
-type        = "metadata"
-tags        = ["anime", "tv", "metadata"]
+id           = "anilist"
+name         = "anilist"
+version      = "1.0.0"
+abi_version  = 1
+description  = "AniList — anime metadata (movies + series)"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://anilist.co"
 
 [permissions]
-network = true
+network = ["graphql.anilist.co", "s4.anilist.co"]
+
+[permissions.rate_limit]
+# AniList allows ~90 req/min in practice. 0.5 rps leaves headroom for bursts.
+requests_per_second = 0.5
+burst               = 5
 
 [capabilities.catalog]
 kinds = ["movie", "series"]
 
-[capabilities]
-metadata = true
-anime = true
+search   = true
+lookup   = { id_sources = ["anilist", "myanimelist"] }
+enrich   = true
+artwork  = { sizes = ["thumbnail", "standard", "hires"] }
+credits  = true
+related  = true

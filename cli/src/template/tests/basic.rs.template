@@ -1,0 +1,21 @@
+use {{PLUGIN_NAME_UNDERSCORED}}_provider::{{PLUGIN_TYPE}};
+use stui_plugin_sdk::{CatalogPlugin, SearchRequest, SearchScope};
+
+#[test]
+fn search_returns_empty_stub() {
+    let plugin = {{PLUGIN_TYPE}}::new();
+    let req = SearchRequest {
+        query: "test".to_string(),
+        scope: SearchScope::Global,
+        page: 0,
+        limit: 10,
+        per_scope_limit: None,
+        locale: None,
+    };
+    let resp = match plugin.search(req) {
+        stui_plugin_sdk::PluginResult::Ok(r) => r,
+        stui_plugin_sdk::PluginResult::Err(e) => panic!("search returned an error: {}", e.message),
+    };
+    assert_eq!(resp.items.len(), 0);
+    assert_eq!(resp.total, 0);
+}

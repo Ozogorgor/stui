@@ -7,18 +7,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "anilist-provider",
-    "discogs-provider",
-    "imdb-provider",
-    "javdb",
-    "kitsu",
-    "kitsunekko",
-    "lastfm-provider",
-    "listenbrainz-provider",
-    "omdb-provider",
-    "r18",
-    "subscene",
     "tmdb-provider",
-    "torrentio-rpc",
-    "yify-subs",
+    "omdb-provider",
+    "anilist-provider",
+    "kitsu",
+    "discogs-provider",
+    "lastfm-provider",
+    "musicbrainz-provider",
 ]
