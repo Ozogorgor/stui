@@ -543,7 +543,54 @@ impl Engine {
             // plugin is registered but marked unavailable until reload.
             match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg).await {
                 Ok(sup) => {
-                    reg.insert_wasm_supervisor(&pid, Arc::new(sup));
+                    // Call `Plugin::init` once after instantiation. Failures here
+                    // do NOT register the supervisor — calls would all bounce. The
+                    // plugin is still added to the registry so `list_plugins`
+                    // surfaces it; user fixes config / restarts STUI to recover.
+                    //
+                    // Config/env resolution uses the four-level precedence from
+                    // `plugin::state::resolve_config` with TUI overrides currently
+                    // empty (StateStore integration lands in a later chunk). The
+                    // effective map is surfaced as both `env` (string-typed) and
+                    // `config` (toml::Value::String) so plugins can read either
+                    // shape during the migration window.
+                    let resolved = crate::plugin::state::resolve_config(
+                        &loaded.manifest,
+                        &HashMap::new(),
+                        |k| std::env::var(k).ok(),
+                    );
+                    let init_req = crate::abi::InitRequest {
+                        env: resolved.clone(),
+                        config: resolved
+                            .into_iter()
+                            .map(|(k, v)| (k, toml::Value::String(v)))
+                            .collect(),
+                        cache_dir: ctx.cache_dir.clone(),
+                    };
+                    match sup.init(&init_req).await {
+                        Ok(()) => {
+                            info!(plugin = %pname, "plugin init ok");
+                            reg.insert_wasm_supervisor(&pid, Arc::new(sup));
+                        }
+                        Err(crate::abi::InitError::Plugin(
+                            crate::abi::PluginInitError::MissingConfig { fields, hint },
+                        )) => {
+                            warn!(
+                                plugin  = %pname,
+                                missing = ?fields,
+                                hint    = ?hint,
+                                "plugin init reports missing config — set fields via TUI then reload"
+                            );
+                        }
+                        Err(crate::abi::InitError::Plugin(
+                            crate::abi::PluginInitError::Fatal(msg),
+                        )) => {
+                            warn!(plugin = %pname, err = %msg, "plugin init fatal — unavailable until reload");
+                        }
+                        Err(crate::abi::InitError::Abi(abi_err)) => {
+                            warn!(plugin = %pname, err = %abi_err, "plugin init plumbing error — unavailable until reload");
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(plugin = %pname, err = %e, "WASM supervisor load failed — plugin unavailable until reload");
