@@ -99,7 +99,6 @@ fn http_get_with_bearer(url: &str, token: &str) -> Result<String, String> {
     #[link(wasm_import_module = "stui")]
     extern "C" {
         fn stui_http_post(ptr: *const u8, len: i32) -> i64;
-        fn stui_free(ptr: i32, len: i32);
     }
 
     let packed = unsafe { stui_http_post(payload.as_ptr(), payload.len() as i32) };
@@ -108,10 +107,11 @@ fn http_get_with_bearer(url: &str, token: &str) -> Result<String, String> {
     }
     let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
     let len = (packed & 0xFFFFFFFF) as usize;
+    // Host writes into plugin-owned linear memory; the SDK's sibling HTTP
+    // helpers don't manually free either — the allocation is reclaimed on
+    // the next `stui_alloc` cycle or when the module unloads.
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-    let json = std::str::from_utf8(slice).map(String::from);
-    unsafe { stui_free(ptr as i32, len as i32) };
-    let json = json.map_err(|e| e.to_string())?;
+    let json = std::str::from_utf8(slice).map(String::from).map_err(|e| e.to_string())?;
 
     #[derive(Deserialize)]
     struct R { status: u16, body: String }
