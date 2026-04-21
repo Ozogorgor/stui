@@ -119,7 +119,7 @@ impl std::str::FromStr for PluginType {
     /// canonical names (`metadata-provider`) and the legacy aliases
     /// (`metadata`, `provider`, `subtitle`).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().as_str() {
             "metadata-provider" | "metadata" => Ok(PluginType::MetadataProvider),
             "stream-provider" => Ok(PluginType::StreamProvider),
             "subtitle-provider" => Ok(PluginType::SubtitleProvider),
@@ -128,7 +128,7 @@ impl std::str::FromStr for PluginType {
             "indexer" => Ok(PluginType::Indexer),
             "provider" => Ok(PluginType::Provider),
             "subtitle" => Ok(PluginType::Subtitle),
-            other => Err(format!("unknown plugin type: {other}")),
+            _ => Err(format!("unknown plugin type: {s}")),
         }
     }
 }
