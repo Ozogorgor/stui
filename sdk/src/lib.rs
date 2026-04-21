@@ -260,9 +260,14 @@ pub trait CatalogPlugin: Plugin {
 
 // ── Host function imports (called by plugin at runtime) ───────────────────────
 
-/// Log a message through the stui host logger.
-/// Use the `log!` / `info!` / `warn!` macros instead of calling this directly.
+/// Host imports exposed to plugins. All functions are registered by the
+/// runtime under the dedicated `stui` WASM import module so they don't
+/// collide with WASI's `env` namespace.
+///
+/// Use the `log!` / `info!` / `warn!` macros instead of calling `stui_log`
+/// directly.
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "stui")]
 extern "C" {
     pub fn stui_log(level: i32, ptr: *const u8, len: i32);
     pub fn stui_http_get(url_ptr: *const u8, url_len: i32) -> i64;
