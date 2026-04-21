@@ -106,7 +106,7 @@ fn classify_http_err(err: &str) -> PluginError {
 fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("discogs: parse error: {}", e);
-        PluginError { code: "parse_error".to_string(), message: format!("Discogs JSON parse failure: {e}") }
+        PluginError { code: error_codes::PARSE_ERROR.to_string(), message: format!("Discogs JSON parse failure: {e}") }
     })
 }
 

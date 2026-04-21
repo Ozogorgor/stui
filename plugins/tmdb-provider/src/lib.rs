@@ -161,7 +161,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("tmdb: parse error: {}", e);
         PluginError {
-            code: "parse_error".to_string(),
+            code: error_codes::PARSE_ERROR.to_string(),
             message: format!("TMDB JSON parse failure: {e}"),
         }
     })
@@ -1213,7 +1213,7 @@ mod tests {
     fn parse_json_invalid_returns_parse_error() {
         let r: Result<serde_json::Value, _> = parse_json("not json");
         let err = r.unwrap_err();
-        assert_eq!(err.code, "parse_error");
+        assert_eq!(err.code, error_codes::PARSE_ERROR);
     }
 
     /// Verify that a movie search payload parses as `PagedResponse<MovieItem>`

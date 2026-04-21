@@ -125,7 +125,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("omdb: parse error: {}", e);
         PluginError {
-            code: "parse_error".to_string(),
+            code: error_codes::PARSE_ERROR.to_string(),
             message: format!("OMDb JSON parse failure: {e}"),
         }
     })

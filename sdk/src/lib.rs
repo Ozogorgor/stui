@@ -67,15 +67,17 @@ pub use capabilities::{
 pub mod error_codes {
     //! Stable error-code string constants used in `PluginError::code`.
     //! The runtime matches on these strings, so changing a value is a
-    //! wire-breaking change.
+    //! wire-breaking change. Canonical form is snake_case to match
+    //! the rest of the ABI.
 
     pub const UNSUPPORTED_SCOPE: &str = "unsupported_scope";
-    pub const INVALID_REQUEST: &str = "invalid_request";
-    pub const NOT_IMPLEMENTED: &str = "not_implemented";
-    pub const UNKNOWN_ID: &str = "unknown_id";
-    pub const RATE_LIMITED: &str = "rate_limited";
-    pub const TRANSIENT: &str = "transient";
-    pub const REMOTE_ERROR: &str = "remote_error";
+    pub const INVALID_REQUEST:   &str = "invalid_request";
+    pub const NOT_IMPLEMENTED:   &str = "not_implemented";
+    pub const UNKNOWN_ID:        &str = "unknown_id";
+    pub const RATE_LIMITED:      &str = "rate_limited";
+    pub const TRANSIENT:         &str = "transient";
+    pub const REMOTE_ERROR:      &str = "remote_error";
+    pub const PARSE_ERROR:       &str = "parse_error";
 }
 
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
@@ -727,7 +729,10 @@ macro_rules! __catalog_abi_fn {
                 Ok(r) => r,
                 Err(e) => {
                     return $crate::__write_result(
-                        &$crate::PluginResult::<$resp_ty>::err("PARSE_ERROR", e.to_string()),
+                        &$crate::PluginResult::<$resp_ty>::err(
+                            $crate::error_codes::PARSE_ERROR,
+                            e.to_string(),
+                        ),
                     );
                 }
             };
@@ -869,7 +874,7 @@ macro_rules! stui_export_plugin {
                 Err(e) => {
                     return $crate::__write_result(
                         &$crate::PluginResult::<$crate::ResolveResponse>::err(
-                            "PARSE_ERROR",
+                            $crate::error_codes::PARSE_ERROR,
                             e.to_string(),
                         ),
                     )

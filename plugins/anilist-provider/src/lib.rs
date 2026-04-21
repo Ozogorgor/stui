@@ -83,7 +83,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("anilist: parse error: {}", e);
         PluginError {
-            code: "parse_error".to_string(),
+            code: error_codes::PARSE_ERROR.to_string(),
             message: format!("AniList JSON parse failure: {e}"),
         }
     })
@@ -92,7 +92,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
 fn gql(query: &'static str, variables: serde_json::Value) -> Result<String, PluginError> {
     let body = serde_json::to_string(&GraphQLRequest { query, variables })
         .map_err(|e| PluginError {
-            code: "parse_error".to_string(),
+            code: error_codes::PARSE_ERROR.to_string(),
             message: format!("gql request encode: {e}"),
         })?;
     http_post_json(GRAPHQL_URL, &body).map_err(|e| classify_http_err(&e))
