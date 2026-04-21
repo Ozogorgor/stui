@@ -1,30 +1,38 @@
-# tmdb-provider — plugin manifest
-# Install at: ~/.stui/plugins/tmdb-provider/
-
 [plugin]
-name        = "tmdb-provider"
-version     = "0.1.0"
-description = "The Movie Database — movies & TV metadata, posters, ratings"
-author      = "stui"
-abi_version = 1
-type        = "metadata"  # provides catalog/metadata, not streams
-tags        = ["movies", "tv", "metadata"]
+id           = "tmdb"
+name         = "tmdb"
+version      = "1.0.0"
+abi_version  = 1
+description  = "The Movie Database — movies, TV series, episodes"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://github.com/Ozogorgor/stui_plugins"
+repository   = "https://github.com/Ozogorgor/stui_plugins"
 
 [env]
-TMDB_API_KEY = ""                         # Free at themoviedb.org/settings/api
+TMDB_API_KEY = ""
 
 [[config]]
 key       = "api_key"
 label     = "TMDB API Key"
-hint      = "Get free at themoviedb.org/settings/api"
+hint      = "Get a free key at themoviedb.org/settings/api"
 masked    = true
 required  = true
+env_var   = "TMDB_API_KEY"
 
 [permissions]
-network = true
+network = ["api.themoviedb.org", "image.tmdb.org"]
+
+[permissions.rate_limit]
+requests_per_second = 4
+burst               = 10
 
 [capabilities.catalog]
 kinds = ["movie", "series", "episode"]
 
-[capabilities]
-metadata = true
+search  = true
+lookup  = { id_sources = ["tmdb", "imdb"] }
+enrich  = true
+artwork = { sizes = ["thumbnail", "standard", "hires"] }
+credits = true
+related = true
