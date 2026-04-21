@@ -300,6 +300,102 @@ macro_rules! plugin_error { ($($t:tt)*) => { $crate::host_log(4, &format!($($t)*
 #[macro_export]
 macro_rules! plugin_debug { ($($t:tt)*) => { $crate::host_log(1, &format!($($t)*)) }; }
 
+/// Strip sensitive query parameters from a URL so it's safe to log.
+///
+/// Replaces the *value* of any query parameter whose key matches one of
+/// the well-known auth names (`api_key`, `apikey`, `key`, `token`,
+/// `access_token`, `secret`) with `***`. All other query params are
+/// preserved. Fragments and paths are untouched.
+///
+/// Use this in `plugin_info!` / `plugin_debug!` calls that would
+/// otherwise embed the full authenticated URL — even info-level logs
+/// can end up in crash reports, user bug submissions, or terminal
+/// scrollback.
+///
+/// ```
+/// use stui_plugin_sdk::log_url;
+/// let safe = log_url("https://api.example.com/x?query=matrix&api_key=deadbeef");
+/// assert_eq!(safe, "https://api.example.com/x?query=matrix&api_key=***");
+/// ```
+pub fn log_url(url: &str) -> String {
+    const SENSITIVE: &[&str] = &[
+        "api_key", "apikey", "key", "token", "access_token", "secret",
+    ];
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    // Split off fragment so we reattach it at the end unchanged.
+    let (query, fragment) = match query.split_once('#') {
+        Some((q, f)) => (q, Some(f)),
+        None         => (query, None),
+    };
+    let scrubbed: Vec<String> = query
+        .split('&')
+        .map(|kv| match kv.split_once('=') {
+            Some((k, _)) if SENSITIVE.iter().any(|s| k.eq_ignore_ascii_case(s)) => {
+                format!("{k}=***")
+            }
+            _ => kv.to_string(),
+        })
+        .collect();
+    let joined = scrubbed.join("&");
+    match fragment {
+        Some(f) => format!("{base}?{joined}#{f}"),
+        None    => format!("{base}?{joined}"),
+    }
+}
+
+#[cfg(test)]
+mod log_url_tests {
+    use super::log_url;
+
+    #[test]
+    fn strips_api_key() {
+        assert_eq!(
+            log_url("https://api.tmdb.org/3/search/movie?query=matrix&api_key=deadbeef"),
+            "https://api.tmdb.org/3/search/movie?query=matrix&api_key=***",
+        );
+    }
+
+    #[test]
+    fn preserves_innocuous_params() {
+        assert_eq!(
+            log_url("https://x.example/y?page=2&limit=5"),
+            "https://x.example/y?page=2&limit=5",
+        );
+    }
+
+    #[test]
+    fn handles_multiple_sensitive_keys() {
+        let out = log_url("https://a?apikey=A&token=B&other=ok&access_token=C");
+        assert!(out.contains("apikey=***"));
+        assert!(out.contains("token=***"));
+        assert!(out.contains("access_token=***"));
+        assert!(out.contains("other=ok"));
+    }
+
+    #[test]
+    fn case_insensitive_key_match() {
+        assert_eq!(
+            log_url("https://a?API_KEY=X"),
+            "https://a?API_KEY=***",
+        );
+    }
+
+    #[test]
+    fn preserves_fragment() {
+        assert_eq!(
+            log_url("https://a/b?api_key=X#section"),
+            "https://a/b?api_key=***#section",
+        );
+    }
+
+    #[test]
+    fn no_query_is_passthrough() {
+        assert_eq!(log_url("https://a/b"), "https://a/b");
+    }
+}
+
 /// Make an HTTP GET request through the sandboxed host.
 /// Returns the response body as a String, or an error message.
 pub fn http_get(url: &str) -> Result<String, String> {

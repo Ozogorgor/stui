@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    cache_get, error_codes, http_get,
+    cache_get, error_codes, http_get, log_url,
     id_sources, normalize_crew_role,
     plugin_error, plugin_info,
     stui_export_catalog_plugin,
@@ -494,7 +494,7 @@ impl CatalogPlugin for TmdbPlugin {
         };
         let _ = use_multi; // reserved for future `SearchScope::Global` variant
 
-        plugin_info!("tmdb: search {} (query='{}')", url, query);
+        plugin_info!("tmdb: search {} (query='{}')", log_url(&url), query);
 
         let body = match http_get(&url) {
             Ok(b) => b,
@@ -713,7 +713,7 @@ impl CatalogPlugin for TmdbPlugin {
             query.push_str(&format!("&{year_param}={y}"));
         }
         let search_url = build_url(endpoint, &query, &api_key);
-        plugin_info!("tmdb: enrich search {}", search_url);
+        plugin_info!("tmdb: enrich search {}", log_url(&search_url));
 
         let search_body = match http_get(&search_url) {
             Ok(b) => b,
