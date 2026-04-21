@@ -8,6 +8,7 @@ use crate::ipc::{
     ErrorCode, PluginReposResponse, ProviderField, ProviderSchema, ProviderSettingsResponse,
     Response, SetConfigRequest, SetPluginReposRequest,
 };
+use crate::plugin::PluginMetaExt;
 
 // ── SetConfig ─────────────────────────────────────────────────────────────────
 

@@ -13,9 +13,9 @@ pub mod rate_limit;
 // ── Re-exports for external callers ───────────────────────────────────────────
 
 pub use manifest::{
-    AuthorMeta, Capabilities, CatalogCapability, ManifestValidationError, NetworkPermission,
-    Permissions, PluginCapability, PluginConfigField, PluginManifest, PluginMeta, PluginType,
-    RateLimit, VerbConfig,
+    ArtworkConfig, AuthorMeta, Capabilities, CatalogCapability, LookupConfig,
+    ManifestValidationError, NetworkPermission, Permissions, PluginCapability, PluginConfigField,
+    PluginManifest, PluginMeta, PluginMetaExt, PluginType, RateLimit, VerbConfig,
 };
 pub use loader::{load_from_dir, load_manifest, parse_manifest, resolve_entrypoint, ExecutionMode, LoadedPlugin, LoaderError};
 pub use state::{PluginState, PluginStatus, StateStore};

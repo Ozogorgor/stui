@@ -44,6 +44,7 @@ use crate::ipc::{
 };
 use crate::plugin::{ExecutionMode, LoadedPlugin};
 use crate::plugin;
+use crate::plugin::PluginMetaExt;
 use crate::sandbox::SandboxCtx;
 use crate::{resolver, scraper};
 

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::kinds::EntryKind;
-use crate::{PluginEntry, PluginManifest, PluginResult};
+use crate::manifest::{ManifestValidationError, PluginManifest};
+use crate::{PluginEntry, PluginResult};
 
 // ── InitContext ───────────────────────────────────────────────────────────────
 
@@ -233,72 +234,17 @@ pub fn err_not_implemented<T>() -> PluginResult<T> {
     )
 }
 
-// ── Slim manifest validator (used by CLI lint/build) ──────────────────────────
+// ── Manifest validator (used by CLI lint/build) ───────────────────────────────
 
-/// Schema-only manifest validation. Covers:
-/// - Legacy fields rejected ([plugin] type, [permissions] network=bool, filesystem).
-/// - Canonical id-sources in [capabilities.catalog] lookup.id_sources.
-/// - Required verb presence (search = true on CatalogPlugin).
+/// Validate a freshly-parsed manifest against the canonical schema.
 ///
-/// The runtime's full validator in `runtime::plugin::manifest::validate()`
-/// is a superset that adds runtime-only concerns (e.g., network allowlist
-/// resolution against real DNS). This slim version is sufficient for static
-/// checks in `stui plugin lint` / `stui plugin build`.
+/// Thin delegator to [`crate::manifest::validate`] — the authoritative
+/// validator lives alongside the manifest types. This name is kept here as a
+/// stable entry point for the CLI (`stui plugin lint` / `stui plugin build`)
+/// so call sites like `stui_plugin_sdk::capabilities::validate_manifest(&m)`
+/// continue to compile.
 pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestValidationError> {
-    // Legacy [plugin] type field
-    // NOTE: The existing PluginMeta in sdk/src/lib.rs may not yet have a
-    // `plugin_type` field — check and skip this validation if it doesn't
-    // exist. The Task 1.7 runtime validator covers legacy fields at a deeper
-    // level; this SDK slim version aligns with whatever fields sdk::PluginMeta
-    // exposes today.
-
-    // Legacy [permissions] network = true bool
-    if let Some(perms) = &manifest.permissions {
-        if matches!(perms.network, Some(crate::NetworkPermission::Bool(_))) {
-            return Err(ManifestValidationError::LegacyField(
-                "[permissions] network = true is no longer supported; use network = [\"host1\", ...]".into(),
-            ));
-        }
-    }
-
-    // Canonical id-sources in lookup.id_sources
-    // Only check if the plugin declares catalog capability with typed form.
-    // If the CatalogCapability::Typed form has a `lookup` field in the form
-    // of a { id_sources = [...] } sub-table, validate each source.
-    //
-    // NOTE: current sdk::CatalogCapability may not yet have per-verb sub-tables;
-    // that's being added in Task 1.7 (manifest.rs runtime side). For now, the
-    // SDK slim validator can only check what sdk::CatalogCapability exposes
-    // today. Keep this minimal and add checks as the schema grows.
-    if let Some(caps) = &manifest.capabilities {
-        if let Some(catalog) = &caps.catalog {
-            for src in &catalog.id_sources {
-                if !crate::id_sources::is_canonical(src) {
-                    return Err(ManifestValidationError::UnknownIdSource(src.clone()));
-                }
-            }
-        }
-    }
-
-    // Required verb: search must be declared.
-    // This is also dependent on the future schema shape — for now, we can only
-    // check that the plugin declares some catalog capability at all.
-    // TODO(Task 2.3): once Task 1.7 extends CatalogCapability with per-verb
-    // sub-tables, add: check that `search = true` is declared here.
-
-    Ok(())
-}
-
-#[derive(Debug, thiserror::Error, Clone)]
-pub enum ManifestValidationError {
-    #[error("legacy manifest field: {0}")]
-    LegacyField(String),
-
-    #[error("unknown id-source: {0} (see sdk::id_sources for canonical set)")]
-    UnknownIdSource(String),
-
-    #[error("required verb not declared: {0}")]
-    MissingRequiredVerb(String),
+    crate::manifest::validate(manifest)
 }
 
 #[cfg(test)]

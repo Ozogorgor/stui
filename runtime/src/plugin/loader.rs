@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use thiserror::Error;
 
-use super::manifest::{self, ManifestValidationError, PluginManifest};
+use super::manifest::{self, ManifestValidationError, PluginManifest, PluginMetaExt};
 
 // ── LoadedPlugin ──────────────────────────────────────────────────────────────
 

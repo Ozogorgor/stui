@@ -38,6 +38,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::engine::Engine;
 use crate::plugin::load_manifest;
+use crate::plugin::PluginMetaExt;
 
 // ── Toast notification ────────────────────────────────────────────────────────
 

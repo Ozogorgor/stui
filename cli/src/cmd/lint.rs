@@ -64,12 +64,19 @@ mod tests {
 
     #[test]
     fn lint_passes_minimal_valid_manifest() {
+        // Minimal valid canonical manifest: typed catalog with `search = true`.
+        // Legacy bool form `[capabilities] catalog = true` also passes but
+        // carries no scope information — we standardize on the typed form.
         let manifest = parse(
             r#"
 [plugin]
 id      = "my-plugin"
 name    = "My Plugin"
 version = "0.1.0"
+
+[capabilities.catalog]
+kinds  = ["movie"]
+search = true
 "#,
         );
         assert!(run_manifest(&manifest).is_ok());
@@ -77,6 +84,7 @@ version = "0.1.0"
 
     #[test]
     fn lint_passes_manifest_with_canonical_id_sources() {
+        // Canonical id-sources now live in `[capabilities.catalog.lookup]`.
         let manifest = parse(
             r#"
 [plugin]
@@ -85,6 +93,10 @@ name    = "TMDB Catalog"
 version = "0.1.0"
 
 [capabilities.catalog]
+kinds  = ["movie"]
+search = true
+
+[capabilities.catalog.lookup]
 id_sources = ["tmdb", "imdb"]
 "#,
         );
@@ -101,6 +113,10 @@ name    = "Bad Plugin"
 version = "0.1.0"
 
 [capabilities.catalog]
+kinds  = ["movie"]
+search = true
+
+[capabilities.catalog.lookup]
 id_sources = ["definitely_not_a_real_source_xyz"]
 "#,
         );
@@ -127,6 +143,10 @@ version = "0.1.0"
 
 [permissions]
 network = true
+
+[capabilities.catalog]
+kinds  = ["movie"]
+search = true
 "#,
         )
         .expect("should parse as toml");
@@ -149,8 +169,40 @@ version = "0.1.0"
 
 [permissions]
 network = ["api.example.com"]
+
+[capabilities.catalog]
+kinds  = ["movie"]
+search = true
 "#,
         );
         assert!(run_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn lint_fails_when_catalog_search_missing() {
+        // New canonical-schema enforcement: the CLI validator now catches
+        // `[capabilities.catalog]` without `search = true`. This is the
+        // proof-of-consolidation test: with the old stub-shape SDK the
+        // omission passed silently; with the authoritative SDK it fails.
+        let manifest = parse(
+            r#"
+[plugin]
+id      = "no-search"
+name    = "No Search"
+version = "0.1.0"
+
+[capabilities.catalog]
+kinds = ["movie"]
+"#,
+        );
+        let err = run_manifest(&manifest).unwrap_err();
+        assert!(
+            err.to_string().contains("required verb not declared"),
+            "error should mention required verb: {err}"
+        );
+        assert!(
+            err.to_string().contains("search"),
+            "error should name the search verb: {err}"
+        );
     }
 }
