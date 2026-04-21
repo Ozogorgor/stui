@@ -167,7 +167,7 @@ impl WasmHost {
     ) -> Result<WasmInstance, AbiError> {
         info!(plugin = %plugin_name, path = %wasm_path.display(), max_memory_mb, "loading WASM plugin");
         let inner = WasmInner::load(wasm_path, plugin_name, ctx, max_memory_mb).await?;
-        let abi_version = inner.abi_version();
+        let abi_version = inner.abi_version().await;
         if abi_version != STUI_ABI_VERSION {
             return Err(AbiError::VersionMismatch {
                 plugin: abi_version,
@@ -623,16 +623,14 @@ mod inner_impl {
             })
         }
 
-        pub fn abi_version(&self) -> i32 {
-            // try_lock() is callable from sync context (returns TryLockResult, not a Future).
-            // If the store is held by a long-running auth wait, fall back to 0.
-            match self.store.try_lock() {
-                Ok(mut store) => self.instance
-                    .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
-                    .ok()
-                    .and_then(|f| f.call(&mut *store, ()).ok())
-                    .unwrap_or(-1),
-                Err(_) => 0,
+        /// Invoke the plugin's `stui_abi_version` export. Async because the
+        /// store runs in async mode (`config.async_support(true)`), which
+        /// makes sync `call()` panic at the wasmtime layer.
+        pub async fn abi_version(&self) -> i32 {
+            let mut store = self.store.lock().await;
+            match self.instance.get_typed_func::<(), i32>(&mut *store, "stui_abi_version") {
+                Ok(f) => f.call_async(&mut *store, ()).await.unwrap_or(-1),
+                Err(_) => -1,
             }
         }
 
@@ -807,7 +805,7 @@ mod stub_impl {
             Ok(WasmInner { plugin_name: plugin_name.to_string() })
         }
 
-        pub fn abi_version(&self) -> i32 {
+        pub async fn abi_version(&self) -> i32 {
             // Return the host version so the version check passes in stub mode.
             // Real plugins need the real host.
             STUI_ABI_VERSION
