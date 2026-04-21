@@ -90,6 +90,24 @@ Open items from search-refactor Task 7.0 that didn't land in that branch:
   types. Migrate to the scoped-search API; then delete legacy types.
   File: `tui/internal/ui/ui.go:~2390`.
 
+### From plugin refactor (Chunk 7 smoke)
+
+- **Supervisor mis-classifies `PluginResult::Err` responses as WASM traps.**
+  Every bundled plugin correctly returns
+  `PluginResult::err(UNSUPPORTED_SCOPE, ...)` when the engine dispatches
+  a scope the plugin doesn't handle (e.g. TMDB on `Artist` scope during
+  catalog-refresh fanout). The supervisor's `call_verb` path treats the
+  response as `"trap: WASM execution error: unsupported_scope: ..."` and
+  increments `crashes_in_window`, scheduling a reload. At 5 crashes the
+  plugin is marked `Failed` and unloaded. Symptoms in chunk 7.1 smoke:
+  every `Loaded` plugin got a benign reload during startup catalog fanout.
+  Fix: in `runtime/src/abi/supervisor.rs::call_verb` (and `::init`), inspect
+  the returned envelope — only `InitError::Abi(_)` / memory / timeout
+  errors should count toward the crash window; plugin-side
+  `PluginResult::Err` must be surfaced as a plain response error. Affects
+  dispatch scale-out, not correctness for the single-scope happy path
+  (TMDB/MB IPC search returns real results via socat smoke).
+
 ### Pre-existing issues, not introduced by search refactor
 
 - **`tui/internal/ui/screens/music_queue_test.go:127/140/152/160`** —
