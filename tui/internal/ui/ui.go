@@ -347,7 +347,7 @@ func (m Model) Init() tea.Cmd {
 		return tea.Batch(
 			m.loadingSpinner.Tick,
 			func() tea.Msg { return ipc.RuntimeReadyMsg{} },
-			func() tea.Msg { return poster.PollRefresh()() },
+			pollPosterRefresh(),
 		)
 	}
 
@@ -360,7 +360,7 @@ func (m Model) Init() tea.Cmd {
 			}
 			return runtimeStartedMsg{client: client}
 		},
-		func() tea.Msg { return poster.PollRefresh()() },
+		pollPosterRefresh(),
 	)
 }
 
@@ -382,6 +382,15 @@ func listenIPC(ch <-chan tea.Msg) tea.Cmd {
 		}
 		log.Info("ui: listenIPC got message", "type", fmt.Sprintf("%T", msg))
 		return fromIPC{msg}
+	}
+}
+
+// pollPosterRefresh adapts the poster package's Bubbletea-agnostic
+// PollRefresh (a func() any) into a tea.Cmd. It's re-armed from both
+// Init and the Update handler for PostersUpdatedMsg.
+func pollPosterRefresh() tea.Cmd {
+	return func() tea.Msg {
+		return poster.PollRefresh()()
 	}
 }
 
@@ -500,7 +509,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case poster.PostersUpdatedMsg:
 		// Re-arm the poll so we keep listening. No model-state change —
 		// the next View() pass picks up newly-cached posters directly.
-		return m, func() tea.Msg { return poster.PollRefresh()() }
+		return m, pollPosterRefresh()
 
 	case components.ToastDismissMsg:
 		m.activeToast = nil

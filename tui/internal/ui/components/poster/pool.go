@@ -243,12 +243,17 @@ type httpErr struct{ status int }
 
 func (e *httpErr) Error() string { return http.StatusText(e.status) }
 
-// PollRefresh returns a tea.Cmd that blocks on the next refresh signal and
+// PollRefresh returns a func() any that blocks on the next refresh signal and
 // emits a PostersUpdatedMsg. The caller's Update handler is responsible
 // for re-arming the Cmd after each receive to keep the subscription alive.
 //
 // The `any` return type avoids a cross-package dependency from the poster
-// package on Bubbletea — callers adapt via `tea.Cmd(poster.PollRefresh())`.
+// package on Bubbletea. Callers adapt at their call site with a small
+// shim, e.g.:
+//
+//     return func() tea.Msg { return poster.PollRefresh()() }
+//
+// or an equivalent named helper function.
 func PollRefresh() func() any {
 	return func() any {
 		<-Global().RefreshChan()
