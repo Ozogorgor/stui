@@ -18,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ipc"
+	posterpkg "github.com/stui/stui/internal/ui/components/poster"
 	"github.com/stui/stui/pkg/bidi"
 	"github.com/stui/stui/pkg/theme"
 )
@@ -44,11 +45,27 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	posterH := CardPosterRows
 
 	// ── Poster area ───────────────────────────────────────────────────────
+	//
+	// Precedence:
+	//  1. PosterArt — runtime pre-rendered block art (future caching path).
+	//  2. PosterURL + on-disk cache hit — render through ImageView (chafa).
+	//  3. PosterURL + cache miss — enqueue for background download, show
+	//     existing placeholder so the user sees SOMETHING immediately.
+	//  4. Neither — existing placeholder.
 	var poster string
-	if entry.PosterArt != nil && *entry.PosterArt != "" {
-		// Pre-rendered block art from cache — use directly
+	switch {
+	case entry.PosterArt != nil && *entry.PosterArt != "":
 		poster = *entry.PosterArt
-	} else {
+	case entry.PosterURL != nil && *entry.PosterURL != "":
+		if cached, hit := posterpkg.CachedPath(*entry.PosterURL); hit {
+			iv := NewImageView(w, posterH)
+			iv.SetImage(cached)
+			poster = iv.View()
+		} else {
+			posterpkg.Global().Enqueue(*entry.PosterURL)
+			poster = renderPlaceholderPoster(entry, w, posterH)
+		}
+	default:
 		poster = renderPlaceholderPoster(entry, w, posterH)
 	}
 
