@@ -62,6 +62,25 @@ impl PluginRegistry {
         self.plugins.get(id)
     }
 
+    /// Resolve a plugin identifier that may be either a registry UUID
+    /// (preferred) or a manifest `name` (fallback). Returns the canonical
+    /// UUID so callers can hit UUID-keyed maps (`sandbox`, `wasm_supervisors`).
+    ///
+    /// UUIDs take priority — they're guaranteed unique per load, whereas
+    /// two installed plugins CAN share a manifest name (edge case; we
+    /// return the first match). This lets ad-hoc IPC clients send a
+    /// human-readable `"tmdb"` without having to round-trip `ListPlugins`
+    /// first to cache the UUID map.
+    pub fn resolve_id<'a>(&'a self, id_or_name: &'a str) -> Option<&'a str> {
+        if self.plugins.contains_key(id_or_name) {
+            return Some(id_or_name);
+        }
+        self.plugins
+            .values()
+            .find(|p| p.manifest.plugin.name == id_or_name)
+            .map(|p| p.id.as_str())
+    }
+
     pub fn all(&self) -> impl Iterator<Item = &LoadedPlugin> {
         self.plugins.values()
     }
@@ -329,13 +348,13 @@ impl Engine {
 
         // Look up the supervisor under a short read-lock.  We clone the Arc
         // so we can drop the lock before the potentially-long supervisor call.
+        // Accepts either a registry UUID or a manifest name via `resolve_id`.
         let sup = {
             let reg = self.registry.read().await;
-            // Verify the plugin exists in the registry first.
-            if reg.get(plugin_id).is_none() {
-                return Err(PluginCallError::PluginNotFound(plugin_id.into()));
+            match reg.resolve_id(plugin_id) {
+                Some(canonical) => reg.wasm_supervisor_for(canonical),
+                None => return Err(PluginCallError::PluginNotFound(plugin_id.into())),
             }
-            reg.wasm_supervisor_for(plugin_id)
         };
 
         let sup = sup.ok_or_else(|| PluginCallError::Other(
@@ -401,12 +420,13 @@ impl Engine {
 
         // Look up the supervisor under a short read-lock.  Clone the Arc so
         // the lock is released before the potentially-long supervisor call.
+        // Accepts either a registry UUID or a manifest name via `resolve_id`.
         let sup = {
             let reg = self.registry.read().await;
-            if reg.get(plugin_id).is_none() {
-                return Err(PluginCallError::PluginNotFound(plugin_id.into()));
+            match reg.resolve_id(plugin_id) {
+                Some(canonical) => reg.wasm_supervisor_for(canonical),
+                None => return Err(PluginCallError::PluginNotFound(plugin_id.into())),
             }
-            reg.wasm_supervisor_for(plugin_id)
         };
 
         let sup = sup.ok_or_else(|| PluginCallError::Other(
@@ -1323,6 +1343,72 @@ mod supervisor_search_tests {
         assert_eq!(me.artist_name, Some("Radiohead".into()));
         assert_eq!(me.album_name,  Some("OK Computer".into()));
         assert_eq!(me.track_number, Some(3));
+    }
+
+    // ── PluginRegistry::resolve_id ────────────────────────────────────────────
+
+    fn mini_loaded_plugin(id: &str, name: &str) -> LoadedPlugin {
+        use crate::plugin::manifest::{Capabilities, PluginManifest, PluginMeta};
+        LoadedPlugin {
+            id: id.into(),
+            manifest: PluginManifest {
+                plugin: PluginMeta {
+                    name: name.into(),
+                    version: "0.0.0".into(),
+                    plugin_type: None,
+                    entrypoint: "plugin.wasm".into(),
+                    description: None,
+                    tags: Vec::new(),
+                    _author: None,
+                    _abi_version: None,
+                },
+                permissions: None,
+                meta: None,
+                env: Default::default(),
+                config: Vec::new(),
+                capabilities: Capabilities::default(),
+                rate_limit: None,
+                _extra: Default::default(),
+            },
+            dir: std::path::PathBuf::from("/tmp"),
+            entrypoint: std::path::PathBuf::from("/tmp/plugin.wasm"),
+            mode: ExecutionMode::Wasm,
+        }
+    }
+
+    #[test]
+    fn resolve_id_returns_uuid_on_direct_match() {
+        let mut reg = PluginRegistry::default();
+        let loaded = mini_loaded_plugin("uuid-a", "tmdb");
+        reg.insert(loaded.clone(), SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()));
+        assert_eq!(reg.resolve_id("uuid-a"), Some("uuid-a"));
+    }
+
+    #[test]
+    fn resolve_id_falls_back_to_manifest_name() {
+        let mut reg = PluginRegistry::default();
+        let loaded = mini_loaded_plugin("uuid-a", "tmdb");
+        reg.insert(loaded.clone(), SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()));
+        // "tmdb" is not a UUID key → fall back to name lookup → returns UUID.
+        assert_eq!(reg.resolve_id("tmdb"), Some("uuid-a"));
+    }
+
+    #[test]
+    fn resolve_id_none_when_neither_matches() {
+        let reg = PluginRegistry::default();
+        assert_eq!(reg.resolve_id("nope"), None);
+    }
+
+    #[test]
+    fn resolve_id_uuid_wins_over_name_collision() {
+        // Edge case: two plugins share a name. UUID match is preferred.
+        let mut reg = PluginRegistry::default();
+        let a = mini_loaded_plugin("uuid-a", "tmdb");
+        let b = mini_loaded_plugin("uuid-b", "tmdb");
+        reg.insert(a.clone(), SandboxCtx::new(&a, "/tmp".into(), "/tmp".into()));
+        reg.insert(b.clone(), SandboxCtx::new(&b, "/tmp".into(), "/tmp".into()));
+        assert_eq!(reg.resolve_id("uuid-a"), Some("uuid-a"));
+        assert_eq!(reg.resolve_id("uuid-b"), Some("uuid-b"));
     }
 
     // ── Engine::plugins_for_scope / scope_has_any_plugins ─────────────────────
