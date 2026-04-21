@@ -1,323 +1,499 @@
-//! discogs-provider — stui plugin for Discogs REST API.
+//! Discogs metadata provider — artists and albums via the Discogs REST API.
 //!
-//! ## API Overview
+//! Implements `Plugin` + `CatalogPlugin::{search, lookup}`. Track scope is
+//! dropped per spec §5 (Discogs has no addressable per-track resource).
 //!
-//! Discogs provides music data at https://api.discogs.com
+//! ## API key
 //!
-//! Endpoints used:
-//!   GET /database/search?q={query}&type=release  → search releases
-//!   GET /database/search?q={query}&type=artist    → search artists
-//!
-//! API key required (Personal Access Token from discogs.com/settings/developers)
-//!
-//! ## Plugin Interface
-//!
-//! This plugin implements the stui search interface:
-//!   search(query, scope, page) → returns catalog entries
-//!
-//! Supported scopes: Artist, Album (release), Track (single)
-//! Empty query → new releases / featured content
-//! Non-empty query → search results
+//! Required. Read from `InitContext.config["api_key"]` at `Plugin::init`.
+//! Fallback: `DISCOGS_API_KEY` env var via `cache_get("__env:...")`.
 
-use serde::{Deserialize, Serialize};
-use stui_plugin_sdk::prelude::*;
-use stui_plugin_sdk::{error_codes, EntryKind, SearchScope};
+use std::sync::OnceLock;
+
+use serde::Deserialize;
+
+use stui_plugin_sdk::{
+    cache_get, error_codes, http_get,
+    id_sources,
+    plugin_error, plugin_info,
+    stui_export_catalog_plugin,
+    CatalogPlugin,
+    EntryKind,
+    InitContext,
+    LookupRequest, LookupResponse,
+    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
+    SearchRequest, SearchResponse, SearchScope,
+};
 
 const API_BASE: &str = "https://api.discogs.com";
 
-pub struct DiscogsProvider;
+// ── Plugin ────────────────────────────────────────────────────────────────────
 
-impl DiscogsProvider {
+pub struct DiscogsPlugin {
+    manifest: PluginManifest,
+    api_key: OnceLock<String>,
+}
+
+impl DiscogsPlugin {
     pub fn new() -> Self {
-        Self
+        let manifest: PluginManifest = toml::from_str(include_str!("../plugin.toml"))
+            .expect("plugin.toml failed to parse at compile time");
+        Self { manifest, api_key: OnceLock::new() }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(api_key: &str) -> Self {
+        let inst = Self::new();
+        let _ = inst.api_key.set(api_key.to_string());
+        inst
+    }
+
+    fn api_key(&self) -> Result<&str, PluginError> {
+        if let Some(k) = self.api_key.get() {
+            return Ok(k.as_str());
+        }
+        let env_key = cache_get("__env:DISCOGS_API_KEY").unwrap_or_default();
+        if env_key.is_empty() {
+            return Err(PluginError {
+                code: error_codes::INVALID_REQUEST.to_string(),
+                message: "Discogs api_key not configured".to_string(),
+            });
+        }
+        Ok(self.api_key.get_or_init(|| env_key).as_str())
     }
 }
 
-impl Default for DiscogsProvider {
-    fn default() -> Self {
-        Self
+impl Default for DiscogsPlugin {
+    fn default() -> Self { Self::new() }
+}
+
+impl Plugin for DiscogsPlugin {
+    fn manifest(&self) -> &PluginManifest { &self.manifest }
+
+    fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
+        let key = ctx.config.get("api_key").and_then(|v| v.as_str()).map(str::to_string)
+            .or_else(|| ctx.env.get("DISCOGS_API_KEY").cloned())
+            .unwrap_or_default();
+        if key.is_empty() {
+            return Err(PluginInitError::MissingConfig {
+                fields: vec!["api_key".to_string()],
+                hint: Some("Free at discogs.com/settings/developers".to_string()),
+            });
+        }
+        let _ = self.api_key.set(key);
+        Ok(())
     }
 }
 
-impl StuiPlugin for DiscogsProvider {
-    fn name(&self) -> &str {
-        "discogs"
-    }
-    fn version(&self) -> &str {
-        "0.1.0"
-    }
-    fn plugin_type(&self) -> PluginType {
-        PluginType::Metadata
-    }
+// ── Error handling ────────────────────────────────────────────────────────────
 
+fn classify_http_err(err: &str) -> PluginError {
+    if let Some(rest) = err.strip_prefix("HTTP ") {
+        if let Some((code_str, body)) = rest.split_once(": ") {
+            if let Ok(status) = code_str.parse::<u16>() {
+                let code = match status {
+                    401 | 403 => error_codes::INVALID_REQUEST,
+                    404       => error_codes::UNKNOWN_ID,
+                    429       => error_codes::RATE_LIMITED,
+                    500..=599 => error_codes::TRANSIENT,
+                    _         => error_codes::REMOTE_ERROR,
+                };
+                return PluginError { code: code.to_string(), message: format!("Discogs HTTP {status}: {body}") };
+            }
+        }
+    }
+    PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
+}
+
+fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
+    serde_json::from_str(body).map_err(|e| {
+        plugin_error!("discogs: parse error: {}", e);
+        PluginError { code: "parse_error".to_string(), message: format!("Discogs JSON parse failure: {e}") }
+    })
+}
+
+/// Return `genre` and `description` strings with a clean split:
+/// - `genre`  = `genres + styles` (music-genre information)
+/// - `desc`   = format / country / label (physical-release metadata)
+fn partition_genre_and_description(
+    genres: &[String],
+    styles: &[String],
+    format: &[String],
+    country: Option<&str>,
+    label: &[String],
+) -> (Option<String>, Option<String>) {
+    let mut combined_genres: Vec<&str> = genres.iter().map(|s| s.as_str()).collect();
+    combined_genres.extend(styles.iter().map(|s| s.as_str()));
+    let genre = if combined_genres.is_empty() {
+        None
+    } else {
+        Some(combined_genres.into_iter().take(5).collect::<Vec<_>>().join(", "))
+    };
+
+    let mut desc_parts: Vec<String> = Vec::new();
+    if !format.is_empty() {
+        desc_parts.push(format.join(", "));
+    }
+    if let Some(c) = country {
+        if !c.is_empty() {
+            desc_parts.push(c.to_string());
+        }
+    }
+    if !label.is_empty() {
+        desc_parts.push(format!("Label: {}", label.join(", ")));
+    }
+    let description = if desc_parts.is_empty() { None } else { Some(desc_parts.join(" | ")) };
+    (genre, description)
+}
+
+// ── CatalogPlugin impl ────────────────────────────────────────────────────────
+
+impl CatalogPlugin for DiscogsPlugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
-        // Map scope to Discogs search type + entry kind
         let (search_type, entry_kind) = match req.scope {
-            SearchScope::Artist => ("artist", EntryKind::Artist),
-            SearchScope::Album => ("release", EntryKind::Album),
-            SearchScope::Track => ("release", EntryKind::Track),
+            SearchScope::Artist => ("artist",  EntryKind::Artist),
+            SearchScope::Album  => ("release", EntryKind::Album),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
-                    "discogs only supports artist, album, and track scopes",
+                    "discogs only supports artist and album scopes",
                 );
             }
         };
 
-        let query = req.query.trim();
-        let page = req.page.max(1);
-        let per_page = req.limit.min(50) as usize;
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
 
-        if query.is_empty() {
-            self.get_new_releases(page, per_page, entry_kind)
+        let page     = req.page.max(1);
+        let per_page = if req.limit == 0 { 20 } else { req.limit.min(50) } as usize;
+        let query    = req.query.trim();
+
+        let url = if query.is_empty() {
+            format!(
+                "{API_BASE}/database/search?sort=date_added,desc&type={search_type}&page={page}&per_page={per_page}&key={api_key}"
+            )
         } else {
-            self.search_catalog(query, search_type, page, per_page, entry_kind)
+            format!(
+                "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}&key={api_key}",
+                urlencoding::encode(query),
+            )
+        };
+        plugin_info!("discogs: search '{}' type={search_type} (page {page})", query);
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let resp: SearchEnvelope = match parse_json(&body) {
+            Ok(r) => r,
+            Err(e) => return PluginResult::Err(e),
+        };
+
+        let items: Vec<PluginEntry> = resp.results.into_iter()
+            .filter(|r| r.id > 0)
+            .take(per_page)
+            .map(|r| r.into_entry(entry_kind))
+            .collect();
+        let total = resp.pagination.as_ref()
+            .and_then(|p| p.items)
+            .unwrap_or(items.len() as i32)
+            .max(0) as u32;
+        PluginResult::ok(SearchResponse { items, total })
+    }
+
+    fn lookup(&self, req: LookupRequest) -> PluginResult<LookupResponse> {
+        if req.id_source != id_sources::DISCOGS {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("discogs lookup: unsupported id_source: {}", req.id_source),
+            );
         }
-    }
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
 
-    fn resolve(&self, _req: ResolveRequest) -> PluginResult<ResolveResponse> {
-        PluginResult::err("NOT_SUPPORTED", "discogs provider does not resolve streams")
+        let (path, entry_kind) = match req.kind {
+            EntryKind::Artist => (format!("/artists/{}", urlencoding::encode(&req.id)), EntryKind::Artist),
+            EntryKind::Album  => (format!("/releases/{}", urlencoding::encode(&req.id)), EntryKind::Album),
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    "discogs lookup supports artist and album kinds only",
+                );
+            }
+        };
+        let url = format!("{API_BASE}{path}?key={api_key}");
+        plugin_info!("discogs: lookup {} ({:?})", req.id, req.kind);
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let entry = match entry_kind {
+            EntryKind::Artist => match parse_json::<ArtistDetail>(&body) {
+                Ok(a) => a.into_entry(),
+                Err(e) => return PluginResult::Err(e),
+            },
+            _ => match parse_json::<ReleaseDetail>(&body) {
+                Ok(r) => r.into_entry(),
+                Err(e) => return PluginResult::Err(e),
+            },
+        };
+        PluginResult::ok(LookupResponse { entry })
     }
 }
 
-impl DiscogsProvider {
-    fn get_api_key(&self) -> Result<String, String> {
-        env_or("DISCOGS_API_KEY", "")
-            .or_else(|| cache_get("__config:api_key"))
-            .ok_or_else(|| "DISCOGS_API_KEY not set".to_string())
-    }
-
-    fn search_catalog(
-        &self,
-        query: &str,
-        search_type: &str,
-        page: u32,
-        per_page: usize,
-        entry_kind: EntryKind,
-    ) -> PluginResult<SearchResponse> {
-        let api_key = match self.get_api_key() {
-            Ok(k) => k,
-            Err(e) => return PluginResult::err("CONFIG_ERROR", &e),
-        };
-
-        let url = format!(
-            "{}/database/search?q={}&type={}&page={}&per_page={}",
-            API_BASE,
-            url_encode(query),
-            search_type,
-            page,
-            per_page
-        );
-
-        plugin_info!("discogs: searching '{}' type={} (page {})", query, search_type, page);
-
-        let response = match http_get_auth(&url, &api_key) {
-            Ok(r) => r,
-            Err(e) => return PluginResult::err("HTTP_ERROR", &e),
-        };
-
-        let search_resp: SearchResponseWrapper = match serde_json::from_str(&response) {
-            Ok(r) => r,
-            Err(e) => {
-                plugin_error!("discogs: parse error: {}", e);
-                return PluginResult::err("PARSE_ERROR", &e.to_string());
-            }
-        };
-
-        let entries: Vec<PluginEntry> = search_resp
-            .results
-            .into_iter()
-            .filter(|r| r.id > 0)
-            .take(per_page)
-            .map(|r| r.into_entry(entry_kind))
-            .collect();
-
-        let total = search_resp
-            .pagination
-            .unwrap_or_default()
-            .entries
-            .unwrap_or(entries.len() as i32) as u32;
-        plugin_info!("discogs: {} entries (total: {})", entries.len(), total);
-
-        PluginResult::ok(SearchResponse {
-            items: entries,
-            total,
-        })
-    }
-
-    fn get_new_releases(
-        &self,
-        page: u32,
-        per_page: usize,
-        entry_kind: EntryKind,
-    ) -> PluginResult<SearchResponse> {
-        let api_key = match self.get_api_key() {
-            Ok(k) => k,
-            Err(e) => return PluginResult::err("CONFIG_ERROR", &e),
-        };
-
-        let url = format!(
-            "{}/database/search?sort=date_added,desc&type=release&page={}&per_page={}",
-            API_BASE, page, per_page
-        );
-
-        plugin_info!("discogs: fetching new releases (page {})", page);
-
-        let response = match http_get_auth(&url, &api_key) {
-            Ok(r) => r,
-            Err(e) => return PluginResult::err("HTTP_ERROR", &e),
-        };
-
-        let search_resp: SearchResponseWrapper = match serde_json::from_str(&response) {
-            Ok(r) => r,
-            Err(e) => {
-                plugin_error!("discogs: parse error: {}", e);
-                return PluginResult::err("PARSE_ERROR", &e.to_string());
-            }
-        };
-
-        let entries: Vec<PluginEntry> = search_resp
-            .results
-            .into_iter()
-            .filter(|r| r.id > 0)
-            .take(per_page)
-            .map(|r| r.into_entry(entry_kind))
-            .collect();
-
-        let total = entries.len() as u32;
-        plugin_info!("discogs: {} new releases", entries.len());
-
-        PluginResult::ok(SearchResponse {
-            items: entries,
-            total,
-        })
-    }
-}
-
-// ── API Types ──────────────────────────────────────────────────────────────────
+// ── API types ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct SearchResponseWrapper {
-    #[serde(default)]
+struct SearchEnvelope {
     pagination: Option<Pagination>,
     #[serde(default)]
-    results: Vec<DiscogsRelease>,
+    results: Vec<SearchHit>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct Pagination {
-    #[serde(rename = "page", default)]
-    page: Option<i32>,
-    #[serde(rename = "pages", default)]
-    pages: Option<i32>,
-    #[serde(rename = "per_page", default)]
-    per_page: Option<i32>,
-    #[serde(rename = "items", default)]
-    entries: Option<i32>,
+    items: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
-struct DiscogsRelease {
-    #[serde(default)]
-    id: i64,
-    #[serde(rename = "type", default)]
-    type_: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    year: Option<i32>,
-    #[serde(default)]
-    country: Option<String>,
-    #[serde(default)]
-    format: Vec<String>,
-    #[serde(default)]
-    label: Vec<String>,
-    #[serde(rename = "cover_image", default)]
-    cover_image: Option<String>,
-    #[serde(rename = "thumb", default)]
-    thumb: Option<String>,
-    #[serde(rename = "genre", default)]
-    genre: Vec<String>,
-    #[serde(rename = "style", default)]
-    style: Vec<String>,
-    #[serde(rename = "resource_url", default)]
-    resource_url: Option<String>,
+struct SearchHit {
+    #[serde(default)] id: i64,
+    #[serde(default)] title: String,
+    #[serde(default)] year: Option<i32>,
+    #[serde(default)] country: Option<String>,
+    #[serde(default)] format: Vec<String>,
+    #[serde(default)] label: Vec<String>,
+    #[serde(rename = "cover_image", default)] cover_image: Option<String>,
+    #[serde(rename = "thumb", default)]        thumb: Option<String>,
+    #[serde(default)] genre: Vec<String>,
+    #[serde(default)] style: Vec<String>,
 }
 
-impl DiscogsRelease {
+impl SearchHit {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
-        let title = self.title;
-
-        // Year as u32
         let year = self.year.and_then(|y| if y > 0 { Some(y as u32) } else { None });
-
-        // Combine genre and style
-        let mut genres = self.genre.clone();
-        genres.extend(self.style);
-        let genre = if genres.is_empty() {
-            None
-        } else {
-            Some(genres.into_iter().take(3).collect::<Vec<_>>().join(", "))
-        };
-
+        let (genre, description) = partition_genre_and_description(
+            &self.genre,
+            &self.style,
+            &self.format,
+            self.country.as_deref(),
+            &self.label,
+        );
         let poster_url = self.cover_image.or(self.thumb);
 
-        let mut desc_parts = vec![];
-        if !self.format.is_empty() {
-            desc_parts.push(self.format.join(", "));
-        }
-        if let Some(ref c) = self.country {
-            desc_parts.push(c.clone());
-        }
-        if !self.label.is_empty() {
-            desc_parts.push(format!("Label: {}", self.label.join(", ")));
-        }
-        let description = if desc_parts.is_empty() {
-            None
-        } else {
-            Some(desc_parts.join(" | "))
-        };
-
-        PluginEntry {
+        let mut entry = PluginEntry {
             id: format!("discogs-{}", self.id),
             kind,
             source: "discogs".to_string(),
-            title,
+            title: self.title,
             year,
             genre,
-            rating: None,
             description,
             poster_url,
-            imdb_id: None,
-            duration: None,
             ..Default::default()
-        }
+        };
+        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────────
+#[derive(Debug, Deserialize)]
+struct ReleaseDetail {
+    #[serde(default)] id: i64,
+    #[serde(default)] title: String,
+    #[serde(default)] year: Option<i32>,
+    #[serde(default)] country: Option<String>,
+    #[serde(default)] genres: Vec<String>,
+    #[serde(default)] styles: Vec<String>,
+    #[serde(default)] formats: Vec<ReleaseFormat>,
+    #[serde(default)] labels:  Vec<ReleaseLabel>,
+    #[serde(default)] images:  Vec<ReleaseImage>,
+    #[serde(default)] notes:   Option<String>,
+}
 
-fn env_or(var: &str, default: &str) -> Option<String> {
-    let cache_key = format!("__env:{}", var);
-    cache_get(&cache_key).or_else(|| {
-        if default.is_empty() {
-            None
-        } else {
-            Some(default.to_string())
+#[derive(Debug, Deserialize, Default)]
+struct ReleaseFormat { #[serde(default)] name: String }
+
+#[derive(Debug, Deserialize, Default)]
+struct ReleaseLabel  { #[serde(default)] name: String }
+
+#[derive(Debug, Deserialize)]
+struct ReleaseImage {
+    #[serde(rename = "uri",     default)] uri: Option<String>,
+    #[serde(rename = "uri150",  default)] uri150: Option<String>,
+}
+
+impl ReleaseDetail {
+    fn into_entry(self) -> PluginEntry {
+        let year = self.year.and_then(|y| if y > 0 { Some(y as u32) } else { None });
+        let formats: Vec<String> = self.formats.into_iter().map(|f| f.name).filter(|s| !s.is_empty()).collect();
+        let labels:  Vec<String> = self.labels.into_iter().map(|l| l.name).filter(|s| !s.is_empty()).collect();
+        let (genre, mut description) = partition_genre_and_description(
+            &self.genres,
+            &self.styles,
+            &formats,
+            self.country.as_deref(),
+            &labels,
+        );
+        if let Some(notes) = self.notes.filter(|n| !n.is_empty()) {
+            description = match description {
+                Some(d) => Some(format!("{d}\n\n{notes}")),
+                None    => Some(notes),
+            };
         }
-    })
+        let poster_url = self.images.into_iter().find_map(|i| i.uri.clone().or(i.uri150.clone()));
+
+        let mut entry = PluginEntry {
+            id: format!("discogs-{}", self.id),
+            kind: EntryKind::Album,
+            source: "discogs".to_string(),
+            title: self.title,
+            year,
+            genre,
+            description,
+            poster_url,
+            ..Default::default()
+        };
+        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
+    }
 }
 
-/// GET with Discogs auth header
-fn http_get_auth(url: &str, api_key: &str) -> Result<String, String> {
-    let auth_url = if url.contains('?') {
-        format!("{}&key={}", url, api_key)
-    } else {
-        format!("{}?key={}", url, api_key)
-    };
-    http_get(&auth_url)
+#[derive(Debug, Deserialize)]
+struct ArtistDetail {
+    #[serde(default)] id: i64,
+    #[serde(default)] name: String,
+    #[serde(default)] profile: Option<String>,
+    #[serde(default)] images: Vec<ReleaseImage>,
+    #[serde(default)] namevariations: Vec<String>,
 }
 
-// ── WASM Exports ───────────────────────────────────────────────────────────────
+impl ArtistDetail {
+    fn into_entry(self) -> PluginEntry {
+        let description = self.profile.filter(|p| !p.is_empty()).or_else(|| {
+            if self.namevariations.is_empty() {
+                None
+            } else {
+                Some(format!("Also known as: {}", self.namevariations.join(", ")))
+            }
+        });
+        let poster_url = self.images.into_iter().find_map(|i| i.uri.or(i.uri150));
+        let mut entry = PluginEntry {
+            id: format!("discogs-{}", self.id),
+            kind: EntryKind::Artist,
+            source: "discogs".to_string(),
+            title: self.name,
+            description,
+            poster_url,
+            ..Default::default()
+        };
+        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
+    }
+}
 
-stui_export_plugin!(DiscogsProvider);
+// ── WASM exports ──────────────────────────────────────────────────────────────
+
+stui_export_catalog_plugin!(DiscogsPlugin);
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_trait_satisfied() {
+        fn _p<T: Plugin>() {}
+        fn _c<T: CatalogPlugin>() {}
+        _p::<DiscogsPlugin>();
+        _c::<DiscogsPlugin>();
+    }
+
+    #[test]
+    fn manifest_parses_at_compile_time() {
+        let p = DiscogsPlugin::new();
+        assert_eq!(p.manifest().plugin.name, "discogs");
+    }
+
+    #[test]
+    fn genre_comes_from_genre_plus_style_only() {
+        let (g, _d) = partition_genre_and_description(
+            &["Electronic".to_string()],
+            &["Techno".to_string(), "IDM".to_string()],
+            &["CD".to_string()],
+            Some("UK"),
+            &["Warp Records".to_string()],
+        );
+        assert_eq!(g.as_deref(), Some("Electronic, Techno, IDM"));
+    }
+
+    #[test]
+    fn description_collects_format_country_label() {
+        let (_g, d) = partition_genre_and_description(
+            &[],
+            &[],
+            &["CD".to_string(), "Album".to_string()],
+            Some("US"),
+            &["Atlantic".to_string()],
+        );
+        assert_eq!(d.as_deref(), Some("CD, Album | US | Label: Atlantic"));
+    }
+
+    #[test]
+    fn description_empty_when_no_physical_metadata() {
+        let (_g, d) = partition_genre_and_description(
+            &["Rock".to_string()],
+            &[],
+            &[],
+            None,
+            &[],
+        );
+        assert_eq!(d, None);
+    }
+
+    #[test]
+    fn search_hit_into_entry_populates_discogs_id() {
+        let hit = SearchHit {
+            id: 12345,
+            title: "OK Computer".into(),
+            year: Some(1997),
+            country: Some("UK".into()),
+            format: vec!["CD".into()],
+            label: vec!["Parlophone".into()],
+            cover_image: Some("https://img/1.jpg".into()),
+            thumb: None,
+            genre: vec!["Rock".into()],
+            style: vec!["Alternative".into()],
+        };
+        let e = hit.into_entry(EntryKind::Album);
+        assert_eq!(e.source, "discogs");
+        assert_eq!(e.kind, EntryKind::Album);
+        assert_eq!(e.year, Some(1997));
+        assert_eq!(e.genre.as_deref(), Some("Rock, Alternative"));
+        assert_eq!(e.description.as_deref(), Some("CD | UK | Label: Parlophone"));
+        assert_eq!(e.external_ids.get(id_sources::DISCOGS).map(String::as_str), Some("12345"));
+    }
+
+    #[test]
+    fn invalid_years_rejected() {
+        let hit = SearchHit {
+            id: 1, title: "x".into(), year: Some(0),
+            country: None, format: vec![], label: vec![],
+            cover_image: None, thumb: None, genre: vec![], style: vec![],
+        };
+        let e = hit.into_entry(EntryKind::Album);
+        assert_eq!(e.year, None);
+    }
+
+    #[test]
+    fn new_for_test_caches_api_key() {
+        let p = DiscogsPlugin::new_for_test("fake");
+        assert_eq!(p.api_key().unwrap(), "fake");
+    }
+}

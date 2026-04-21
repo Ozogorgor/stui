@@ -1,35 +1,36 @@
-# discogs-provider — plugin manifest
-# Install at: ~/.stui/plugins/discogs-provider/
-
 [plugin]
-name        = "discogs"
-version     = "0.1.0"
-description = "Music & vinyl metadata via Discogs — releases, artists, labels"
-author      = "stui"
-abi_version = 1
-type        = "metadata"
-tags        = ["music", "metadata", "vinyl"]
+id           = "discogs"
+name         = "discogs"
+version      = "1.0.0"
+abi_version  = 1
+description  = "Discogs — music / vinyl metadata (artists + albums)"
+author       = "stui"
+license      = "MIT"
+homepage     = "https://www.discogs.com"
 
 [env]
-DISCOGS_API_KEY = ""                     # Required — https://www.discogs.com/settings/developers
+DISCOGS_API_KEY = ""
 
 [[config]]
-key       = "api_key"
-label     = "Discogs Personal Access Token"
-hint      = "Get free at https://www.discogs.com/settings/developers"
-masked    = true
-required  = true
+key      = "api_key"
+label    = "Discogs Personal Access Token"
+hint     = "Free at discogs.com/settings/developers"
+masked   = true
+required = true
+env_var  = "DISCOGS_API_KEY"
 
 [permissions]
-network = [
-  "api.discogs.com",
-  "img.discogs.com",
-  "s.discogs.com",
-]
+network = ["api.discogs.com", "img.discogs.com", "s.discogs.com"]
+
+[permissions.rate_limit]
+# Discogs free tier: 60 authenticated req/min (= 1 rps).
+requests_per_second = 1
+burst               = 5
 
 [capabilities.catalog]
-kinds = ["artist", "album", "track"]
+# Track scope dropped: Discogs has no track API; the release endpoint
+# exposes per-track listings but not a per-track addressable resource.
+kinds = ["artist", "album"]
 
-[capabilities]
-metadata = true
-music = true
+search = true
+lookup = { id_sources = ["discogs"] }
