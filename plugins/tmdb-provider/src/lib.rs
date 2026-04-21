@@ -185,13 +185,6 @@ struct PagedResponse<T> {
     total_results: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum SearchResult {
-    Movie(MovieItem),
-    Tv(TvItem),
-}
-
 #[derive(Debug, Deserialize, Default)]
 struct MovieItem {
     id: u64,
@@ -508,27 +501,46 @@ impl CatalogPlugin for TmdbPlugin {
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
 
-        let paged: PagedResponse<SearchResult> = match parse_json(&body) {
-            Ok(p) => p,
-            Err(e) => return PluginResult::Err(e),
-        };
-
         let limit = if req.limit == 0 {
             usize::MAX
         } else {
             req.limit as usize
         };
-        let items: Vec<PluginEntry> = paged
-            .results
-            .into_iter()
-            .take(limit)
-            .map(|item| match item {
-                SearchResult::Movie(m) => m.into_entry(entry_kind),
-                SearchResult::Tv(t) => t.into_entry(entry_kind),
-            })
-            .collect();
 
-        let total = paged.total_results.unwrap_or(items.len() as u32);
+        // Deserialize per endpoint: each branch knows its concrete item type,
+        // so we don't need an untagged enum that could silently misclassify.
+        let (items, total_results) = match entry_kind {
+            EntryKind::Movie => {
+                let paged: PagedResponse<MovieItem> = match parse_json(&body) {
+                    Ok(p) => p,
+                    Err(e) => return PluginResult::Err(e),
+                };
+                let total = paged.total_results;
+                let items: Vec<PluginEntry> = paged
+                    .results
+                    .into_iter()
+                    .take(limit)
+                    .map(|m| m.into_entry(entry_kind))
+                    .collect();
+                (items, total)
+            }
+            _ => {
+                let paged: PagedResponse<TvItem> = match parse_json(&body) {
+                    Ok(p) => p,
+                    Err(e) => return PluginResult::Err(e),
+                };
+                let total = paged.total_results;
+                let items: Vec<PluginEntry> = paged
+                    .results
+                    .into_iter()
+                    .take(limit)
+                    .map(|t| t.into_entry(entry_kind))
+                    .collect();
+                (items, total)
+            }
+        };
+
+        let total = total_results.unwrap_or(items.len() as u32);
         plugin_info!("tmdb: {} entries", items.len());
         PluginResult::ok(SearchResponse { items, total })
     }
@@ -586,12 +598,22 @@ impl CatalogPlugin for TmdbPlugin {
                     Err(e) => return PluginResult::Err(e),
                 };
                 let entry = if !found.movie_results.is_empty() {
-                    let mut e = found.movie_results.into_iter().next().unwrap().into_entry(EntryKind::Movie);
+                    let mut e = found
+                        .movie_results
+                        .into_iter()
+                        .next()
+                        .expect("guarded by is_empty check above")
+                        .into_entry(EntryKind::Movie);
                     e.imdb_id = Some(req.id.clone());
                     e.external_ids.insert(id_sources::IMDB.to_string(), req.id.clone());
                     e
                 } else if !found.tv_results.is_empty() {
-                    let mut e = found.tv_results.into_iter().next().unwrap().into_entry(EntryKind::Series);
+                    let mut e = found
+                        .tv_results
+                        .into_iter()
+                        .next()
+                        .expect("guarded by is_empty check above")
+                        .into_entry(EntryKind::Series);
                     e.imdb_id = Some(req.id.clone());
                     e.external_ids.insert(id_sources::IMDB.to_string(), req.id.clone());
                     e
@@ -651,7 +673,11 @@ impl CatalogPlugin for TmdbPlugin {
             };
         }
 
-        // Fallback: title+year search, pick best match.
+        // Fallback: title+year search via a direct URL so we can pass the
+        // correct year query param to TMDB (primary_release_year for movies,
+        // first_air_date_year for TV). The `search` verb never reads
+        // `SearchRequest.locale`, so we build the URL ourselves instead of
+        // routing through `self.search()`.
         let title = req.partial.title.trim();
         if title.is_empty() {
             return PluginResult::err(
@@ -659,9 +685,13 @@ impl CatalogPlugin for TmdbPlugin {
                 "enrich requires at least a title",
             );
         }
-        let scope = match req.partial.kind {
-            EntryKind::Movie => SearchScope::Movie,
-            EntryKind::Series | EntryKind::Episode => SearchScope::Series,
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+        let (endpoint, entry_kind) = match req.partial.kind {
+            EntryKind::Movie => ("/search/movie", EntryKind::Movie),
+            EntryKind::Series | EntryKind::Episode => ("/search/tv", EntryKind::Series),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -669,23 +699,47 @@ impl CatalogPlugin for TmdbPlugin {
                 );
             }
         };
-        let search_req = SearchRequest {
-            query: title.to_string(),
-            scope,
-            page: 1,
-            limit: 10,
-            per_scope_limit: None,
-            locale: req.partial.year.map(|y| y.to_string()),
+        let mut query = format!(
+            "query={}&page=1&language=en-US",
+            urlencoding::encode(title)
+        );
+        if let Some(y) = req.partial.year {
+            // TMDB uses different param names per endpoint.
+            let year_param = if entry_kind == EntryKind::Movie {
+                "primary_release_year"
+            } else {
+                "first_air_date_year"
+            };
+            query.push_str(&format!("&{year_param}={y}"));
+        }
+        let search_url = build_url(endpoint, &query, &api_key);
+        plugin_info!("tmdb: enrich search {}", search_url);
+
+        let search_body = match http_get(&search_url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
-        let search_resp = match self.search(search_req) {
-            PluginResult::Ok(r) => r,
-            PluginResult::Err(e) => return PluginResult::Err(e),
+        let search_items: Vec<PluginEntry> = if entry_kind == EntryKind::Movie {
+            let paged: PagedResponse<MovieItem> = match parse_json(&search_body) {
+                Ok(p) => p,
+                Err(e) => return PluginResult::Err(e),
+            };
+            paged.results.into_iter().take(10).map(|m| m.into_entry(entry_kind)).collect()
+        } else {
+            let paged: PagedResponse<TvItem> = match parse_json(&search_body) {
+                Ok(p) => p,
+                Err(e) => return PluginResult::Err(e),
+            };
+            paged.results.into_iter().take(10).map(|t| t.into_entry(entry_kind)).collect()
         };
 
-        let (best, confidence) = pick_best_match(&req.partial, &search_resp.items);
+        let (best, confidence) = pick_best_match(&req.partial, &search_items);
         match best {
             Some(idx) => {
-                let winner = search_resp.items.into_iter().nth(idx).unwrap();
+                let winner = search_items
+                    .into_iter()
+                    .nth(idx)
+                    .expect("index from pick_best_match is in-bounds");
                 // Hydrate the winner via direct lookup so external_ids get
                 // populated (search results don't carry them).
                 let lookup_req = LookupRequest {
@@ -851,20 +905,32 @@ impl CatalogPlugin for TmdbPlugin {
             Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
-        let paged: PagedResponse<SearchResult> = match parse_json(&body) {
-            Ok(p) => p,
-            Err(e) => return PluginResult::Err(e),
-        };
         let limit = if req.limit == 0 { 20 } else { req.limit as usize };
-        let items: Vec<PluginEntry> = paged
-            .results
-            .into_iter()
-            .take(limit)
-            .map(|r| match r {
-                SearchResult::Movie(m) => m.into_entry(entry_kind),
-                SearchResult::Tv(t) => t.into_entry(entry_kind),
-            })
-            .collect();
+        // Deserialize per endpoint: the path already encodes whether this is a
+        // movie or TV recommendations call, so we know the concrete item type.
+        let items: Vec<PluginEntry> = if entry_kind == EntryKind::Movie {
+            let paged: PagedResponse<MovieItem> = match parse_json(&body) {
+                Ok(p) => p,
+                Err(e) => return PluginResult::Err(e),
+            };
+            paged
+                .results
+                .into_iter()
+                .take(limit)
+                .map(|m| m.into_entry(entry_kind))
+                .collect()
+        } else {
+            let paged: PagedResponse<TvItem> = match parse_json(&body) {
+                Ok(p) => p,
+                Err(e) => return PluginResult::Err(e),
+            };
+            paged
+                .results
+                .into_iter()
+                .take(limit)
+                .map(|t| t.into_entry(entry_kind))
+                .collect()
+        };
         PluginResult::ok(RelatedResponse { items })
     }
 }
@@ -1148,5 +1214,41 @@ mod tests {
         let r: Result<serde_json::Value, _> = parse_json("not json");
         let err = r.unwrap_err();
         assert_eq!(err.code, "parse_error");
+    }
+
+    /// Verify that a movie search payload parses as `PagedResponse<MovieItem>`
+    /// without needing the `SearchResult` untagged enum.
+    #[test]
+    fn paged_movie_response_deserializes_typed() {
+        let json = r#"{
+            "results": [{"id": 1, "title": "Dune", "release_date": "2021-09-15"}],
+            "total_results": 1
+        }"#;
+        let paged: PagedResponse<MovieItem> = parse_json(json).unwrap();
+        assert_eq!(paged.results.len(), 1);
+        assert_eq!(paged.results[0].title, "Dune");
+        assert_eq!(paged.total_results, Some(1));
+    }
+
+    /// Verify that a TV search payload parses as `PagedResponse<TvItem>`
+    /// without needing the `SearchResult` untagged enum.
+    #[test]
+    fn paged_tv_response_deserializes_typed() {
+        let json = r#"{
+            "results": [{"id": 2, "name": "Severance", "first_air_date": "2022-02-18"}],
+            "total_results": 1
+        }"#;
+        let paged: PagedResponse<TvItem> = parse_json(json).unwrap();
+        assert_eq!(paged.results.len(), 1);
+        assert_eq!(paged.results[0].name, "Severance");
+        // A TV payload must NOT bleed into MovieItem — `title` field stays empty default.
+        let movie_attempt: Result<PagedResponse<MovieItem>, _> = parse_json(json);
+        let title = movie_attempt.map(|p| p.results.into_iter().next().map(|m| m.title));
+        // Either fails or the title is empty (not "Severance"), confirming the
+        // typed approach catches the mismatch that the untagged enum hid.
+        match title {
+            Ok(Some(t)) => assert!(t.is_empty(), "movie title should not take TV 'name' field"),
+            Ok(None) | Err(_) => { /* parse failure is also acceptable */ }
+        }
     }
 }
