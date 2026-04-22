@@ -124,7 +124,7 @@ func TestQueueSeekFwdNoopWhenNoDuration(t *testing.T) {
 func TestQueueColWidthsNarrow(t *testing.T) {
 	// L=100, R=100-17=83: title=45 (83*55/100=45), artist=37 (83*45/100=37)
 	// remainder = 83 - 45 - 37 = 1 goes to title → title=46
-	tw, aw, alw := queueColWidths(100)
+	tw, aw, alw, _ := queueColWidths(100)
 	if alw != 0 {
 		t.Errorf("albumW = %d, want 0 for narrow layout", alw)
 	}
@@ -137,7 +137,7 @@ func TestQueueColWidthsNarrow(t *testing.T) {
 
 func TestQueueColWidthsWide(t *testing.T) {
 	// L=120, R=120-18=102: title=40, artist=35, album=25, rem=2 → title=42
-	tw, aw, alw := queueColWidths(120)
+	tw, aw, alw, _ := queueColWidths(120)
 	if alw == 0 {
 		t.Error("albumW should be > 0 for L=120")
 	}
@@ -149,7 +149,7 @@ func TestQueueColWidthsWide(t *testing.T) {
 func TestQueueColWidthsExact143Terminal(t *testing.T) {
 	// terminal width=146, rightBoxW=24: leftBoxW=146-24=122, L=122-2=120 >= 120, wide layout
 	L := 146 - 26
-	_, _, alw := queueColWidths(L)
+	_, _, alw, _ := queueColWidths(L)
 	if alw == 0 {
 		t.Errorf("album column should appear at L=%d (terminal width 146)", L)
 	}
@@ -157,7 +157,7 @@ func TestQueueColWidthsExact143Terminal(t *testing.T) {
 
 func TestQueueColWidthsBelowThreshold(t *testing.T) {
 	// L=119: narrow layout
-	_, _, alw := queueColWidths(119)
+	_, _, alw, _ := queueColWidths(119)
 	if alw != 0 {
 		t.Errorf("album column should not appear at L=119, got albumW=%d", alw)
 	}
