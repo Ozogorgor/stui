@@ -2,9 +2,9 @@
 # scripts/build-plugins.sh — compile all stui WASM plugins and install them.
 #
 # Usage:
-#   ./scripts/build-plugins.sh                  # build all, install to ~/.stui/plugins/
-#   ./scripts/build-plugins.sh kitsunekko        # build only kitsunekko
-#   ./scripts/build-plugins.sh --no-install      # build only, don't copy to ~/.stui/
+#   ./scripts/build-plugins.sh                 # build all, install to ~/.stui/plugins/
+#   ./scripts/build-plugins.sh tmdb            # build only tmdb
+#   ./scripts/build-plugins.sh --no-install    # build only, don't copy to ~/.stui/
 #   PLUGIN_DIR=/custom/path ./scripts/build-plugins.sh
 #
 # Requirements:
@@ -27,17 +27,14 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: $0 [plugin-name] [--no-install]"
             echo ""
-            echo "Available plugins:"
-            echo "  anilist           Anime/manga metadata (AniList)"
-            echo "  discogs           Music metadata (Discogs)"
-            echo "  imdb              Movie/TV metadata (IMDB)"
-            echo "  javdb             Japanese adult video metadata"
-            echo "  kitsu             Anime metadata (Kitsu)"
-            echo "  lastfm            Music scrobbling metadata (Last.fm)"
-            echo "  listenbrainz      Music listen metadata (ListenBrainz)"
-            echo "  omdb              Movie/TV metadata (OMDb)"
-            echo "  r18               Japanese adult video metadata (R18)"
-            echo "  tmdb              Movie/TV metadata (TMDB)"
+            echo "Available plugins (7 bundled metadata plugins):"
+            echo "  anilist       Anime metadata (AniList)"
+            echo "  discogs       Music metadata (Discogs)"
+            echo "  kitsu         Anime metadata (Kitsu)"
+            echo "  lastfm        Music scrobbling metadata (Last.fm / Libre.fm)"
+            echo "  musicbrainz   Music metadata (MusicBrainz)"
+            echo "  omdb          Movie/TV metadata (OMDb)"
+            echo "  tmdb          Movie/TV metadata (TMDB)"
             exit 0
             ;;
         *) FILTER="$arg" ;;
@@ -51,16 +48,16 @@ if ! rustup target list --installed 2>/dev/null | grep -q "$TARGET"; then
 fi
 
 # ── Plugin definitions ────────────────────────────────────────────────────────
+# The 7 canonical bundled metadata plugins (post-refactor). The dropped
+# plugins (imdb, javdb, r18, listenbrainz, subscene, kitsunekko, yify-subs,
+# torrentio-rpc) are gone from the tree — don't re-add them here.
 declare -A PLUGINS=(
     ["anilist"]="anilist-provider"
     ["discogs"]="discogs-provider"
-    ["imdb"]="imdb-provider"
-    ["javdb"]="javdb"
     ["kitsu"]="kitsu"
     ["lastfm"]="lastfm-provider"
-    ["listenbrainz"]="listenbrainz-provider"
+    ["musicbrainz"]="musicbrainz-provider"
     ["omdb"]="omdb-provider"
-    ["r18"]="r18"
     ["tmdb"]="tmdb-provider"
 )
 
