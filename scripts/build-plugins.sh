@@ -17,6 +17,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 PLUGIN_DIR="${PLUGIN_DIR:-$HOME/.stui/plugins}"
 TARGET="wasm32-wasip1"
+# Respect CARGO_TARGET_DIR so builds land where cargo actually writes them.
+# Common developer setup: `CARGO_TARGET_DIR=~/.cargo/target` for shared caching.
+CARGO_TGT="${CARGO_TARGET_DIR:-$ROOT/target}"
 INSTALL=true
 FILTER=""
 
@@ -88,10 +91,10 @@ build_plugin() {
             -p "$crate_name"
     )
 
-    # Workspace builds output to $ROOT/target/, not the plugin's own target/.
+    # Workspace builds output to cargo's target dir (honouring CARGO_TARGET_DIR).
     # Cargo converts hyphens to underscores in the filename.
     local wasm_name="${crate_name//-/_}.wasm"
-    local wasm_file="$ROOT/target/$TARGET/release/$wasm_name"
+    local wasm_file="$CARGO_TGT/$TARGET/release/$wasm_name"
 
     if [[ ! -f "$wasm_file" ]]; then
         echo "✗ Build succeeded but $wasm_name not found in target/$TARGET/release/" >&2
