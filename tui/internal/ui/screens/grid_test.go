@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
 )
 
@@ -80,6 +81,19 @@ func TestRenderGridAlwaysFillsAvailH(t *testing.T) {
 		lines := strings.Split(result, "\n")
 		if len(lines) != 20 {
 			t.Errorf("n=%d: expected 20 lines, got %d", n, len(lines))
+		}
+	}
+}
+
+// With overflow, every rendered line should be exactly termWidth cells —
+// scrollbar flush at the last column, no raggedness.
+func TestRenderGridScrollbarFlushRight(t *testing.T) {
+	entries := makeEntries(30)
+	termWidth := 120
+	result := RenderGrid(entries, GridCursor{}, termWidth, 8, false, 0, "ready", []string{"test"}, nil)
+	for i, line := range strings.Split(result, "\n") {
+		if w := lipgloss.Width(line); w != termWidth {
+			t.Errorf("line %d: width = %d, want %d", i, w, termWidth)
 		}
 	}
 }

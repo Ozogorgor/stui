@@ -172,14 +172,17 @@ func RenderGrid(
 
 	// Attach scrollbar: each grid row is rowH terminal lines tall.
 	// Distribute the sbChars across rows — one char per visible row index.
+	// Pad each line to gridWidth so the scrollbar lands at column gridWidth (flush right).
 	sbIdx := 0
 	var finalRows []string
 	for _, rowStr := range rowStrings {
 		lines := strings.Split(rowStr, "\n")
 		for li := range lines {
 			// Append the scrollbar char to the first line of each card row.
+			// Pad the line to gridWidth first so the scrollbar ends up at the rightmost column.
 			if li == 0 && sbIdx < len(sbChars) {
-				lines[li] = lines[li] + sbChars[sbIdx]
+				padded := lipgloss.NewStyle().Width(gridWidth).Render(lines[li])
+				lines[li] = padded + sbChars[sbIdx]
 				sbIdx++
 			}
 		}
