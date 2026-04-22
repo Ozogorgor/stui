@@ -70,3 +70,16 @@ func TestRenderGridLoadingState(t *testing.T) {
 		t.Error("RenderGrid with isLoading=true should return a non-empty loading message")
 	}
 }
+
+// When entries fit within availH, the output must still be exactly availH
+// lines tall — the parent container expects fixed height.
+func TestRenderGridAlwaysFillsAvailH(t *testing.T) {
+	for _, n := range []int{0, 1, 3, 5, 10} {
+		entries := makeEntries(n)
+		result := RenderGrid(entries, GridCursor{}, 120, 20, false, 0, "ready", []string{"test"}, nil)
+		lines := strings.Split(result, "\n")
+		if len(lines) != 20 {
+			t.Errorf("n=%d: expected 20 lines, got %d", n, len(lines))
+		}
+	}
+}

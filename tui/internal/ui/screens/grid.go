@@ -107,7 +107,7 @@ func RenderGrid(
 	}
 
 	// Determine if scrollbar is needed before computing card width,
-	// so we can reserve 2 columns (1 gap + 1 scrollbar) upfront.
+	// so we can reserve space upfront.
 	cols := components.CardColumns
 	totalRows := (len(entries) + cols - 1) / cols
 	rowH := components.CardPosterRows + 4 + 2 // card height + meta lines + border
@@ -119,7 +119,7 @@ func RenderGrid(
 	needsScrollbar := totalRows > visibleRows
 	gridWidth := termWidth
 	if needsScrollbar {
-		gridWidth -= 2 // reserve 1 gap + 1 scrollbar column
+		gridWidth -= 1 // reserve 1 column for the scrollbar (no extra padding — the card's internal right margin separates it visually)
 	}
 
 	cw := components.CardWidth(gridWidth)
@@ -167,7 +167,7 @@ func RenderGrid(
 	}
 
 	if !needsScrollbar {
-		return strings.Join(rowStrings, "\n")
+		return fixedHeightGrid(strings.Join(rowStrings, "\n"), termWidth, availH)
 	}
 
 	// Attach scrollbar: each grid row is rowH terminal lines tall.
@@ -179,13 +179,24 @@ func RenderGrid(
 		for li := range lines {
 			// Append the scrollbar char to the first line of each card row.
 			if li == 0 && sbIdx < len(sbChars) {
-				lines[li] = lines[li] + " " + sbChars[sbIdx]
+				lines[li] = lines[li] + sbChars[sbIdx]
 				sbIdx++
 			}
 		}
 		finalRows = append(finalRows, strings.Join(lines, "\n"))
 	}
-	return strings.Join(finalRows, "\n")
+	return fixedHeightGrid(strings.Join(finalRows, "\n"), termWidth, availH)
+}
+
+// fixedHeightGrid forces the grid's output to occupy exactly `availH` rows
+// so the parent container doesn't shrink to content height when the grid
+// has fewer entries than the viewport can hold.
+func fixedHeightGrid(content string, termWidth, availH int) string {
+	return lipgloss.NewStyle().
+		Width(termWidth).
+		Height(availH).
+		Align(lipgloss.Left, lipgloss.Top).
+		Render(content)
 }
 
 // CenteredMsg renders a single message centered in the available space.
