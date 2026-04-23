@@ -4,9 +4,6 @@ name         = "discogs"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Discogs — music / vinyl metadata (artists + albums)"
-author       = "stui"
-license      = "MIT"
-homepage     = "https://www.discogs.com"
 
 [env]
 DISCOGS_API_KEY = ""
@@ -36,3 +33,8 @@ kinds = ["artist", "album"]
 
 search = true
 lookup = { id_sources = ["discogs"] }
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://www.discogs.com"

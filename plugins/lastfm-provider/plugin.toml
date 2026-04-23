@@ -4,9 +4,6 @@ name         = "lastfm"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Last.fm — music discovery and charts"
-author       = "stui"
-license      = "MIT"
-homepage     = "https://www.last.fm/api"
 
 # Talks to last.fm's official API at ws.audioscrobbler.com. A free api_key
 # is required (https://www.last.fm/api/account/create). libre.fm's endpoint
@@ -42,3 +39,8 @@ enrich = true
 # `album.getInfo` / `track.getInfo` keyed by (name, artist) rather than a
 # canonical id, so id-based lookup would require a fake "{artist}|{track}"
 # id that doesn't round-trip. enrich covers the realistic use case.
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://www.last.fm/api"

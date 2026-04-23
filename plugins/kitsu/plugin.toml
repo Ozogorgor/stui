@@ -4,9 +4,6 @@ name         = "kitsu"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Kitsu — anime metadata (movies + series)"
-author       = "stui"
-license      = "MIT"
-homepage     = "https://kitsu.io"
 
 [env]
 KITSU_API_KEY = ""
@@ -31,3 +28,8 @@ kinds = ["movie", "series"]
 
 search = true
 lookup = { id_sources = ["kitsu", "myanimelist"] }
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://kitsu.io"

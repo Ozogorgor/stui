@@ -4,9 +4,6 @@ name         = "tmdb"
 version      = "1.0.0"
 abi_version  = 1
 description  = "The Movie Database — movies, TV series, episodes"
-author       = "stui"
-license      = "MIT"
-homepage     = "https://github.com/Ozogorgor/stui_plugins"
 repository   = "https://github.com/Ozogorgor/stui_plugins"
 
 [env]
@@ -36,3 +33,8 @@ enrich  = true
 artwork = { sizes = ["thumbnail", "standard", "hires"] }
 credits = true
 related = true
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://github.com/Ozogorgor/stui_plugins"
