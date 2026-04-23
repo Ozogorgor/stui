@@ -1,0 +1,202 @@
+name: Bundled Plugin Release
+
+# Publishes WASM builds of the bundled metadata plugins (plugins/*) as a
+# GitHub Release + a plugins.json index on GitHub Pages, so a user who
+# has uninstalled a bundled plugin can reinstall it from Plugin Manager
+# → Available instead of being stuck.
+#
+# The external plugin registry (ozogorgor.github.io/stui_plugins) lives
+# in a separate repo and its own workflow. This workflow publishes
+# exclusively the plugins that ship IN the stui runtime repo at
+# `plugins/*`, so the registry URL added to stui's default repo list
+# mirrors the monorepo's plugin set.
+#
+# Triggered by tags matching `plugins-v*.*.*` (e.g. `plugins-v0.1.0`)
+# so it never collides with a future stui runtime release tag.
+
+on:
+  push:
+    tags: ['plugins-v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. plugins-v0.1.0)'
+        required: true
+        default: 'plugins-v0.1.0'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-wasm:
+    name: Build ${{ matrix.plugin }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - tmdb-provider
+          - omdb-provider
+          - anilist-provider
+          - kitsu
+          - discogs-provider
+          - lastfm-provider
+          - musicbrainz-provider
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins
+          key: ${{ matrix.plugin }}
+
+      - name: Build
+        working-directory: plugins
+        run: |
+          cargo build -p "${{ matrix.plugin }}" \
+            --target wasm32-wasip1 \
+            --release
+
+      - name: Package
+        working-directory: plugins
+        run: |
+          DIR="${{ matrix.plugin }}"
+          CRATE=$(echo "$DIR" | tr '-' '_')
+          VERSION=$(grep '^version' "${DIR}/plugin.toml" | head -1 | sed 's/.*= *"\(.*\)"/\1/')
+          ARCHIVE="${DIR}-${VERSION}.tar.gz"
+
+          mkdir staging
+          cp "target/wasm32-wasip1/release/${CRATE}.wasm" staging/plugin.wasm
+          cp "${DIR}/plugin.toml" staging/
+          tar -czf "${ARCHIVE}" -C staging .
+
+          echo "ARCHIVE=plugins/${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.plugin }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [build-wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate plugins.json
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          python3 - << 'PYEOF'
+          import json, hashlib, os, tomllib, glob
+
+          tag  = os.environ['RELEASE_TAG']
+          repo = os.environ['GITHUB_REPOSITORY']
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+
+          entries = []
+          for archive in sorted(glob.glob('dist/*.tar.gz')):
+              fname    = os.path.basename(archive)
+              checksum = f"sha256:{hashlib.sha256(open(archive,'rb').read()).hexdigest()}"
+              stem       = fname.removesuffix('.tar.gz')
+              plugin_dir, version = stem.rsplit('-', 1)
+
+              description = ''
+              author      = 'stui'
+              homepage    = None
+
+              toml_path = f"plugins/{plugin_dir}/plugin.toml"
+              if os.path.exists(toml_path):
+                  with open(toml_path, 'rb') as f:
+                      meta = tomllib.load(f)
+                  p    = meta.get('plugin', meta)
+                  m    = meta.get('meta', {})
+                  description = p.get('description') or meta.get('description', '')
+                  author      = (p.get('author') or m.get('author') or
+                                 meta.get('author') or 'stui')
+                  homepage    = p.get('homepage') or m.get('homepage') or meta.get('homepage')
+
+              entry = {
+                  'name':        plugin_dir,
+                  'version':     version,
+                  'type':        'wasm',
+                  'description': description,
+                  'author':      author,
+                  'binary_url':  f"{base}/{fname}",
+                  'checksum':    checksum,
+              }
+              if homepage:
+                  entry['homepage'] = homepage
+              entries.append(entry)
+
+          entries.sort(key=lambda e: e['name'])
+
+          os.makedirs('pages', exist_ok=True)
+          with open('pages/plugins.json', 'w') as f:
+              json.dump(entries, f, indent=2)
+              f.write('\n')
+
+          print(f"Generated plugins.json — {len(entries)} entries:")
+          for e in entries:
+              print(f"  {e['name']} {e['version']}")
+          PYEOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          generate_release_notes: true
+          body: |
+            ## Bundled plugins
+
+            These are the metadata plugins that ship with stui. If you
+            ever uninstall one from Plugin Manager, you can reinstall it
+            by adding this repo to your plugin sources:
+
+            ```
+            https://ozogorgor.github.io/stui
+            ```
+
+            (Already added by default in recent stui builds.)
+          files: |
+            dist/*.tar.gz
+            pages/plugins.json
+
+      - name: Deploy plugins.json to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: pages
+          keep_files: true
+          commit_message: "Update plugins.json for ${{ steps.tag.outputs.value }}"

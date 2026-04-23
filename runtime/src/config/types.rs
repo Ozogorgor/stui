@@ -694,6 +694,12 @@ mod defaults {
         vec![
             "https://plugins.stui.dev".to_string(),
             "https://ozogorgor.github.io/stui_plugins".to_string(),
+            // Bundled metadata plugins (tmdb, omdb, anilist, kitsu,
+            // discogs, lastfm, musicbrainz) — published from the stui
+            // monorepo's plugin-release.yml workflow. Listed so that a
+            // user who uninstalls a bundled plugin can reinstall it
+            // from Plugin Manager → Available.
+            "https://ozogorgor.github.io/stui".to_string(),
         ]
     }
 
