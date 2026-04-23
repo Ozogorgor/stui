@@ -24,6 +24,8 @@ pub use pipeline::Pipeline;
 pub mod search_scoped;
 pub use search_scoped::{search_scoped, ScopedSearchConfig};
 
+pub mod subtitles;
+
 pub mod trace;
 pub use trace::TraceEmitter;
 
@@ -1779,6 +1781,7 @@ mod supervisor_search_tests {
             dir: std::path::PathBuf::from("/tmp"),
             entrypoint: std::path::PathBuf::from("/tmp/plugin.wasm"),
             mode: ExecutionMode::Wasm,
+            enabled: true,
         }
     }
 

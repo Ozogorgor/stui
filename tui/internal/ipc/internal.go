@@ -181,6 +181,20 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.send(msg)
 		}
+	case "subtitle_fetched":
+		var msg SubtitleFetchedMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse subtitle_fetched", "error", err)
+		} else {
+			c.send(msg)
+		}
+	case "subtitle_search_failed":
+		var msg SubtitleSearchFailedMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse subtitle_search_failed", "error", err)
+		} else {
+			c.send(msg)
+		}
 	case "theme_update":
 		var msg ThemeUpdateMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {

@@ -506,6 +506,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case ipc.SubtitleFetchedMsg:
+		t, cmd := components.ShowToast(
+			fmt.Sprintf("Subtitle: %s · %s", msg.Language, msg.Provider),
+			false,
+		)
+		m.activeToast = &t
+		return m, cmd
+
+	case ipc.SubtitleSearchFailedMsg:
+		t, cmd := components.ShowToast(
+			fmt.Sprintf("Subtitle search failed: %s", msg.Reason),
+			true,
+		)
+		m.activeToast = &t
+		return m, cmd
+
 	case poster.PostersUpdatedMsg:
 		// Re-arm the poll so we keep listening. No model-state change —
 		// the next View() pass picks up newly-cached posters directly.

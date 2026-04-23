@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::aria2_bridge::Aria2Bridge;
+use crate::config::ConfigManager;
 use crate::config::types::PlaybackConfig;
 use crate::dsp::DspPipeline;
 use crate::engine::Engine;
@@ -80,6 +81,7 @@ pub struct PlayerBridge {
     aria2:        Option<Aria2Bridge>,
     mpd:          Option<MpdBridge>,
     engine:       Arc<Engine>,
+    config:       Arc<ConfigManager>,
     storage:      Arc<crate::storage::MediaStorage>,
     watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
     ipc_tx:       mpsc::Sender<String>,
@@ -95,6 +97,7 @@ pub struct PlayerBridge {
 impl PlayerBridge {
     pub fn new(
         engine:       Arc<Engine>,
+        config:       Arc<ConfigManager>,
         aria2:        Option<Aria2Bridge>,
         mpd:          Option<MpdBridge>,
         storage:      Arc<crate::storage::MediaStorage>,
@@ -113,7 +116,7 @@ impl PlayerBridge {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, aria2, mpd, engine, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
+        PlayerBridge { mpv, aria2, mpd, engine, config, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Build the DSP-derived mpv flags for the current pipeline configuration.
@@ -163,6 +166,55 @@ impl PlayerBridge {
             }
             warn!("player_bridge: audio tab but MPD not configured — falling back to mpv");
         }
+
+        // Subtitle auto-download prelude. Best-effort: any failure falls
+        // through to the existing sidecar helper. 5s total cap on fetch so
+        // mpv warmup isn't blocked.
+        let cfg_snap = self.config.snapshot().await;
+        if cfg_snap.subtitles.auto_download && !imdb_id.is_empty() {
+            let kind = match tab {
+                Some(crate::ipc::MediaTab::Series) =>
+                    stui_plugin_sdk::EntryKind::Series,
+                _ => stui_plugin_sdk::EntryKind::Movie,
+            };
+            let lang = cfg_snap.subtitles.preferred_language.clone();
+            let engine = self.engine.clone();
+            let title_owned = title.to_string();
+            let imdb_owned = imdb_id.to_string();
+            let data_dir = self.data_dir.clone();
+            let tx = self.ipc_tx.clone();
+
+            // 5s cap — on timeout, the unwrap_or_default returns an empty Vec.
+            let fetched = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                crate::engine::subtitles::fetch_subtitles(
+                    &engine, &title_owned, Some(&imdb_owned), kind, &lang,
+                ),
+            ).await.unwrap_or_default();
+
+            if let Some(candidate) = fetched.into_iter().next() {
+                match Self::download_subtitle_candidate(&engine, &candidate, &imdb_owned, &data_dir).await {
+                    Ok(file_name) => {
+                        let msg = serde_json::to_string(&serde_json::json!({
+                            "type":      "subtitle_fetched",
+                            "language":  candidate.language.unwrap_or_else(|| "unknown".into()),
+                            "provider":  candidate.plugin_name,
+                            "file_name": file_name,
+                        })).unwrap_or_default();
+                        let _ = tx.send(msg).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "subtitle download failed");
+                        let msg = serde_json::to_string(&serde_json::json!({
+                            "type":   "subtitle_search_failed",
+                            "reason": e.to_string(),
+                        })).unwrap_or_default();
+                        let _ = tx.send(msg).await;
+                    }
+                }
+            }
+        }
+        drop(cfg_snap);
 
         let sub_path = find_subtitle(&self.data_dir, imdb_id);
         self.start_stream(entry_id, &stream_url, title, sub_path.as_deref(), media_type, year).await;
@@ -549,5 +601,64 @@ impl PlayerBridge {
             Music => self.storage.artist_folder(title),
             Podcast => self.storage.podcast_folder(title),
         }
+    }
+
+    /// Resolve the candidate's entry_id to a subtitle URL via the plugin,
+    /// HTTP-GET the file to the canonical sidecar path. Returns the basename
+    /// of the written file.
+    ///
+    /// Layout: `{data_dir}/subtitles/{imdb_id}/{lang}.srt` matches the
+    /// layout that `find_subtitle` already scans, so the file picks up
+    /// automatically on the next `find_subtitle` call in the play path.
+    async fn download_subtitle_candidate(
+        engine: &Engine,
+        candidate: &crate::engine::subtitles::SubtitleCandidate,
+        imdb_id: &str,
+        data_dir: &str,
+    ) -> anyhow::Result<String> {
+        // 1. Resolve — 10s cap.
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            crate::engine::subtitles::call_plugin_resolve(
+                engine, &candidate.plugin_id, &candidate.entry.id,
+            ),
+        ).await
+            .map_err(|_| anyhow::anyhow!("subtitle resolve timeout (10s)"))?
+            .map_err(|e| anyhow::anyhow!("subtitle resolve: {e}"))?;
+
+        let url = resp.stream_url;
+        if url.is_empty() {
+            anyhow::bail!("subtitle resolve returned empty stream_url");
+        }
+
+        // 2. Compose sidecar path.
+        let lang = candidate.language.as_deref().unwrap_or("unknown");
+        let sub_dir = format!("{data_dir}/subtitles/{imdb_id}");
+        tokio::fs::create_dir_all(&sub_dir).await
+            .map_err(|e| anyhow::anyhow!("mkdir {sub_dir}: {e}"))?;
+        let file_name = format!("{lang}.srt");
+        let file_path = format!("{sub_dir}/{file_name}");
+
+        // 3. HTTP GET — 15s cap. Subtitle files are typically <100KB;
+        // aria2 is overkill for a one-shot fetch.
+        let bytes = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            async {
+                reqwest::get(&url).await
+                    .map_err(|e| anyhow::anyhow!("GET {url}: {e}"))?
+                    .error_for_status()
+                    .map_err(|e| anyhow::anyhow!("GET {url}: HTTP {e}"))?
+                    .bytes().await
+                    .map_err(|e| anyhow::anyhow!("read {url}: {e}"))
+            },
+        ).await
+            .map_err(|_| anyhow::anyhow!("subtitle download timeout (15s)"))??;
+
+        tokio::fs::write(&file_path, &bytes).await
+            .map_err(|e| anyhow::anyhow!("write {file_path}: {e}"))?;
+
+        tracing::info!(plugin = %candidate.plugin_name, path = %file_path,
+                       "subtitle downloaded");
+        Ok(file_name)
     }
 }

@@ -400,6 +400,7 @@ async fn main() -> Result<()> {
     // ── mpv / player bridge ───────────────────────────────────────────────
     let player = player::PlayerBridge::new(
         Arc::clone(&engine),
+        Arc::clone(&config),
         aria2.clone(),
         mpd_bridge.clone(),
         Arc::clone(&storage),

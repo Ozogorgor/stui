@@ -77,6 +77,18 @@ type PluginToastMsg struct {
 	IsError    bool   `json:"is_error"`
 }
 
+// SubtitleFetchedMsg is pushed when auto-download succeeds for a played stream.
+type SubtitleFetchedMsg struct {
+	Language string `json:"language"`
+	Provider string `json:"provider"`
+	FileName string `json:"file_name"`
+}
+
+// SubtitleSearchFailedMsg is pushed when subtitle search/download fails.
+type SubtitleSearchFailedMsg struct {
+	Reason string `json:"reason"`
+}
+
 // ThemeUpdateMsg is pushed by the Rust runtime whenever matugen rewrites
 // its colors.json.
 type ThemeUpdateMsg struct {
