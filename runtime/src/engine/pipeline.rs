@@ -90,7 +90,11 @@ impl Pipeline {
         cfg: &RuntimeConfig,
         player: Arc<PlayerBridge>,
     ) -> Self {
-        let engine  = Engine::new(cfg.cache_dir.clone(), cfg.data_dir.clone());
+        let engine  = Engine::new(
+            cfg.cache_dir.clone(),
+            cfg.data_dir.clone(),
+            cfg.catalog.anime_ratio,
+        );
         let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), Arc::new(engine.clone())));
         let cache   = RuntimeCache::new();
         let policy  = RankingPolicy::default();

@@ -238,12 +238,11 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "ctrl+c":
 			return r, tea.Quit
-		case "q":
-			// Only quit from the root screen; subscreens (search, settings, etc.)
-			// must handle or ignore "q" themselves so typed text is not intercepted.
-			if len(r.history) == 0 {
-				return r, tea.Quit
-			}
+		// `q` is NOT handled here. The inner screen (ui.go::handleKey) owns
+		// it so the search-bar's Focus state can veto the quit when the user
+		// is typing a query. A duplicated root-level `case "q":` used to
+		// fire first and bypass that check, leaking "queen"/"quit"/"quiet"
+		// queries into an accidental quit.
 		case "esc":
 			if len(r.history) > 0 {
 				// Pop the previous screen

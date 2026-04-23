@@ -13,6 +13,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 mkdir -p "$DIST"
+# Respect CARGO_TARGET_DIR so the binary we copy into dist/ is the one cargo
+# actually just wrote — not a stale artifact in $ROOT/target/ from before the
+# shared cache was configured.
+CARGO_TGT="${CARGO_TARGET_DIR:-$ROOT/target}"
 
 FEATURES=""
 BUILD_PLUGINS=true
@@ -60,7 +64,7 @@ if [[ -n "$FEATURES" ]]; then
 else
     cargo build --release -p stui-runtime
 fi
-cp target/release/stui-runtime "$DIST/stui-runtime"
+cp "$CARGO_TGT/release/stui-runtime" "$DIST/stui-runtime"
 echo "✓  dist/stui-runtime  ($(du -h "$DIST/stui-runtime" | cut -f1))"
 
 # ── TUI (Go) ──────────────────────────────────────────────────────────────────

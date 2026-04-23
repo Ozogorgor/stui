@@ -201,6 +201,11 @@ struct MovieItem {
     overview: Option<String>,
     #[serde(default)]
     poster_path: Option<String>,
+    /// ISO 639-1. TMDB includes this on search + discover + trending.
+    /// Needed so the runtime's anime-mix classifier can flag
+    /// Japanese animation ("Animation" + "ja") that ships via TMDB.
+    #[serde(default)]
+    original_language: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -218,6 +223,8 @@ struct TvItem {
     overview: Option<String>,
     #[serde(default)]
     poster_path: Option<String>,
+    #[serde(default)]
+    original_language: Option<String>,
 }
 
 /// Direct-lookup payload for `/movie/{id}?append_to_response=external_ids`.
@@ -363,6 +370,7 @@ impl MovieItem {
             rating: nonzero_rating(self.vote_average),
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
+            original_language: self.original_language,
             ..Default::default()
         }
     }
@@ -383,6 +391,7 @@ impl TvItem {
             rating: nonzero_rating(self.vote_average),
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
+            original_language: self.original_language,
             ..Default::default()
         }
     }
@@ -1097,6 +1106,7 @@ mod tests {
             vote_average: 8.3,
             overview: Some("desc".into()),
             poster_path: Some("/abc.jpg".into()),
+            original_language: Some("ja".into()),
         };
         let e = m.into_entry(EntryKind::Movie);
         assert_eq!(e.id, "100");

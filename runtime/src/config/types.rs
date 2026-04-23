@@ -142,6 +142,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub music: MusicConfig,
 
+    /// Catalog grid shaping (anime ratio etc.).
+    #[serde(default)]
+    pub catalog: CatalogConfig,
+
     /// Intro/credits skip detection configuration.
     #[serde(default)]
     pub skipper: SkipperConfig,
@@ -506,6 +510,33 @@ pub struct MusicConfig {
     pub normalize: MusicNormalizeConfig,
 }
 
+/// `[catalog]` section — controls post-merge shaping of Movies/Series grids.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CatalogConfig {
+    /// Fraction of the Movies/Series grid reserved for anime-dominant
+    /// entries (present in kitsu/anilist but NOT also in tmdb/omdb/tvdb).
+    ///
+    /// Clamped to `[0.0, 1.0]`:
+    ///   - `0.0` → no anime-dominant entries shown
+    ///   - `0.4` → default: 60% general, 40% anime, interleaved in 10-slot batches
+    ///   - `0.5` → 50/50
+    ///   - `1.0` → only anime-dominant entries
+    ///
+    /// Interleave pattern is computed at runtime: `round(ratio * 10)` anime
+    /// per 10-slot batch, remainder general. Titles that cross over (present
+    /// in both anime and global providers, e.g. "Your Name" in TMDB+AniList)
+    /// are treated as general so mainstream hits aren't quota'd down.
+    #[serde(default = "defaults::catalog_anime_ratio")]
+    pub anime_ratio: f32,
+}
+
+impl Default for CatalogConfig {
+    fn default() -> Self {
+        Self { anime_ratio: defaults::catalog_anime_ratio() }
+    }
+}
+
 /// Configuration for the intro/credits skip detector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkipperConfig {
@@ -578,6 +609,7 @@ impl Default for RuntimeConfig {
             api_keys: ApiKeysConfig::default(),
             mpd: MpdConfig::default(),
             music: MusicConfig::default(),
+            catalog: CatalogConfig::default(),
             skipper: SkipperConfig::default(),
             plugin_repos: defaults::plugin_repos(),
             plugins: std::collections::HashMap::new(),
@@ -604,6 +636,13 @@ mod defaults {
     }
     pub fn theme_mode() -> String {
         "dark".to_string()
+    }
+
+    /// Default fraction of Movies/Series grid dedicated to anime-dominant
+    /// entries (from kitsu/anilist but NOT also in tmdb/omdb/tvdb).
+    /// 0.4 = 60% general / 40% anime, interleaved in 10-slot batches.
+    pub fn catalog_anime_ratio() -> f32 {
+        0.4
     }
     pub fn log_level() -> String {
         "info".to_string()

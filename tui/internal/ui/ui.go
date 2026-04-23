@@ -516,17 +516,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Catalog grid ──────────────────────────────────────────────────────
 
+	case ipc.CatalogStaleMsg:
+		// Runtime couldn't refresh this tab (all providers errored /
+		// offline). Surface to the user so they know the grid isn't
+		// freshly fetched data — existing cached entries stay on screen
+		// because the runtime deliberately didn't overwrite them with
+		// an empty result.
+		tab := msg.Tab
+		if tab == "" {
+			tab = "catalog"
+		}
+		m.state.StatusMsg = fmt.Sprintf("⚠ Offline — showing cached %s", tab)
+		return m, nil
+
 	case ipc.GridUpdateMsg:
 		m.grids[msg.Tab] = msg.Entries
 		m.musicScreen, _ = m.musicScreen.Update(msg) // keep Browse catalog fresh
 		if msg.Tab == m.state.ActiveTab.MediaTabID() {
 			m.state.IsLoading = false
 			m.state.LoadingStart = 0
-			if msg.Source == "cache" {
-				m.state.StatusMsg = fmt.Sprintf("Loaded %d titles from cache \u2014 refreshing\u2026", len(msg.Entries))
-			} else {
-				m.state.StatusMsg = fmt.Sprintf("%d titles", len(msg.Entries))
-			}
+			// The runtime's catalog now skips refresh_tab when the cached
+			// grid is still within TTL, so a cache-source GridUpdate is NOT
+			// guaranteed to be followed by a live one. Showing "refreshing…"
+			// here would leave the footbar stuck on that string when no
+			// follow-up arrives. Plain "N titles" is correct in both cases.
+			m.state.StatusMsg = fmt.Sprintf("%d titles", len(msg.Entries))
 		}
 		// Persist live catalog data for offline browsing.
 		if msg.Source == "live" && m.mediaCache != nil {
@@ -1733,18 +1747,22 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// ── Global player controls — active whenever mpv is running ───────────
+	// All ambient-mode handlers below short-circuit when the search input
+	// is focused, so the user can type letters that happen to be bound to
+	// player/DSP/MPD actions ("d", "n", "p", "r", " ", etc.) without them
+	// being intercepted as commands.
 	activePlayer := m.nowPlaying
 	if m.detail != nil && m.detail.NowPlaying != nil {
 		activePlayer = m.detail.NowPlaying
 	}
 	// MPD pause: space toggles MPD pause from any screen when MPD is playing.
-	if m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" && m.client != nil {
+	if m.state.Focus != state.FocusSearch && m.mpdNowPlaying != nil && m.mpdNowPlaying.State != "stop" && m.client != nil {
 		if action, ok := actions.FromKey(key); ok && action == actions.ActionPlayerPause {
 			m.client.MpdCmd("mpd_toggle_pause", nil)
 			return m, nil
 		}
 	}
-	if activePlayer != nil && m.client != nil {
+	if m.state.Focus != state.FocusSearch && activePlayer != nil && m.client != nil {
 		if action, ok := actions.FromKey(key); ok && action.IsPlayerAction() {
 			switch action {
 			case actions.ActionPlayerPause:
@@ -1848,7 +1866,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// ── MPD controls — active whenever MPD HUD is visible ────────────────
-	if m.mpdNowPlaying != nil && m.client != nil {
+	// Yield to the search input when it has focus — otherwise letters in a
+	// query like "dune" get swallowed by the `n` → next-track handler and
+	// the user can't type at all.
+	if m.state.Focus != state.FocusSearch && m.mpdNowPlaying != nil && m.client != nil {
 		switch key {
 		case "n":
 			m.client.MpdCmd("mpd_next", nil)
@@ -1900,7 +1921,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// ── DSP controls — active whenever DSP is enabled ────────────────────────
-	if m.dspState != nil && m.client != nil {
+	// Yield to the search input when it has focus; otherwise typing the
+	// letter `d` (or c / b / r / D) in a query gets captured as a DSP
+	// toggle / convolution switch, and the user can't complete their search.
+	if m.state.Focus != state.FocusSearch && m.dspState != nil && m.client != nil {
 		switch key {
 		case "d":
 			// Toggle DSP enabled/disabled
@@ -2168,7 +2192,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// Global keys
 	switch key {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		if m.client != nil {
 			if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
 				m.client.MpdCmd("mpd_stop", nil)
@@ -2176,6 +2200,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.client.Stop()
 		}
 		return m, tea.Quit
+	case "q":
+		// `q` is only a quit shortcut when the search bar isn't focused —
+		// otherwise typing a query that contains 'q' (e.g. "squid game",
+		// "american queer", "the queen") would kill the app mid-word.
+		// ctrl+c above remains a hard quit from any focus.
+		if m.state.Focus != state.FocusSearch {
+			if m.client != nil {
+				if m.mpdNowPlaying != nil && m.mpdNowPlaying.State == "play" {
+					m.client.MpdCmd("mpd_stop", nil)
+				}
+				m.client.Stop()
+			}
+			return m, tea.Quit
+		}
 	case "/":
 		// Activate the inline search bar only when the focused screen is
 		// Searchable. Non-Searchable screens ignore the keystroke entirely.
@@ -2198,6 +2236,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Open offline library
 		if m.mediaCache != nil {
 			return m, screen.TransitionCmd(screens.NewOfflineLibraryScreen(m.mediaCache), true)
+		}
+	case "R":
+		// Manual catalog refresh — wipes the runtime's in-mem SearchCache
+		// for this tab and re-dispatches the provider fan-out. Refreshed
+		// entries arrive via the existing GridUpdate stream, so the
+		// daemon's ack is fire-and-forget. The Rust `MediaTab` enum
+		// serializes snake_case so we send the lowercased name.
+		if m.screen == screenGrid && m.client != nil {
+			label := state.Tab(m.state.ActiveTab).String()
+			m.client.CatalogRefresh(strings.ToLower(label))
+			m.state.StatusMsg = fmt.Sprintf("Refreshing %s…", label)
+			return m, nil
 		}
 	case "tab":
 		next := (int(m.state.ActiveTab) + 1) % len(state.Tabs())

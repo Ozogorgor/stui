@@ -137,6 +137,7 @@ mod tests {
                     tmdb_id: None,
                     media_type: MediaType::default(),
                     ratings: Default::default(),
+                    original_language: None,
                 })
                 .collect(),
             source,

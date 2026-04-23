@@ -167,6 +167,13 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.send(msg)
 		}
+	case "catalog_stale":
+		var msg CatalogStaleMsg
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse catalog_stale", "error", err)
+		} else {
+			c.send(msg)
+		}
 	case "plugin_toast":
 		var msg PluginToastMsg
 		if err := json.Unmarshal(raw.Raw, &msg); err != nil {

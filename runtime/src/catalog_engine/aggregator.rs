@@ -571,6 +571,9 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
         if base.tmdb_id.is_none() {
             base.tmdb_id = secondary.tmdb_id.clone();
         }
+        if base.original_language.is_none() {
+            base.original_language = secondary.original_language.clone();
+        }
 
         // Merge all per-source ratings (don't overwrite existing keys).
         for (k, v) in &secondary.ratings {
@@ -715,6 +718,7 @@ mod tests {
             tmdb_id: None,
             media_type,
             ratings: ratings_map,
+            original_language: None,
         }
     }
 

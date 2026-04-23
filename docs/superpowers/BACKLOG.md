@@ -64,6 +64,132 @@ repo, not bundled. Probably adds:
 
 ## Tier 2 — Code cleanups (small, can be batched into maintenance PRs)
 
+### Pre-existing auth test failures (surfaced 2026-04-23)
+
+After fixing compile errors introduced by the `original_language` field,
+`cargo test -p stui-runtime` runs with 471 passing and 5 failing. All 5
+failures are in the auth subsystem:
+  - `abi::host::inner_impl::tests::test_auth_receiver_stored_in_host_state`
+  - `auth::callback_server::tests::test_allocate_returns_port_and_fires_receiver_on_callback`
+  - `auth::tests::test_open_and_wait_denied`
+  - `auth::tests::test_open_and_wait_timeout`
+  - `plugin_rpc::process::tests::test_auth_phase_allocated_allows_realloc`
+Unrelated to this session's catalog/cache/engine/tvdb work — likely
+flaky due to port binding / process-spawn timing, or a pre-existing real
+regression that slipped under a test-compile outage. Investigate with
+`cargo test -p stui-runtime auth:: -- --nocapture` to see the panics.
+
+### Test-literal repairs (post-original_language addition, 2026-04-22) — ✅ DONE 2026-04-23
+
+`CatalogEntry` now derives `Default`; `MediaEntry` now derives `Default`
+and `MediaTab` now derives `Default` with `#[default] Movies`. Remaining
+struct literals across tests (`catalog.rs`, `catalog_engine/aggregator.rs`,
+`ipc_batcher.rs`, `engine/search_scoped.rs`, `mediacache/store.rs`,
+`tests/provider_tests.rs`) either got the `original_language: None` field
+added explicitly or switched to `..Default::default()`. Engine::new() test
+call sites updated to the 3-arg signature. Test suite compiles again.
+
+### Corrupt chafa posters on some AniList entries (2026-04-22)
+
+Repro: browse Series tab past the general-bucket tail into anime entries.
+A handful of cards (LIAR GAME, Rent-a-Girlfriend S5) render a noisy/
+broken poster instead of the image — title + meta bar below are correct.
+Other anime from AniList render cleanly. Hypothesis: the poster URL
+returns a non-image payload (404 HTML, or an image format chafa's build
+can't decode).
+
+**Partial progress (2026-04-23):** `imageview.go::render()` now captures
+chafa stderr and logs `path=X err=Y stderr=Z` when the subprocess fails
+or produces empty output. Next step: reproduce the broken card, check
+runtime.log for the failure line, and confirm whether it's an HTTP
+content-type issue (poster cache stored HTML), an unsupported image
+format, or something else.
+
+### UI scroll sluggishness + R-refresh freeze (2026-04-22)
+
+Observed: grid scrolling feels slow; pressing R briefly freezes the UI while
+the newly-arrived entries render. The chafa in-memory cache is already
+wired (`cardImageViews` map in `tui/internal/ui/components/card.go` +
+`ImageView`'s internal `(path,w,h)->lines` cache in `imageview.go`), so
+steady-state scrolling isn't re-shelling chafa — the issue is elsewhere.
+
+Three suspects ranked by likelihood:
+
+1. **Synchronous chafa on first-render of freshly-downloaded posters.**
+   When R triggers a refresh and 72 entries with novel poster URLs land,
+   the first render enqueues all into the poster download pool. Each
+   download-complete tick triggers re-render; the first render of each
+   card then invokes chafa synchronously inside `ImageView.Lines()` on the
+   bubbletea message-loop thread. Bursts of ~10 concurrent chafa calls
+   at ~30–80ms each = visible stall. Fix: render chafa in a background
+   goroutine per cached path and push the rendered lines back via a
+   `ChafaReadyMsg` — the card's first draw shows the placeholder, second
+   frame gets the real art. File: `tui/internal/ui/components/imageview.go`
+   around `render()`.
+
+2. **Full `View()` recompute on every Msg.** Every keystroke re-renders
+   the entire model: grid + topbar + footer + search + status. Grid alone
+   is 10 cards × (poster + title style + meta style + genre style + border
+   + overlay splice). `lipgloss.Width(line)` (ANSI-aware width calc) runs
+   per line of every row inside the scrollbar-attach loop in
+   `tui/internal/ui/screens/grid.go`. Profile candidates: memoize rendered
+   cards keyed by `(entry.ID, selected)` — only re-render when either
+   changes; cache per-row width so the scrollbar loop doesn't re-measure.
+
+3. **Message-loop contention from concurrent IPC.** MPD status ticks,
+   player heartbeats, and plugin toasts all dispatch bubbletea messages.
+   If any handler holds the loop for more than ~16ms, scroll keypresses
+   queue behind them. Diagnostic: instrument `Update` in `ui.go` with a
+   duration log per message type; the slowest types are likely the
+   optimization targets. File: `tui/internal/ui/ui.go` Update().
+
+Prefer starting with (1) — the fix is bounded (one file, one goroutine
+spawn) and targets the most-reported freeze (R + scroll through fresh
+results). Revisit (2) and (3) if scroll still feels heavy after (1).
+
+### From caching Phase 1 (2026-04-22)
+
+- **DSP config IPC timeout (30s) exposed once grid refresh became instant.**
+  `Request::SetDspConfig` in `runtime/src/main.rs:1121` takes a tokio Mutex on
+  the DSP pipeline, mutates config, calls `pipeline.update_config(cfg).await`.
+  One of three suspects: (1) `update_config` awaits the output thread holding
+  a lock while mutating, (2) the DSP Mutex is held by a long-running MPD-
+  bridge op, (3) head-of-line blocking in the IPC loop when another slow
+  handler is ahead. Cache didn't cause it — it just stopped masking the
+  30s wait behind slower grid fan-outs. Repro by opening Movies + hitting a
+  DSP toggle in settings while a search is mid-flight.
+
+### Lastfm provider robustness — ✅ DONE 2026-04-23
+
+`parse_json()` in `plugins/lastfm-provider/src/lib.rs` now detects the
+`{"error": N, "message": "..."}` envelope before falling through to the
+strongly-typed deserialize. Turns "missing field `tracks`" into
+"lastfm API error 10: Invalid API key" which is actionable.
+
+### Post-TVDB integration
+
+- **TVDB extended metadata endpoint** (`/movies/{id}/extended` and series
+  equivalent) — types already declared in `runtime/src/tvdb/types.rs`
+  (`ExtendedRecord`) with `#[allow(dead_code)]`; wire a `lookup` method on
+  `TvdbClient` once there's a caller (Phase 2 of caching or detail-view
+  enrichment).
+- **TVDB acknowledgement screen** — user requested this as a follow-up
+  after TVDB integration lands. Show the TVDB logo + attribution text in a
+  credits/about view (location TBD; no such screen today).
+  Attribution requirements per https://thetvdb.com/api-information#attribution:
+  (a) "Metadata provided by TheTVDB" text, (b) TVDB logo, (c) link to
+  https://www.thetvdb.com (or https://thetvdb.com). All three must appear
+  wherever TVDB data is displayed or at minimum in a dedicated credits view.
+  Assets: grab the logo from the same page, bundle under `tui/assets/` as
+  an ANSI block-art variant (chafa-friendly) since we can't render raster
+  PNG in the TUI.
+- **TVDB trending/discover for empty-query refresh** — `/search` rejects
+  empty queries (HTTP 400). TVDB has no direct `/trending` like TMDB, but
+  `/movies?page=N` (all-movies by id) or `/movies/filter?sort=score&...`
+  (untested, endpoint shape finicky) could provide a curated list. Today
+  we skip TVDB when query is empty. Explore the filter endpoint later so
+  TVDB contributes to the initial catalog fan-out too.
+
 Open items from search-refactor Task 7.0 that didn't land in that branch:
 
 ### From search refactor

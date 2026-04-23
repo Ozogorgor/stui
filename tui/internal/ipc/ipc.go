@@ -133,10 +133,21 @@ func Start(runtimePath string) (*Client, error) {
 	logger := log.NewIPCLogger().With("runtime_path", runtimePath)
 	logger.Info("starting runtime process")
 
+	// bufio.Scanner defaults to a 64 KiB per-token buffer, which a single
+	// grid-update wire message can blow past (72 movies + posters + per-source
+	// ratings comfortably lands at 80–120 KiB). When that happens the scanner
+	// emits `token too long` and kills the pipe, which the UI surfaces as a
+	// runtime error in the footbar. 1 MiB matches the daemon-side MAX_MSG_SIZE
+	// in runtime/src/main.rs, so oversized messages get rejected at the source
+	// rather than silently truncated here.
+	scanner := bufio.NewScanner(stdoutPipe)
+	const maxIPCMessageBytes = 1024 * 1024
+	scanner.Buffer(make([]byte, 0, 64*1024), maxIPCMessageBytes)
+
 	c := &Client{
 		cmd:       cmd,
 		stdin:     stdin,
-		stdout:    bufio.NewScanner(stdoutPipe),
+		stdout:    scanner,
 		stderrLog: stderrLog,
 		pending:   make(map[string]chan RawResponse),
 		out:       make(chan tea.Msg, 256),

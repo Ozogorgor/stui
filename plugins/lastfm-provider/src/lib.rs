@@ -25,7 +25,7 @@ use stui_plugin_sdk::{
     SearchRequest, SearchResponse, SearchScope,
 };
 
-const API_BASE: &str = "https://libre.fm/2.0";
+const API_BASE: &str = "https://ws.audioscrobbler.com/2.0";
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ impl Plugin for LastfmPlugin {
         if key.is_empty() {
             return Err(PluginInitError::MissingConfig {
                 fields: vec!["api_key".to_string()],
-                hint: Some("Free at last.fm/api/account/create (accepted by libre.fm)".to_string()),
+                hint: Some("Free at last.fm/api/account/create".to_string()),
             });
         }
         let _ = self.api_key.set(key);
@@ -105,10 +105,34 @@ fn classify_http_err(err: &str) -> PluginError {
     PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
 }
 
+/// Last.fm error-envelope shape: `{"error": N, "message": "..."}`. When
+/// the API rejects a request (invalid key, rate limit, method mismatch)
+/// it returns this instead of the expected result envelope, and a naive
+/// `serde_json::from_str::<TrackSearchResponse>()` fails with "missing
+/// field `tracks`" — useless for triage. Detecting the envelope first
+/// gives us "lastfm API error 10: Invalid API key" which is actionable.
+#[derive(Deserialize)]
+struct LastfmErrorEnvelope {
+    error: i32,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
+    if let Ok(env) = serde_json::from_str::<LastfmErrorEnvelope>(body) {
+        let msg = env.message.as_deref().unwrap_or("(no message)");
+        plugin_error!("lastfm: API error {}: {}", env.error, msg);
+        return Err(PluginError {
+            code: error_codes::PARSE_ERROR.to_string(),
+            message: format!("lastfm API error {}: {}", env.error, msg),
+        });
+    }
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("lastfm: parse error: {}", e);
-        PluginError { code: error_codes::PARSE_ERROR.to_string(), message: format!("lastfm JSON parse failure: {e}") }
+        PluginError {
+            code: error_codes::PARSE_ERROR.to_string(),
+            message: format!("lastfm JSON parse failure: {e}"),
+        }
     })
 }
 

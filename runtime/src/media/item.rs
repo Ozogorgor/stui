@@ -140,6 +140,7 @@ impl From<MediaItem> for CatalogEntry {
             imdb_id: m.imdb_id,
             tmdb_id: m.tmdb_id.map(|id| id.to_string()),
             media_type: m.media_type,
+            original_language: None,
         }
     }
 }

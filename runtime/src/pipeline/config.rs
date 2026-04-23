@@ -55,9 +55,9 @@ pub async fn run_get_provider_settings(
                         .get(plugin_name)
                         .and_then(|p| p.get(&field.key).cloned())
                         .or_else(|| {
-                            // Check environment variable (e.g., TMDB_API_KEY for tmdb-provider)
+                            // Check secrets / environment (e.g., TMDB_API_KEY for tmdb-provider)
                             let env_key = format!("{}_{}", plugin_name.to_uppercase(), field.key.replace('-', "_"));
-                            std::env::var(&env_key).ok()
+                            crate::config::secrets::env_lookup(&env_key)
                         })
                         .unwrap_or_default();
                     

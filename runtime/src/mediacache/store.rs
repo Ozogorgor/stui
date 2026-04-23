@@ -208,24 +208,10 @@ mod tests {
         let entry = MediaEntry {
             id: "test".to_string(),
             title: "Test".to_string(),
-            year: None,
-            genre: None,
-            rating: None,
-            ratings: std::collections::HashMap::new(),
-            description: None,
-            poster_url: None,
             provider: "test".to_string(),
             tab: MediaTab::Movies,
             media_type: MediaType::Movie,
-            imdb_id: None,
-            tmdb_id: None,
-            kind: Default::default(),
-            source: String::new(),
-            artist_name: None,
-            album_name: None,
-            track_number: None,
-            season: None,
-            episode: None,
+            ..Default::default()
         };
         cache.tabs.insert("movies".to_string(), CachedTab {
             tab: "movies".to_string(),

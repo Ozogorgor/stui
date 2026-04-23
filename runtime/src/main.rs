@@ -29,6 +29,7 @@ mod sandbox;
 mod scraper;
 mod stremio;
 mod streamer;
+mod tvdb;
 mod pipeline;
 mod plugin_rpc;
 mod registry;
@@ -45,7 +46,7 @@ mod auth;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
@@ -75,6 +76,22 @@ use storage::aria2_translator::Aria2Translator;
 // Override the number of worker threads with the TOKIO_WORKER_THREADS env var.
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // `stui-runtime cache <stats|clear|inspect|list>` — admin CLI for the
+    // on-disk response cache. Operates on `~/.cache/stui/response.db`
+    // directly; no running daemon required. Writes (clear) while the daemon
+    // is running are safe (SQLite WAL) but new rows may arrive from plugin
+    // searches seconds later.
+    //
+    // Short-circuits BEFORE logging init so the CLI output isn't polluted
+    // with tracing preamble. Tracing is wired inside the subcommand at
+    // `error` level for anything that genuinely needs to surface.
+    if args.get(1).map(|a| a.as_str()) == Some("cache") {
+        logging::init_with_level("error");
+        return run_cache_subcommand(&args);
+    }
+
     // Logging is initialised after config load so the log level comes from
     // stui.toml (with STUI_LOG env var override). We use a temporary default
     // here and re-initialise below once config is loaded.
@@ -84,7 +101,7 @@ async fn main() -> Result<()> {
     // `stui-runtime`            → stdin/stdout mode (launched by TUI process)
     // `stui-runtime daemon`     → Unix socket daemon mode
     // `stui-runtime daemon --socket /path/to/sock`
-    let args: Vec<String> = std::env::args().collect();
+
     let daemon_mode = args.get(1).map(|a| a == "daemon").unwrap_or(false);
     let socket_path = args.windows(2)
         .find(|w| w[0] == "--socket")
@@ -131,7 +148,11 @@ async fn main() -> Result<()> {
     );
 
     // ── Engine ────────────────────────────────────────────────────────────
-    let engine = Arc::new(Engine::new(cfg.cache_dir.clone(), cfg.data_dir.clone()));
+    let engine = Arc::new(Engine::new(
+        cfg.cache_dir.clone(),
+        cfg.data_dir.clone(),
+        cfg.catalog.anime_ratio,
+    ));
 
     // ── Watch history ──────────────────────────────────────────────────────
     let watch_history = Arc::new(watchhistory::WatchHistoryStore::new(
@@ -144,6 +165,48 @@ async fn main() -> Result<()> {
         mediacache::default_cache_path(),
     ).await);
     info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
+
+    // ── Catalog + cached-grid emission (runs in parallel with plugin load) ──
+    // Constructed + started BEFORE `discovery.scan_and_load().await?` below,
+    // which takes 3–5s for 7 WASM plugins. The disk grid cache at
+    // ~/.stui/cache/grid/{tab}.json doesn't need any plugin — it's just a
+    // file read + broadcast — so waiting for plugin init to finish before
+    // emitting makes the UI feel slow even when the cache is fresh.
+    //
+    // Race window: if a tab's disk cache is TTL-stale, catalog.init_tab
+    // calls refresh_tab → search_catalog_entries → needs plugins. When
+    // plugins haven't finished loading yet, the registry is empty and the
+    // refresh returns no new entries. That's fine: the cached grid was
+    // already emitted, and the user can hit `R` once plugins are live.
+    let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), Arc::clone(&engine)));
+
+    // Persistent subscriber that keeps media_cache in sync with the catalog
+    // broadcast regardless of whether a client is connected. Without this, any
+    // GridUpdate emitted while the UI is still starting (e.g. the startup
+    // cache-serve broadcast) is dropped and `GetMediaCacheTab("movies")`
+    // returns nothing — leaving Movies empty until the user manually searches.
+    // Subscribe BEFORE spawning `catalog.start()` so we catch its first
+    // per-tab emission.
+    {
+        let mut rx = catalog.subscribe();
+        let mc = media_cache.clone();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(u) => {
+                        let entries: Vec<ipc::MediaEntry> =
+                            u.entries.iter().map(catalog_entry_to_media_entry).collect();
+                        mc.save_tab(u.tab, entries).await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "media_cache sync subscriber lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+    { let c = Arc::clone(&catalog); tokio::spawn(async move { c.start().await }); }
 
     // ── Tag-write job state (for Action A tag normalization) ─────────────────
     let tag_job_store = Arc::new(mediacache::tag_write_job::JobStore::new());
@@ -168,6 +231,11 @@ async fn main() -> Result<()> {
     ));
     let plugins_loaded = discovery.scan_and_load().await?;
     info!(plugins_loaded, "startup plugin scan complete");
+    // Unblock any catalog refresh_tab calls that were waiting on us.
+    // init_tab emitted its cached grid synchronously; this signal releases
+    // the live-refresh step so the tabs that need a network fan-out finally
+    // run it against a populated plugin registry.
+    catalog.mark_plugins_ready();
     Arc::clone(&discovery).start_watcher();
     let mut toast_rx = toast_tx.subscribe();
 
@@ -181,11 +249,6 @@ async fn main() -> Result<()> {
         debug!("no Stremio addons configured");
     }
 
-    // ── Catalog uses Engine for WASM plugin-based providers ─────────────────
-    // Built-in providers (tmdb, imdb, omdb, anilist, etc.) are now loaded as
-    // WASM plugins via Discovery above and accessed through Engine's search().
-    let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), Arc::clone(&engine)));
-
     // ── Shared health registry + config manager ───────────────────────────
     let bus     = Arc::new(EventBus::new());
     let health  = Arc::new(HealthRegistry::new());
@@ -198,7 +261,52 @@ async fn main() -> Result<()> {
         }
         t
     };
-    { let c = Arc::clone(&catalog); tokio::spawn(async move { c.start().await }); }
+    // Catalog creation + cached-grid emission spawn moved above, to run
+    // concurrently with `discovery.scan_and_load().await?`.
+
+    // Periodic cache eviction. Every 5 minutes we walk the in-memory TTL
+    // caches (SearchCache, MetadataCache) and drop expired entries so a
+    // long-running daemon doesn't accumulate them indefinitely. The caches
+    // short-circuit on read when entries are stale already, so missing a
+    // cycle is harmless — this just bounds memory.
+    {
+        let e = Arc::clone(&engine);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+            // First tick fires immediately; skip it so we don't run before
+            // any caches have content.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                e.cache.search.evict_expired().await;
+                e.cache.metadata.evict_expired().await;
+            }
+        });
+    }
+
+    // Disk purge (Phase 2). Expired rows in ~/.cache/stui/response.db stay
+    // until deleted explicitly; physical deletion reclaims disk space. Runs
+    // once at boot (so a multi-day-stopped daemon cleans up its own stale
+    // rows without waiting 24h) and daily thereafter.
+    if let Some(disk) = engine.cache.disk.clone() {
+        tokio::spawn(async move {
+            match disk.purge_expired() {
+                Ok(n) if n > 0 => info!(deleted = n, "response cache: purged expired rows at boot"),
+                Ok(_) => {}
+                Err(e) => warn!(err = %e, "response cache: boot purge failed"),
+            }
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+            ticker.tick().await; // skip immediate first tick
+            loop {
+                ticker.tick().await;
+                match disk.purge_expired() {
+                    Ok(n) if n > 0 => info!(deleted = n, "response cache: daily purge"),
+                    Ok(_) => {}
+                    Err(e) => warn!(err = %e, "response cache: daily purge failed"),
+                }
+            }
+        });
+    }
 
     // ── Shared event channel (aria2 + mpv/player → Go) ──────────────────
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(128);
@@ -417,6 +525,28 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     let grid_rx = catalog.subscribe();
+    let mut stale_rx = catalog.subscribe_stale();
+
+    // Replay the latest known entries for each tab to the freshly-connected
+    // client. catalog.start() fires its cached-grid broadcast a few hundred
+    // milliseconds before the TUI's IPC reader attaches; without this replay
+    // the client would only see live refreshes (which require plugins to be
+    // loaded), and the grid would stay populated from whatever stale data
+    // was in ~/.config/stui/mediacache.json until the first refresh.
+    {
+        let snapshot = catalog.snapshot_all().await;
+        for u in snapshot {
+            let entries: Vec<ipc::MediaEntry> =
+                u.entries.iter().map(catalog_entry_to_media_entry).collect();
+            let source = match u.source {
+                catalog::GridUpdateSource::Cache => "cache".to_string(),
+                catalog::GridUpdateSource::Live  => "live".to_string(),
+            };
+            let msg = GridUpdateMsg { tab: u.tab, entries, source };
+            send_wire(&mut writer, &msg.to_wire()?).await?;
+        }
+    }
+
     let mut batcher = ipc_batcher::IpcBatcher::new(grid_rx);
     loop {
         tokio::select! {
@@ -586,43 +716,14 @@ where
                             catalog::GridUpdateSource::Cache => "cache".to_string(),
                             catalog::GridUpdateSource::Live  => "live".to_string(),
                         };
-                        let entries: Vec<ipc::MediaEntry> = u.entries.iter().map(|e| {
-                            let tab = match e.tab.as_str() {
-                                "movies"   => ipc::MediaTab::Movies,
-                                "series"   => ipc::MediaTab::Series,
-                                "music"    => ipc::MediaTab::Music,
-                                "radio"    => ipc::MediaTab::Radio,
-                                "podcasts" => ipc::MediaTab::Podcasts,
-                                "videos"   => ipc::MediaTab::Videos,
-                                _          => ipc::MediaTab::Library,
-                            };
-                            ipc::MediaEntry {
-                                id: e.id.clone(), title: e.title.clone(), year: e.year.clone(), genre: e.genre.clone(),
-                                rating: e.rating.clone(), ratings: e.ratings.clone(),
-                                description: e.description.clone(),
-                                poster_url: e.poster_url.clone(), provider: e.provider.clone(),
-                                tab, media_type: e.media_type.clone(),
-                                imdb_id: e.imdb_id.clone(),
-                                tmdb_id: e.tmdb_id.clone(),
-                                kind: Default::default(),
-                                source: String::new(),
-                                artist_name: None,
-                                album_name: None,
-                                track_number: None,
-                                season: None,
-                                episode: None,
-                            }
-                        }).collect();
+                        let entries: Vec<ipc::MediaEntry> =
+                            u.entries.iter().map(catalog_entry_to_media_entry).collect();
 
-                        // Cache live updates in media cache
-                        if u.source == catalog::GridUpdateSource::Live {
-                            let mc = media_cache.clone();
-                            let tab_name = u.tab.clone();
-                            let entries_to_cache = entries.clone();
-                            tokio::spawn(async move {
-                                mc.save_tab(tab_name, entries_to_cache).await;
-                            });
-                        }
+                        // Persistence into media_cache now happens in a separate
+                        // daemon-level subscriber (see the `catalog.subscribe()`
+                        // task spawned near media_cache init). That subscriber
+                        // runs even when no client is connected, so the startup
+                        // cache broadcast no longer gets dropped on the floor.
 
                         let msg = GridUpdateMsg { tab: u.tab, entries, source };
                         send_wire(&mut writer, &msg.to_wire()?).await?;
@@ -653,10 +754,232 @@ where
                 if !line.ends_with('\n') { line.push('\n'); }
                 send_wire(&mut writer, &line).await?;
             }
+
+            // Catalog refresh attempted but got zero entries — forward to
+            // the TUI as a `catalog_stale` event so it can surface an
+            // "Offline — showing cached" status line.
+            stale = stale_rx.recv() => {
+                match stale {
+                    Ok(s) => {
+                        let ev = ipc::CatalogStaleMsg {
+                            tab: s.tab,
+                            reason: s.reason,
+                        };
+                        send_wire(&mut writer, &ev.to_wire()?).await?;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // Lost a stale notification — non-critical. Next
+                        // refresh failure will generate a new one.
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // Catalog dropped — runtime shutting down.
+                    }
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+/// Admin CLI for the on-disk response cache.
+///
+///   stui-runtime cache stats                          — per-namespace summary
+///   stui-runtime cache clear [--namespace <ns>]       — wipe rows
+///   stui-runtime cache list <namespace> [--limit N]   — enumerate keys
+///   stui-runtime cache inspect <namespace> <key>      — pretty-print a value
+fn run_cache_subcommand(args: &[String]) -> Result<()> {
+    let usage = "\
+usage: stui-runtime cache <subcommand>
+  stats                                 summary of every namespace
+  clear [--namespace <ns>]              wipe all rows, or just one namespace
+  list <namespace> [--limit N]          list keys (default limit 20)
+  inspect <namespace> <key>             pretty-print the cached value";
+
+    let verb = args
+        .get(2)
+        .map(String::as_str)
+        .ok_or_else(|| anyhow::anyhow!(usage))?;
+
+    let path = cache::default_cache_db_path();
+    let kv = cache::SqliteKv::open(&path)
+        .with_context(|| format!("opening cache DB at {}", path.display()))?;
+
+    match verb {
+        "stats" => cmd_cache_stats(&kv, &path),
+        "clear" => cmd_cache_clear(&kv, &args[3..]),
+        "list" => cmd_cache_list(&kv, &args[3..]),
+        "inspect" => cmd_cache_inspect(&kv, &args[3..]),
+        _ => anyhow::bail!("unknown verb '{verb}'\n\n{usage}"),
+    }
+}
+
+fn cmd_cache_stats(kv: &cache::SqliteKv, path: &std::path::Path) -> Result<()> {
+    let stats = kv.namespace_stats()?;
+    println!("cache: {}", path.display());
+    if stats.is_empty() {
+        println!("(empty)");
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    println!(
+        "{:<14} {:>7} {:>10}   {:<20} {:<20}",
+        "NAMESPACE", "ROWS", "SIZE", "OLDEST EXPIRES IN", "NEWEST EXPIRES IN"
+    );
+    for s in stats {
+        println!(
+            "{:<14} {:>7} {:>10}   {:<20} {:<20}",
+            s.namespace,
+            s.rows,
+            format_bytes(s.total_bytes),
+            s.oldest_expiry
+                .map(|t| format_duration_signed(t - now))
+                .unwrap_or_else(|| "-".into()),
+            s.newest_expiry
+                .map(|t| format_duration_signed(t - now))
+                .unwrap_or_else(|| "-".into()),
+        );
+    }
+    Ok(())
+}
+
+fn cmd_cache_clear(kv: &cache::SqliteKv, rest: &[String]) -> Result<()> {
+    let mut ns: Option<&str> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        if rest[i] == "--namespace" {
+            ns = rest.get(i + 1).map(|s| s.as_str());
+            i += 2;
+        } else {
+            anyhow::bail!("unknown flag '{}'", rest[i]);
+        }
+    }
+    let deleted = if let Some(ns) = ns {
+        let n = kv.clear_namespace(ns)?;
+        eprintln!("✓ cleared {n} rows from namespace '{ns}'");
+        n
+    } else {
+        let n = kv.clear_all()?;
+        eprintln!("✓ cleared {n} rows (all namespaces)");
+        n
+    };
+    let _ = deleted;
+    Ok(())
+}
+
+fn cmd_cache_list(kv: &cache::SqliteKv, rest: &[String]) -> Result<()> {
+    let ns = rest
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage: cache list <namespace> [--limit N]"))?;
+    let mut limit: usize = 20;
+    let mut i = 1;
+    while i < rest.len() {
+        if rest[i] == "--limit" {
+            limit = rest
+                .get(i + 1)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| anyhow::anyhow!("--limit expects a positive integer"))?;
+            i += 2;
+        } else {
+            anyhow::bail!("unknown flag '{}'", rest[i]);
+        }
+    }
+    let keys = kv.list_keys(ns, limit)?;
+    if keys.is_empty() {
+        eprintln!("(no keys in namespace '{ns}')");
+        return Ok(());
+    }
+    for k in keys {
+        println!("{k}");
+    }
+    Ok(())
+}
+
+fn cmd_cache_inspect(kv: &cache::SqliteKv, rest: &[String]) -> Result<()> {
+    let ns = rest
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage: cache inspect <namespace> <key>"))?;
+    let key = rest
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("usage: cache inspect <namespace> <key>"))?;
+    match kv.get(ns, key) {
+        Some(bytes) => {
+            // Attempt JSON pretty-print; fall back to lossy UTF-8 dump.
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                println!("{}", String::from_utf8_lossy(&bytes));
+            }
+            Ok(())
+        }
+        None => {
+            eprintln!("(no entry for {ns}/{key} — either absent or expired)");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn format_bytes(n: i64) -> String {
+    if n < 1024 {
+        format!("{} B", n)
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else if n < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// Human-readable duration: positive = time until, negative = time since.
+fn format_duration_signed(secs: i64) -> String {
+    let abs = secs.unsigned_abs();
+    let s = if abs < 60 {
+        format!("{}s", abs)
+    } else if abs < 3600 {
+        format!("{}m", abs / 60)
+    } else if abs < 86_400 {
+        format!("{}h {}m", abs / 3600, (abs % 3600) / 60)
+    } else {
+        format!("{}d {}h", abs / 86_400, (abs % 86_400) / 3600)
+    };
+    if secs < 0 {
+        format!("-{s} (expired)")
+    } else {
+        format!("in {s}")
+    }
+}
+
+fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
+    let tab = match e.tab.as_str() {
+        "movies"   => ipc::MediaTab::Movies,
+        "series"   => ipc::MediaTab::Series,
+        "music"    => ipc::MediaTab::Music,
+        "radio"    => ipc::MediaTab::Radio,
+        "podcasts" => ipc::MediaTab::Podcasts,
+        "videos"   => ipc::MediaTab::Videos,
+        _          => ipc::MediaTab::Library,
+    };
+    ipc::MediaEntry {
+        id: e.id.clone(), title: e.title.clone(), year: e.year.clone(), genre: e.genre.clone(),
+        rating: e.rating.clone(), ratings: e.ratings.clone(),
+        description: e.description.clone(),
+        poster_url: e.poster_url.clone(), provider: e.provider.clone(),
+        tab, media_type: e.media_type.clone(),
+        imdb_id: e.imdb_id.clone(),
+        tmdb_id: e.tmdb_id.clone(),
+        original_language: e.original_language.clone(),
+        kind: Default::default(),
+        source: String::new(),
+        artist_name: None,
+        album_name: None,
+        track_number: None,
+        season: None,
+        episode: None,
+    }
 }
 
 fn default_socket_path() -> std::path::PathBuf {
@@ -795,6 +1118,23 @@ async fn handle_line(
             Ok(resp) => resp,
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
+
+        Request::CatalogRefresh(r) => {
+            // Manual refresh: wipe mem AND disk SearchCache so the next
+            // provider fan-out actually hits the network. Mem-only clear
+            // left disk-tier rows that would warm mem back up inside
+            // search_catalog_entries, short-circuiting the refresh — which
+            // violates the IPC contract ("as if TTL had expired"). Result
+            // flows back to the TUI via the existing GridUpdate broadcast;
+            // we ack here with Ok so the caller knows the request landed.
+            engine.cache.search.clear_all().await;
+            let catalog_c = Arc::clone(catalog);
+            let tab = r.tab.clone();
+            tokio::spawn(async move {
+                catalog_c.refresh_tab(tab).await;
+            });
+            Response::Ok
+        }
 
         Request::Search(r)    => {
             // Fire-and-forget: results stream back as Event::ScopeResults messages

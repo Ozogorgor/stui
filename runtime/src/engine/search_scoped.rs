@@ -280,26 +280,12 @@ mod tests {
 
     fn make_entry(id: &str) -> MediaEntry {
         MediaEntry {
-            id:           id.into(),
-            title:        id.into(),
-            year:         None,
-            genre:        None,
-            rating:       None,
-            description:  None,
-            poster_url:   None,
-            provider:     "test".into(),
-            tab:          MediaTab::Music,
-            media_type:   MediaType::default(),
-            ratings:      std::collections::HashMap::new(),
-            imdb_id:      None,
-            tmdb_id:      None,
-            kind:         Default::default(),
-            source:       "test".into(),
-            artist_name:  None,
-            album_name:   None,
-            track_number: None,
-            season:       None,
-            episode:      None,
+            id: id.into(),
+            title: id.into(),
+            provider: "test".into(),
+            tab: MediaTab::Music,
+            source: "test".into(),
+            ..Default::default()
         }
     }
 
@@ -500,6 +486,7 @@ mod tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let cfg = ScopedSearchConfig::default();
         let (tx, mut rx) = make_event_channel(8);

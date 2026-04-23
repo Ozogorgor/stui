@@ -68,8 +68,10 @@ pub use v1::{
     GetWatchHistoryInProgressRequest,
     // Out-of-band events
     GridUpdateEvent,
+    CatalogStaleEvent,
     // Backward-compat aliases
     GridUpdateMsg,
+    CatalogStaleMsg,
     // Registry types
     InstallPluginRequest,
     LoadConvolutionFilterRequest,

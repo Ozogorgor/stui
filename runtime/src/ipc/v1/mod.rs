@@ -61,6 +61,10 @@ pub enum ScopeError {
 pub enum Request {
     /// Full-text search across active providers.
     Search(SearchRequest),
+    /// Force-refresh a catalog tab — clears the in-mem SearchCache for that
+    /// (tab, scope) space and re-dispatches provider searches. Used by the
+    /// `R` hotkey on the grid and by future offline→online transitions.
+    CatalogRefresh(CatalogRefreshRequest),
     /// Resolve a catalog entry into a stream URL (without playing).
     Resolve(ResolveRequest),
     /// Fetch all ranked stream candidates for a catalog entry.
@@ -415,6 +419,16 @@ pub struct LoadPluginRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UnloadPluginRequest {
     pub plugin_id: String,
+}
+
+/// Force-refresh a catalog tab. The runtime clears its in-mem SearchCache
+/// entries for this tab's scope, then re-dispatches provider searches as
+/// if the TTL had expired.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CatalogRefreshRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub tab: MediaTab,
 }
 
 // ── Plugin verb IPC request structs ──────────────────────────────────────────
@@ -1195,6 +1209,44 @@ impl GridUpdateEvent {
 /// Backward-compat alias for `GridUpdateEvent`.
 pub type GridUpdateMsg = GridUpdateEvent;
 
+/// Pushed when the catalog attempted to refresh a tab but the provider
+/// fan-out returned zero entries (every provider errored, or no provider
+/// could respond). Signals "offline / network unreachable" to the TUI so
+/// it can flag the grid as stale. Entries already on screen continue to
+/// display from the disk grid cache — the runtime just doesn't overwrite
+/// them with an empty result.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CatalogStaleEvent {
+    pub tab: String,
+    /// Short human-readable description of why the refresh produced no
+    /// entries. E.g. "no active providers", "all providers errored",
+    /// "network offline". Meant for status-bar display; not an error code.
+    pub reason: String,
+}
+
+impl CatalogStaleEvent {
+    pub fn to_wire(&self) -> anyhow::Result<String> {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "type".to_string(),
+            serde_json::Value::String("catalog_stale".to_string()),
+        );
+        map.insert(
+            "tab".to_string(),
+            serde_json::Value::String(self.tab.clone()),
+        );
+        map.insert(
+            "reason".to_string(),
+            serde_json::Value::String(self.reason.clone()),
+        );
+        let mut s = serde_json::to_string(&serde_json::Value::Object(map))?;
+        s.push('\n');
+        Ok(s)
+    }
+}
+
+pub type CatalogStaleMsg = CatalogStaleEvent;
+
 /// Cached enriched detail entry — alias for `MetadataResponse`.
 pub type DetailEntry = MetadataResponse;
 
@@ -1279,9 +1331,10 @@ impl MediaType {
 ///
 /// Tabs map 1:1 to `MediaSource` variants for provider routing.
 /// New tabs can be added here; providers declare support via `supported_sources()`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaTab {
+    #[default]
     Movies,
     Series,
     Music,
@@ -1320,7 +1373,7 @@ impl MediaTab {
 }
 
 /// A catalog item as returned by search or trending.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MediaEntry {
     pub id: String,
     pub title: String,
@@ -1343,6 +1396,12 @@ pub struct MediaEntry {
     pub imdb_id: Option<String>,
     #[serde(default)]
     pub tmdb_id: Option<String>,
+    /// ISO 639-1 code of the entry's original language (e.g. "ja", "en").
+    /// Populated by plugins that know it (tmdb, kitsu, anilist). The runtime's
+    /// anime-mix classifier uses this together with genre to identify
+    /// Japanese animation shipped by mainstream providers.
+    #[serde(default)]
+    pub original_language: Option<String>,
     // ── Fields added in Task 2.3 ────────────────────────────────────────────
     // `#[serde(default)]` keeps old wire payloads (without these fields) valid.
     /// Typed entry kind for scoped search results (`Artist`, `Album`, `Track`,

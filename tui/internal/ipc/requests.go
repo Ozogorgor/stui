@@ -781,6 +781,22 @@ type MediaCacheStats struct {
 	LastUpdated int64 `json:"last_updated"`
 }
 
+// CatalogRefresh asks the runtime to discard its in-mem SearchCache and
+// re-dispatch the provider fan-out for the given tab. Fire-and-forget —
+// the actual refreshed entries arrive via the existing GridUpdate stream.
+func (c *Client) CatalogRefresh(tab string) {
+	go func() {
+		reqID := c.nextID()
+		respCh := c.sendWithID(reqID, map[string]any{
+			"type": "catalog_refresh",
+			"tab":  tab,
+		})
+		// Drain the ack so pending-map entries don't leak, but ignore the
+		// payload: the grid update broadcast is what actually matters.
+		<-respCh
+	}()
+}
+
 // GetMediaCacheTab requests cached entries for a specific tab.
 func (c *Client) GetMediaCacheTab(tab string) <-chan CachedTab {
 	ch := make(chan CachedTab, 1)

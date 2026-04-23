@@ -39,6 +39,12 @@ tui/go.work.sum
 *.sock
 *.pid
 
+# Project-owned TVDB API key — baked into the binary by runtime/build.rs.
+# Keep OUT of git; set TVDB_API_KEY in CI env for release builds or drop the
+# key into one of these files locally.
+runtime/.tvdb-key
+.tvdb-key
+
 # Compiled plugin artifacts
 plugins/**/target/
 plugins/**/*.so

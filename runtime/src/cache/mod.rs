@@ -1,13 +1,18 @@
 //! Runtime cache layer.
 //!
-//! Three independent TTL caches backed by `moka` (a high-performance async
-//! Rust cache modelled on Caffeine):
+//! Three independent TTL caches plus an optional SQLite-backed persistent
+//! tier (see `persistent.rs`) wired under `SearchCache`:
 //!
-//! | Cache             | Key                   | Value              | TTL   |
-//! |-------------------|-----------------------|--------------------|-------|
-//! | `SearchCache`     | (tab, query, page)    | Vec<CatalogEntry>  | 5 min |
-//! | `MetadataCache`   | imdb_id / entry_id    | DetailEntry        | 1 hr  |
-//! | `StreamCache`     | entry_id              | Vec<Stream>        | 10 min|
+//! | Cache             | Key                                | Value              | TTL    | Disk-persisted |
+//! |-------------------|------------------------------------|--------------------|--------|----------------|
+//! | `SearchCache`     | (plugin_id, query, scope, page)    | Vec<MediaEntry>    | 2 hr   | yes            |
+//! | `MetadataCache`   | imdb_id / entry_id                 | DetailEntry        | 24 hr  | no (unused)    |
+//! | `StreamCache`     | entry_id                           | Vec<Stream>        | 10 min | no (unused)    |
+//!
+//! `SearchCache` is the only one exercised by real call sites today — the
+//! other two are infrastructure waiting on their respective callers. The
+//! disk tier at `~/.cache/stui/response.db` survives daemon restarts; mem
+//! evicts on a 5-minute interval spawned from `main.rs`.
 //!
 //! All caches are cheap to clone (they share the underlying `Arc`).
 //! The runtime holds a single `RuntimeCache` that groups all three.
@@ -17,10 +22,12 @@
 pub mod search;
 pub mod metadata;
 pub mod streams;
+pub mod persistent;
 
 pub use search::SearchCache;
 pub use metadata::MetadataCache;
 pub use streams::StreamCache;
+pub use persistent::{default_cache_db_path, SqliteKv};
 
 /// Grouped handle — clone freely, all fields share the underlying Arc storage.
 #[allow(dead_code)] // pub API: used by engine cache layer
@@ -29,14 +36,33 @@ pub struct RuntimeCache {
     pub search:   SearchCache,
     pub metadata: MetadataCache,
     pub streams:  StreamCache,
+    /// On-disk persistence tier shared with SearchCache. Exposed so the
+    /// daemon can run periodic `purge_expired` against the physical DB
+    /// without going through the per-cache API.
+    pub disk:     Option<std::sync::Arc<SqliteKv>>,
 }
 
 impl RuntimeCache {
+    /// Mem-only cache. Use when the disk tier is unavailable or undesired
+    /// (tests, inline-mode one-shots).
     pub fn new() -> Self {
         RuntimeCache {
             search:   SearchCache::new(),
             metadata: MetadataCache::new(),
             streams:  StreamCache::new(),
+            disk:     None,
+        }
+    }
+
+    /// Cache with the SQLite persistence tier wired into SearchCache.
+    /// MetadataCache and StreamCache remain mem-only until they have real
+    /// callers worth persisting for.
+    pub fn with_disk(disk: std::sync::Arc<SqliteKv>) -> Self {
+        RuntimeCache {
+            search:   SearchCache::with_disk(std::sync::Arc::clone(&disk)),
+            metadata: MetadataCache::new(),
+            streams:  StreamCache::new(),
+            disk:     Some(disk),
         }
     }
 }

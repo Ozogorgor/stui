@@ -57,6 +57,16 @@ type GridUpdateMsg struct {
 	Source  string         `json:"source"`
 }
 
+// CatalogStaleMsg is pushed when the runtime attempted a catalog refresh
+// for a tab and got zero entries back (every provider errored, network is
+// offline, etc.). The TUI surfaces this in the status bar as
+// "⚠ Offline — showing cached <tab>". Entries already displayed remain
+// on screen because the runtime won't overwrite them with an empty set.
+type CatalogStaleMsg struct {
+	Tab    string `json:"tab"`
+	Reason string `json:"reason"`
+}
+
 // PluginToastMsg is pushed by the runtime when a plugin is hot-loaded or
 // fails to load.
 type PluginToastMsg struct {

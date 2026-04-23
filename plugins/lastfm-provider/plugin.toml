@@ -3,29 +3,29 @@ id           = "lastfm"
 name         = "lastfm"
 version      = "1.0.0"
 abi_version  = 1
-description  = "Last.fm / Libre.fm — music discovery and charts"
+description  = "Last.fm — music discovery and charts"
 author       = "stui"
 license      = "MIT"
-homepage     = "https://libre.fm"
+homepage     = "https://www.last.fm/api"
 
-# Last.fm's official API is deprecated and its endpoints redirect to
-# Libre.fm, a compatible free alternative. This plugin talks to Libre.fm
-# directly and still uses a Last.fm-format api_key (Libre.fm accepts any
-# non-empty token for public endpoints — a real key is optional).
+# Talks to last.fm's official API at ws.audioscrobbler.com. A free api_key
+# is required (https://www.last.fm/api/account/create). libre.fm's endpoint
+# used to be the default but now serves a Cloudflare bot-challenge page
+# instead of JSON, so the plugin is switched over to the upstream.
 
 [env]
 LASTFM_API_KEY = ""
 
 [[config]]
 key      = "api_key"
-label    = "Last.fm / Libre.fm API Key"
-hint     = "Free at last.fm/api/account/create (accepted by libre.fm)"
+label    = "Last.fm API Key"
+hint     = "Free at last.fm/api/account/create"
 masked   = true
 required = true
 env_var  = "LASTFM_API_KEY"
 
 [permissions]
-network = ["libre.fm", "lastfm-img2.akamaized.net", "lastfm.freetls.fastly.net"]
+network = ["ws.audioscrobbler.com", "lastfm-img2.akamaized.net", "lastfm.freetls.fastly.net"]
 
 [rate_limit]
 # libre.fm / last.fm public endpoints tolerate ~5 req/min in practice; keep

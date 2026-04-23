@@ -17,10 +17,12 @@ package components
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
 )
+
 
 // ImageProtocol is the terminal image rendering protocol to use.
 type ImageProtocol int
@@ -124,13 +126,25 @@ func (iv *ImageView) render() []string {
 		format = "kitty"
 	}
 
-	out, err := exec.Command("chafa",
+	cmd := exec.Command("chafa",
 		"--format", format,
 		"--size", fmt.Sprintf("%dx%d", iv.width, iv.height),
 		"--animate", "off",
 		iv.path,
-	).Output()
+	)
+	// Capture stderr separately so we can include it in the diagnostic
+	// log when chafa fails or returns empty output. Helps identify
+	// corrupt/unsupported poster files that otherwise render as noise.
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
+		if err != nil || stderr.Len() > 0 {
+			// One diagnostic line per failure — chafa path + truncated stderr.
+			// Spammy but opt-in via the runtime log file (not the main TUI).
+			log.Printf("chafa render failed: path=%q err=%v stderr=%q",
+				iv.path, err, truncate(stderr.String(), 200))
+		}
 		return iv.placeholderLines()
 	}
 

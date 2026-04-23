@@ -18,15 +18,11 @@ fn entry(title: &str, year: &str, genre: &str, rating: &str, mt: MediaType) -> C
         year: Some(year.to_string()),
         genre: Some(genre.to_string()),
         rating: Some(rating.to_string()),
-        description: None,
-        poster_url: None,
-        poster_art: None,
         provider: "test".to_string(),
         tab: "movies".to_string(),
-        imdb_id: None,
-        tmdb_id: None,
         media_type: mt,
         ratings: HashMap::new(),
+        ..Default::default()
     }
 }
 

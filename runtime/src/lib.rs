@@ -38,6 +38,7 @@ pub mod sandbox;
 pub mod scraper;
 pub mod stremio;
 pub mod streamer;
+pub mod tvdb;
 pub mod storage;
 pub mod watchhistory;
 pub mod mediacache;

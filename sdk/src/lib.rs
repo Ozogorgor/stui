@@ -162,6 +162,16 @@ pub struct PluginEntry {
     pub season: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub episode: Option<u32>,
+
+    /// ISO 639-1 code of the entry's original spoken/produced language
+    /// (e.g. `"en"`, `"ja"`, `"ko"`). Used by the runtime's post-merge
+    /// anime-mix classifier: `genre contains "Animation" AND language == "ja"`
+    /// identifies Japanese animation from mainstream providers (TMDB etc).
+    /// Anime-dedicated providers (kitsu, anilist) are classified by provider
+    /// alone — populating this field is still helpful for future genre/lang
+    /// filters but not required for the anime quota to work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

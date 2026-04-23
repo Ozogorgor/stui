@@ -110,7 +110,7 @@ func RenderGrid(
 	// so we can reserve space upfront.
 	cols := components.CardColumns
 	totalRows := (len(entries) + cols - 1) / cols
-	rowH := components.CardPosterRows + 4 + 2 // card height + meta lines + border
+	rowH := components.CardTotalRows // authoritative — matches components.RenderCard
 	visibleRows := availH / rowH
 	if visibleRows < 1 {
 		visibleRows = 1
@@ -141,8 +141,24 @@ func RenderGrid(
 	// load-bearing.
 	var sbChars []string
 	if needsScrollbar {
-		sbStyle := lipgloss.NewStyle().Foreground(theme.T.Accent())
-		sbChars = components.ScrollbarChars(startRow, visibleRows, totalRows, sbStyle)
+		// Background must match MainCardStyle's bg so non-thumb track chars
+		// (░) don't show terminal default between the rightmost card and
+		// the scrollbar column.
+		sbStyle := lipgloss.NewStyle().
+			Foreground(theme.T.Accent()).
+			Background(theme.T.Bg())
+		// Compute the scrollbar in TERMINAL-LINE units, not card-row units.
+		// Each card-row is rowH terminal lines tall, so the track has
+		// visibleRows*rowH positions to represent totalRows*rowH "items".
+		// Calling ScrollbarChars with card-row units collapses the track to
+		// visibleRows positions — tiny integer-division buckets mean the
+		// thumb doesn't move until the very last row is reached.
+		sbChars = components.ScrollbarChars(
+			startRow*rowH,
+			visibleRows*rowH,
+			totalRows*rowH,
+			sbStyle,
+		)
 	}
 
 	// Render grid rows.
@@ -170,21 +186,28 @@ func RenderGrid(
 		return fixedHeightGrid(strings.Join(rowStrings, "\n"), termWidth, availH)
 	}
 
-	// Attach scrollbar: each grid row is rowH terminal lines tall.
-	// Distribute the sbChars across rows — one char per visible row index.
-	// Pad each line to gridWidth so the scrollbar lands at column gridWidth (flush right).
+	// Attach scrollbar flush-right — one char per terminal line so the
+	// thumb position changes smoothly as the viewport scrolls. sbChars is
+	// sized visibleRows*rowH to match. The gap between the rightmost card
+	// and the scrollbar column is padded with MainCard's bg so the seam
+	// is invisible against the card background.
+	bgStyle := lipgloss.NewStyle().Background(theme.T.Bg())
 	sbIdx := 0
 	var finalRows []string
 	for _, rowStr := range rowStrings {
 		lines := strings.Split(rowStr, "\n")
 		for li := range lines {
-			// Append the scrollbar char to the first line of each card row.
-			// Pad the line to gridWidth first so the scrollbar ends up at the rightmost column.
-			if li == 0 && sbIdx < len(sbChars) {
-				padded := lipgloss.NewStyle().Width(gridWidth).Render(lines[li])
-				lines[li] = padded + sbChars[sbIdx]
-				sbIdx++
+			line := lines[li]
+			rendered := lipgloss.Width(line)
+			if gap := gridWidth - rendered; gap > 0 {
+				line = line + bgStyle.Render(strings.Repeat(" ", gap))
 			}
+			tail := bgStyle.Render(" ")
+			if sbIdx < len(sbChars) {
+				tail = sbChars[sbIdx]
+			}
+			sbIdx++
+			lines[li] = line + tail
 		}
 		finalRows = append(finalRows, strings.Join(lines, "\n"))
 	}

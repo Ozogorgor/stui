@@ -11,7 +11,6 @@ package components
 // Card dimensions are computed dynamically from terminal width / column count.
 
 import (
-	"fmt"
 	"image/color"
 	"strings"
 	"sync"
@@ -28,6 +27,12 @@ const (
 	CardColumns    = 5 // Netflix-style: 5 columns
 	CardPosterRows = 9 // Height of the poster area in terminal rows
 	CardMinWidth   = 14
+	// Content rows inside the card border: poster + title + meta + genre.
+	// The outer style adds 2 rows of border on top. Grid.go uses this
+	// constant to compute rowH — keep them in lock-step.
+	CardContentRows = CardPosterRows + 3
+	// Total rendered card height (content + top/bottom border).
+	CardTotalRows = CardContentRows + 2
 )
 
 // Package-level registry of ImageView instances keyed by the cached poster
@@ -68,15 +73,27 @@ func CardWidth(termWidth int) int {
 }
 
 // RenderCard renders a single CatalogEntry as a poster card string.
-// selected = true draws a violet glow border.
+// Title + compact meta are painted onto the last two rows of the poster as
+// an opaque dark bar (Netflix-style overlay), so the card footprint is
+// pure poster + border — no separate meta rows below.
+// selected = true draws the accent-colored border.
 func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
-	posterH := CardPosterRows
+	// Content area width after cardStyle's border(+2) and padding(+2). Poster
+	// is rendered at this width so nothing wraps when the border wraps it.
+	innerW := w - 4
+	if innerW < 1 {
+		innerW = 1
+	}
+	// Poster now fills the full card interior (was CardPosterRows = 9 with
+	// meta rows stacked below). The bottom two lines are overwritten by the
+	// meta bar, so the visible poster art is effectively innerH-2 rows tall.
+	posterH := CardContentRows
 
 	// ── Poster area ───────────────────────────────────────────────────────
 	//
 	// Precedence:
 	//  1. PosterArt — runtime-side pre-rendered block art; already read today,
-//     future caching work will populate it more eagerly.
+	//     future caching work will populate it more eagerly.
 	//  2. PosterURL + on-disk cache hit — render through ImageView (chafa).
 	//  3. PosterURL + cache miss — enqueue for background download, show
 	//     existing placeholder so the user sees SOMETHING immediately.
@@ -87,74 +104,106 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 		poster = *entry.PosterArt
 	case entry.PosterURL != nil && *entry.PosterURL != "":
 		if cached, hit := posterpkg.CachedPath(*entry.PosterURL); hit {
-			poster = cardImageView(cached, w, posterH).View()
+			poster = cardImageView(cached, innerW, posterH).View()
 		} else {
 			posterpkg.Global().Enqueue(*entry.PosterURL)
-			poster = renderPlaceholderPoster(entry, w, posterH)
+			poster = renderPlaceholderPoster(entry, innerW, posterH)
 		}
 	default:
-		poster = renderPlaceholderPoster(entry, w, posterH)
+		poster = renderPlaceholderPoster(entry, innerW, posterH)
 	}
 
-	// ── Title ─────────────────────────────────────────────────────────────
-	title := Truncate(entry.Title, w-2)
-	titleStyle := bidi.AlignedStyle(
-		lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true).Width(w),
-		entry.Title,
-	)
-	titleLine := titleStyle.Render(bidi.Apply(title))
+	// Splice the meta bar onto the last two rows of the rendered poster.
+	posterLines := strings.Split(poster, "\n")
+	posterLines = overlayMetaBar(posterLines, entry.Title, buildCompactMeta(entry), innerW)
+	content := strings.Join(posterLines, "\n")
+	// Defense-in-depth: if chafa returned fewer lines than requested, pad
+	// to CardContentRows so the card frame doesn't collapse.
+	content = clampLines(content, CardContentRows)
 
-	// ── Year + Rating ────────────────────────────────────────────────────
-	year := "—"
-	if entry.Year != nil && *entry.Year != "" {
-		year = *entry.Year
-	}
-	rating := ""
-	if entry.Rating != nil && *entry.Rating != "" {
-		barWidth := 6
-		if w > 18 {
-			barWidth = 8
-		}
-		rating = CompactRatingBar(*entry.Rating, barWidth)
-	}
-	metaLine := lipgloss.NewStyle().
-		Foreground(theme.T.TextMuted()).
-		Width(w).
-		Render(fmt.Sprintf("%s  %s", year, rating))
-
-	// ── Genre tag ─────────────────────────────────────────────────────────
-	genreTag := ""
-	if entry.Genre != nil && *entry.Genre != "" {
-		g := Truncate(*entry.Genre, w-4)
-		genreTag = lipgloss.NewStyle().
-			Foreground(theme.T.AccentAlt()).
-			Render("◆ " + g)
-	}
-
-	// ── Card border ───────────────────────────────────────────────────────
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		poster,
-		titleLine,
-		metaLine,
-		genreTag,
-	)
-
-	var cardStyle lipgloss.Style
+	borderColor := theme.T.Border()
 	if selected {
-		cardStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(theme.T.Accent()).
-			Padding(0, 1).
-			Width(w)
-	} else {
-		cardStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(theme.T.Border()).
-			Padding(0, 1).
-			Width(w)
+		borderColor = theme.T.Accent()
 	}
+	// Width/Height are TOTAL frame dimensions in lipgloss v2 — border+padding
+	// are included in these counts. Pinning both locks every card to the
+	// same footprint regardless of poster content.
+	cardStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(w).
+		Height(CardTotalRows)
 
 	return cardStyle.Render(content)
+}
+
+// buildCompactMeta joins year · ★rating · genre on one line. Parts that
+// aren't present are skipped, so cards with partial metadata stay tidy.
+func buildCompactMeta(entry ipc.CatalogEntry) string {
+	var parts []string
+	if entry.Year != nil && *entry.Year != "" {
+		parts = append(parts, *entry.Year)
+	}
+	if entry.Rating != nil && *entry.Rating != "" {
+		parts = append(parts, "★"+*entry.Rating)
+	}
+	if entry.Genre != nil && *entry.Genre != "" {
+		parts = append(parts, *entry.Genre)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// overlayMetaBar paints a 2-row dark bar onto the last two elements of
+// posterLines: row 1 = bold white title, row 2 = muted white compact meta.
+// Both rows are styled to exactly innerW cells so they align with the
+// poster block above them. Safe when posterLines has fewer than 2 rows
+// (no-op). The caller is responsible for the overall clamp to CardContentRows.
+func overlayMetaBar(posterLines []string, title, meta string, innerW int) []string {
+	n := len(posterLines)
+	if n < 2 {
+		return posterLines
+	}
+	barBg := theme.T.Bg()
+	titleRow := bidi.AlignedStyle(
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ffffff")).
+			Background(barBg).
+			Bold(true).
+			Width(innerW),
+		title,
+	).Render(bidi.Apply(Truncate(title, innerW)))
+	metaRow := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#cccccc")).
+		Background(barBg).
+		Width(innerW).
+		Render(Truncate(meta, innerW))
+	posterLines[n-2] = singleLine(titleRow)
+	posterLines[n-1] = singleLine(metaRow)
+	return posterLines
+}
+
+// singleLine collapses a multi-line string to its first line, preserving any
+// ANSI style codes that precede the first "\n".
+func singleLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// clampLines forces a string to exactly `n` lines: truncates excess,
+// pads with empty lines when short.
+func clampLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	} else {
+		for len(lines) < n {
+			lines = append(lines, "")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // posterColorPalette is the shared color palette used for placeholder posters.

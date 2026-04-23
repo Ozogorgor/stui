@@ -308,10 +308,11 @@ mod inner_impl {
             let wasi = wasi_builder.build_p1();
 
             // Pre-populate KV with env vars from the manifest [env] table.
-            // Priority: actual process env > plugin.toml default value.
+            // Priority: secrets.env / process env > plugin.toml default value.
             let mut kv = std::collections::HashMap::new();
             for (var, default_val) in &ctx.env_defaults {
-                let value = std::env::var(var).unwrap_or_else(|_| default_val.clone());
+                let value = crate::config::secrets::env_lookup(var)
+                    .unwrap_or_else(|| default_val.clone());
                 kv.insert(format!("__env:{}", var), value);
             }
 

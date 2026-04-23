@@ -163,6 +163,134 @@ pub struct SearchOptions {
 }
 
 /// Apply sort and filters from `options` to a list of already-merged entries.
+/// Normalize genre + original_language for entries that come from anime-only
+/// providers (kitsu, anilist). These providers' API responses are 100% anime
+/// by definition, so we force the fields the classifier depends on — this
+/// way the downstream dictionary rule (`is_anime_dominant`) catches them
+/// even if the plugin didn't emit either field. For other providers the
+/// plugin's emissions pass through unchanged.
+///
+/// Genre: preserved if it already contains any "anim" substring (so
+/// "Anime, Action" stays intact); replaced with "Anime" otherwise.
+/// Language: always forced to "ja" — kitsu/anilist catalogs are Japanese.
+fn stamp_anime_fields(
+    provider: &str,
+    genre: Option<String>,
+    original_language: Option<String>,
+) -> (Option<String>, Option<String>) {
+    if !matches!(provider, "kitsu" | "anilist") {
+        return (genre, original_language);
+    }
+    let stamped_genre = match genre {
+        Some(g) if g.to_lowercase().contains("anim") => Some(g),
+        _ => Some("Anime".to_string()),
+    };
+    (stamped_genre, Some("ja".to_string()))
+}
+
+/// True when this entry is East-Asian animation ("anime" in the broad sense
+/// — Japanese anime, Korean aeni, Chinese donghua). Classifier is
+/// dictionary-only: `genre` contains "animation" or "anime" (case-
+/// insensitive) AND `original_language` is one of `ja`/`jp`/`ko`/`zh`.
+///
+/// Responsibility shifts to plugins: every plugin that can emit anime MUST
+/// populate both `genre` and `original_language` on those entries, or they
+/// will be classified as general and escape the anime quota. Kitsu/anilist
+/// entries are normalized upstream by `stamp_anime_fields` since those
+/// providers ship 100% anime and their plugins don't always populate both
+/// fields explicitly.
+fn is_anime_dominant(entry: &crate::catalog::CatalogEntry) -> bool {
+    let Some(genre) = entry.genre.as_deref() else {
+        return false;
+    };
+    let genre_lower = genre.to_lowercase();
+    let is_animation_genre =
+        genre_lower.contains("animation") || genre_lower.contains("anime");
+    if !is_animation_genre {
+        return false;
+    }
+    let Some(lang) = entry.original_language.as_deref() else {
+        return false;
+    };
+    let l = lang.to_ascii_lowercase();
+    // Accept Japanese, Korean, Chinese variants. TMDB emits "ja" / "ko" /
+    // "zh"; some sources use "jp" or region-tagged codes like "zh-cn".
+    matches!(l.as_str(), "ja" | "jp" | "ko" | "zh" | "zh-cn" | "zh-tw" | "zh-hk")
+}
+
+/// Interleave anime-dominant entries with general ones so the final grid
+/// follows the configured `anime_ratio` throughout — not just in aggregate.
+/// Pattern derived dynamically: `round(ratio * 10)` anime slots per 10-slot
+/// batch, remainder general. Once either bucket drains, the remainder fills
+/// from the other. Preserves per-bucket order so the aggregator's merit
+/// ranking isn't lost.
+fn balance_anime_mix(
+    entries: Vec<crate::catalog::CatalogEntry>,
+    anime_ratio: f32,
+) -> Vec<crate::catalog::CatalogEntry> {
+    let ratio = anime_ratio.clamp(0.0, 1.0);
+    let anime_per_batch = (ratio * 10.0).round() as usize;
+    let general_per_batch = 10 - anime_per_batch;
+
+    let (anime, general): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(is_anime_dominant);
+
+    // Degenerate cases. If ratio excludes a bucket, don't emit from it; if
+    // one bucket is naturally empty, emit the other straight through.
+    if anime_per_batch == 0 {
+        return general;
+    }
+    if general_per_batch == 0 {
+        return anime;
+    }
+    if anime.is_empty() {
+        return general;
+    }
+    if general.is_empty() {
+        return anime;
+    }
+
+    let mut gi = general.into_iter();
+    let mut ai = anime.into_iter();
+    let mut out = Vec::new();
+    // Enforce the configured ratio globally, not just per-batch. When either
+    // bucket can't fill its share for the current batch, stop — otherwise
+    // the surplus of the other bucket spills into the tail as "rows full of
+    // anime" (or rows full of general), which is exactly what the ratio is
+    // supposed to prevent. Tradeoff: entries beyond the ratio cap are
+    // dropped from the grid. Users who want more anime can raise
+    // `[catalog] anime_ratio` in stui.toml.
+    'outer: loop {
+        let mut gen_batch = Vec::with_capacity(general_per_batch);
+        for _ in 0..general_per_batch {
+            match gi.next() {
+                Some(e) => gen_batch.push(e),
+                None => {
+                    // Emit partial general batch then stop.
+                    out.append(&mut gen_batch);
+                    break 'outer;
+                }
+            }
+        }
+        out.append(&mut gen_batch);
+
+        let mut anime_batch = Vec::with_capacity(anime_per_batch);
+        for _ in 0..anime_per_batch {
+            match ai.next() {
+                Some(e) => anime_batch.push(e),
+                None => {
+                    // Emit partial anime batch then stop.
+                    out.append(&mut anime_batch);
+                    break 'outer;
+                }
+            }
+        }
+        out.append(&mut anime_batch);
+    }
+    out
+}
+
 fn apply_search_options(
     options: &SearchOptions,
     entries: Vec<crate::catalog::CatalogEntry>,
@@ -204,6 +332,7 @@ fn catalog_entries_to_media(
         ratings:     e.ratings,
         imdb_id:     e.imdb_id,
         tmdb_id:     e.tmdb_id,
+        original_language: e.original_language,
         kind:        Default::default(),
         source:      String::new(),
         artist_name: None,
@@ -268,18 +397,58 @@ pub struct Engine {
     /// global regardless of how many clones exist.  Initialised with
     /// `MAX_CONCURRENT_PLUGIN_CALLS` permits.
     plugin_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Fraction of Movies/Series grid reserved for anime-dominant entries.
+    /// Sourced from `RuntimeConfig.catalog.anime_ratio`, clamped to [0.0, 1.0].
+    /// See `balance_anime_mix`.
+    anime_ratio: f32,
+    /// Runtime-integrated TVDB client. `None` when the user hasn't configured
+    /// a key — all plugin search still works; TVDB simply doesn't contribute
+    /// to the fan-out. See `crate::tvdb` for storage and auth details.
+    tvdb: Option<Arc<crate::tvdb::TvdbClient>>,
 }
 
 impl Engine {
-    pub fn new(cache_dir: std::path::PathBuf, data_dir: std::path::PathBuf) -> Self {
+    pub fn new(
+        cache_dir: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+        anime_ratio: f32,
+    ) -> Self {
+        // Load TVDB using the project-embedded (XOR-obfuscated) key, with a
+        // TVDB_API_KEY env var override for dev testing. Failure is non-fatal:
+        // the runtime comes up without TVDB and plugin metadata still flows.
+        let tvdb = match crate::tvdb::embedded_client() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(err = %e, "tvdb: construct failed — tvdb disabled");
+                None
+            }
+        };
+        // On-disk response cache (Phase 2). Survives daemon restart so the
+        // catalog grid doesn't re-fetch providers for fresh-TTL keys. If the
+        // DB can't be opened, fall back to mem-only — the runtime still works.
+        let cache = match crate::cache::SqliteKv::open(&crate::cache::default_cache_db_path()) {
+            Ok(kv) => RuntimeCache::with_disk(Arc::new(kv)),
+            Err(e) => {
+                tracing::warn!(err = %e, "response cache: disk tier unavailable — mem-only");
+                RuntimeCache::new()
+            }
+        };
         Self {
             registry:     Arc::new(RwLock::new(PluginRegistry::default())),
             cache_dir,
             data_dir,
-            cache:        RuntimeCache::new(),
+            cache,
             dispatch_map: Arc::new(RwLock::new(DispatchMap::default())),
             plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
+            anime_ratio: anime_ratio.clamp(0.0, 1.0),
+            tvdb,
         }
+    }
+
+    /// Return the TVDB client if configured. Exposed so the pipeline
+    /// enrichment stage can use the same client instance (auth cache shared).
+    pub fn tvdb(&self) -> Option<Arc<crate::tvdb::TvdbClient>> {
+        self.tvdb.clone()
     }
 
     // ── Plugin lifecycle ──────────────────────────────────────────────────
@@ -578,7 +747,7 @@ impl Engine {
                     let resolved = crate::plugin::state::resolve_config(
                         &loaded.manifest,
                         &HashMap::new(),
-                        |k| std::env::var(k).ok(),
+                        crate::config::secrets::env_lookup,
                     );
                     let init_req = crate::abi::InitRequest {
                         env: resolved.clone(),
@@ -685,16 +854,106 @@ impl Engine {
         tab: &MediaTab,
         options: SearchOptions,
     ) -> Vec<crate::catalog::CatalogEntry> {
+        // Scope used uniformly for cache keying (plugin + TVDB share one tab→
+        // scope mapping). Plugins derive the same scope inside their task;
+        // keeping the derivation here too lets the cache key be computed
+        // before any spawn/dispatch.
+        let scope = match tab {
+            crate::ipc::MediaTab::Music  => stui_plugin_sdk::SearchScope::Track,
+            crate::ipc::MediaTab::Movies => stui_plugin_sdk::SearchScope::Movie,
+            crate::ipc::MediaTab::Series => stui_plugin_sdk::SearchScope::Series,
+            _ => stui_plugin_sdk::SearchScope::Track,
+        };
+
         // ── Live fan-out ──────────────────────────────────────────────────
         let reg = self.registry.read().await;
         let providers = reg.find_providers_for_tab(tab);
 
-        if providers.is_empty() {
+        let mut set = tokio::task::JoinSet::new();
+        let sem = Arc::clone(&self.plugin_semaphore);
+        // Entries served straight from the in-memory SearchCache. Merged
+        // with JoinSet results before the aggregator runs, so a source
+        // that hit the cache is indistinguishable downstream from a fresh
+        // network response.
+        let mut cached_entries: Vec<MediaEntry> = Vec::new();
+
+        // TVDB always-on fallback. Only dispatched for movie/series tabs since
+        // TVDB has no music coverage. Also skipped when the query is empty:
+        // TVDB's /search endpoint is a free-text endpoint that rejects empty
+        // queries with HTTP 400 ("query is required"). Unlike TMDB, TVDB v4
+        // has no equivalent of /trending we can hit during the tab's initial
+        // catalog refresh. When the user types a real query, TVDB joins the
+        // fan-out normally.
+        if let Some(tvdb) = self.tvdb.clone().filter(|_| !query.trim().is_empty()) {
+            let kind = match tab {
+                crate::ipc::MediaTab::Movies => Some(crate::tvdb::SearchKind::Movie),
+                crate::ipc::MediaTab::Series => Some(crate::tvdb::SearchKind::Series),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let cache_key = crate::cache::search::SearchKey::new("tvdb", query, scope, 0);
+                if let Some(cached) = self.cache.search.get(&cache_key).await {
+                    cached_entries.extend(cached);
+                } else {
+                    let q = query.to_string();
+                    let tab_out = tab.clone();
+                    let cache = self.cache.search.clone();
+                    let cache_key_for_task = cache_key.clone();
+                    set.spawn(async move {
+                        // Explicit generic args on Ok/Err pin the closure's return
+                        // type for the JoinSet. Without them rustc sees multiple
+                        // plausible error types and can't infer the whole chain.
+                        let items: Vec<crate::tvdb::TvdbEntry> =
+                            match tvdb.search(&q, kind, 30).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return (
+                                        "tvdb".to_string(),
+                                        Err::<Vec<MediaEntry>, anyhow::Error>(e),
+                                    );
+                                }
+                            };
+                        let entries: Vec<MediaEntry> = items
+                            .into_iter()
+                            .map(|e| MediaEntry {
+                                id: format!("tvdb-{}", e.tvdb_id),
+                                title: e.title,
+                                year: e.year,
+                                genre: if e.genres.is_empty() {
+                                    None
+                                } else {
+                                    Some(e.genres.join(", "))
+                                },
+                                rating: None,
+                                description: e.overview,
+                                poster_url: e.image_url,
+                                provider: "tvdb".to_string(),
+                                tab: tab_out.clone(),
+                                media_type: crate::ipc::MediaType::default(),
+                                ratings: std::collections::HashMap::new(),
+                                imdb_id: e.imdb_id,
+                                tmdb_id: e.tmdb_id,
+                                original_language: e.original_language,
+                                kind: stui_plugin_sdk::EntryKind::default(),
+                                source: "tvdb".to_string(),
+                                artist_name: None,
+                                album_name: None,
+                                track_number: None,
+                                season: None,
+                                episode: None,
+                            })
+                            .collect();
+                        cache.insert(cache_key_for_task, entries.clone()).await;
+                        ("tvdb".to_string(), Ok::<_, anyhow::Error>(entries))
+                    });
+                }
+            }
+        }
+
+        if providers.is_empty() && set.is_empty() && cached_entries.is_empty() {
             return vec![];
         }
 
-        let mut set = tokio::task::JoinSet::new();
-        let sem = Arc::clone(&self.plugin_semaphore);
         for plugin in &providers {
             // Skip plugins tagged "adult" when adult content is disabled.
             if !options.adult_content_enabled
@@ -703,6 +962,17 @@ impl Engine {
                 continue;
             }
             let plugin_clone = (*plugin).clone();
+
+            // Per-plugin cache lookup. If fresh entries for this (plugin,
+            // query, scope) are still in the in-mem cache we bypass the
+            // WASM call entirely — no network, no plugin init cost.
+            let plugin_name = plugin_clone.manifest.plugin.name.clone();
+            let cache_key = crate::cache::search::SearchKey::new(&plugin_name, query, scope, 0);
+            if let Some(cached) = self.cache.search.get(&cache_key).await {
+                cached_entries.extend(cached);
+                continue;
+            }
+
             let q = query.to_string();
             let t = tab.clone();
 
@@ -714,6 +984,8 @@ impl Engine {
                         let tab_out  = t.clone();
                         let pname = provider.clone();
                         let sem = Arc::clone(&sem);
+                        let cache = self.cache.search.clone();
+                        let cache_key_for_task = cache_key.clone();
                         set.spawn(async move {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
@@ -748,6 +1020,7 @@ impl Engine {
                                         ratings:     std::collections::HashMap::new(),
                                         imdb_id:     e.imdb_id,
                                         tmdb_id:     None,
+                                        original_language: e.original_language,
                                         kind:        e.kind,
                                         source:      e.source,
                                         artist_name: e.artist_name,
@@ -761,6 +1034,11 @@ impl Engine {
                             .catch_unwind()
                             .await
                             .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
+                            // Write-through on success only. Errors/panics must NOT
+                            // poison the cache — next query re-hits the provider.
+                            if let Ok(entries) = &result {
+                                cache.insert(cache_key_for_task, entries.clone()).await;
+                            }
                             (pname, result)
                         });
                     } else {
@@ -772,6 +1050,8 @@ impl Engine {
                     if let Some(ctx) = sandbox {
                         let pname = plugin_clone.manifest.plugin.name.clone();
                         let sem = Arc::clone(&sem);
+                        let cache = self.cache.search.clone();
+                        let cache_key_for_task = cache_key.clone();
                         set.spawn(async move {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
@@ -781,6 +1061,9 @@ impl Engine {
                             .catch_unwind()
                             .await
                             .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
+                            if let Ok(entries) = &result {
+                                cache.insert(cache_key_for_task, entries.clone()).await;
+                            }
                             (pname, result)
                         });
                     }
@@ -790,7 +1073,9 @@ impl Engine {
         drop(reg);
 
         // Collect results in completion order — fastest provider wins the front.
-        let mut all_items: Vec<crate::ipc::MediaEntry> = vec![];
+        // Cache-served entries jump to the front since they require no network
+        // wait — the aggregator's dedup will handle ordering correctly.
+        let mut all_items: Vec<crate::ipc::MediaEntry> = cached_entries;
         while let Some(result) = set.join_next().await {
             match result {
                 Ok((_, Ok(mut items))) => all_items.append(&mut items),
@@ -800,13 +1085,21 @@ impl Engine {
         }
 
         // ── Aggregate ────────────────────────────────────────────────────
+        // Stamp anime-only providers (kitsu/anilist) with normalized
+        // genre+language BEFORE per-entry MediaEntry→CatalogEntry conversion.
+        // Applied here (post JoinSet collect) so every provider path — WASM
+        // plugin, scraper, TVDB, snapshot-replayed entries — flows through
+        // the same normalization step. Previously this lived inline in the
+        // WASM arm only, leaving the scraper arm unstamped.
         let tab_str = format!("{:?}", tab).to_lowercase();
         let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
+            let (genre, original_language) =
+                stamp_anime_fields(&e.provider, e.genre, e.original_language);
             crate::catalog::CatalogEntry {
                 id:          e.id,
                 title:       e.title,
                 year:        e.year,
-                genre:       e.genre,
+                genre,
                 rating:      e.rating,
                 description: e.description,
                 poster_url:  e.poster_url,
@@ -817,6 +1110,7 @@ impl Engine {
                 tmdb_id:     e.tmdb_id,
                 media_type:  e.media_type,
                 ratings:     e.ratings,
+                original_language,
             }
         }).collect();
 
@@ -824,8 +1118,25 @@ impl Engine {
         // weighted-median composite rating from all per-source scores.
         let merged = crate::catalog_engine::CatalogAggregator::new().merge(raw_entries);
 
-        // Apply sort and filters for this specific request.
-        apply_search_options(&options, merged)
+        // Filter + sort FIRST — the default sort is by rating desc, so we
+        // want each bucket ordered by quality before the interleave picks
+        // from them. Running balance before sort would let the sort re-cluster
+        // entries by rating (TMDB's 8+ scores in front, anilist's placeholders
+        // at the back), which is exactly the "rows full of anime at the
+        // bottom" symptom we're trying to fix.
+        let sorted = apply_search_options(&options, merged);
+
+        // Balance anime vs. general in Movies/Series tabs so plugins like
+        // kitsu/anilist can't drown out TMDB/OMDB/TVDB. Applied LAST so the
+        // interleave isn't undone by the sort. Music tab and others are
+        // untouched — no "anime" classification applies there.
+        // Ratio sourced from `RuntimeConfig.catalog.anime_ratio`.
+        match tab {
+            crate::ipc::MediaTab::Movies | crate::ipc::MediaTab::Series => {
+                balance_anime_mix(sorted, self.anime_ratio)
+            }
+            _ => sorted,
+        }
     }
 
     // ── Resolve ───────────────────────────────────────────────────────────
@@ -1206,11 +1517,14 @@ fn abi_entry_to_media_entry(
         | stui_plugin_sdk::EntryKind::Episode => crate::ipc::MediaTab::Series,
     };
 
+    let (genre, original_language) =
+        stamp_anime_fields(provider_name, e.genre, e.original_language);
+
     crate::ipc::MediaEntry {
         id:           e.id,
         title:        e.title,
         year:         e.year.map(|y| y.to_string()),
-        genre:        e.genre,
+        genre,
         rating:       e.rating.map(|r| r.to_string()),
         description:  e.description,
         poster_url:   e.poster_url,
@@ -1220,6 +1534,7 @@ fn abi_entry_to_media_entry(
         ratings:      std::collections::HashMap::new(),
         imdb_id:      e.imdb_id,
         tmdb_id:      None,
+        original_language,
         kind:         e.kind,
         source:       e.source,
         artist_name:  e.artist_name,
@@ -1418,6 +1733,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let ids = engine.plugins_for_scope(SearchScope::Artist).await;
         assert!(ids.is_empty());
@@ -1428,6 +1744,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         assert!(!engine.scope_has_any_plugins(SearchScope::Movie).await);
     }
@@ -1439,6 +1756,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let clone = engine.clone();
         // Both point to the same semaphore (Arc identity).
@@ -1450,6 +1768,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         assert_eq!(
             engine.plugin_semaphore().available_permits(),
@@ -1464,6 +1783,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -1479,6 +1799,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let req = crate::abi::types::LookupRequest {
             id:        "tt1234".into(),
@@ -1498,6 +1819,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let req = crate::abi::types::EnrichRequest {
             partial:          crate::abi::types::PluginEntry::default(),
@@ -1512,6 +1834,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let req = crate::abi::types::ArtworkRequest {
             id:        "e1".into(),
@@ -1528,6 +1851,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let req = crate::abi::types::CreditsRequest {
             id:        "e1".into(),
@@ -1543,6 +1867,7 @@ mod supervisor_search_tests {
         let engine = Engine::new(
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
+            0.4,
         );
         let req = crate::abi::types::RelatedRequest {
             id:        "e1".into(),

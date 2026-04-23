@@ -32,6 +32,7 @@ pub mod loader;
 pub mod types;
 pub mod manager;
 pub mod secrets;
+pub mod secrets_enc;
 
 pub use loader::load;
 #[allow(unused_imports)]

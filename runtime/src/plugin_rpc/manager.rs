@@ -294,6 +294,7 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
         tmdb_id:     None,
         media_type:  MediaType::Movie,
         ratings:     std::collections::HashMap::new(),
+        original_language: None,
     }
 }
 

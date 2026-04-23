@@ -185,6 +185,17 @@ fn parse_env_content(content: &str) -> anyhow::Result<HashMap<String, String>> {
     Ok(vars)
 }
 
+/// Env-var lookup that consults stui's loaded secrets *then* the process env.
+///
+/// Plugins may reference secrets (TMDB_API_KEY, OMDB_API_KEY, …) that live only
+/// in `~/.stui/secrets.env`. They are never exported into the daemon process
+/// env, so a bare `std::env::var` lookup misses them. Any call site that
+/// resolves plugin config fields or builds the plugin's WASI env should route
+/// through here.
+pub fn env_lookup(key: &str) -> Option<String> {
+    Secrets::load().get(key).or_else(|| env::var(key).ok())
+}
+
 pub fn redact(value: &str) -> String {
     let char_count = value.chars().count();
     if char_count <= 4 {

@@ -60,6 +60,9 @@ stui-aria2        = { path = "../aria2" }
 stui-plugin-sdk   = { path = "../sdk" }
 libc              = "0.2"
 sha2              = "0.10"
+aes-gcm           = "0.10"
+base64            = "0.22"
+getrandom         = "0.2"
 lofty             = "0.22"
 flate2            = "1"
 tar               = "0.4"

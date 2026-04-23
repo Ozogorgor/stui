@@ -95,6 +95,9 @@ pub struct PluginEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub track_number: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub season: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub episode: Option<u32>,
+    /// ISO 639-1 original language. Mirrors `stui_plugin_sdk::PluginEntry`.
+    /// Used by the engine's anime-mix classifier alongside genre.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub original_language: Option<String>,
 }
 
 /// Returned by `stui_resolve`.
