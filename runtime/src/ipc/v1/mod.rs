@@ -83,6 +83,10 @@ pub enum Request {
     LoadPlugin(LoadPluginRequest),
     /// Unload a loaded plugin by its ID.
     UnloadPlugin(UnloadPluginRequest),
+    /// Toggle whether a loaded plugin participates in dispatch. The
+    /// plugin stays in the registry either way — this is a soft
+    /// enable/disable, not an uninstall.
+    SetPluginEnabled(SetPluginEnabledRequest),
     /// Health-check ping; runtime replies with `Response::Pong`.
     ///
     /// `ipc_version` — the TUI's protocol version number.  If absent (old
@@ -507,6 +511,7 @@ pub enum Response {
     PluginList(PluginListResponse),
     PluginLoaded(PluginLoadedResponse),
     PluginUnloaded(PluginUnloadedResponse),
+    PluginEnabled(PluginEnabledResponse),
     /// Response to `Ping`.  Always carries version metadata so the TUI can
     /// detect mismatches and warn the user.  The correlation `id` is injected
     /// at the dispatcher level (see `inject_id_into_response` in `main.rs`).
@@ -705,6 +710,18 @@ pub struct PluginLoadedResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PluginUnloadedResponse {
     pub plugin_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetPluginEnabledRequest {
+    pub plugin_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PluginEnabledResponse {
+    pub plugin_id: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1475,6 +1492,12 @@ pub struct PluginInfo {
     pub version: String,
     pub plugin_type: String,
     pub status: PluginStatus,
+    /// Mirror of `status == Loaded` but kept as an explicit bool so the
+    /// TUI doesn't need to know the full status enum to decide whether
+    /// to show the Enable vs Disable action. Stays in sync with
+    /// `status` inside `list_plugins`.
+    #[serde(default = "pluginfo_default_enabled")]
+    pub enabled: bool,
     /// Tags for organizing plugins (e.g., "movies", "music", "anime", "tv", "subtitles")
     #[serde(default)]
     pub tags: Vec<String>,
@@ -1485,6 +1508,8 @@ pub struct PluginInfo {
     #[serde(default)]
     pub author: String,
 }
+
+fn pluginfo_default_enabled() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

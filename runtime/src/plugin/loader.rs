@@ -19,6 +19,12 @@ pub struct LoadedPlugin {
     pub dir: PathBuf,        // directory containing plugin.toml
     pub entrypoint: PathBuf, // resolved absolute path to .wasm / .so / rpc binary
     pub mode: ExecutionMode,
+    /// When `false`, capability dispatch (`find_by_capability`,
+    /// `find_providers_for_tab`, `find_stream_providers`,
+    /// `find_subtitle_providers`) skips this plugin. Supervisor +
+    /// sandbox stay alive so toggling back to `true` is O(1) — no
+    /// reload, no re-download. Defaults to `true` on load.
+    pub enabled: bool,
 }
 
 impl LoadedPlugin {
@@ -128,5 +134,6 @@ pub fn load_from_dir(dir: &Path) -> Result<LoadedPlugin, LoaderError> {
         dir: dir.to_path_buf(),
         entrypoint,
         mode,
+        enabled: true,
     })
 }

@@ -38,11 +38,9 @@ package ui
 import (
 	"strings"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ui/screen"
-	"github.com/stui/stui/internal/ui/screens"
 	"github.com/stui/stui/pkg/theme"
 )
 
@@ -171,14 +169,6 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── When overlay is open, route input there; ESC/PopMsg close it ──────────
 	if r.overlay != nil {
-		// Background tick messages must always reach the active screen so that
-		// spinner animation chains stay alive while a popup is open.
-		if _, ok := msg.(spinner.TickMsg); ok {
-			next, cmd := r.active.Update(msg)
-			r.active = next
-			return r, cmd
-		}
-
 		// ESC / backspace pops back to the previous overlay if one was
 		// pushed (Settings → DSP), otherwise closes the overlay entirely.
 		if key, ok := msg.(tea.KeyPressMsg); ok {
@@ -217,20 +207,52 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mm, ok := msg.(tea.MouseMsg); ok {
 			msg = r.translateOverlayMouse(mm)
 		}
-		// App-level messages emitted by the overlay (e.g. SettingsChangedMsg)
-		// must also reach the active screen — that's where persistence and
-		// runtime IPC live. Without this fan-out the active screen never
-		// sees them because the overlay branch returns early.
-		if shouldFanOutToActive(msg) {
-			activeNext, activeCmd := r.active.Update(msg)
-			r.active = activeNext
-			overlayNext, overlayCmd := r.overlay.Update(msg)
-			r.overlay = overlayNext
-			return r, tea.Batch(activeCmd, overlayCmd)
+
+		// User input (keys + mouse) is routed to the overlay only — the
+		// overlay owns focus while open.
+		if _, isKey := msg.(tea.KeyPressMsg); isKey {
+			next, cmd := r.overlay.Update(msg)
+			r.overlay = next
+			return r, cmd
 		}
-		next, cmd := r.overlay.Update(msg)
-		r.overlay = next
-		return r, cmd
+		if _, isMouse := msg.(tea.MouseMsg); isMouse {
+			next, cmd := r.overlay.Update(msg)
+			r.overlay = next
+			return r, cmd
+		}
+
+		// Everything else — runtime lifecycle events (`runtimeStartedMsg`,
+		// `RuntimeErrorMsg`), IPC responses (`GridUpdateMsg`,
+		// `PluginListMsg`, `CatalogStaleMsg`, player / MPD / DSP events),
+		// spinner ticks, background timers — fans out to BOTH the active
+		// screen and the overlay. The Model in ui.go holds the long-lived
+		// state (client handle, mediaCache, grids, mpdNowPlaying, history);
+		// starving it of these messages while any overlay is open
+		// indefinitely deferred `m.client = msg.client` and other critical
+		// assignments. Previous behaviour was an explicit allowlist which
+		// was brittle — every new IPC message type needed opt-in. Fan-by-
+		// default closes that hole.
+		//
+		// `fromIPC` is the envelope `listenIPC` uses to wrap every IPC
+		// message before handing it off (see ui.go). The active screen
+		// MUST see the envelope — its handler unwraps the inner message
+		// AND re-arms `listenIPC` so the next IPC response can flow. The
+		// overlay cannot do that re-arm (it has no `m.client`), and its
+		// handlers type-switch on the unwrapped concrete type
+		// (`ipc.PluginListMsg`, `ipc.RegistryBrowseResultMsg`, …), so
+		// forwarding the `fromIPC` wrapper to the overlay would silently
+		// drop every IPC response. Send the active screen the wrapper
+		// (so it unwraps + re-subscribes) and the overlay the unwrapped
+		// inner message directly.
+		activeNext, activeCmd := r.active.Update(msg)
+		r.active = activeNext
+		overlayMsg := msg
+		if f, ok := msg.(fromIPC); ok {
+			overlayMsg = f.Msg
+		}
+		overlayNext, overlayCmd := r.overlay.Update(overlayMsg)
+		r.overlay = overlayNext
+		return r, tea.Batch(activeCmd, overlayCmd)
 	}
 
 	// ── Global keys ────────────────────────────────────────────────────
@@ -269,18 +291,6 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := r.active.Update(msg)
 	r.active = next
 	return r, cmd
-}
-
-// shouldFanOutToActive returns true for messages that an overlay-emitted
-// command sends but that need to be processed by the underlying active
-// screen as well (for persistence, IPC, etc.). Currently this covers the
-// settings-change message family.
-func shouldFanOutToActive(msg tea.Msg) bool {
-	switch msg.(type) {
-	case screens.SettingsChangedMsg:
-		return true
-	}
-	return false
 }
 
 // translateOverlayMouse converts a raw terminal mouse event into one whose

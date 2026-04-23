@@ -585,9 +585,10 @@ where
                             "browse_registry" => {
                                 let req_id = val["id"].as_str().unwrap_or("").to_string();
                                 let config_c = Arc::clone(config);
+                                let engine_c = Arc::clone(&engine);
                                 let tx = event_tx.clone();
                                 tokio::spawn(async move {
-                                    let resp = pipeline::registry::run_browse_registry(&config_c).await;
+                                    let resp = pipeline::registry::run_browse_registry(&config_c, &engine_c).await;
                                     // Inject the correlation id so Go can route the response.
                                     if !req_id.is_empty() {
                                         if let Ok(mut v) = serde_json::to_value(&resp) {
@@ -1119,6 +1120,11 @@ async fn handle_line(
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
 
+        Request::SetPluginEnabled(r) => match engine.set_plugin_enabled(&r.plugin_id, r.enabled).await {
+            Ok(resp) => resp,
+            Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
+        },
+
         Request::CatalogRefresh(r) => {
             // Manual refresh: wipe mem AND disk SearchCache so the next
             // provider fan-out actually hits the network. Mem-only clear
@@ -1171,7 +1177,7 @@ async fn handle_line(
         Request::GetProviderSettings  => pipeline::config::run_get_provider_settings(engine, config).await,
         Request::GetPluginRepos       => pipeline::config::run_get_plugin_repos(config).await,
         Request::SetPluginRepos(r)    => pipeline::config::run_set_plugin_repos(config, r).await,
-        Request::BrowseRegistry       => pipeline::registry::run_browse_registry(config).await,
+        Request::BrowseRegistry       => pipeline::registry::run_browse_registry(config, engine).await,
         Request::InstallPlugin(r)     => pipeline::registry::run_install_plugin(config, r).await,
         Request::RankStreams(r)       => pipeline::rank::run_rank_streams(r).await,
 

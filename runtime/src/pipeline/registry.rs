@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::config::ConfigManager;
+use crate::engine::Engine;
 use crate::ipc::{
     ErrorCode, InstallPluginRequest, PluginInstalledResponse, RegistryEntryWire,
     RegistryIndexResponse, Response,
@@ -16,30 +17,22 @@ use crate::registry;
 
 /// Fetch the merged plugin index from every configured registry URL.
 ///
-/// Cross-references the plugin_dir to mark each entry as `installed` when a
-/// subdirectory with the same name already exists.
-pub async fn run_browse_registry(config: &Arc<ConfigManager>) -> Response {
-    let cfg       = config.snapshot().await;
-    let repos     = &cfg.plugin_repos;
-    let plugin_dir = &cfg.plugin_dir;
+/// Cross-references the engine's live plugin registry to mark each entry as
+/// `installed`. Using the runtime registry (not a disk scan of plugin_dir)
+/// reflects the CURRENT state: after `unload_plugin`, a plugin is removed
+/// from the engine but its directory is left on disk — a disk scan would
+/// mis-report it as still installed and hide it from the Available tab.
+pub async fn run_browse_registry(
+    config: &Arc<ConfigManager>,
+    engine: &Arc<Engine>,
+) -> Response {
+    let cfg   = config.snapshot().await;
+    let repos = &cfg.plugin_repos;
 
-    // Collect names of already-installed plugins by listing plugin_dir.
-    let installed_names: HashSet<String> = if plugin_dir.exists() {
-        std::fs::read_dir(plugin_dir)
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter_map(|e| {
-                let e = e.ok()?;
-                if e.path().is_dir() {
-                    e.file_name().into_string().ok()
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        HashSet::new()
+    // Names of currently-loaded plugins per the engine registry.
+    let installed_names: HashSet<String> = {
+        let reg = engine.registry_read().await;
+        reg.all().map(|p| p.manifest.plugin.name.clone()).collect()
     };
 
     // Fetch from each repo; track failures.

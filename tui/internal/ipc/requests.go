@@ -123,6 +123,24 @@ func (c *Client) UnloadPlugin(pluginID string) {
 	}()
 }
 
+// SetPluginEnabled toggles whether a loaded plugin participates in
+// dispatch. The plugin stays in the runtime registry either way —
+// this is a soft enable/disable, not an uninstall. After the runtime
+// responds we re-fetch the plugin list so the TUI reflects the new
+// state immediately.
+func (c *Client) SetPluginEnabled(pluginID string, enabled bool) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":      "set_plugin_enabled",
+			"plugin_id": pluginID,
+			"enabled":   enabled,
+		})
+		receiveWithTimeout(ch)
+		c.ListPlugins()
+	}()
+}
+
 // LoadPlugin sends a load_plugin request.
 func (c *Client) LoadPlugin(path string) {
 	go func() {

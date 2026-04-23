@@ -126,6 +126,8 @@ pub use v1::{
     PluginStatus,
     PluginToastEvent,
     PluginUnloadedResponse,
+    PluginEnabledResponse,
+    SetPluginEnabledRequest,
     // Provider settings schema
     ProviderField,
     ProviderSchema,

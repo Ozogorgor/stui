@@ -1280,15 +1280,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case screens.OpenPluginManagerMsg:
+		if m.client == nil {
+			m.state.StatusMsg = "Runtime not ready — try again shortly."
+			return m, nil
+		}
 		return m, screen.TransitionCmd(screens.NewPluginManagerScreen(m.client), true)
 
 	case screens.OpenPluginSettingsMsg:
+		if m.client == nil {
+			m.state.StatusMsg = "Runtime not ready — try again shortly."
+			return m, nil
+		}
 		return m, screen.TransitionCmd(screens.NewPluginSettingsScreen(m.client), true)
 
 	case screens.OpenPluginReposMsg:
+		if m.client == nil {
+			m.state.StatusMsg = "Runtime not ready — try again shortly."
+			return m, nil
+		}
 		return m, screen.TransitionCmd(screens.NewPluginReposScreen(m.client), true)
 
 	case screens.OpenPluginRegistryMsg:
+		if m.client == nil {
+			m.state.StatusMsg = "Runtime not ready — try again shortly."
+			return m, nil
+		}
 		return m, screen.TransitionCmd(screens.NewPluginRegistryScreen(m.client), true)
 
 	case screens.OpenKeybindsEditorMsg:

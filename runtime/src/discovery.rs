@@ -175,11 +175,25 @@ impl Discovery {
     }
 
     async fn handle_fs_event(&self, event: Event, seen: &mut HashSet<PathBuf>) {
-        // We only care about new directories appearing (plugin drops)
+        // Process create + rename-name (plugin drop-in or rename), and
+        // remove (uninstall deletes the dir — we need to drop the path
+        // from `seen` so a reinstall of the same name triggers load
+        // again instead of being silently skipped as "already seen").
         let is_create = matches!(
             event.kind,
             EventKind::Create(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))
         );
+        let is_remove = matches!(event.kind, EventKind::Remove(_));
+
+        if is_remove {
+            for path in event.paths {
+                if seen.remove(&path) {
+                    debug!(path = %path.display(), "plugin dir removed — dropping from seen set");
+                }
+            }
+            return;
+        }
+
         if !is_create {
             return;
         }

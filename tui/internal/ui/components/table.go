@@ -18,9 +18,23 @@ type StyledTable struct {
 }
 
 func NewStyledTable(columns []Column) *StyledTable {
+	// Width derived from the declared column widths. bubbles/table's
+	// viewport defaults to width=0 when WithWidth is omitted, which
+	// silently swallows every data row — the header renders fine
+	// because it comes from `headersView()`, but body rows are routed
+	// through a zero-wide viewport. Callers can override via SetWidth
+	// once they know their container dimensions.
+	totalW := 0
+	for _, c := range columns {
+		totalW += c.Width
+	}
+	if totalW < 10 {
+		totalW = 10
+	}
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithHeight(10),
+		table.WithWidth(totalW),
 	)
 
 	t.SetStyles(table.Styles{
@@ -45,12 +59,21 @@ func tableHeaderStyle() lipgloss.Style {
 }
 
 func tableCellStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(theme.T.Text())
+	// Intentionally no `Foreground` here. The bubbles/table Model renders
+	// each row as `Cell.Render(…)` first, then wraps the cursor row with
+	// `Selected.Render(row)`. Lipgloss preserves inner foregrounds on
+	// already-styled text, so setting a Foreground on Cell would mask
+	// the Selected style's accent color — leaking only additive
+	// attributes (bold, underline) through to the cursor row. Leaving
+	// Cell's foreground unset lets Selected's Foreground paint every
+	// character of the selected row while non-selected rows fall back
+	// to the terminal's default text color.
+	return lipgloss.NewStyle()
 }
 
 func tableSelectedStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
+		Background(theme.T.Surface()).
 		Foreground(theme.T.Accent()).
 		Bold(true)
 }

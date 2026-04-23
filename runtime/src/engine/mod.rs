@@ -109,9 +109,26 @@ impl PluginRegistry {
         self.plugins.remove(id)
     }
 
-    /// Find all plugins that have a given capability.
+    /// Find all plugins that have a given capability and are currently
+    /// enabled. Disabled plugins stay in the registry (supervisor + sandbox
+    /// intact) but are skipped by dispatch so the user can quickly
+    /// pause/resume a plugin without a reload cycle.
     pub fn find_by_capability(&self, cap: crate::plugin::PluginCapability) -> Vec<&LoadedPlugin> {
-        self.plugins.values().filter(|p| p.has_capability(cap.clone())).collect()
+        self.plugins.values()
+            .filter(|p| p.enabled && p.has_capability(cap.clone()))
+            .collect()
+    }
+
+    /// Mutable access to a plugin's `enabled` flag. Returns true if the
+    /// plugin id was found. Callers should rebuild dispatch after flipping.
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
+        match self.plugins.get_mut(id) {
+            Some(p) => {
+                p.enabled = enabled;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Find all plugins that can serve catalog content.
@@ -706,6 +723,7 @@ impl Engine {
             dir: plugin_dir.to_path_buf(),
             entrypoint,
             mode,
+            enabled: true,
         };
 
         let ctx = SandboxCtx::new(
@@ -717,79 +735,89 @@ impl Engine {
 
         info!(plugin_id = %id, plugin = %name, "plugin loaded");
 
-        let mut reg = self.registry.write().await;
+        // ── Slow path: build the WASM supervisor WITHOUT the registry
+        //    write lock held. Instantiating wasmtime + calling `Plugin::init`
+        //    can take hundreds of ms to several seconds per plugin; holding
+        //    the write lock across those awaits serializes startup and
+        //    starves every concurrent `list_plugins` / catalog read behind
+        //    the ongoing scan. We do the slow work lock-free, then grab
+        //    the write lock just long enough to splice the result in. ──
+        let supervisor: Option<Arc<WasmSupervisor>> =
+            if matches!(loaded.mode, ExecutionMode::Wasm) {
+                let sup_cfg = WasmSupervisorConfig::default();
+                let wasm_path = loaded.entrypoint.clone();
+                let pname = name.clone();
+                let sup_ctx = ctx.clone();
+                let sup_rate_limit = loaded.manifest.rate_limit.clone();
 
-        // For WASM plugins, spin up a supervisor so calls get timeout,
-        // crash detection, memory limits, and automatic reload.
-        if matches!(loaded.mode, ExecutionMode::Wasm) {
-            let sup_cfg  = WasmSupervisorConfig::default();
-            let wasm_path = loaded.entrypoint.clone();
-            let pname     = name.clone();
-            let sup_ctx   = ctx.clone();
-            let pid       = id.clone();
-            let sup_rate_limit = loaded.manifest.rate_limit.clone();
-
-            // Load happens async; if it fails we log and continue — the
-            // plugin is registered but marked unavailable until reload.
-            match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg, sup_rate_limit.as_ref()).await {
-                Ok(sup) => {
-                    // Call `Plugin::init` once after instantiation. Failures here
-                    // do NOT register the supervisor — calls would all bounce. The
-                    // plugin is still added to the registry so `list_plugins`
-                    // surfaces it; user fixes config / restarts STUI to recover.
-                    //
-                    // Config/env resolution uses the four-level precedence from
-                    // `plugin::state::resolve_config` with TUI overrides currently
-                    // empty (StateStore integration lands in a later chunk). The
-                    // effective map is surfaced as both `env` (string-typed) and
-                    // `config` (serde_json::Value::String) so plugins can read
-                    // either shape without pulling the `toml` crate.
-                    let resolved = crate::plugin::state::resolve_config(
-                        &loaded.manifest,
-                        &HashMap::new(),
-                        crate::config::secrets::env_lookup,
-                    );
-                    let init_req = crate::abi::InitRequest {
-                        env: resolved.clone(),
-                        config: resolved
-                            .into_iter()
-                            .map(|(k, v)| (k, serde_json::Value::String(v)))
-                            .collect(),
-                        cache_dir: ctx.cache_dir.clone(),
-                    };
-                    match sup.init(&init_req).await {
-                        Ok(()) => {
-                            info!(plugin = %pname, "plugin init ok");
-                            reg.insert_wasm_supervisor(&pid, Arc::new(sup));
-                        }
-                        Err(crate::abi::InitError::Plugin(
-                            crate::abi::PluginInitError::MissingConfig { fields, hint },
-                        )) => {
-                            warn!(
-                                plugin  = %pname,
-                                missing = ?fields,
-                                hint    = ?hint,
-                                "plugin init reports missing config — set fields via TUI then reload"
-                            );
-                        }
-                        Err(crate::abi::InitError::Plugin(
-                            crate::abi::PluginInitError::Fatal(msg),
-                        )) => {
-                            warn!(plugin = %pname, err = %msg, "plugin init fatal — unavailable until reload");
-                        }
-                        Err(crate::abi::InitError::Abi(abi_err)) => {
-                            warn!(plugin = %pname, err = %abi_err, "plugin init plumbing error — unavailable until reload");
+                match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg, sup_rate_limit.as_ref()).await {
+                    Ok(sup) => {
+                        // Config/env resolution uses the four-level precedence
+                        // from `plugin::state::resolve_config`; TUI overrides
+                        // will land in a later chunk via StateStore. The
+                        // effective map is surfaced as both `env` (string) and
+                        // `config` (JSON string values) so plugins can read
+                        // either without pulling the `toml` crate.
+                        let resolved = crate::plugin::state::resolve_config(
+                            &loaded.manifest,
+                            &HashMap::new(),
+                            crate::config::secrets::env_lookup,
+                        );
+                        let init_req = crate::abi::InitRequest {
+                            env: resolved.clone(),
+                            config: resolved
+                                .into_iter()
+                                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                                .collect(),
+                            cache_dir: ctx.cache_dir.clone(),
+                        };
+                        match sup.init(&init_req).await {
+                            Ok(()) => {
+                                info!(plugin = %pname, "plugin init ok");
+                                Some(Arc::new(sup))
+                            }
+                            Err(crate::abi::InitError::Plugin(
+                                crate::abi::PluginInitError::MissingConfig { fields, hint },
+                            )) => {
+                                warn!(
+                                    plugin  = %pname,
+                                    missing = ?fields,
+                                    hint    = ?hint,
+                                    "plugin init reports missing config — set fields via TUI then reload"
+                                );
+                                None
+                            }
+                            Err(crate::abi::InitError::Plugin(
+                                crate::abi::PluginInitError::Fatal(msg),
+                            )) => {
+                                warn!(plugin = %pname, err = %msg, "plugin init fatal — unavailable until reload");
+                                None
+                            }
+                            Err(crate::abi::InitError::Abi(abi_err)) => {
+                                warn!(plugin = %pname, err = %abi_err, "plugin init plumbing error — unavailable until reload");
+                                None
+                            }
                         }
                     }
+                    Err(e) => {
+                        warn!(plugin = %pname, err = %e, "WASM supervisor load failed — plugin unavailable until reload");
+                        None
+                    }
                 }
-                Err(e) => {
-                    warn!(plugin = %pname, err = %e, "WASM supervisor load failed — plugin unavailable until reload");
-                }
-            }
-        }
+            } else {
+                None
+            };
 
-        reg.insert(loaded, ctx);
-        self.rebuild_dispatch_map(&reg).await;
+        // ── Fast path: take the write lock only long enough to splice
+        //    the finished plugin + supervisor into the registry. ──
+        {
+            let mut reg = self.registry.write().await;
+            if let Some(sup) = supervisor {
+                reg.insert_wasm_supervisor(&id, sup);
+            }
+            reg.insert(loaded, ctx);
+            self.rebuild_dispatch_map(&reg).await;
+        }
 
         Ok(Response::PluginLoaded(PluginLoadedResponse {
             plugin_id: id,
@@ -798,17 +826,58 @@ impl Engine {
     }
 
     pub async fn unload_plugin(&self, plugin_id: &str) -> Result<Response> {
-        let mut reg = self.registry.write().await;
-        match reg.remove(plugin_id) {
-            Some(p) => {
-                info!(plugin_id = %plugin_id, plugin = %p.manifest.plugin.name, "plugin unloaded");
-                self.rebuild_dispatch_map(&reg).await;
-                Ok(Response::PluginUnloaded(PluginUnloadedResponse {
-                    plugin_id: plugin_id.to_string(),
-                }))
+        // Snapshot the plugin dir before removing, so we can delete it
+        // from disk outside the write lock. We keep the lock hold as
+        // short as possible; disk I/O happens after release.
+        let dir_to_delete = {
+            let mut reg = self.registry.write().await;
+            match reg.remove(plugin_id) {
+                Some(p) => {
+                    info!(
+                        plugin_id = %plugin_id,
+                        plugin = %p.manifest.plugin.name,
+                        "plugin unloaded",
+                    );
+                    self.rebuild_dispatch_map(&reg).await;
+                    Some(p.dir)
+                }
+                None => bail!("Plugin '{}' not found", plugin_id),
             }
-            None => bail!("Plugin '{}' not found", plugin_id),
+        };
+
+        // Uninstall semantics: delete the plugin directory from disk
+        // so the next runtime restart doesn't re-scan and reload it,
+        // and so browse_registry's "installed" check (keyed on the
+        // engine registry) stays consistent with the filesystem. The
+        // watcher is set up to drop the path from its `seen` set on
+        // the resulting fs remove event, so reinstall works cleanly.
+        if let Some(dir) = dir_to_delete {
+            if dir.exists() {
+                if let Err(e) = tokio::fs::remove_dir_all(&dir).await {
+                    warn!(
+                        dir  = %dir.display(),
+                        err  = %e,
+                        "failed to delete plugin dir — plugin is unloaded from \
+                         memory but the files remain; restart will re-load it",
+                    );
+                } else {
+                    info!(dir = %dir.display(), "plugin dir removed");
+                }
+            }
         }
+
+        Ok(Response::PluginUnloaded(PluginUnloadedResponse {
+            plugin_id: plugin_id.to_string(),
+        }))
+    }
+
+    /// Read-only access to the plugin registry for callers outside the
+    /// engine module that need to query live plugin state (e.g.
+    /// `run_browse_registry` marking `installed=true` for currently-loaded
+    /// plugins). Keeps `self.registry` private while letting the
+    /// pipeline see the same source of truth as `list_plugins`.
+    pub async fn registry_read(&self) -> tokio::sync::RwLockReadGuard<'_, PluginRegistry> {
+        self.registry.read().await
     }
 
     pub async fn list_plugins(&self) -> Response {
@@ -820,7 +889,8 @@ impl Engine {
                 name: p.manifest.plugin.name.clone(),
                 version: p.manifest.plugin.version.clone(),
                 plugin_type: p.manifest.plugin.plugin_type_str(),
-                status: PluginStatus::Loaded,
+                status: if p.enabled { PluginStatus::Loaded } else { PluginStatus::Disabled },
+                enabled: p.enabled,
                 tags: p.manifest.plugin.tags.clone(),
                 description: p.manifest.plugin.description.clone().unwrap_or_default(),
                 author: p.manifest.meta.as_ref()
@@ -830,6 +900,27 @@ impl Engine {
             })
             .collect();
         Response::PluginList(PluginListResponse { plugins })
+    }
+
+    /// Toggle whether a plugin participates in dispatch. The plugin
+    /// stays loaded (supervisor + sandbox intact); only capability
+    /// lookups start skipping it. Dispatch map is rebuilt so per-scope
+    /// routing tables reflect the new enabled set immediately.
+    pub async fn set_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<Response> {
+        let mut reg = self.registry.write().await;
+        let canonical = match reg.resolve_id(plugin_id) {
+            Some(id) => id.to_string(),
+            None => bail!("Plugin '{}' not found", plugin_id),
+        };
+        if !reg.set_enabled(&canonical, enabled) {
+            bail!("Plugin '{}' not found", plugin_id);
+        }
+        info!(plugin_id = %canonical, enabled, "plugin enabled flag toggled");
+        self.rebuild_dispatch_map(&reg).await;
+        Ok(Response::PluginEnabled(crate::ipc::PluginEnabledResponse {
+            plugin_id: canonical,
+            enabled,
+        }))
     }
 
     // ── Search (catalog fan-out) ──────────────────────────────────────────

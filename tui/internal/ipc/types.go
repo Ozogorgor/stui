@@ -105,6 +105,7 @@ type PluginInfo struct {
 	Version     string   `json:"version"`
 	PluginType  string   `json:"plugin_type"`
 	Status      string   `json:"status"`
+	Enabled     bool     `json:"enabled"`
 	Tags        []string `json:"tags"`
 	Description string   `json:"description"`
 	Author      string   `json:"author"`

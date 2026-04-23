@@ -172,9 +172,13 @@ impl PluginMetaExt for PluginMeta {
     }
 
     fn plugin_type_str(&self) -> String {
-        self.plugin_type_enum()
-            .map(|t| t.to_string())
-            .unwrap_or_default()
+        // New manifests deliberately omit `[plugin] type` (it's deprecated —
+        // see SDK PluginMeta::plugin_type). Falling back to
+        // `plugin_type_or_default()` (MetadataProvider) gives the TUI's
+        // Installed table a non-blank Type cell for modern plugins
+        // instead of empty string. Legacy manifests that still set the
+        // field continue to report their declared type verbatim.
+        self.plugin_type_or_default().to_string()
     }
 
     fn is_metadata_provider(&self) -> bool {

@@ -61,6 +61,14 @@ type updateCandidate struct {
 	entry  ipc.RegistryEntry
 }
 
+// pmMenuOption is a single choice in the Enter-on-row action menu
+// (installed tab). Label is what the user sees; invoke runs when
+// the user picks it.
+type pmMenuOption struct {
+	label  string
+	invoke func() (screen.Screen, tea.Cmd)
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 // PluginManagerScreen is the unified plugin management hub.
@@ -90,6 +98,18 @@ type PluginManagerScreen struct {
 	// Transient UI state
 	installing bool   // an install/update is in flight
 	status     string // last status/error message
+
+	// Confirmation prompt. When non-empty, key input routes to the
+	// prompt resolver (y/n/esc) instead of normal navigation. One
+	// prompt at a time — installed-tab actions (unload/update) are
+	// the only callers today.
+	confirmPrompt string             // text shown to the user
+	confirmAction func() (screen.Screen, tea.Cmd)
+
+	// Pending action menu (Enter on installed row). When non-zero
+	// length, key input picks one of these options.
+	pendingMenu    []pmMenuOption
+	pendingMenuIdx int
 
 
 	// Spinners
@@ -145,11 +165,30 @@ func NewPluginManagerScreen(client *ipc.Client) *PluginManagerScreen {
 func (m *PluginManagerScreen) Init() tea.Cmd {
 	m.pluginsSpinner.Start()
 	m.registrySpinner.Start()
-	return func() tea.Msg {
-		m.client.ListPlugins()
-		m.client.BrowseRegistry()
-		return nil
+	cmds := []tea.Cmd{
+		m.pluginsSpinner.Init(),
+		m.registrySpinner.Init(),
 	}
+	// Only fire the IPC calls when a client is actually wired. Opening the
+	// plugin manager before `ClientReadyMsg` has landed (e.g. the user
+	// mashes into Settings → Plugin Manager within the first ~50ms of
+	// launch, before the runtime subprocess has dialed) means `m.client`
+	// is still nil and dereffing it in the goroutine inside ListPlugins
+	// segfaults on `atomic.Uint64.Add` against the nil Client pointer.
+	if m.client != nil {
+		cmds = append(cmds, func() tea.Msg {
+			m.client.ListPlugins()
+			m.client.BrowseRegistry()
+			return nil
+		})
+	} else {
+		m.plLoading = false
+		m.regLoading = false
+		m.pluginsSpinner.Stop()
+		m.registrySpinner.Stop()
+		m.status = "Runtime not ready — open Plugin Manager again once stui finishes starting."
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
@@ -171,6 +210,11 @@ func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		} else {
 			m.plugins = msg.Plugins
 			m.updateInstalledTable()
+			// Clear any lingering transient status (e.g. "installed —
+			// refreshing…") now that the refresh actually landed.
+			if !m.regLoading {
+				m.status = ""
+			}
 		}
 		m.recomputeUpdates()
 
@@ -184,9 +228,30 @@ func (m *PluginManagerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			m.failedRepos = msg.FailedRepos
 			m.available = pmFilterUninstalled(msg.Entries)
 			m.updateAvailableTable()
+			if !m.plLoading {
+				m.status = ""
+			}
 		}
 		m.recomputeUpdates()
 		m.updateUpdatesTable()
+
+	case ipc.PluginToastMsg:
+		// The runtime broadcasts this when its filesystem watcher
+		// finishes hot-loading a plugin (install path, manual drop,
+		// whatever). Our own `ListPlugins()` request right after an
+		// install response races the watcher and usually wins — the
+		// Installed tab would show stale data until the user hit `r`.
+		// Refreshing on the toast catches the load unconditionally.
+		if m.client != nil && !msg.IsError {
+			m.plLoading = true
+			m.pluginsSpinner.Start()
+			m.client.ListPlugins()
+			// Registry too, since newly-loaded plugins get moved out
+			// of the Available list.
+			m.regLoading = true
+			m.registrySpinner.Start()
+			m.client.BrowseRegistry()
+		}
 
 	case ipc.PluginInstallResultMsg:
 		m.installing = false
@@ -212,6 +277,54 @@ func (m *PluginManagerScreen) handleKey(msg tea.KeyPressMsg) (screen.Screen, tea
 		return m, nil
 	}
 	key := msg.String()
+
+	// ── Confirmation prompt active: y/n/esc only ──────────────────────
+	if m.confirmPrompt != "" {
+		switch key {
+		case "y", "enter":
+			action := m.confirmAction
+			m.confirmPrompt = ""
+			m.confirmAction = nil
+			if action != nil {
+				return action()
+			}
+			return m, nil
+		case "n", "esc":
+			m.confirmPrompt = ""
+			m.confirmAction = nil
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// ── Action menu active (Enter on installed row): up/down/enter/esc ─
+	if len(m.pendingMenu) > 0 {
+		switch key {
+		case "up", "k":
+			if m.pendingMenuIdx > 0 {
+				m.pendingMenuIdx--
+			}
+			return m, nil
+		case "down", "j":
+			if m.pendingMenuIdx < len(m.pendingMenu)-1 {
+				m.pendingMenuIdx++
+			}
+			return m, nil
+		case "enter":
+			opt := m.pendingMenu[m.pendingMenuIdx]
+			m.pendingMenu = nil
+			m.pendingMenuIdx = 0
+			if opt.invoke != nil {
+				return opt.invoke()
+			}
+			return m, nil
+		case "esc":
+			m.pendingMenu = nil
+			m.pendingMenuIdx = 0
+			return m, nil
+		}
+		return m, nil
+	}
 
 	// Global keys
 	switch key {
@@ -245,17 +358,16 @@ func (m *PluginManagerScreen) handleInstalledKey(key string) (screen.Screen, tea
 		if m.plCursor > 0 {
 			m.plCursor--
 		}
+		m.installedTable.SetCursor(m.plCursor)
 	case "down", "j":
 		if m.plCursor < len(m.plugins)-1 {
 			m.plCursor++
 		}
+		m.installedTable.SetCursor(m.plCursor)
 	case "u", "x":
-		if len(m.plugins) > 0 && m.plCursor < len(m.plugins) && !m.plLoading {
-			p := m.plugins[m.plCursor]
-			m.client.UnloadPlugin(p.ID)
-			m.status = fmt.Sprintf("Unloading '%s'…", p.Name)
-			m.plLoading = true
-		}
+		m.promptUnloadCursor()
+	case "enter":
+		m.openInstalledActionMenu()
 	case "r":
 		m.plLoading = true
 		m.status = ""
@@ -264,16 +376,124 @@ func (m *PluginManagerScreen) handleInstalledKey(key string) (screen.Screen, tea
 	return m, nil
 }
 
+// promptUnloadCursor stages a y/n confirmation for uninstalling the
+// plugin under the installed-tab cursor. On confirmation the actual
+// UnloadPlugin RPC fires (which also deletes the plugin directory
+// from disk) and both lists refresh so the row moves from Installed
+// → Available without the user hitting `r`.
+func (m *PluginManagerScreen) promptUnloadCursor() {
+	if len(m.plugins) == 0 || m.plCursor >= len(m.plugins) || m.plLoading || m.client == nil {
+		return
+	}
+	p := m.plugins[m.plCursor]
+	m.confirmPrompt = fmt.Sprintf("Uninstall '%s' v%s?  (deletes the plugin from disk)\n\n  [y]es   [n]o", p.Name, p.Version)
+	m.confirmAction = func() (screen.Screen, tea.Cmd) {
+		m.client.UnloadPlugin(p.ID)
+		// Clear the cached row immediately so the UI doesn't show
+		// the just-uninstalled plugin while the refresh is in flight.
+		m.status = fmt.Sprintf("Uninstalling '%s'…", p.Name)
+		m.plLoading = true
+		m.regLoading = true
+		m.pluginsSpinner.Start()
+		m.registrySpinner.Start()
+		// The runtime doesn't push a toast on uninstall, so we have
+		// to schedule both fetches ourselves. Without BrowseRegistry
+		// the Available tab would keep showing Installed=true for
+		// the unloaded entry until a manual `r`.
+		m.client.ListPlugins()
+		m.client.BrowseRegistry()
+		return m, tea.Batch(m.pluginsSpinner.Init(), m.registrySpinner.Init())
+	}
+}
+
+// openInstalledActionMenu builds the Enter-on-row menu. The options
+// are context-dependent: an "Update to vX.Y.Z" choice appears only
+// when the Updates tab sees a newer version for the cursor's plugin.
+func (m *PluginManagerScreen) openInstalledActionMenu() {
+	if len(m.plugins) == 0 || m.plCursor >= len(m.plugins) || m.plLoading || m.client == nil {
+		return
+	}
+	p := m.plugins[m.plCursor]
+
+	var opts []pmMenuOption
+
+	// "Update" option first — primary action when available.
+	if up, ok := m.findUpdateFor(p); ok {
+		entry := up.entry
+		opts = append(opts, pmMenuOption{
+			label: fmt.Sprintf("Update to v%s", entry.Version),
+			invoke: func() (screen.Screen, tea.Cmd) {
+				m.installing = true
+				m.status = fmt.Sprintf("Updating '%s' to v%s…", entry.Name, entry.Version)
+				m.client.InstallPlugin(entry.Name, entry.Version, entry.BinaryURL, entry.Checksum)
+				return m, nil
+			},
+		})
+	}
+	// Enable/Disable toggle — plugin stays on disk, just stops
+	// participating in dispatch. Label flips based on current state
+	// so there's always exactly one toggle action in the menu.
+	if p.Enabled {
+		opts = append(opts, pmMenuOption{
+			label: "Disable",
+			invoke: func() (screen.Screen, tea.Cmd) {
+				m.client.SetPluginEnabled(p.ID, false)
+				m.status = fmt.Sprintf("Disabling '%s'…", p.Name)
+				m.plLoading = true
+				m.pluginsSpinner.Start()
+				// Re-arm the spinner's tick loop — Start() just
+				// flips the active flag, it doesn't emit a tick.
+				return m, m.pluginsSpinner.Init()
+			},
+		})
+	} else {
+		opts = append(opts, pmMenuOption{
+			label: "Enable",
+			invoke: func() (screen.Screen, tea.Cmd) {
+				m.client.SetPluginEnabled(p.ID, true)
+				m.status = fmt.Sprintf("Enabling '%s'…", p.Name)
+				m.plLoading = true
+				m.pluginsSpinner.Start()
+				return m, m.pluginsSpinner.Init()
+			},
+		})
+	}
+	opts = append(opts, pmMenuOption{
+		label: "Uninstall",
+		invoke: func() (screen.Screen, tea.Cmd) {
+			m.promptUnloadCursor()
+			return m, nil
+		},
+	})
+	opts = append(opts, pmMenuOption{label: "Cancel"})
+
+	m.pendingMenu = opts
+	m.pendingMenuIdx = 0
+}
+
+// findUpdateFor returns the registry's newer-version entry for p, if
+// any, by consulting the previously-computed updates slice.
+func (m *PluginManagerScreen) findUpdateFor(p ipc.PluginInfo) (updateCandidate, bool) {
+	for _, u := range m.updates {
+		if u.plugin.ID == p.ID {
+			return u, true
+		}
+	}
+	return updateCandidate{}, false
+}
+
 func (m *PluginManagerScreen) handleAvailableKey(key string) (screen.Screen, tea.Cmd) {
 	switch key {
 	case "up", "k":
 		if m.avCursor > 0 {
 			m.avCursor--
 		}
+		m.availableTable.SetCursor(m.avCursor)
 	case "down", "j":
 		if m.avCursor < len(m.available)-1 {
 			m.avCursor++
 		}
+		m.availableTable.SetCursor(m.avCursor)
 	case "enter", " ":
 		if len(m.available) > 0 && !m.regLoading && !m.installing {
 			e := m.available[m.avCursor]
@@ -295,10 +515,12 @@ func (m *PluginManagerScreen) handleUpdatesKey(key string) (screen.Screen, tea.C
 		if m.upCursor > 0 {
 			m.upCursor--
 		}
+		m.updatesTable.SetCursor(m.upCursor)
 	case "down", "j":
 		if m.upCursor < len(m.updates)-1 {
 			m.upCursor++
 		}
+		m.updatesTable.SetCursor(m.upCursor)
 	case "enter", "u":
 		if len(m.updates) > 0 && !m.installing {
 			u := m.updates[m.upCursor]
@@ -373,13 +595,20 @@ func (m *PluginManagerScreen) View() tea.View {
 	sb.WriteString("  " + dim.Render(strings.Repeat("─", m.contentWidth())) + "\n\n")
 
 	// ── Active tab content ────────────────────────────────────────────────
-	switch m.tab {
-	case pmInstalled:
-		sb.WriteString(m.viewInstalled())
-	case pmAvailable:
-		sb.WriteString(m.viewAvailable())
-	case pmUpdates:
-		sb.WriteString(m.viewUpdates())
+	// When a confirmation or action menu is pending, replace the tab
+	// body with a centred dialog so the prompt is unmissable. Inline
+	// prompts got lost below long plugin lists.
+	if m.confirmPrompt != "" || len(m.pendingMenu) > 0 {
+		sb.WriteString(m.renderDialog())
+	} else {
+		switch m.tab {
+		case pmInstalled:
+			sb.WriteString(m.viewInstalled())
+		case pmAvailable:
+			sb.WriteString(m.viewAvailable())
+		case pmUpdates:
+			sb.WriteString(m.viewUpdates())
+		}
 	}
 
 	// ── Status bar ────────────────────────────────────────────────────────
@@ -408,8 +637,6 @@ func (m *PluginManagerScreen) View() tea.View {
 }
 
 func (m *PluginManagerScreen) viewInstalled() string {
-	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-
 	var sb strings.Builder
 
 	if m.plLoading {
@@ -421,56 +648,108 @@ func (m *PluginManagerScreen) viewInstalled() string {
 		return sb.String()
 	}
 
-	availH := m.height - 10
-	if availH < 1 {
-		availH = 20
-	}
-
-	m.installedTable.SetHeight(availH)
+	m.installedTable.SetHeight(pmTableHeight(len(m.plugins), m.height))
 	m.installedTable.SetFocused(true)
 
 	tableView := m.installedTable.View()
 
-	sb.WriteString(dim.Render(tableView))
+	sb.WriteString(tableView)
+	sb.WriteString("\n")
 	if m.plCursor < len(m.plugins) {
 		p := m.plugins[m.plCursor]
 		sb.WriteString(pluginDetail(p.Description, p.Author))
 	}
-	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("u", "unload") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
+	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("enter", "actions") + "  " + theme.T.KeyHint("u", "uninstall") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
 }
 
-func (m *PluginManagerScreen) viewAvailable() string {
+// renderDialog returns the centered confirm / menu dialog that floats
+// above the tab body when a destructive action or action menu is
+// pending. Returned as a standalone region composited by View() over
+// the normal tab content — replacing the inline prompt that was
+// hard to spot when the installed table ran long.
+func (m *PluginManagerScreen) renderDialog() string {
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	warn := lipgloss.NewStyle().Foreground(theme.T.Warn()).Bold(true)
 
+	var body strings.Builder
+
+	if m.confirmPrompt != "" {
+		body.WriteString(warn.Render("⚠  Confirm"))
+		body.WriteString("\n\n")
+		body.WriteString(m.confirmPrompt)
+		body.WriteString("\n")
+	} else if len(m.pendingMenu) > 0 {
+		body.WriteString(acc.Render("Actions"))
+		body.WriteString("\n\n")
+		for i, opt := range m.pendingMenu {
+			if i == m.pendingMenuIdx {
+				body.WriteString(acc.Render("▸ " + opt.label))
+			} else {
+				body.WriteString("  " + dim.Render(opt.label))
+			}
+			body.WriteString("\n")
+		}
+		body.WriteString("\n")
+		body.WriteString(dim.Render("↑↓ choose · enter confirm · esc cancel"))
+	}
+
+	// Border + padding, centred inside the plugin_manager overlay.
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.T.Accent()).
+		Background(theme.T.Surface()).
+		Padding(1, 3).
+		Render(body.String())
+
+	// Reserve roughly the same vertical space the tab body would use
+	// so the surrounding chrome (title, tabs, footer) doesn't shift
+	// when the dialog opens.
+	bodyH := m.height - 6
+	if bodyH < 10 {
+		bodyH = 10
+	}
+	bodyW := m.contentWidth() + 2
+	if bodyW < 30 {
+		bodyW = 30
+	}
+	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, box)
+}
+
+
+func (m *PluginManagerScreen) viewAvailable() string {
 	var sb strings.Builder
 
 	if m.regLoading {
 		sb.WriteString("  " + m.registrySpinner.View() + "\n")
 		return sb.String()
 	}
-	if len(m.failedRepos) > 0 {
-		sb.WriteString("  " + theme.T.WarnPill("⚠ "+fmt.Sprintf("%d repo(s) unreachable", len(m.failedRepos))) + "\n\n")
-	}
 	if len(m.available) == 0 {
 		sb.WriteString("  " + theme.T.SuccessPill("✓ All available plugins are already installed") + "\n")
+		if len(m.failedRepos) > 0 {
+			sb.WriteString("\n  " + theme.T.WarnPill("⚠ "+fmt.Sprintf("%d repo(s) unreachable", len(m.failedRepos))) + "\n")
+		}
 		return sb.String()
 	}
 
-	availH := m.height - 10
-	if availH < 1 {
-		availH = 20
-	}
-
-	m.availableTable.SetHeight(availH)
+	m.availableTable.SetHeight(pmTableHeight(len(m.available), m.height))
 	m.availableTable.SetFocused(true)
 
 	tableView := m.availableTable.View()
 
-	sb.WriteString(dim.Render(tableView))
+	sb.WriteString(tableView)
+	sb.WriteString("\n")
 	if m.avCursor < len(m.available) {
 		e := m.available[m.avCursor]
 		sb.WriteString(pluginDetail(e.Description, e.Author))
+	}
+	// Render the unreachable-repos warning BELOW the table so it
+	// doesn't push the plugin list downward on every open. It's
+	// supplementary info — users care about what they can install,
+	// which repos failed is secondary.
+	if len(m.failedRepos) > 0 {
+		sb.WriteString("  " + theme.T.WarnPill("⚠ "+fmt.Sprintf("%d repo(s) unreachable", len(m.failedRepos))) + "\n")
 	}
 	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("enter", "install") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
@@ -490,17 +769,13 @@ func (m *PluginManagerScreen) viewUpdates() string {
 		return sb.String()
 	}
 
-	availH := m.height - 10
-	if availH < 1 {
-		availH = 20
-	}
-
-	m.updatesTable.SetHeight(availH)
+	m.updatesTable.SetHeight(pmTableHeight(len(m.updates), m.height))
 	m.updatesTable.SetFocused(true)
 
 	tableView := m.updatesTable.View()
 
-	sb.WriteString(dim.Render(tableView))
+	sb.WriteString(tableView)
+	sb.WriteString("\n")
 	if m.installing {
 		sb.WriteString("  " + theme.T.WarnPill("updating…") + "\n")
 	}
@@ -511,12 +786,19 @@ func (m *PluginManagerScreen) viewUpdates() string {
 func (m *PluginManagerScreen) updateInstalledTable() {
 	rows := make([][]string, len(m.plugins))
 	for i, p := range m.plugins {
+		status := p.Status
+		if !p.Enabled {
+			// Keep the word short to fit the 10-wide Status column
+			// and distinct from "loaded" so disabled plugins are
+			// obvious at a glance.
+			status = "disabled"
+		}
 		rows[i] = []string{
 			truncate(p.Name, 22),
 			truncate(p.Version, 9),
 			truncate(p.PluginType, 14),
 			truncate(p.Author, 12),
-			p.Status,
+			status,
 		}
 	}
 	m.installedTable.SetData(rows)
@@ -578,6 +860,42 @@ func (m *PluginManagerScreen) contentWidth() int {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// pmTableHeight returns the table viewport height that shows every row at
+// once when the overlay has the space, and caps at the overlay's available
+// height minus the fixed chrome (title, tab bar, detail line, hints,
+// footer ≈ 10 rows) otherwise.
+//
+// bubbles/table's `SetHeight(h)` sets the viewport to
+// `h - lipgloss.Height(headersView)`. With `BorderBottom(true)` on the
+// header style, the bordered header is exactly 2 lines, so
+// `viewport_rows = h - 2`. The viewport itself pads its content to the
+// declared viewport height with full-width spaces — any leftover budget
+// becomes a padding row at the end that anything appended after the table
+// (like pluginDetail) lands on, shunted to the far right of the screen.
+//
+// Returning exactly `rowCount + 2` produces `viewport_rows == rowCount`
+// with no padding slack, so pluginDetail renders on its own line below.
+//
+// Prior behaviour fixed the height at `overlayHeight - 10`, which when the
+// overlay was shorter than ~30 rows collapsed the viewport to 1-2 rows and
+// forced arrow-key paging through the plugin list even when every plugin
+// would comfortably fit on screen.
+func pmTableHeight(rowCount, overlayHeight int) int {
+	const headerLines = 2
+	desired := rowCount + headerLines
+	if desired < headerLines+1 {
+		desired = headerLines + 1
+	}
+	maxH := overlayHeight - 10
+	if maxH < headerLines+1 {
+		return desired
+	}
+	if desired > maxH {
+		return maxH
+	}
+	return desired
+}
 
 func pmFilterUninstalled(entries []ipc.RegistryEntry) []ipc.RegistryEntry {
 	out := make([]ipc.RegistryEntry, 0, len(entries))
