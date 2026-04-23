@@ -1,0 +1,72 @@
+[
+  {
+    "name": "anilist-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "AniList \u2014 anime metadata (movies + series)",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/anilist-provider-1.0.0.tar.gz",
+    "checksum": "sha256:3897d07116b7714f200bd29bacf0bf1dd5208249b0649831784e37ac4734f8e5",
+    "homepage": "https://anilist.co"
+  },
+  {
+    "name": "discogs-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "Discogs \u2014 music / vinyl metadata (artists + albums)",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/discogs-provider-1.0.0.tar.gz",
+    "checksum": "sha256:02add2b3c5331bc1c8e19d34585c29f7ae6ae1e590d546a78d027ef17f19cdb6",
+    "homepage": "https://www.discogs.com"
+  },
+  {
+    "name": "kitsu",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "Kitsu \u2014 anime metadata (movies + series)",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/kitsu-1.0.0.tar.gz",
+    "checksum": "sha256:ba922b1f75258db3b90d9e293a6eced05d7a4194f0d8663f7f30795c80d204ab",
+    "homepage": "https://kitsu.io"
+  },
+  {
+    "name": "lastfm-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "Last.fm \u2014 music discovery and charts",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/lastfm-provider-1.0.0.tar.gz",
+    "checksum": "sha256:d4f2d626f16ed51a524a16e574a88bfddd8f1002128c9a14fdedd1b0911d101a",
+    "homepage": "https://www.last.fm/api"
+  },
+  {
+    "name": "musicbrainz-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "MusicBrainz \u2014 open music encyclopedia (artists, albums, tracks)",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/musicbrainz-provider-1.0.0.tar.gz",
+    "checksum": "sha256:b228865e4227f0f9d2e3938008a2c308327acc6603fa32f57f552bbca7cd3a65",
+    "homepage": "https://musicbrainz.org"
+  },
+  {
+    "name": "omdb-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "Open Movie Database \u2014 movie/TV info, ratings, posters",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/omdb-provider-1.0.0.tar.gz",
+    "checksum": "sha256:d66015263e6e2a3b56ef60dd73d586de42b16af9fa57fa988a36682a2943c107",
+    "homepage": "https://www.omdbapi.com"
+  },
+  {
+    "name": "tmdb-provider",
+    "version": "1.0.0",
+    "type": "wasm",
+    "description": "The Movie Database \u2014 movies, TV series, episodes",
+    "author": "stui",
+    "binary_url": "https://github.com/Ozogorgor/stui/releases/download/plugins-v0.1.0/tmdb-provider-1.0.0.tar.gz",
+    "checksum": "sha256:af63eb4b9661bee3aa5fd7289bf9883f1f7ca36af97e6a9f9d20c08ef46a9dda",
+    "homepage": "https://github.com/Ozogorgor/stui_plugins"
+  }
+]
