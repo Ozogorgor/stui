@@ -4,6 +4,19 @@
   <img src="assets/stui_logo_braille_play.svg" alt="stui logo" width="400"/>
 </p>
 
+> **⚠️ DO NOT USE — heavy development.**
+>
+> This repository is public for infrastructure reasons (GitHub Pages hosting
+> of the bundled-plugin registry requires a public repo). It is **not ready
+> for end-user use**. APIs, IPC protocol, plugin ABI, on-disk data layout, and
+> the `~/.stui/` directory structure are all subject to breaking changes
+> without notice. Data loss, crashes, and incomplete features are expected.
+>
+> If you're looking for a stable terminal streaming TUI, this isn't it yet —
+> come back when this banner is gone.
+
+---
+
 **stui** is a plugin-driven terminal streaming platform for Linux.
 
 A fast, audiophile friendly, feature rich and keyboard-first TUI for discovering and playing movies, series, music, radio, and podcasts — powered by a Rust async runtime, intelligent stream selection, and a fully extensible plugin system.
