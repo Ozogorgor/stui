@@ -1,6 +1,13 @@
 # Superpowers tooling state
 .superpowers/
 
+# Session-local planning / backlog / todo scratchpads — private to the
+# working repo, not meant for public GitHub. Previously-tracked files
+# are untracked via `git rm --cached` alongside this change; they stay
+# on disk for local reference.
+docs/superpowers/
+SCAFFOLD_TODOS.md
+
 # Git worktrees
 .worktrees/
 
