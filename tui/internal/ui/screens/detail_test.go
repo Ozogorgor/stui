@@ -149,17 +149,27 @@ func TestDetail_CreditsFirst_OtherSectionsStillLoading(t *testing.T) {
 	}
 }
 
-// All four verbs resolved empty — the main body swaps in the
-// "Metadata unavailable" fallback.
-func TestDetail_AllEmpty_ShowsMetadataUnavailableFallback(t *testing.T) {
-	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+// All four verbs resolved empty — each section shows its own empty
+// label, catalog data (title, description, stream-via) stays visible.
+// The full-body "Metadata unavailable" fallback was removed because it
+// stomped catalog data that is always valid independent of the fetch.
+func TestDetail_AllEmpty_ShowsPerSectionLabelsNotFullFallback(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "The Matrix"})
 	ds.Meta.EnrichStatus = FetchEmpty
 	ds.Meta.CreditsStatus = FetchEmpty
 	ds.Meta.ArtworkStatus = FetchEmpty
 	ds.Meta.RelatedStatus = FetchEmpty
 	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
-	if !strings.Contains(out, detailAllEmptyFallbck) {
-		t.Errorf("fallback missing: %q", out)
+	// Catalog title is still visible.
+	if !strings.Contains(out, "The Matrix") {
+		t.Errorf("catalog title missing when metadata empty: %q", out)
+	}
+	// Per-section empty labels are present.
+	if !strings.Contains(out, detailEmptyCredits) {
+		t.Errorf("credits empty label missing: %q", out)
+	}
+	if !strings.Contains(out, detailEmptyRelated) {
+		t.Errorf("related empty label missing: %q", out)
 	}
 }
 
@@ -227,8 +237,5 @@ func TestDetail_OneEmpty_OthersLoaded(t *testing.T) {
 	}
 	if !strings.Contains(out, "Sequel") {
 		t.Error("related missing")
-	}
-	if strings.Contains(out, detailAllEmptyFallbck) {
-		t.Error("false all-empty fallback")
 	}
 }

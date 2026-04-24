@@ -68,10 +68,9 @@ const (
 	detailEmptyCredits    = "No crew or cast available"
 	detailEmptyArtwork    = "No artwork available"
 	detailEmptyRelated    = "No related items"
-	detailLoadingCrew     = "Loading crew…"
-	detailLoadingArtwork  = "Loading artwork…"
-	detailLoadingRelated  = "Loading related…"
-	detailAllEmptyFallbck = "Metadata unavailable"
+	detailLoadingCrew    = "Loading crew…"
+	detailLoadingArtwork = "Loading artwork…"
+	detailLoadingRelated = "Loading related…"
 )
 
 // RenderDetailOverlay renders the full-screen detail view.
@@ -122,23 +121,6 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Height(mainH).
 			Render(right),
 	)
-
-	// All-empty fallback: when all four per-verb fetches resolved empty,
-	// swap the main body (not the header, not the related row) for a
-	// single centered "Metadata unavailable" message. Keeps the header
-	// breadcrumb and related-row empty-state visible.
-	if ds.Meta.EnrichStatus == FetchEmpty &&
-		ds.Meta.CreditsStatus == FetchEmpty &&
-		ds.Meta.ArtworkStatus == FetchEmpty &&
-		ds.Meta.RelatedStatus == FetchEmpty {
-		main = lipgloss.NewStyle().
-			Foreground(theme.T.TextDim()).
-			Faint(true).
-			Width(w).
-			Height(mainH).
-			Align(lipgloss.Center, lipgloss.Center).
-			Render(detailAllEmptyFallbck)
-	}
 
 	related := renderRelatedRow(ds, w, relatedH)
 
