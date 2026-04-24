@@ -695,6 +695,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state.StatusMsg = msg.Entry.Title
 		return m, m.fetchSimilar(msg.Entry)
 
+	case ipc.DetailMetadataPartial:
+		// Streamed per-verb partial from GetDetailMetadata. Apply to the
+		// live detail state if the user hasn't navigated away; mismatched
+		// EntryIDs are silently ignored by ApplyMetadataPartial.
+		if m.detail != nil {
+			m.detail.ApplyMetadataPartial(msg)
+		}
+		return m, nil
+
 	// ── Live theme update from matugen watcher ───────────────────────────
 	case ipc.ThemeUpdateMsg:
 		palette := theme.FromMatugen(msg.Colors)
