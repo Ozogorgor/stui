@@ -96,12 +96,19 @@ func RenderDetailOverlay(
 
 func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 	header := renderDetailHeader(ds, w, tab)
-	relatedH := similarRowHeight + 2
 
-	// The artwork-status strip is a single full-width row between the
-	// two-column main body and the related row. It only renders while
-	// the artwork verb is pending or resolved empty — once backdrops
-	// load, the per-column carousel takes over.
+	// Related row: reserve height only if it has content. When the
+	// verb resolves empty the row is hidden entirely so the main body
+	// reclaims the vertical space.
+	relatedH := 0
+	if ds.Meta.RelatedStatus == FetchPending ||
+		(ds.Meta.RelatedStatus == FetchLoaded && len(ds.Meta.Related.Items) > 0) {
+		relatedH = similarRowHeight + 2
+	}
+
+	// Artwork-status strip: only rendered while the artwork verb is
+	// pending (loading). Empty state returns "" so it doesn't consume
+	// a row between the main body and the related row.
 	artworkStatus := renderBackdropStatusStrip(ds, w)
 	statusH := 0
 	if artworkStatus != "" {
@@ -122,13 +129,13 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
-	related := renderRelatedRow(ds, w, relatedH)
-
 	parts := []string{header, main}
 	if artworkStatus != "" {
 		parts = append(parts, artworkStatus)
 	}
-	parts = append(parts, related)
+	if relatedH > 0 {
+		parts = append(parts, renderRelatedRow(ds, w, relatedH))
+	}
 	full := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
 	return lipgloss.NewStyle().
@@ -255,8 +262,11 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	}
 
 	// CREW — directors, DoP, composer, studio. Rendered above CAST so
-	// headline creatives appear first in the reading order.
-	sections = append(sections, renderCrewSection(ds, w), "")
+	// headline creatives appear first in the reading order. Hidden
+	// entirely when the credits verb resolves empty.
+	if crew := renderCrewSection(ds, w); crew != "" {
+		sections = append(sections, crew, "")
+	}
 
 	// CAST
 	if len(ds.Entry.Cast) > 0 {

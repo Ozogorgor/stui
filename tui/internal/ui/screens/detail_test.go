@@ -30,12 +30,21 @@ func TestDetail_CrewSectionShowsDirectorFromCredits(t *testing.T) {
 	}
 }
 
-func TestDetail_CrewSectionShowsEmptyLabelWhenEmpty(t *testing.T) {
-	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+func TestDetail_CrewSectionHiddenWhenEmpty(t *testing.T) {
+	// Plugins returned nothing for credits — the CREW section is
+	// hidden entirely rather than showing an empty placeholder. The
+	// catalog title still renders so the card isn't blank.
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "The Matrix"})
 	ds.Meta.CreditsStatus = FetchEmpty
 	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
-	if !strings.Contains(out, detailEmptyCredits) {
-		t.Errorf("empty label %q missing from output", detailEmptyCredits)
+	if strings.Contains(out, detailCrewHeader) {
+		t.Errorf("CREW header rendered when empty: %q", out)
+	}
+	if strings.Contains(out, detailEmptyCredits) {
+		t.Errorf("empty-credits placeholder still rendered: %q", out)
+	}
+	if !strings.Contains(out, "The Matrix") {
+		t.Errorf("catalog title missing: %q", out)
 	}
 }
 
@@ -63,12 +72,17 @@ func TestDetail_RelatedSectionShowsItemsFromRelatedPayload(t *testing.T) {
 	}
 }
 
-func TestDetail_RelatedSectionShowsEmptyLabel(t *testing.T) {
+func TestDetail_RelatedSectionHiddenWhenEmpty(t *testing.T) {
+	// Plugins returned no related items — the row is hidden entirely
+	// to reclaim vertical space rather than showing an empty placeholder.
 	ds := NewDetailState(ipc.DetailEntry{ID: "tt1"})
 	ds.Meta.RelatedStatus = FetchEmpty
 	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
-	if !strings.Contains(out, detailEmptyRelated) {
-		t.Errorf("empty label %q missing from output", detailEmptyRelated)
+	if strings.Contains(out, detailRelatedHeader) {
+		t.Errorf("RELATED header rendered when empty: %q", out)
+	}
+	if strings.Contains(out, detailEmptyRelated) {
+		t.Errorf("empty-related placeholder still rendered: %q", out)
 	}
 }
 
@@ -149,27 +163,30 @@ func TestDetail_CreditsFirst_OtherSectionsStillLoading(t *testing.T) {
 	}
 }
 
-// All four verbs resolved empty — each section shows its own empty
-// label, catalog data (title, description, stream-via) stays visible.
-// The full-body "Metadata unavailable" fallback was removed because it
-// stomped catalog data that is always valid independent of the fetch.
-func TestDetail_AllEmpty_ShowsPerSectionLabelsNotFullFallback(t *testing.T) {
+// All four verbs resolved empty — the metadata-dependent sections hide
+// entirely so the card isn't cluttered with empty placeholders. The
+// catalog-derived info (title, year, description, stream-via) stays
+// visible because it was never dependent on plugin output.
+func TestDetail_AllEmpty_HidesSectionsKeepsCatalogData(t *testing.T) {
 	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "The Matrix"})
 	ds.Meta.EnrichStatus = FetchEmpty
 	ds.Meta.CreditsStatus = FetchEmpty
 	ds.Meta.ArtworkStatus = FetchEmpty
 	ds.Meta.RelatedStatus = FetchEmpty
 	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
-	// Catalog title is still visible.
 	if !strings.Contains(out, "The Matrix") {
 		t.Errorf("catalog title missing when metadata empty: %q", out)
 	}
-	// Per-section empty labels are present.
-	if !strings.Contains(out, detailEmptyCredits) {
-		t.Errorf("credits empty label missing: %q", out)
+	if strings.Contains(out, detailCrewHeader) {
+		t.Errorf("CREW header still rendered when empty: %q", out)
 	}
-	if !strings.Contains(out, detailEmptyRelated) {
-		t.Errorf("related empty label missing: %q", out)
+	if strings.Contains(out, detailRelatedHeader) {
+		t.Errorf("RELATED header still rendered when empty: %q", out)
+	}
+	for _, label := range []string{detailEmptyCredits, detailEmptyRelated, detailEmptyArtwork} {
+		if strings.Contains(out, label) {
+			t.Errorf("empty placeholder %q should be hidden", label)
+		}
 	}
 }
 
@@ -222,7 +239,7 @@ func TestDetail_OneEmpty_OthersLoaded(t *testing.T) {
 		Type: "credits",
 		Crew: []ipc.CrewWire{{Name: "Nolan", Role: "director"}},
 	}
-	ds.Meta.ArtworkStatus = FetchEmpty
+	ds.Meta.ArtworkStatus = FetchEmpty // artwork strip is hidden entirely
 	ds.Meta.RelatedStatus = FetchLoaded
 	ds.Meta.Related = ipc.MetadataPayload{
 		Type:  "related",
@@ -232,8 +249,8 @@ func TestDetail_OneEmpty_OthersLoaded(t *testing.T) {
 	if !strings.Contains(out, "Nolan") {
 		t.Error("credits missing")
 	}
-	if !strings.Contains(out, detailEmptyArtwork) {
-		t.Error("artwork empty label missing")
+	if strings.Contains(out, detailEmptyArtwork) {
+		t.Error("empty-artwork placeholder should be hidden, not shown")
 	}
 	if !strings.Contains(out, "Sequel") {
 		t.Error("related missing")

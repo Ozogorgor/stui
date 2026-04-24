@@ -26,12 +26,15 @@ func renderCrewSection(ds *DetailState, width int) string {
 	case FetchPending:
 		return title + "\n" + detailDim(detailLoadingCrew)
 	case FetchEmpty:
-		return title + "\n" + detailDim(detailEmptyCredits)
+		// Plugins returned nothing — hide the section entirely rather
+		// than showing an empty placeholder. Catalog data (title, year,
+		// description) is still visible in the info block above.
+		return ""
 	}
 
 	crew := ds.Meta.Credits.Crew
 	if len(crew) == 0 && ds.Entry.Studio == "" {
-		return title + "\n" + detailDim(detailEmptyCredits)
+		return ""
 	}
 
 	var rows []string

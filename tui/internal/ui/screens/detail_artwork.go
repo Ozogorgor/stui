@@ -65,12 +65,8 @@ func renderBackdropStatusStrip(ds *DetailState, width int) string {
 			PaddingLeft(2).
 			Render(detailLoadingArtwork)
 	case FetchEmpty:
-		return lipgloss.NewStyle().
-			Foreground(theme.T.TextDim()).
-			Faint(true).
-			Width(width).
-			PaddingLeft(2).
-			Render(detailEmptyArtwork)
+		// Plugins returned no artwork — hide the strip entirely.
+		return ""
 	}
 	return ""
 }
