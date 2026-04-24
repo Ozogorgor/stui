@@ -8,10 +8,6 @@ package screens
 //   FocusDetailCast     — cast list, vertical cursor
 //   FocusDetailProvider — STREAM VIA badges, horizontal cursor
 //   FocusDetailRelated  — related titles row, horizontal cursor
-//
-// FocusDetailSimilar is a deprecated alias for FocusDetailRelated retained
-// through Chunk 6's transitional commits; Task 6.3 removes it and its
-// associated `Similar*` fields once ui.go has been rewired.
 
 import (
 	"github.com/stui/stui/internal/ipc"
@@ -29,12 +25,6 @@ const (
 	FocusDetailProvider                    // STREAM VIA provider badges
 	FocusDetailRelated                     // related titles row
 )
-
-// FocusDetailSimilar is a compatibility alias for FocusDetailRelated kept
-// during the chunk-6 transition so ui.go continues to compile while the
-// follow-up task swaps call sites over to FocusDetailRelated. Removed in
-// Task 6.3.
-const FocusDetailSimilar = FocusDetailRelated
 
 // FetchStatus tracks the lifecycle of one metadata verb's partial.
 // The zero value is FetchPending so DetailState's embedded DetailMetadata
@@ -90,13 +80,6 @@ type DetailState struct {
 
 	// Metadata — populated by streamed DetailMetadataPartial events.
 	Meta DetailMetadata
-
-	// Deprecated legacy fields retained during the chunk-6 transition so
-	// ui.go continues to compile; Task 6.3 removes them in favour of
-	// ds.Meta.Related.Items + ds.Meta.RelatedCursor + ds.Meta.RelatedStatus.
-	Similar        []ipc.CatalogEntry
-	SimilarCursor  int
-	SimilarLoading bool
 
 	// Breadcrumb / person mode
 	Breadcrumbs   []BreadcrumbEntry

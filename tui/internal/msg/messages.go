@@ -56,9 +56,6 @@ type CatalogLoadedMsg = ipc.CatalogLoadedMsg
 // DetailReadyMsg carries fully-enriched metadata for the detail overlay.
 type DetailReadyMsg = ipc.DetailReadyMsg
 
-// SimilarReadyMsg carries "more like this" results for the bottom similar row.
-type SimilarReadyMsg = ipc.SimilarReadyMsg
-
 // PersonSearchMsg is dispatched internally when the user activates a cast link.
 type PersonSearchMsg = ipc.PersonSearchMsg
 

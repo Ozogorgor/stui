@@ -321,6 +321,28 @@ func (c *Client) SwitchStream(url string) {
 	}()
 }
 
+// GetDetailMetadata fires the four-verb metadata fan-out for a single
+// detail entry. The runtime streams back one detail_metadata_partial
+// message per verb as its merge finishes; these are dispatched through
+// the unsolicited channel and handled by Model.Update via
+// DetailState.ApplyMetadataPartial.
+//
+// Fire-and-forget — the per-verb partials don't share a request id
+// with this send; the TUI correlates them by EntryID instead.
+func (c *Client) GetDetailMetadata(entryID, idSource, kind string) {
+	go func() {
+		id := c.nextID()
+		payload := map[string]any{
+			"type":      "get_detail_metadata",
+			"id":        id,
+			"entry_id":  entryID,
+			"id_source": idSource,
+			"kind":      kind,
+		}
+		_ = c.sendRaw(payload)
+	}()
+}
+
 // LoadEpisodes requests episode metadata for a series season.
 func (c *Client) LoadEpisodes(seriesID string, season int) {
 	go func() {

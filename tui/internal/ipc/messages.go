@@ -160,16 +160,6 @@ type DetailReadyMsg struct {
 	Err   error
 }
 
-// SimilarReadyMsg carries similar title results for the bottom row.
-// Deprecated: retired in Chunk 6 (Task 6.3) in favour of
-// DetailMetadataPartial verb="related". Kept here during the task-6.1
-// commit so callers still compile; removed in the task-6.3 commit.
-type SimilarReadyMsg struct {
-	ForID   string
-	Entries []CatalogEntry
-	Err     error
-}
-
 // StreamInfo describes a single resolved stream candidate.
 type StreamInfo struct {
 	URL       string  `json:"url"`

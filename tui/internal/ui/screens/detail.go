@@ -99,7 +99,7 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
-	similar := renderSimilarRow(ds, w, similarH)
+	similar := renderRelatedRow(ds, w, similarH)
 
 	full := lipgloss.JoinVertical(lipgloss.Left, header, main, similar)
 	return lipgloss.NewStyle().
@@ -329,27 +329,34 @@ func renderCastRow(
 	return lipgloss.JoinHorizontal(lipgloss.Top, nameStr, roleStr, linkStr)
 }
 
-// ── Similar titles row ────────────────────────────────────────────────────────
+// ── Related titles row ────────────────────────────────────────────────────────
+//
+// Reads ds.Meta.Related which is populated by the "related" verb of a
+// GetDetailMetadata fan-out. The rendering here is intentionally minimal
+// (mini cards, colored background, initials); Chunk 7 will rebuild it
+// with artwork, year chips and proper keyboard navigation.
 
-func renderSimilarRow(ds *DetailState, w, h int) string {
-	header := theme.T.SimilarHeaderStyle().Width(w - 2).Render("SIMILAR TITLES")
+func renderRelatedRow(ds *DetailState, w, h int) string {
+	header := theme.T.SimilarHeaderStyle().Width(w - 2).Render("RELATED TITLES")
 
-	if ds.SimilarLoading {
+	items := ds.Meta.Related.Items
+
+	if ds.Meta.RelatedStatus == FetchPending {
 		loading := lipgloss.NewStyle().
 			Foreground(theme.T.Neon()).
 			PaddingLeft(2).
-			Render("⠿ Loading similar titles…")
+			Render("⠿ Loading related titles…")
 		return lipgloss.NewStyle().
 			Background(theme.T.Surface()).
 			Width(w).Height(h).
 			Render(lipgloss.JoinVertical(lipgloss.Left, header, loading))
 	}
 
-	if len(ds.Similar) == 0 {
+	if len(items) == 0 {
 		empty := lipgloss.NewStyle().
 			Foreground(theme.T.TextDim()).
 			PaddingLeft(2).
-			Render("No similar titles found")
+			Render("No related titles found")
 		return lipgloss.NewStyle().
 			Background(theme.T.Surface()).
 			Width(w).Height(h).
@@ -364,15 +371,15 @@ func renderSimilarRow(ds *DetailState, w, h int) string {
 	}
 
 	var cards []string
-	start := ds.SimilarCursor
-	if start >= len(ds.Similar) {
+	start := ds.Meta.RelatedCursor
+	if start >= len(items) {
 		start = 0
 	}
-	end := min(start+similarCardCols, len(ds.Similar))
+	end := min(start+similarCardCols, len(items))
 
 	for i := start; i < end; i++ {
-		e := ds.Similar[i]
-		selected := (ds.Focus == FocusDetailSimilar && i == ds.SimilarCursor)
+		e := items[i]
+		selected := (ds.Focus == FocusDetailRelated && i == ds.Meta.RelatedCursor)
 
 		// Minimal card: just colored block + title
 		bg := similarCardBg(e.Title)
@@ -409,7 +416,7 @@ func renderSimilarRow(ds *DetailState, w, h int) string {
 	}
 
 	// Scroll arrow if more available
-	if end < len(ds.Similar) {
+	if end < len(items) {
 		arrow := lipgloss.NewStyle().
 			Foreground(theme.T.AccentAlt()).
 			Align(lipgloss.Center, lipgloss.Center).
