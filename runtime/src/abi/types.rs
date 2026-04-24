@@ -255,6 +255,8 @@ pub enum CrewRole {
     CostumeDesigner,
     SoundDesigner,
     VfxSupervisor,
+    AnimationDirector,
+    LeadAnimator,
     Other(String),
 }
 
@@ -574,5 +576,24 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         let back: RelatedResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, resp);
+    }
+}
+
+#[cfg(test)]
+mod crew_role_tests {
+    use super::*;
+
+    #[test]
+    fn animation_director_deserializes_from_sdk_wire_format() {
+        let wire = "\"animation_director\"";
+        let parsed: CrewRole = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, CrewRole::AnimationDirector);
+    }
+
+    #[test]
+    fn lead_animator_deserializes_from_sdk_wire_format() {
+        let wire = "\"lead_animator\"";
+        let parsed: CrewRole = serde_json::from_str(wire).unwrap();
+        assert_eq!(parsed, CrewRole::LeadAnimator);
     }
 }
