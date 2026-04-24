@@ -21,7 +21,7 @@ package screens
 //  │            │  STREAM VIA                                         │
 //  │            │  [tmdb]  [omdb]  [hello-provider]                  │
 //  ├────────────┴─────────────────────────────────────────────────────┤
-//  │  SIMILAR TITLES                                                  │
+//  │  RELATED                                                        │
 //  │  [card]  [card]  [card]  [card]  [card]  →                      │
 //  └──────────────────────────────────────────────────────────────────┘
 //
@@ -97,10 +97,10 @@ func RenderDetailOverlay(
 
 func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 	header := renderDetailHeader(ds, w, tab)
-	similarH := similarRowHeight + 2
+	relatedH := similarRowHeight + 2
 
-	// Split: poster|info section, then similar row at bottom
-	mainH := h - lipgloss.Height(header) - similarH
+	// Split: poster|info section, then related row at bottom
+	mainH := h - lipgloss.Height(header) - relatedH
 
 	left := renderPosterBlock(ds, detailPosterWidth, mainH)
 	right := renderInfoBlock(ds, w-detailPosterWidth-4, mainH)
@@ -113,9 +113,9 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
-	similar := renderRelatedRow(ds, w, similarH)
+	related := renderRelatedRow(ds, w, relatedH)
 
-	full := lipgloss.JoinVertical(lipgloss.Left, header, main, similar)
+	full := lipgloss.JoinVertical(lipgloss.Left, header, main, related)
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
@@ -138,7 +138,7 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 			Render("  ↑↓ navigate  enter search  tab → providers")
 	case FocusDetailProvider:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.Neon()).
-			Render("  ←→ select  enter ▶ play  tab → similar")
+			Render("  ←→ select  enter ▶ play  tab → related")
 	case FocusDetailRelated:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
 			Render("  ←→ scroll  enter open  tab → cast")
