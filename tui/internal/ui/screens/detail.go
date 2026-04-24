@@ -60,6 +60,21 @@ const (
 	detailStatusHeight = 2  // status bar
 )
 
+// Render string constants — shared across detail.go, detail_crew.go,
+// detail_related.go and detail_artwork.go. Chunk 8 snapshot tests match
+// the exact spelling here.
+const (
+	detailCrewHeader      = "CREW"
+	detailRelatedHeader   = "RELATED"
+	detailEmptyCredits    = "No crew or cast available"
+	detailEmptyArtwork    = "No artwork available"
+	detailEmptyRelated    = "No related items"
+	detailLoadingCrew     = "Loading crew…"
+	detailLoadingArtwork  = "Loading artwork…"
+	detailLoadingRelated  = "Loading related…"
+	detailAllEmptyFallbck = "Metadata unavailable"
+)
+
 // RenderDetailOverlay renders the full-screen detail view.
 func RenderDetailOverlay(
 	ds *DetailState,
@@ -209,9 +224,13 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		)
 	}
 
-	// CAST & CREW
+	// CREW — directors, DoP, composer, studio. Rendered above CAST so
+	// headline creatives appear first in the reading order.
+	sections = append(sections, renderCrewSection(ds, w), "")
+
+	// CAST
 	if len(ds.Entry.Cast) > 0 {
-		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST & CREW"))
+		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST"))
 
 		for i, member := range ds.Entry.Cast {
 			row := renderCastRow(member, i, ds.CastCursor, ds.Focus, w)
