@@ -15,7 +15,13 @@
 
 #![allow(dead_code)]
 
+pub mod metadata;
 pub mod stream;
+
+pub use metadata::{
+    ArtworkData, ArtworkVariantWire, CastWire, CreditsData, CrewWire, DetailMetadataPartial,
+    EnrichData, GetDetailMetadataRequest, MetadataPayload, RelatedData, RelatedItemWire,
+};
 
 use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::{EntryKind, SearchScope};
@@ -71,6 +77,10 @@ pub enum Request {
     GetStreams(GetStreamsRequest),
     /// Fetch enriched metadata for a media entry.
     Metadata(MetadataRequest),
+    /// Fetch enriched detail metadata, fanning out the four metadata verbs
+    /// (enrich, credits, artwork, related) through the source-priority list.
+    /// Partials stream back as `Response::DetailMetadataPartial` events.
+    GetDetailMetadata(GetDetailMetadataRequest),
     /// Resolve + hand off to the player (aria2 → mpv, or direct mpv).
     Play(PlayRequest),
     /// Stop current playback; kills mpv and the active aria2 GID.
@@ -665,6 +675,11 @@ pub enum Response {
     GetCredits(CreditsIpcResponse),
     /// Response to `Related`.
     Related(RelatedIpcResponse),
+
+    /// One per-verb partial streamed back to the TUI during a
+    /// `GetDetailMetadata` fan-out.  Multiple partials arrive per request
+    /// (one per completed verb, out-of-order).
+    DetailMetadataPartial(DetailMetadataPartial),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1940,5 +1955,52 @@ mod search_request_tests {
         assert_eq!(serde_json::to_string(&MpdScope::Artist).unwrap(), "\"artist\"");
         assert_eq!(serde_json::to_string(&MpdScope::Album).unwrap(), "\"album\"");
         assert_eq!(serde_json::to_string(&MpdScope::Track).unwrap(), "\"track\"");
+    }
+}
+
+#[cfg(test)]
+mod detail_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn get_detail_metadata_request_round_trips() {
+        let req = Request::GetDetailMetadata(GetDetailMetadataRequest {
+            entry_id: "tt1".into(),
+            id_source: "imdb".into(),
+            kind: "movies".into(),
+        });
+        let s = serde_json::to_string(&req).unwrap();
+        // Wire tag lives on the Request enum itself.
+        assert!(s.contains("\"type\":\"get_detail_metadata\""));
+        let back: Request = serde_json::from_str(&s).unwrap();
+        match back {
+            Request::GetDetailMetadata(r) => {
+                assert_eq!(r.entry_id, "tt1");
+                assert_eq!(r.id_source, "imdb");
+                assert_eq!(r.kind, "movies");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn detail_metadata_partial_credits_round_trips() {
+        let resp = Response::DetailMetadataPartial(DetailMetadataPartial {
+            entry_id: "tt1".into(),
+            verb: "credits".into(),
+            payload: MetadataPayload::Empty,
+        });
+        let s = serde_json::to_string(&resp).unwrap();
+        // Outer wire tag is the Response variant.
+        assert!(s.contains("\"type\":\"detail_metadata_partial\""));
+        let back: Response = serde_json::from_str(&s).unwrap();
+        match back {
+            Response::DetailMetadataPartial(p) => {
+                assert_eq!(p.entry_id, "tt1");
+                assert_eq!(p.verb, "credits");
+                assert_eq!(p.payload, MetadataPayload::Empty);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 }

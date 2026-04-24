@@ -6,8 +6,9 @@
 //!   Enrich:             7 days
 //!   Related:            3 days
 //!
-//! Values are `MetadataPayload` (defined in `ipc::v1` starting Chunk 5;
-//! a minimal placeholder enum lives here until then).
+//! Values are the real wire-typed [`MetadataPayload`] defined in
+//! `ipc::v1::metadata` — cache and IPC share one payload shape so the
+//! runtime never has to convert between cache-internal and wire forms.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,12 +20,7 @@ use tracing::debug;
 use crate::cache::metadata_key::{MetadataCacheKey, MetadataVerb};
 use crate::cache::Ttl;
 
-// TODO(chunk-5): replace with `pub use crate::ipc::v1::MetadataPayload;`
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MetadataPayload {
-    Empty,
-    // Enrich(EnrichData), Credits(CreditsData), ...  — filled in Chunk 5.
-}
+pub use crate::ipc::v1::MetadataPayload;
 
 pub const CREDITS_TTL: Duration = Duration::from_secs(30 * 86_400);
 pub const ARTWORK_TTL: Duration = Duration::from_secs(30 * 86_400);
