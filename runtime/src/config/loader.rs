@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 use super::secrets::Secrets;
-use super::types::RuntimeConfig;
+use super::types::{MetadataSources, RuntimeConfig};
 
 pub fn load() -> RuntimeConfig {
     let path = default_config_path();
@@ -42,8 +42,31 @@ pub fn load_from(path: Option<&Path>) -> RuntimeConfig {
 
 fn load_toml(path: &Path) -> anyhow::Result<RuntimeConfig> {
     let text = std::fs::read_to_string(path)?;
-    let cfg: RuntimeConfig = toml::from_str(&text)?;
+    let mut cfg: RuntimeConfig = toml::from_str(&text)?;
+    merge_metadata_source_defaults(&mut cfg);
     Ok(cfg)
+}
+
+/// Append any canonical metadata sources missing from the user's per-kind
+/// priority lists. Preserves the user's chosen ordering — new defaults are
+/// only appended to the tail, never reordered.
+///
+/// This runs after TOML deserialization so users who upgrade stui don't have
+/// to hand-edit their config to pick up newly-bundled sources (e.g. tvdb).
+pub(crate) fn merge_metadata_source_defaults(cfg: &mut RuntimeConfig) {
+    let canonical = MetadataSources::default();
+    append_missing(&mut cfg.metadata.sources.movies, &canonical.movies);
+    append_missing(&mut cfg.metadata.sources.series, &canonical.series);
+    append_missing(&mut cfg.metadata.sources.anime,  &canonical.anime);
+    append_missing(&mut cfg.metadata.sources.music,  &canonical.music);
+}
+
+fn append_missing(user: &mut Vec<String>, canonical: &[String]) {
+    for item in canonical {
+        if !user.iter().any(|u| u == item) {
+            user.push(item.clone());
+        }
+    }
 }
 
 fn default_config_path() -> Option<PathBuf> {
@@ -108,5 +131,45 @@ fn apply_env_overrides(cfg: &mut RuntimeConfig) {
         if !repos.is_empty() {
             cfg.plugin_repos = repos;
         }
+    }
+}
+
+#[cfg(test)]
+mod merge_defaults_tests {
+    use super::*;
+    use crate::config::types::*;
+
+    #[test]
+    fn appends_missing_tvdb_for_movies() {
+        let toml = r#"
+[metadata.sources]
+movies = ["tmdb"]
+        "#;
+        let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
+        merge_metadata_source_defaults(&mut cfg);
+        assert_eq!(cfg.metadata.sources.movies, vec!["tmdb", "omdb", "tvdb"]);
+    }
+
+    #[test]
+    fn preserves_user_ordering() {
+        let toml = r#"
+[metadata.sources]
+movies = ["omdb", "tmdb"]
+        "#;
+        let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
+        merge_metadata_source_defaults(&mut cfg);
+        assert_eq!(cfg.metadata.sources.movies, vec!["omdb", "tmdb", "tvdb"]);
+    }
+
+    #[test]
+    fn idempotent_when_already_complete() {
+        let toml = r#"
+[metadata.sources]
+movies = ["tmdb", "omdb", "tvdb"]
+        "#;
+        let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
+        let before = cfg.metadata.sources.movies.clone();
+        merge_metadata_source_defaults(&mut cfg);
+        assert_eq!(cfg.metadata.sources.movies, before);
     }
 }
