@@ -21,7 +21,7 @@ package screens
 //  │            │  STREAM VIA                                         │
 //  │            │  [tmdb]  [omdb]  [hello-provider]                  │
 //  ├────────────┴─────────────────────────────────────────────────────┤
-//  │  SIMILAR TITLES                                                  │
+//  │  RELATED                                                        │
 //  │  [card]  [card]  [card]  [card]  [card]  →                      │
 //  └──────────────────────────────────────────────────────────────────┘
 //
@@ -37,7 +37,6 @@ package screens
 
 import (
 	"fmt"
-	"image/color"
 	"math"
 	"strings"
 
@@ -58,6 +57,21 @@ const (
 	similarRowHeight   = 8  // rows for similar section
 	detailHeaderHeight = 3  // top bar + border
 	detailStatusHeight = 2  // status bar
+)
+
+// Render string constants — shared across detail.go, detail_crew.go,
+// detail_related.go and detail_artwork.go. Chunk 8 snapshot tests match
+// the exact spelling here.
+const (
+	detailCrewHeader      = "CREW"
+	detailRelatedHeader   = "RELATED"
+	detailEmptyCredits    = "No crew or cast available"
+	detailEmptyArtwork    = "No artwork available"
+	detailEmptyRelated    = "No related items"
+	detailLoadingCrew     = "Loading crew…"
+	detailLoadingArtwork  = "Loading artwork…"
+	detailLoadingRelated  = "Loading related…"
+	detailAllEmptyFallbck = "Metadata unavailable"
 )
 
 // RenderDetailOverlay renders the full-screen detail view.
@@ -83,10 +97,20 @@ func RenderDetailOverlay(
 
 func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 	header := renderDetailHeader(ds, w, tab)
-	similarH := similarRowHeight + 2
+	relatedH := similarRowHeight + 2
 
-	// Split: poster|info section, then similar row at bottom
-	mainH := h - lipgloss.Height(header) - similarH
+	// The artwork-status strip is a single full-width row between the
+	// two-column main body and the related row. It only renders while
+	// the artwork verb is pending or resolved empty — once backdrops
+	// load, the per-column carousel takes over.
+	artworkStatus := renderBackdropStatusStrip(ds, w)
+	statusH := 0
+	if artworkStatus != "" {
+		statusH = lipgloss.Height(artworkStatus)
+	}
+
+	// Split: poster|info section, then related row at bottom
+	mainH := h - lipgloss.Height(header) - relatedH - statusH
 
 	left := renderPosterBlock(ds, detailPosterWidth, mainH)
 	right := renderInfoBlock(ds, w-detailPosterWidth-4, mainH)
@@ -99,9 +123,32 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
-	similar := renderSimilarRow(ds, w, similarH)
+	// All-empty fallback: when all four per-verb fetches resolved empty,
+	// swap the main body (not the header, not the related row) for a
+	// single centered "Metadata unavailable" message. Keeps the header
+	// breadcrumb and related-row empty-state visible.
+	if ds.Meta.EnrichStatus == FetchEmpty &&
+		ds.Meta.CreditsStatus == FetchEmpty &&
+		ds.Meta.ArtworkStatus == FetchEmpty &&
+		ds.Meta.RelatedStatus == FetchEmpty {
+		main = lipgloss.NewStyle().
+			Foreground(theme.T.TextDim()).
+			Faint(true).
+			Width(w).
+			Height(mainH).
+			Align(lipgloss.Center, lipgloss.Center).
+			Render(detailAllEmptyFallbck)
+	}
 
-	full := lipgloss.JoinVertical(lipgloss.Left, header, main, similar)
+	related := renderRelatedRow(ds, w, relatedH)
+
+	parts := []string{header, main}
+	if artworkStatus != "" {
+		parts = append(parts, artworkStatus)
+	}
+	parts = append(parts, related)
+	full := lipgloss.JoinVertical(lipgloss.Left, parts...)
+
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
@@ -124,8 +171,8 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 			Render("  ↑↓ navigate  enter search  tab → providers")
 	case FocusDetailProvider:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.Neon()).
-			Render("  ←→ select  enter ▶ play  tab → similar")
-	case FocusDetailSimilar:
+			Render("  ←→ select  enter ▶ play  tab → related")
+	case FocusDetailRelated:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
 			Render("  ←→ scroll  enter open  tab → cast")
 	default:
@@ -161,12 +208,22 @@ func renderPosterBlock(ds *DetailState, w, h int) string {
 		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, w-4, detailPosterHeight)
 	}
 
+	// Backdrop carousel strip — rendered directly under the poster. Emits
+	// a faint loading/empty label while the "artwork" verb is in-flight or
+	// resolved empty; the index indicator once it lands with data.
+	carousel := renderBackdropCarousel(ds, w-4)
+
+	body := poster
+	if carousel != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, poster, "", carousel)
+	}
+
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
 		Height(h).
 		Padding(2, 2).
-		Render(poster)
+		Render(body)
 }
 
 // ── Info block (right side) ───────────────────────────────────────────────────
@@ -182,7 +239,7 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	titleLine := lipgloss.JoinHorizontal(lipgloss.Top, titleStr, ratingStr)
 	sections = append(sections, titleLine)
 
-	// Meta: year · genre · runtime
+	// Meta: year · genre · runtime · studio
 	metaParts := []string{}
 	if ds.Entry.Year != "" {
 		metaParts = append(metaParts, ds.Entry.Year)
@@ -192,6 +249,12 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	}
 	if ds.Entry.Runtime != "" {
 		metaParts = append(metaParts, ds.Entry.Runtime)
+	}
+	// Studio lands here after the "enrich" verb resolves. It's also
+	// re-surfaced in the CREW section so users see it in both reading
+	// positions.
+	if ds.Entry.Studio != "" {
+		metaParts = append(metaParts, ds.Entry.Studio)
 	}
 	meta := theme.T.DetailMetaStyle().Render(strings.Join(metaParts, "  ·  "))
 	sections = append(sections, meta, "")
@@ -209,9 +272,13 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		)
 	}
 
-	// CAST & CREW
+	// CREW — directors, DoP, composer, studio. Rendered above CAST so
+	// headline creatives appear first in the reading order.
+	sections = append(sections, renderCrewSection(ds, w), "")
+
+	// CAST
 	if len(ds.Entry.Cast) > 0 {
-		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST & CREW"))
+		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST"))
 
 		for i, member := range ds.Entry.Cast {
 			row := renderCastRow(member, i, ds.CastCursor, ds.Focus, w)
@@ -327,117 +394,6 @@ func renderCastRow(
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, nameStr, roleStr, linkStr)
-}
-
-// ── Similar titles row ────────────────────────────────────────────────────────
-
-func renderSimilarRow(ds *DetailState, w, h int) string {
-	header := theme.T.SimilarHeaderStyle().Width(w - 2).Render("SIMILAR TITLES")
-
-	if ds.SimilarLoading {
-		loading := lipgloss.NewStyle().
-			Foreground(theme.T.Neon()).
-			PaddingLeft(2).
-			Render("⠿ Loading similar titles…")
-		return lipgloss.NewStyle().
-			Background(theme.T.Surface()).
-			Width(w).Height(h).
-			Render(lipgloss.JoinVertical(lipgloss.Left, header, loading))
-	}
-
-	if len(ds.Similar) == 0 {
-		empty := lipgloss.NewStyle().
-			Foreground(theme.T.TextDim()).
-			PaddingLeft(2).
-			Render("No similar titles found")
-		return lipgloss.NewStyle().
-			Background(theme.T.Surface()).
-			Width(w).Height(h).
-			Render(lipgloss.JoinVertical(lipgloss.Left, header, empty))
-	}
-
-	// Render up to similarCardCols mini cards
-	cardH := h - lipgloss.Height(header) - 1
-	miniW := (w - (similarCardCols+1)*2) / similarCardCols
-	if miniW < 10 {
-		miniW = 10
-	}
-
-	var cards []string
-	start := ds.SimilarCursor
-	if start >= len(ds.Similar) {
-		start = 0
-	}
-	end := min(start+similarCardCols, len(ds.Similar))
-
-	for i := start; i < end; i++ {
-		e := ds.Similar[i]
-		selected := (ds.Focus == FocusDetailSimilar && i == ds.SimilarCursor)
-
-		// Minimal card: just colored block + title
-		bg := similarCardBg(e.Title)
-		inits := components.PosterInitials(e.Title)
-
-		posterBlock := lipgloss.NewStyle().
-			Background(bg).
-			Width(miniW).
-			Height(cardH-3).
-			Align(lipgloss.Center, lipgloss.Center).
-			Render(inits)
-
-		titleStr := components.Truncate(e.Title, miniW)
-		titleBlock := lipgloss.NewStyle().
-			Foreground(theme.T.Text()).
-			Width(miniW).
-			Render(titleStr)
-
-		var border lipgloss.Style
-		if selected {
-			border = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(theme.T.Accent()).
-				Width(miniW)
-		} else {
-			border = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(theme.T.Border()).
-				Width(miniW)
-		}
-
-		card := border.Render(lipgloss.JoinVertical(lipgloss.Left, posterBlock, titleBlock))
-		cards = append(cards, card)
-	}
-
-	// Scroll arrow if more available
-	if end < len(ds.Similar) {
-		arrow := lipgloss.NewStyle().
-			Foreground(theme.T.AccentAlt()).
-			Align(lipgloss.Center, lipgloss.Center).
-			Height(cardH).
-			Render("›")
-		cards = append(cards, arrow)
-	}
-
-	row := lipgloss.JoinHorizontal(lipgloss.Top, cards...)
-	content := lipgloss.JoinVertical(lipgloss.Left, header, row)
-
-	return lipgloss.NewStyle().
-		Background(theme.T.Surface()).
-		Width(w).Height(h).
-		PaddingLeft(1).
-		Render(content)
-}
-
-func similarCardBg(title string) color.Color {
-	colors := []color.Color{
-		lipgloss.Color("#0d0d25"),
-		lipgloss.Color("#0a1a0a"),
-		lipgloss.Color("#1a0a0a"),
-		lipgloss.Color("#0a0a1a"),
-		lipgloss.Color("#1a1a00"),
-		lipgloss.Color("#001a1a"),
-	}
-	return colors[components.TitleHash(title)%len(colors)]
 }
 
 // ── Person mode ───────────────────────────────────────────────────────────────

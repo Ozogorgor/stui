@@ -130,6 +130,15 @@ type DetailEntry struct {
 	Providers   []string     `json:"providers"`
 	ImdbID      string       `json:"imdb_id"`
 	Tab         string       `json:"tab"`
+
+	// Metadata-enrichment fields populated by DetailMetadataPartial "enrich"
+	// verbs after the detail panel opens. They default to zero values when
+	// the runtime hasn't (yet) delivered the enrichment.
+	IDSource    string            `json:"id_source,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Studio      string            `json:"studio,omitempty"`
+	Networks    []string          `json:"networks,omitempty"`
+	ExternalIDs map[string]string `json:"external_ids,omitempty"`
 }
 
 // CastMember is a single person in the cast/crew list.
@@ -149,13 +158,6 @@ type PersonSearchMsg struct {
 type DetailReadyMsg struct {
 	Entry DetailEntry
 	Err   error
-}
-
-// SimilarReadyMsg carries similar title results for the bottom row.
-type SimilarReadyMsg struct {
-	ForID   string
-	Entries []CatalogEntry
-	Err     error
 }
 
 // StreamInfo describes a single resolved stream candidate.
@@ -426,4 +428,86 @@ type SkipSegmentMsg struct {
 	Start       float64 `json:"start"`
 	End         float64 `json:"end"`
 	FromEnd     bool    `json:"from_end"`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Detail-metadata enrichment (mirrors runtime/src/ipc/v1/metadata.rs).
+//
+// Flow:
+//   1. TUI sends GetDetailMetadataRequest on detail-panel open.
+//   2. Runtime fans out the four verbs (enrich, credits, artwork, related)
+//      and streams back one DetailMetadataPartial per verb as its merge
+//      finishes. Verbs arrive out-of-order.
+
+// GetDetailMetadataRequest triggers the four-verb fan-out for one entry.
+type GetDetailMetadataRequest struct {
+	EntryID  string `json:"entry_id"`
+	IDSource string `json:"id_source"`
+	Kind     string `json:"kind"`
+}
+
+// DetailMetadataPartial is one per-verb chunk of merged metadata for a
+// pending GetDetailMetadataRequest. Multiple partials arrive per request.
+type DetailMetadataPartial struct {
+	EntryID string          `json:"entry_id"`
+	Verb    string          `json:"verb"`
+	Payload MetadataPayload `json:"payload"`
+}
+
+// MetadataPayload is a tagged union discriminated by the "type" field.
+// Only the fields matching Type are populated; the rest stay at their
+// zero values. Keeping this as a flat struct (instead of one struct per
+// variant) makes the Bubbletea side's switch-on-verb straightforward.
+type MetadataPayload struct {
+	// "empty" | "enrich" | "credits" | "artwork" | "related"
+	Type string `json:"type"`
+
+	// Enrich fields
+	Studio      *string           `json:"studio,omitempty"`
+	Networks    []string          `json:"networks,omitempty"`
+	ExternalIDs map[string]string `json:"external_ids,omitempty"`
+
+	// Credits fields
+	Cast []CastWire `json:"cast,omitempty"`
+	Crew []CrewWire `json:"crew,omitempty"`
+
+	// Artwork fields
+	Backdrops []ArtworkVariantWire `json:"backdrops,omitempty"`
+	Posters   []ArtworkVariantWire `json:"posters,omitempty"`
+
+	// Related fields
+	Items []RelatedItemWire `json:"items,omitempty"`
+}
+
+// CastWire mirrors runtime ipc::v1::metadata::CastWire.
+type CastWire struct {
+	Name         string  `json:"name"`
+	Role         string  `json:"role"`
+	Character    *string `json:"character,omitempty"`
+	BillingOrder *uint32 `json:"billing_order,omitempty"`
+}
+
+// CrewWire mirrors runtime ipc::v1::metadata::CrewWire.
+type CrewWire struct {
+	Name       string  `json:"name"`
+	Role       string  `json:"role"`
+	Department *string `json:"department,omitempty"`
+}
+
+// ArtworkVariantWire mirrors runtime ipc::v1::metadata::ArtworkVariantWire.
+type ArtworkVariantWire struct {
+	URL       string  `json:"url"`
+	Width     *uint32 `json:"width,omitempty"`
+	Height    *uint32 `json:"height,omitempty"`
+	SizeLabel string  `json:"size_label"`
+}
+
+// RelatedItemWire mirrors runtime ipc::v1::metadata::RelatedItemWire.
+type RelatedItemWire struct {
+	ID        string  `json:"id"`
+	IDSource  string  `json:"id_source"`
+	Title     string  `json:"title"`
+	Year      *uint16 `json:"year,omitempty"`
+	PosterURL *string `json:"poster_url,omitempty"`
+	Kind      string  `json:"kind"`
 }

@@ -150,6 +150,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub skipper: SkipperConfig,
 
+    /// Metadata enrichment configuration (source priorities + timeouts).
+    #[serde(default)]
+    pub metadata: MetadataConfig,
+
     /// Plugin repository URLs.
     /// The first entry is always the built-in official repo.
     /// Users can append community repos; they are merged at plugin-discovery time.
@@ -510,6 +514,52 @@ pub struct MusicConfig {
     pub normalize: MusicNormalizeConfig,
 }
 
+/// Per-kind metadata source priority lists (`[metadata.sources]` section).
+///
+/// Each kind (movies, series, anime, music) has an ordered list of source
+/// identifiers. The enrichment pipeline consults sources in order, stopping
+/// at the first one that returns a usable result (per verb).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataSources {
+    #[serde(default = "defaults::metadata_sources_movies")]
+    pub movies: Vec<String>,
+    #[serde(default = "defaults::metadata_sources_series")]
+    pub series: Vec<String>,
+    #[serde(default = "defaults::metadata_sources_anime")]
+    pub anime: Vec<String>,
+    #[serde(default = "defaults::metadata_sources_music")]
+    pub music: Vec<String>,
+}
+
+impl Default for MetadataSources {
+    fn default() -> Self {
+        MetadataSources {
+            movies: defaults::metadata_sources_movies(),
+            series: defaults::metadata_sources_series(),
+            anime:  defaults::metadata_sources_anime(),
+            music:  defaults::metadata_sources_music(),
+        }
+    }
+}
+
+/// Metadata enrichment configuration (`[metadata]` section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataConfig {
+    #[serde(default)]
+    pub sources: MetadataSources,
+    #[serde(default = "defaults::metadata_per_verb_timeout_ms")]
+    pub per_verb_timeout_ms: u64,
+}
+
+impl Default for MetadataConfig {
+    fn default() -> Self {
+        MetadataConfig {
+            sources: MetadataSources::default(),
+            per_verb_timeout_ms: defaults::metadata_per_verb_timeout_ms(),
+        }
+    }
+}
+
 /// `[catalog]` section — controls post-merge shaping of Movies/Series grids.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -611,6 +661,7 @@ impl Default for RuntimeConfig {
             music: MusicConfig::default(),
             catalog: CatalogConfig::default(),
             skipper: SkipperConfig::default(),
+            metadata: MetadataConfig::default(),
             plugin_repos: defaults::plugin_repos(),
             plugins: std::collections::HashMap::new(),
             storage: StorageConfig::default(),
@@ -736,6 +787,23 @@ mod defaults {
         true
     }
 
+    // MetadataConfig defaults
+    pub(super) fn metadata_sources_movies() -> Vec<String> {
+        vec!["tmdb".into(), "omdb".into(), "tvdb".into()]
+    }
+    pub(super) fn metadata_sources_series() -> Vec<String> {
+        vec!["tvdb".into(), "tmdb".into(), "omdb".into()]
+    }
+    pub(super) fn metadata_sources_anime() -> Vec<String> {
+        vec!["anilist".into(), "kitsu".into(), "tvdb".into()]
+    }
+    pub(super) fn metadata_sources_music() -> Vec<String> {
+        vec!["musicbrainz".into(), "discogs".into(), "lastfm".into()]
+    }
+    pub(super) fn metadata_per_verb_timeout_ms() -> u64 {
+        8000
+    }
+
     fn base() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -795,5 +863,32 @@ mod music_normalize_tests {
         let c: MusicConfig = toml::from_str(s).unwrap();
         assert!(c.normalize.enabled);
         assert!(!c.normalize.use_lookup);
+    }
+}
+
+#[cfg(test)]
+mod metadata_config_tests {
+    use super::*;
+
+    #[test]
+    fn metadata_sources_defaults_include_tvdb() {
+        let mc = MetadataConfig::default();
+        assert_eq!(mc.sources.movies, vec!["tmdb", "omdb", "tvdb"]);
+        assert_eq!(mc.sources.series, vec!["tvdb", "tmdb", "omdb"]);
+        assert_eq!(mc.sources.anime,  vec!["anilist", "kitsu", "tvdb"]);
+        assert_eq!(mc.sources.music,  vec!["musicbrainz", "discogs", "lastfm"]);
+    }
+
+    #[test]
+    fn metadata_config_deserializes_missing_sources_to_defaults() {
+        let toml = "";
+        let mc: MetadataConfig = toml::from_str(toml).unwrap();
+        assert!(!mc.sources.movies.is_empty());
+    }
+
+    #[test]
+    fn metadata_config_per_verb_timeout_has_default() {
+        let mc = MetadataConfig::default();
+        assert_eq!(mc.per_verb_timeout_ms, 8000);
     }
 }

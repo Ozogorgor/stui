@@ -287,8 +287,8 @@ func New(opts Options, cfg config.Config) Model {
 	collStore := collections.Load(collections.DefaultPath())
 	mcStore := mediacache.Load(mediacache.DefaultPath())
 
-	// Pre-seed the grid map from cache so fetchSimilar and the grid renderer
-	// have data even when the runtime hasn't connected yet (or is offline).
+	// Pre-seed the grid map from cache so the grid renderer has data
+	// even when the runtime hasn't connected yet (or is offline).
 	seedGrids := make(map[string][]ipc.CatalogEntry)
 	for tab, ct := range mcStore.Tabs {
 		seedGrids[tab] = ct.Entries
@@ -693,7 +693,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.Entry = msg.Entry
 		m.detail.Loading = false
 		m.state.StatusMsg = msg.Entry.Title
-		return m, m.fetchSimilar(msg.Entry)
+		return m, m.sendGetDetailMetadata(msg.Entry)
+
+	case ipc.DetailMetadataPartial:
+		// Streamed per-verb partial from GetDetailMetadata. Apply to the
+		// live detail state if the user hasn't navigated away; mismatched
+		// EntryIDs are silently ignored by ApplyMetadataPartial.
+		if m.detail != nil {
+			m.detail.ApplyMetadataPartial(msg)
+		}
+		return m, nil
 
 	// ── Live theme update from matugen watcher ───────────────────────────
 	case ipc.ThemeUpdateMsg:
@@ -1042,14 +1051,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state.StatusMsg = "DSP bound to MPD"
 		} else {
 			m.state.StatusMsg = "DSP bind failed"
-		}
-
-	case ipc.SimilarReadyMsg:
-		if m.detail != nil && msg.ForID == m.detail.Entry.ID {
-			if msg.Err == nil {
-				m.detail.Similar = msg.Entries
-			}
-			m.detail.SimilarLoading = false
 		}
 
 	// ── Visualizer cycle hotkeys (from queue screen) ────────────────────
@@ -2363,35 +2364,52 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	// Cycle focus zones: Info → Cast → Provider → Similar → Info
+	// Cycle focus zones: Info → Crew → Cast → Provider → Related → Info.
+	// Zones with no content are skipped so the user never lands on an
+	// empty section.
 	case "tab":
 		if ds.PersonMode {
 			return m, nil
 		}
 		switch ds.Focus {
 		case screens.FocusDetailInfo:
-			if len(ds.Entry.Cast) > 0 {
+			switch {
+			case len(ds.Meta.Credits.Crew) > 0:
+				ds.Focus = screens.FocusDetailCrew
+			case len(ds.Entry.Cast) > 0:
 				ds.Focus = screens.FocusDetailCast
-			} else if len(ds.Entry.Providers) > 0 {
+			case len(ds.Entry.Providers) > 0:
 				ds.Focus = screens.FocusDetailProvider
-			} else if len(ds.Similar) > 0 {
-				ds.Focus = screens.FocusDetailSimilar
+			case len(ds.Meta.Related.Items) > 0:
+				ds.Focus = screens.FocusDetailRelated
+			}
+		case screens.FocusDetailCrew:
+			switch {
+			case len(ds.Entry.Cast) > 0:
+				ds.Focus = screens.FocusDetailCast
+			case len(ds.Entry.Providers) > 0:
+				ds.Focus = screens.FocusDetailProvider
+			case len(ds.Meta.Related.Items) > 0:
+				ds.Focus = screens.FocusDetailRelated
+			default:
+				ds.Focus = screens.FocusDetailInfo
 			}
 		case screens.FocusDetailCast:
-			if len(ds.Entry.Providers) > 0 {
+			switch {
+			case len(ds.Entry.Providers) > 0:
 				ds.Focus = screens.FocusDetailProvider
-			} else if len(ds.Similar) > 0 {
-				ds.Focus = screens.FocusDetailSimilar
-			} else {
+			case len(ds.Meta.Related.Items) > 0:
+				ds.Focus = screens.FocusDetailRelated
+			default:
 				ds.Focus = screens.FocusDetailInfo
 			}
 		case screens.FocusDetailProvider:
-			if len(ds.Similar) > 0 {
-				ds.Focus = screens.FocusDetailSimilar
+			if len(ds.Meta.Related.Items) > 0 {
+				ds.Focus = screens.FocusDetailRelated
 			} else {
 				ds.Focus = screens.FocusDetailInfo
 			}
-		case screens.FocusDetailSimilar:
+		case screens.FocusDetailRelated:
 			ds.Focus = screens.FocusDetailInfo
 		}
 		return m, nil
@@ -2402,6 +2420,12 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			ds.PersonCursor = screens.MoveCursorDown(ds.PersonCursor, len(ds.PersonResults))
 		case ds.Focus == screens.FocusDetailInfo:
 			ds.InfoScroll++
+		case ds.Focus == screens.FocusDetailCrew:
+			if ds.Meta.CrewCursor < len(ds.Meta.Credits.Crew)-1 {
+				ds.Meta.CrewCursor++
+			} else if len(ds.Entry.Cast) > 0 {
+				ds.Focus = screens.FocusDetailCast
+			}
 		case ds.Focus == screens.FocusDetailCast:
 			if ds.CastCursor < len(ds.Entry.Cast)-1 {
 				ds.CastCursor++
@@ -2409,10 +2433,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 				ds.Focus = screens.FocusDetailProvider
 			}
 		case ds.Focus == screens.FocusDetailProvider:
-			if len(ds.Similar) > 0 {
-				ds.Focus = screens.FocusDetailSimilar
+			if len(ds.Meta.Related.Items) > 0 {
+				ds.Focus = screens.FocusDetailRelated
 			}
-		case ds.Focus == screens.FocusDetailSimilar:
+		case ds.Focus == screens.FocusDetailRelated:
 			// already at bottom
 		}
 		return m, nil
@@ -2425,23 +2449,37 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			if ds.InfoScroll > 0 {
 				ds.InfoScroll--
 			}
+		case ds.Focus == screens.FocusDetailCrew:
+			if ds.Meta.CrewCursor > 0 {
+				ds.Meta.CrewCursor--
+			} else {
+				ds.Focus = screens.FocusDetailInfo
+			}
 		case ds.Focus == screens.FocusDetailCast:
 			if ds.CastCursor > 0 {
 				ds.CastCursor--
+			} else if len(ds.Meta.Credits.Crew) > 0 {
+				ds.Focus = screens.FocusDetailCrew
 			} else {
 				ds.Focus = screens.FocusDetailInfo
 			}
 		case ds.Focus == screens.FocusDetailProvider:
-			if len(ds.Entry.Cast) > 0 {
+			switch {
+			case len(ds.Entry.Cast) > 0:
 				ds.Focus = screens.FocusDetailCast
-			} else {
+			case len(ds.Meta.Credits.Crew) > 0:
+				ds.Focus = screens.FocusDetailCrew
+			default:
 				ds.Focus = screens.FocusDetailInfo
 			}
-		case ds.Focus == screens.FocusDetailSimilar:
-			if len(ds.Entry.Providers) > 0 {
+		case ds.Focus == screens.FocusDetailRelated:
+			switch {
+			case len(ds.Entry.Providers) > 0:
 				ds.Focus = screens.FocusDetailProvider
-			} else if len(ds.Entry.Cast) > 0 {
+			case len(ds.Entry.Cast) > 0:
 				ds.Focus = screens.FocusDetailCast
+			case len(ds.Meta.Credits.Crew) > 0:
+				ds.Focus = screens.FocusDetailCrew
 			}
 		}
 		return m, nil
@@ -2450,13 +2488,17 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorLeft(ds.PersonCursor)
+		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
+			// Cycle backdrop carousel while the info zone has focus.
+			n := len(ds.Meta.Artwork.Backdrops)
+			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor - 1 + n) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor > 0 {
 				ds.ProviderCursor--
 			}
-		case ds.Focus == screens.FocusDetailSimilar:
-			if ds.SimilarCursor > 0 {
-				ds.SimilarCursor--
+		case ds.Focus == screens.FocusDetailRelated:
+			if ds.Meta.RelatedCursor > 0 {
+				ds.Meta.RelatedCursor--
 			}
 		}
 		return m, nil
@@ -2465,13 +2507,17 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorRight(ds.PersonCursor, len(ds.PersonResults))
+		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
+			// Cycle backdrop carousel while the info zone has focus.
+			n := len(ds.Meta.Artwork.Backdrops)
+			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor + 1) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor < len(ds.Entry.Providers)-1 {
 				ds.ProviderCursor++
 			}
-		case ds.Focus == screens.FocusDetailSimilar:
-			if ds.SimilarCursor < len(ds.Similar)-1 {
-				ds.SimilarCursor++
+		case ds.Focus == screens.FocusDetailRelated:
+			if ds.Meta.RelatedCursor < len(ds.Meta.Related.Items)-1 {
+				ds.Meta.RelatedCursor++
 			}
 		}
 		return m, nil
@@ -2533,11 +2579,12 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case ds.Focus == screens.FocusDetailSimilar:
-			idx := ds.SimilarCursor
-			if idx >= 0 && idx < len(ds.Similar) {
+		case ds.Focus == screens.FocusDetailRelated:
+			idx := ds.Meta.RelatedCursor
+			items := ds.Meta.Related.Items
+			if idx >= 0 && idx < len(items) {
 				ds.PushBreadcrumb(ds.Entry.Title)
-				return m, m.openDetail(ds.Similar[idx])
+				return m, m.openDetail(relatedItemToCatalogEntry(items[idx]))
 			}
 		}
 		return m, nil
@@ -2621,7 +2668,6 @@ func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 		Providers:   []string{entry.Provider},
 	}
 	ds := screens.NewDetailState(detail)
-	ds.SimilarLoading = true
 	// Populate watch history so the detail screen can show a resume hint.
 	if m.historyStore != nil {
 		ds.WatchHistory = m.historyStore.Get(entry.ID)
@@ -2653,38 +2699,68 @@ func formatDurationHMS(secs float64) string {
 	return fmt.Sprintf("%d:%02d", min, s)
 }
 
+// fetchDetailMetadata synthesises the initial DetailReadyMsg from the
+// in-memory catalog entry. Until the runtime gains a dedicated detail
+// endpoint (chunk 7+), this populates the overlay with whatever we
+// already have; the four-verb fan-out filed by sendGetDetailMetadata
+// streams back enrichments (studio, networks, credits, artwork,
+// related) as they arrive via DetailMetadataPartial.
 func (m *Model) fetchDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
 	tabProviders := m.providersForTab()
 	return func() tea.Msg {
-		enriched := enrichDetail(entry, tabProviders)
-		return ipc.DetailReadyMsg{Entry: enriched}
+		if len(tabProviders) > 0 && len(entry.Providers) == 0 {
+			entry.Providers = tabProviders
+		}
+		return ipc.DetailReadyMsg{Entry: entry}
 	}
 }
 
-func (m *Model) fetchSimilar(entry ipc.DetailEntry) tea.Cmd {
-	grids := m.grids
+// sendGetDetailMetadata fires the runtime's GetDetailMetadata fan-out
+// for the currently-open detail entry. Partials stream back out-of-order
+// as ipc.DetailMetadataPartial messages and are applied by the ui.go
+// Update handler through DetailState.ApplyMetadataPartial.
+//
+// When the runtime client is nil (offline / tests) the command is a no-op.
+func (m *Model) sendGetDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
+	if m.client == nil {
+		return nil
+	}
+	idSource := entry.IDSource
+	if idSource == "" {
+		// Fallback: the catalog tracks provider, not id_source. For
+		// IMDb-flavoured entries the provider label is close enough;
+		// the runtime's parse_id_source maps unknown strings to
+		// IdSource::Other which is still safe to look up.
+		idSource = entry.Provider
+	}
+	kind := entry.Kind
+	if kind == "" {
+		kind = entry.Tab
+	}
 	entryID := entry.ID
-	tab := entry.Tab
-	genre := strings.ToLower(entry.Genre)
-
+	client := m.client
 	return func() tea.Msg {
-		if entries, ok := grids[tab]; ok {
-			var similar []ipc.CatalogEntry
-			for _, e := range entries {
-				if e.ID == entryID {
-					continue
-				}
-				eGenre := strings.ToLower(derefStr(e.Genre))
-				if genre != "" && strings.Contains(eGenre, genre) {
-					similar = append(similar, e)
-				}
-				if len(similar) >= 12 {
-					break
-				}
-			}
-			return ipc.SimilarReadyMsg{ForID: entryID, Entries: similar}
-		}
-		return ipc.SimilarReadyMsg{ForID: entryID, Entries: nil}
+		client.GetDetailMetadata(entryID, idSource, kind)
+		return nil
+	}
+}
+
+// relatedItemToCatalogEntry reshapes a RelatedItemWire into the
+// CatalogEntry shape that openDetail expects. Year/poster pointers are
+// passed through where present.
+func relatedItemToCatalogEntry(r ipc.RelatedItemWire) ipc.CatalogEntry {
+	var yearStr *string
+	if r.Year != nil {
+		s := fmt.Sprintf("%d", *r.Year)
+		yearStr = &s
+	}
+	return ipc.CatalogEntry{
+		ID:        r.ID,
+		Title:     r.Title,
+		Year:      yearStr,
+		PosterURL: r.PosterURL,
+		Tab:       r.Kind,
+		Source:    r.IDSource,
 	}
 }
 
@@ -3374,22 +3450,6 @@ func listResultToCatalogEntry(r state.ResultItem, tab string) ipc.CatalogEntry {
 		Year: &y, Genre: &g, Rating: &rt,
 		Provider: r.Provider, Tab: tab,
 	}
-}
-
-// enrichDetail populates fields that aren't available from the basic catalog.
-// This is a placeholder until the real metadata endpoint is wired.
-func enrichDetail(entry ipc.DetailEntry, providers []string) ipc.DetailEntry {
-	if len(providers) > 0 && len(entry.Providers) == 0 {
-		entry.Providers = providers
-	}
-	if len(entry.Cast) == 0 {
-		entry.Cast = []ipc.CastMember{
-			{Name: "Director", Role: "Director", RoleType: "crew"},
-			{Name: "Lead Actor", Role: "Lead Role", RoleType: "cast"},
-			{Name: "Supporting Actor", Role: "Supporting Role", RoleType: "cast"},
-		}
-	}
-	return entry
 }
 
 func derefStr(s *string) string {

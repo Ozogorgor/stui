@@ -337,5 +337,15 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 		} else {
 			c.dispatchScopeResults(msg)
 		}
+	case "detail_metadata_partial":
+		// Streamed per-verb partial from a pending GetDetailMetadata
+		// request. Arrives without a request ID — matches by EntryID
+		// inside the Model's Update handler.
+		var msg DetailMetadataPartial
+		if err := json.Unmarshal(raw.Raw, &msg); err != nil {
+			c.logger.Warn("failed to parse detail_metadata_partial", "error", err)
+		} else {
+			c.send(msg)
+		}
 	}
 }

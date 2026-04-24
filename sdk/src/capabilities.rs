@@ -211,7 +211,7 @@ pub struct CastMember {
     pub external_ids: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CrewRole {
     Director,
@@ -230,6 +230,8 @@ pub enum CrewRole {
     CostumeDesigner,
     SoundDesigner,
     VfxSupervisor,
+    AnimationDirector,
+    LeadAnimator,
     Other(String),
 }
 
@@ -268,6 +270,8 @@ pub fn normalize_crew_role(s: &str) -> CrewRole {
         "costume designer" => CrewRole::CostumeDesigner,
         "sound designer" => CrewRole::SoundDesigner,
         "vfx supervisor" | "visual effects supervisor" => CrewRole::VfxSupervisor,
+        "animation director" | "anime director" => CrewRole::AnimationDirector,
+        "lead animator" | "chief animation director" | "sakuga director" => CrewRole::LeadAnimator,
         _ => CrewRole::Other(s.to_string()),
     }
 }
@@ -451,5 +455,42 @@ mod tests {
         } else {
             panic!("round-trip lost Other variant");
         }
+    }
+
+    #[test]
+    fn crew_role_animation_director_round_trips() {
+        let v = CrewRole::AnimationDirector;
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, "\"animation_director\"");
+        let back: CrewRole = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, CrewRole::AnimationDirector);
+    }
+
+    #[test]
+    fn crew_role_lead_animator_round_trips() {
+        let v = CrewRole::LeadAnimator;
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, "\"lead_animator\"");
+        let back: CrewRole = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, CrewRole::LeadAnimator);
+    }
+
+    #[test]
+    fn normalize_anime_director_variants() {
+        assert_eq!(normalize_crew_role("animation director"), CrewRole::AnimationDirector);
+        assert_eq!(normalize_crew_role("Animation Director"), CrewRole::AnimationDirector);
+        assert_eq!(normalize_crew_role("anime director"),     CrewRole::AnimationDirector);
+    }
+
+    #[test]
+    fn normalize_lead_animator_variants() {
+        assert_eq!(normalize_crew_role("lead animator"),            CrewRole::LeadAnimator);
+        assert_eq!(normalize_crew_role("chief animation director"), CrewRole::LeadAnimator);
+        assert_eq!(normalize_crew_role("sakuga director"),          CrewRole::LeadAnimator);
+    }
+
+    #[test]
+    fn normalize_preserves_other_fallthrough() {
+        assert_eq!(normalize_crew_role("key animator"), CrewRole::Other("key animator".into()));
     }
 }

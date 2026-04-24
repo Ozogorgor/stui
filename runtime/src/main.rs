@@ -1170,6 +1170,51 @@ async fn handle_line(
             "Metadata plugins not yet implemented".to_string(),
         ),
 
+        Request::GetDetailMetadata(r) => {
+            // Fire-and-forget: four verb partials stream back via
+            // `event_tx` as `Response::DetailMetadataPartial` wire lines.
+            // No synchronous response body — return Ok so the IPC loop
+            // doesn't write a placeholder.
+            let engine_c = Arc::clone(engine);
+            let event_tx_c = event_tx.clone();
+            let cfg_snapshot = config.snapshot().await;
+            tokio::spawn(async move {
+                let mut req = engine::metadata::DetailMetadataRequest::from_wire(r);
+                req.per_verb_timeout = std::time::Duration::from_millis(
+                    cfg_snapshot.metadata.per_verb_timeout_ms,
+                );
+                let dispatch = engine::metadata::EngineMetadataDispatch::new(
+                    engine_c,
+                    cfg_snapshot.metadata.sources.clone(),
+                )
+                .await;
+                // Small buffer — the orchestrator emits at most 4 partials
+                // and the drain task pulls them off immediately.
+                let (p_tx, mut p_rx) =
+                    tokio::sync::mpsc::channel::<engine::metadata::DetailMetadataPartial>(4);
+                let drain = tokio::spawn(async move {
+                    while let Some(partial) = p_rx.recv().await {
+                        let resp = Response::DetailMetadataPartial(partial.into_wire());
+                        match resp.to_wire() {
+                            Ok(line) => {
+                                if event_tx_c.send(line).await.is_err() {
+                                    // Client hung up — nothing to do.
+                                    break;
+                                }
+                            }
+                            Err(e) => warn!(err = %e, "serialize DetailMetadataPartial failed"),
+                        }
+                    }
+                });
+                engine::metadata::fetch_detail_metadata(dispatch, req, p_tx).await;
+                // `fetch_detail_metadata` returns once every verb has
+                // emitted (or the receiver was dropped). Joining the
+                // drain is optional — the channel close lets it exit.
+                let _ = drain.await;
+            });
+            Response::Ok
+        }
+
         Request::PlayerCommand(r) => pipeline::playback::run_player_command(player, r).await,
 
         Request::Cmd(cmd) => pipeline::playback::run_player_cmd(player, mpd, cmd).await,
