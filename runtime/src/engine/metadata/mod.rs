@@ -40,6 +40,7 @@ use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
     EnrichResponse, PluginEntry, RelatedRequest,
 };
+use stui_plugin_sdk::EntryKind;
 use crate::cache::metadata::{MetadataCache, MetadataPayload};
 use crate::cache::metadata_key::{IdSource, MetadataCacheKey, MetadataVerb};
 
@@ -263,16 +264,35 @@ async fn run_verb<E: MetadataDispatch>(
 
 // ── Per-verb fan-out helpers ─────────────────────────────────────────────────
 
+/// Map the tab-flavoured `kind` string coming from the TUI
+/// (`"movies" | "series" | "anime" | "music"`) to the `EntryKind` the
+/// plugins expect on their verb requests.
+///
+/// Anime cards hit the same `/tv/{id}/credits` endpoint as series on
+/// TMDB, so they map to `Series`. Music maps to `Track` as a fallback —
+/// music providers (discogs/musicbrainz) route on scope internally and
+/// won't use kind for detail-level verbs today, but we pass something
+/// so the wire form isn't ambiguous.
+fn entry_kind_from_hint(hint: &str) -> EntryKind {
+    match hint {
+        "movies" => EntryKind::Movie,
+        "series" | "anime" => EntryKind::Series,
+        "music" => EntryKind::Track,
+        _ => EntryKind::Movie, // safest default — most verbs error cleanly on wrong-kind
+    }
+}
+
 async fn fan_out_enrich<E: MetadataDispatch>(
     engine: &E,
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<EnrichResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
         let er = EnrichRequest {
             partial: PluginEntry {
                 id: req.entry_id.clone(),
-                kind: Default::default(),
+                kind,
                 title: String::new(),
                 source: plugin.clone(),
                 ..Default::default()
@@ -289,11 +309,12 @@ async fn fan_out_credits<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<CreditsResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
         let cr = CreditsRequest {
             id: req.entry_id.clone(),
             id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
+            kind,
         };
         engine.call_credits(plugin, cr)
     });
@@ -305,11 +326,12 @@ async fn fan_out_artwork<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<ArtworkResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
         let ar = ArtworkRequest {
             id: req.entry_id.clone(),
             id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
+            kind,
             size: crate::abi::types::ArtworkSize::Any,
         };
         engine.call_artwork(plugin, ar)
@@ -322,11 +344,12 @@ async fn fan_out_related<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<Vec<PluginEntry>> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
         let rr = RelatedRequest {
             id: req.entry_id.clone(),
             id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
+            kind,
             relation: crate::abi::types::RelationKind::Any,
             limit: 20,
         };

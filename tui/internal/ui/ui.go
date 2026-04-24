@@ -2725,24 +2725,63 @@ func (m *Model) sendGetDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
 	if m.client == nil {
 		return nil
 	}
+
+	// Entries from non-TMDB providers carry a provider-prefixed id
+	// like "anilist-199" or "kitsu-6448"; the entry's Provider field
+	// may also be a comma-joined list of multiple providers (e.g.
+	// "anilist,kitsu" for titles that merged across catalogs).
+	//
+	// Plugin-side verb handlers strictly require `id_source` to match
+	// their own provider name and `id` to be the provider's native
+	// id form (usually numeric). So we strip the provider prefix and
+	// use *that* provider as the canonical id_source — whichever
+	// plugin receives the request then finds its own namespace.
+	entryID := entry.ID
 	idSource := entry.IDSource
 	if idSource == "" {
-		// Fallback: the catalog tracks provider, not id_source. For
-		// IMDb-flavoured entries the provider label is close enough;
-		// the runtime's parse_id_source maps unknown strings to
-		// IdSource::Other which is still safe to look up.
-		idSource = entry.Provider
+		// Prefer the prefix on the id itself — it's the most
+		// authoritative signal for which catalog owns this entry.
+		if prefix, rest, ok := splitProviderPrefix(entry.ID); ok {
+			idSource = prefix
+			entryID = rest
+		} else {
+			// Fall back to the first entry in the (possibly
+			// comma-separated) provider list.
+			idSource = firstProvider(entry.Provider)
+		}
 	}
 	kind := entry.Kind
 	if kind == "" {
 		kind = entry.Tab
 	}
-	entryID := entry.ID
 	client := m.client
 	return func() tea.Msg {
 		client.GetDetailMetadata(entryID, idSource, kind)
 		return nil
 	}
+}
+
+// splitProviderPrefix recognises entry ids of the form
+// "<provider>-<native_id>" (e.g. "anilist-199", "kitsu-6448") and
+// returns (provider, native_id, true). For unprefixed numeric ids
+// (TMDB style, e.g. "83533") returns ("", "", false).
+func splitProviderPrefix(id string) (prefix, rest string, ok bool) {
+	// Known provider prefixes we emit on the catalog side.
+	for _, p := range []string{"anilist-", "kitsu-", "mal-", "tvdb-"} {
+		if strings.HasPrefix(id, p) {
+			return p[:len(p)-1], id[len(p):], true
+		}
+	}
+	return "", "", false
+}
+
+// firstProvider returns the leading provider name from a
+// possibly-comma-joined list like "anilist,kitsu".
+func firstProvider(p string) string {
+	if i := strings.IndexByte(p, ','); i > 0 {
+		return p[:i]
+	}
+	return p
 }
 
 // relatedItemToCatalogEntry reshapes a RelatedItemWire into the
