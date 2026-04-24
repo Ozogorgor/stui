@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/screens"
 )
@@ -57,5 +59,43 @@ func TestModel_IgnoresDetailMetadataPartialWithNoDetail(t *testing.T) {
 	updated, _ := m.Update(partial)
 	if _, ok := updated.(Model); !ok {
 		t.Fatalf("Update returned unexpected model type %T", updated)
+	}
+}
+
+// TestModel_BackdropCarouselCyclesOnArrowKey — with the detail overlay
+// open and focus on the info zone, a KeyRight should advance the
+// artwork cursor. Ensures the carousel keybinding wired in ui.go
+// doesn't get swallowed by the existing focus-cycle or provider
+// left/right handlers.
+func TestModel_BackdropCarouselCyclesOnArrowKey(t *testing.T) {
+	detail := screens.NewDetailState(ipc.DetailEntry{ID: "tt1"})
+	detail.Meta.Artwork = ipc.MetadataPayload{
+		Type: "artwork",
+		Backdrops: []ipc.ArtworkVariantWire{
+			{URL: "a.jpg", SizeLabel: "hi_res"},
+			{URL: "b.jpg", SizeLabel: "hi_res"},
+		},
+	}
+	detail.Meta.ArtworkStatus = screens.FetchLoaded
+	detail.Focus = screens.FocusDetailInfo
+	m := Model{detail: &detail, screen: screenDetail}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m2, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("Update returned unexpected model type %T", updated)
+	}
+	if m2.detail == nil {
+		t.Fatal("detail was cleared by Update")
+	}
+	if m2.detail.Meta.ArtworkCursor != 1 {
+		t.Errorf("artwork cursor after KeyRight = %d, want 1", m2.detail.Meta.ArtworkCursor)
+	}
+
+	// Wrap-around: advancing past the last backdrop returns to 0.
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	m3 := updated.(Model)
+	if m3.detail.Meta.ArtworkCursor != 0 {
+		t.Errorf("artwork cursor after wrap = %d, want 0", m3.detail.Meta.ArtworkCursor)
 	}
 }

@@ -175,12 +175,22 @@ func renderPosterBlock(ds *DetailState, w, h int) string {
 		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, w-4, detailPosterHeight)
 	}
 
+	// Backdrop carousel strip — rendered directly under the poster once
+	// the "artwork" verb resolves with >1 backdrop. Returns "" otherwise
+	// and lipgloss.JoinVertical folds the empty row away.
+	carousel := renderBackdropCarousel(ds, w-4)
+
+	body := poster
+	if carousel != "" {
+		body = lipgloss.JoinVertical(lipgloss.Left, poster, "", carousel)
+	}
+
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
 		Height(h).
 		Padding(2, 2).
-		Render(poster)
+		Render(body)
 }
 
 // ── Info block (right side) ───────────────────────────────────────────────────
@@ -196,7 +206,7 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	titleLine := lipgloss.JoinHorizontal(lipgloss.Top, titleStr, ratingStr)
 	sections = append(sections, titleLine)
 
-	// Meta: year · genre · runtime
+	// Meta: year · genre · runtime · studio
 	metaParts := []string{}
 	if ds.Entry.Year != "" {
 		metaParts = append(metaParts, ds.Entry.Year)
@@ -206,6 +216,12 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	}
 	if ds.Entry.Runtime != "" {
 		metaParts = append(metaParts, ds.Entry.Runtime)
+	}
+	// Studio lands here after the "enrich" verb resolves. It's also
+	// re-surfaced in the CREW section so users see it in both reading
+	// positions.
+	if ds.Entry.Studio != "" {
+		metaParts = append(metaParts, ds.Entry.Studio)
 	}
 	meta := theme.T.DetailMetaStyle().Render(strings.Join(metaParts, "  ·  "))
 	sections = append(sections, meta, "")

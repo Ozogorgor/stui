@@ -2488,6 +2488,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorLeft(ds.PersonCursor)
+		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
+			// Cycle backdrop carousel while the info zone has focus.
+			n := len(ds.Meta.Artwork.Backdrops)
+			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor - 1 + n) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor > 0 {
 				ds.ProviderCursor--
@@ -2503,6 +2507,10 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorRight(ds.PersonCursor, len(ds.PersonResults))
+		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
+			// Cycle backdrop carousel while the info zone has focus.
+			n := len(ds.Meta.Artwork.Backdrops)
+			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor + 1) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor < len(ds.Entry.Providers)-1 {
 				ds.ProviderCursor++
