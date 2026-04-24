@@ -39,12 +39,18 @@ pub struct SidecarBackup {
     pub original: OriginalTags,
 }
 
+// Fields are consumed by unit tests (`BackupLocation::Sidecar(p) => p.exists()`,
+// `report.wrote_backup`) and by the `tracing::info!(backup = ?backup_location)`
+// call in `write_normalized` below — hence the dead_code allow rather than
+// dropping the payloads.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum BackupLocation {
     Sidecar(PathBuf),
     Central(PathBuf),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct WriteReport {
     pub path: PathBuf,

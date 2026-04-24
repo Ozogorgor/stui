@@ -49,8 +49,6 @@ pub enum PluginType {
     Provider,
     /// Legacy alias for SubtitleProvider.
     Subtitle,
-    /// Legacy alias for MetadataProvider.
-    Metadata,
 }
 
 impl PluginType {
@@ -66,10 +64,7 @@ impl PluginType {
 
     /// Returns true if this plugin type supplies catalog / metadata.
     pub fn is_metadata_provider(&self) -> bool {
-        matches!(
-            self,
-            PluginType::MetadataProvider | PluginType::Provider | PluginType::Metadata
-        )
+        matches!(self, PluginType::MetadataProvider | PluginType::Provider)
     }
 
     /// Return the set of runtime capabilities this plugin type advertises.
@@ -78,7 +73,7 @@ impl PluginType {
     /// having to inspect `PluginType` variants directly.
     pub fn capabilities(&self) -> Vec<PluginCapability> {
         match self {
-            PluginType::MetadataProvider | PluginType::Provider | PluginType::Metadata => {
+            PluginType::MetadataProvider | PluginType::Provider => {
                 vec![PluginCapability::Catalog]
             }
             PluginType::StreamProvider => {
@@ -106,7 +101,6 @@ impl std::fmt::Display for PluginType {
             // legacy aliases
             PluginType::Provider => "provider",
             PluginType::Subtitle => "subtitle",
-            PluginType::Metadata => "metadata",
         };
         write!(f, "{}", s)
     }

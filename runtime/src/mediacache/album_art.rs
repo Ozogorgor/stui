@@ -6,7 +6,6 @@
 use lofty::{
     file::TaggedFileExt,
     probe::Probe,
-    tag::TagExt,
 };
 use sha2::{Digest, Sha256};
 use std::fs;

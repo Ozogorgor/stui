@@ -166,13 +166,6 @@ impl SearchCache {
         map.retain(|_, v| v.is_valid());
     }
 
-    /// Drop all mem entries. Disk tier is preserved so a subsequent lookup
-    /// can warm mem from disk — useful for an R-refresh that wants to force
-    /// a network round-trip without dropping every cached response.
-    pub async fn clear(&self) {
-        self.inner.write().await.clear();
-    }
-
     /// Drop mem AND disk entries. Used when the caller really wants a full
     /// invalidation (plugin reload, user "clear cache" command, tests).
     #[allow(dead_code)] // pub API: for plugin-reload / admin-clear callers
