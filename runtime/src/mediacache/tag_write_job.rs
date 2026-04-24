@@ -170,7 +170,7 @@ pub async fn apply(
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.unwrap();
             if cancel.load(Ordering::Relaxed) {
-                return FileResult::Cancelled(row.file);
+                return FileResult::Cancelled;
             }
             let file_c = row.file.clone();
             let nd = row.normalized.clone();
@@ -187,7 +187,7 @@ pub async fn apply(
                 });
             }
             match write_res {
-                Ok(_) => FileResult::Ok(file_c),
+                Ok(_) => FileResult::Ok,
                 Err(_) => FileResult::Failed(file_c),
             }
         }));
@@ -196,9 +196,9 @@ pub async fn apply(
     let mut outcome = ApplyOutcome { succeeded: 0, failed: Vec::new(), skipped_cancelled: 0 };
     for h in handles {
         match h.await.unwrap() {
-            FileResult::Ok(_) => outcome.succeeded += 1,
+            FileResult::Ok => outcome.succeeded += 1,
             FileResult::Failed(p) => outcome.failed.push(p),
-            FileResult::Cancelled(_) => outcome.skipped_cancelled += 1,
+            FileResult::Cancelled => outcome.skipped_cancelled += 1,
         }
     }
     if let Some(tx) = progress {
@@ -207,7 +207,11 @@ pub async fn apply(
     outcome
 }
 
-enum FileResult { Ok(PathBuf), Failed(PathBuf), Cancelled(PathBuf) }
+enum FileResult {
+    Ok,
+    Failed(PathBuf),
+    Cancelled,
+}
 
 #[cfg(test)]
 mod tests {

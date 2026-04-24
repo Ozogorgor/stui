@@ -36,7 +36,10 @@ pub struct ExceptionList {
     pub album: HashSet<String>,
     pub title: HashSet<String>,
     pub genre: HashSet<String>,
-    /// SHA-256 hex of merged-source bytes, for cache keys.
+    /// SHA-256 hex of merged-source bytes, for cache keys. Currently
+    /// exercised only by the content-hash differ tests; a production
+    /// cache-key consumer is planned.
+    #[allow(dead_code)]
     pub content_hash: String,
 }
 
