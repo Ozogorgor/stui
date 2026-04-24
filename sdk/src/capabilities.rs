@@ -270,6 +270,8 @@ pub fn normalize_crew_role(s: &str) -> CrewRole {
         "costume designer" => CrewRole::CostumeDesigner,
         "sound designer" => CrewRole::SoundDesigner,
         "vfx supervisor" | "visual effects supervisor" => CrewRole::VfxSupervisor,
+        "animation director" | "anime director" => CrewRole::AnimationDirector,
+        "lead animator" | "chief animation director" | "sakuga director" => CrewRole::LeadAnimator,
         _ => CrewRole::Other(s.to_string()),
     }
 }
