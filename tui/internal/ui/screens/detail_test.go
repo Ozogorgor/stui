@@ -163,6 +163,46 @@ func TestDetail_AllEmpty_ShowsMetadataUnavailableFallback(t *testing.T) {
 	}
 }
 
+// ── Task 8.2: Forward-compat unknown crew role ────────────────────────────────
+
+// CrewRole::Other(String) arrives on the Go side as a free-form lowercase
+// role string. renderCrewSection only promotes a known set of "headline"
+// roles (director, cinematographer, …) — anything else is currently
+// filtered out. This test locks in graceful forward-compat: an unknown
+// role name must not crash the render, and the presence of a crew row
+// (even if empty) should keep the CREW section rendered.
+//
+// The stricter "must display Makoto" assertion would require a
+// secondary 'Other Crew' block; that's >20 LoC and the plan explicitly
+// permits Option B (assert renders gracefully) in that case. See the
+// plan note under Task 8.2.
+func TestDetail_UnknownCrewRoleRendersWithRoleString(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1"})
+	ds.Meta.Credits = ipc.MetadataPayload{
+		Type: "credits",
+		Crew: []ipc.CrewWire{{
+			Name: "Makoto",
+			Role: "color_designer",
+		}},
+	}
+	ds.Meta.CreditsStatus = FetchLoaded
+
+	// Must not panic.
+	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
+
+	// The CREW header still renders — empty/unknown roles don't hide it.
+	if !strings.Contains(out, detailCrewHeader) {
+		t.Errorf("CREW header missing for unknown-role crew: %q", out)
+	}
+
+	// No "empty credits" fallback — the crew list is non-empty even if
+	// no headline roles matched. (renderCrewSection guards on
+	// len(crew) == 0 && ds.Entry.Studio == "", which is false here.)
+	if strings.Contains(out, detailEmptyCredits) {
+		t.Error("empty-credits fallback fired despite non-empty crew")
+	}
+}
+
 // One verb empty, the others loaded — the all-empty fallback must NOT
 // fire; the single-empty label replaces only its own section.
 func TestDetail_OneEmpty_OthersLoaded(t *testing.T) {
