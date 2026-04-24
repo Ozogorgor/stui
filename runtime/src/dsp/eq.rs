@@ -225,27 +225,27 @@ impl ParametricEq {
     }
 }
 
-// ── Magnitude helper ───────────────────────────────────────────────────────
-
-/// Evaluate |H(ω)| in dB for normalised angular frequency ω = 2π*freq/rate.
-pub fn magnitude_db(c: Coeffs, omega: f32) -> f32 {
-    let (cos1, sin1) = (omega.cos(), omega.sin());
-    let (cos2, sin2) = ((2.0 * omega).cos(), (2.0 * omega).sin());
-    let num_re = c.b0 + c.b1 * cos1 + c.b2 * cos2;
-    let num_im =        c.b1 * sin1 + c.b2 * sin2;
-    let den_re = 1.0  + c.a1 * cos1 + c.a2 * cos2;
-    let den_im =        c.a1 * sin1 + c.a2 * sin2;
-    let ratio = (num_re * num_re + num_im * num_im)
-              / (den_re * den_re + den_im * den_im);
-    20.0 * ratio.sqrt().log10()
-}
-
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::f32::consts::PI;
+
+    /// Evaluate |H(ω)| in dB for normalised angular frequency ω = 2π*freq/rate.
+    /// Test-only helper — previously a `pub fn` in the module (triggered
+    /// `private_interfaces` on `Coeffs` and `never used` outside tests).
+    fn magnitude_db(c: Coeffs, omega: f32) -> f32 {
+        let (cos1, sin1) = (omega.cos(), omega.sin());
+        let (cos2, sin2) = ((2.0 * omega).cos(), (2.0 * omega).sin());
+        let num_re = c.b0 + c.b1 * cos1 + c.b2 * cos2;
+        let num_im =        c.b1 * sin1 + c.b2 * sin2;
+        let den_re = 1.0  + c.a1 * cos1 + c.a2 * cos2;
+        let den_im =        c.a1 * sin1 + c.a2 * sin2;
+        let ratio = (num_re * num_re + num_im * num_im)
+                  / (den_re * den_re + den_im * den_im);
+        20.0 * ratio.sqrt().log10()
+    }
 
     fn omega(freq_hz: f32, sample_rate: u32) -> f32 {
         2.0 * PI * freq_hz / sample_rate as f32

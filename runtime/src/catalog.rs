@@ -413,11 +413,6 @@ impl Catalog {
         };
         let _ = self.tx.send(update);
     }
-
-    pub async fn get_grid(&self, tab: &MediaTab) -> Vec<CatalogEntry> {
-        let grids = self.grids.read().await;
-        grids.get(tab_key(tab)).cloned().unwrap_or_default()
-    }
 }
 
 #[cfg(test)] // only used in tests
