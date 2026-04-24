@@ -125,7 +125,7 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 	case FocusDetailProvider:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.Neon()).
 			Render("  ←→ select  enter ▶ play  tab → similar")
-	case FocusDetailSimilar:
+	case FocusDetailRelated:
 		focusHint = lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
 			Render("  ←→ scroll  enter open  tab → cast")
 	default:

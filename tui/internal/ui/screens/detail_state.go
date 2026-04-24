@@ -4,9 +4,14 @@ package screens
 //
 // Focus zones:
 //   FocusDetailInfo     — top section (poster + metadata), scroll only
+//   FocusDetailCrew     — crew list (directors / writers / composers etc.)
 //   FocusDetailCast     — cast list, vertical cursor
-//   FocusDetailProvider — STREAM VIA badges, horizontal cursor  ← NEW
-//   FocusDetailSimilar  — similar titles row, horizontal cursor
+//   FocusDetailProvider — STREAM VIA badges, horizontal cursor
+//   FocusDetailRelated  — related titles row, horizontal cursor
+//
+// FocusDetailSimilar is a deprecated alias for FocusDetailRelated retained
+// through Chunk 6's transitional commits; Task 6.3 removes it and its
+// associated `Similar*` fields once ui.go has been rewired.
 
 import (
 	"github.com/stui/stui/internal/ipc"
@@ -19,10 +24,47 @@ type DetailFocus int
 
 const (
 	FocusDetailInfo     DetailFocus = iota // poster + meta + description
-	FocusDetailCast                        // cast & crew list
+	FocusDetailCrew                        // crew (director/writer/etc.)
+	FocusDetailCast                        // cast
 	FocusDetailProvider                    // STREAM VIA provider badges
-	FocusDetailSimilar                     // similar titles row
+	FocusDetailRelated                     // related titles row
 )
+
+// FocusDetailSimilar is a compatibility alias for FocusDetailRelated kept
+// during the chunk-6 transition so ui.go continues to compile while the
+// follow-up task swaps call sites over to FocusDetailRelated. Removed in
+// Task 6.3.
+const FocusDetailSimilar = FocusDetailRelated
+
+// FetchStatus tracks the lifecycle of one metadata verb's partial.
+// The zero value is FetchPending so DetailState's embedded DetailMetadata
+// starts in the correct state without explicit initialisation.
+type FetchStatus int
+
+const (
+	FetchPending FetchStatus = iota // request dispatched or not yet dispatched
+	FetchLoaded                     // partial arrived with non-empty payload
+	FetchEmpty                      // partial arrived with "empty" / zero-valued payload
+)
+
+// DetailMetadata holds the four per-verb payloads streamed back by the
+// runtime after a GetDetailMetadata request, plus per-zone cursor state.
+// Each verb has its own FetchStatus so the renderer can distinguish
+// "still loading" from "we tried, nothing available".
+type DetailMetadata struct {
+	EnrichStatus  FetchStatus
+	CreditsStatus FetchStatus
+	ArtworkStatus FetchStatus
+	RelatedStatus FetchStatus
+
+	Credits ipc.MetadataPayload
+	Artwork ipc.MetadataPayload
+	Related ipc.MetadataPayload
+
+	ArtworkCursor int
+	CrewCursor    int
+	RelatedCursor int
+}
 
 // BreadcrumbEntry is a single step in the navigation history.
 type BreadcrumbEntry struct {
@@ -46,7 +88,12 @@ type DetailState struct {
 	// Playback — non-empty while mpv is running for this entry
 	NowPlaying *components.NowPlayingState
 
-	// Similar
+	// Metadata — populated by streamed DetailMetadataPartial events.
+	Meta DetailMetadata
+
+	// Deprecated legacy fields retained during the chunk-6 transition so
+	// ui.go continues to compile; Task 6.3 removes them in favour of
+	// ds.Meta.Related.Items + ds.Meta.RelatedCursor + ds.Meta.RelatedStatus.
 	Similar        []ipc.CatalogEntry
 	SimilarCursor  int
 	SimilarLoading bool
@@ -73,7 +120,58 @@ func NewDetailState(entry ipc.DetailEntry) DetailState {
 		Entry:   entry,
 		Loading: true,
 		Focus:   FocusDetailInfo,
+		// Meta's FetchStatus fields default to FetchPending (zero).
 	}
+}
+
+// ApplyMetadataPartial merges one runtime-streamed DetailMetadataPartial
+// into the state.  Partials for a stale entry (the user navigated away)
+// are silently ignored.
+//
+// Verbs are processed independently — an "enrich" payload arriving after
+// "credits" won't clobber the already-loaded credits.  Empty payloads
+// flip the corresponding FetchStatus to FetchEmpty so renderers can
+// distinguish "loading" from "none available".
+func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
+	if p.EntryID != d.Entry.ID {
+		return
+	}
+	status := FetchLoaded
+	if p.Payload.Type == "empty" || isPayloadEmpty(p.Payload) {
+		status = FetchEmpty
+	}
+	switch p.Verb {
+	case "enrich":
+		if p.Payload.Studio != nil {
+			d.Entry.Studio = *p.Payload.Studio
+		}
+		if len(p.Payload.Networks) > 0 {
+			d.Entry.Networks = p.Payload.Networks
+		}
+		if len(p.Payload.ExternalIDs) > 0 {
+			d.Entry.ExternalIDs = p.Payload.ExternalIDs
+		}
+		d.Meta.EnrichStatus = status
+	case "credits":
+		d.Meta.Credits = p.Payload
+		d.Meta.CreditsStatus = status
+	case "artwork":
+		d.Meta.Artwork = p.Payload
+		d.Meta.ArtworkStatus = status
+	case "related":
+		d.Meta.Related = p.Payload
+		d.Meta.RelatedStatus = status
+	}
+}
+
+// isPayloadEmpty is true when every variant-specific field of p is at its
+// zero value.  Used to downgrade a FetchLoaded status to FetchEmpty when
+// the runtime streams a struct-shaped payload that contains no data.
+func isPayloadEmpty(p ipc.MetadataPayload) bool {
+	return len(p.Cast) == 0 && len(p.Crew) == 0 &&
+		len(p.Backdrops) == 0 && len(p.Posters) == 0 &&
+		len(p.Items) == 0 && p.Studio == nil &&
+		len(p.Networks) == 0 && len(p.ExternalIDs) == 0
 }
 
 func (d *DetailState) SelectedCastMember() *ipc.CastMember {

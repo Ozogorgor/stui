@@ -130,6 +130,15 @@ type DetailEntry struct {
 	Providers   []string     `json:"providers"`
 	ImdbID      string       `json:"imdb_id"`
 	Tab         string       `json:"tab"`
+
+	// Metadata-enrichment fields populated by DetailMetadataPartial "enrich"
+	// verbs after the detail panel opens. They default to zero values when
+	// the runtime hasn't (yet) delivered the enrichment.
+	IDSource    string            `json:"id_source,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Studio      string            `json:"studio,omitempty"`
+	Networks    []string          `json:"networks,omitempty"`
+	ExternalIDs map[string]string `json:"external_ids,omitempty"`
 }
 
 // CastMember is a single person in the cast/crew list.
@@ -152,6 +161,9 @@ type DetailReadyMsg struct {
 }
 
 // SimilarReadyMsg carries similar title results for the bottom row.
+// Deprecated: retired in Chunk 6 (Task 6.3) in favour of
+// DetailMetadataPartial verb="related". Kept here during the task-6.1
+// commit so callers still compile; removed in the task-6.3 commit.
 type SimilarReadyMsg struct {
 	ForID   string
 	Entries []CatalogEntry
