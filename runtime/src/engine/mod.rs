@@ -21,6 +21,8 @@ pub mod pipeline;
 #[allow(unused_imports)]
 pub use pipeline::Pipeline;
 
+pub mod metadata;
+
 pub mod search_scoped;
 pub use search_scoped::{search_scoped, ScopedSearchConfig};
 
