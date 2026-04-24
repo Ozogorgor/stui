@@ -175,16 +175,22 @@ async fn run_verb<E: MetadataDispatch>(
 
     // Fan out + timeout + merge. On timeout we substitute empty results
     // so the merge still runs (returns a sensible "nothing" payload).
-    let payload = match verb {
+    //
+    // `had_results` distinguishes an *authoritative* empty (plugins
+    // responded, nothing found — safe to cache) from a *transient*
+    // empty (timeout or all plugins errored — must NOT cache, or a
+    // single blip poisons the 30-day TTL entry).
+    let (payload, had_results) = match verb {
         MetadataVerb::Enrich => {
             let fan = fan_out_enrich(engine, &sources, req);
             let results =
                 tokio::time::timeout(req.per_verb_timeout, fan)
                     .await
                     .unwrap_or_default();
+            let had_results = !results.is_empty();
             let _merged = merge::merge_enrich(None, results);
             // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Enrich(...)`.
-            MetadataPayload::Empty
+            (MetadataPayload::Empty, had_results)
         }
         MetadataVerb::Credits => {
             let fan = fan_out_credits(engine, &sources, req);
@@ -192,9 +198,10 @@ async fn run_verb<E: MetadataDispatch>(
                 tokio::time::timeout(req.per_verb_timeout, fan)
                     .await
                     .unwrap_or_default();
+            let had_results = !results.is_empty();
             let _merged = merge::merge_credits(None, results);
             // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Credits(...)`.
-            MetadataPayload::Empty
+            (MetadataPayload::Empty, had_results)
         }
         MetadataVerb::Artwork => {
             let fan = fan_out_artwork(engine, &sources, req);
@@ -202,9 +209,10 @@ async fn run_verb<E: MetadataDispatch>(
                 tokio::time::timeout(req.per_verb_timeout, fan)
                     .await
                     .unwrap_or_default();
+            let had_results = !results.is_empty();
             let _merged = merge::merge_artwork(results);
             // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Artwork(...)`.
-            MetadataPayload::Empty
+            (MetadataPayload::Empty, had_results)
         }
         MetadataVerb::Related => {
             let fan = fan_out_related(engine, &sources, req);
@@ -212,13 +220,22 @@ async fn run_verb<E: MetadataDispatch>(
                 tokio::time::timeout(req.per_verb_timeout, fan)
                     .await
                     .unwrap_or_default();
+            let had_results = !results.is_empty();
             let _merged = merge::merge_related(results);
             // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Related(...)`.
-            MetadataPayload::Empty
+            (MetadataPayload::Empty, had_results)
         }
     };
 
-    engine.cache().insert(key, payload.clone()).await;
+    if had_results {
+        engine.cache().insert(key, payload.clone()).await;
+    } else {
+        debug!(
+            ?verb,
+            id = %req.entry_id,
+            "skipping cache write: fan-out produced no results (timeout or all errored)"
+        );
+    }
     payload
 }
 
@@ -542,5 +559,60 @@ mod tests {
             .find(|p| p.verb == MetadataVerb::Related)
             .unwrap();
         assert!(matches!(related.payload, MetadataPayload::Empty));
+    }
+
+    #[tokio::test]
+    async fn timeout_does_not_cache_empty() {
+        // A transient timeout (e.g. network blip) must NOT poison the
+        // cache — otherwise a single hiccup short-circuits all future
+        // opens for the 30-day TTL.
+        let engine = test_engine::stuck(MetadataVerb::Credits);
+        let (tx, mut rx) = mpsc::channel(16);
+        fetch_detail_metadata(
+            engine.clone(),
+            test_engine::req_with_timeout_ms(300),
+            tx,
+        )
+        .await;
+        let _ = test_engine::collect_all(&mut rx).await;
+        let key = MetadataCacheKey {
+            verb: MetadataVerb::Credits,
+            id_source: IdSource::Imdb,
+            id: "tt1".into(),
+        };
+        assert!(
+            engine.cache().get(&key).await.is_none(),
+            "timeout must not cache Empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn authoritative_empty_is_cached() {
+        // Plugin responded with an empty CreditsResponse — this IS
+        // ground truth ("we know there's no credits for this title"),
+        // so it should be cached to avoid re-fanning on every open.
+        //
+        // `always_empty()` wires one fake plugin (`fake-tmdb`) whose
+        // `call_*` methods return empty-but-Ok responses, so the
+        // fan-out yields a non-empty Vec of empty responses — exactly
+        // the authoritative-empty case.
+        let engine = test_engine::always_empty();
+        let (tx, mut rx) = mpsc::channel(16);
+        fetch_detail_metadata(
+            engine.clone(),
+            test_engine::make_request("tt1"),
+            tx,
+        )
+        .await;
+        let _ = test_engine::collect_all(&mut rx).await;
+        let key = MetadataCacheKey {
+            verb: MetadataVerb::Credits,
+            id_source: IdSource::Imdb,
+            id: "tt1".into(),
+        };
+        assert!(
+            engine.cache().get(&key).await.is_some(),
+            "authoritative empty must be cached"
+        );
     }
 }
