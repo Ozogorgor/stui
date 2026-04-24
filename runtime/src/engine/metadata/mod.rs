@@ -27,6 +27,7 @@
 
 pub mod sources;
 pub mod merge;
+mod wire;
 
 use std::time::Duration;
 
@@ -42,7 +43,10 @@ use crate::abi::types::{
 use crate::cache::metadata::{MetadataCache, MetadataPayload};
 use crate::cache::metadata_key::{IdSource, MetadataCacheKey, MetadataVerb};
 
+pub use dispatch::{EngineMetadataDispatch, ManifestCapabilityProbe};
 pub use sources::{SourceCapabilityProbe, SourceResolver};
+
+mod dispatch;
 
 // ── Request / Partial types ──────────────────────────────────────────────────
 
@@ -180,6 +184,12 @@ async fn run_verb<E: MetadataDispatch>(
     // responded, nothing found — safe to cache) from a *transient*
     // empty (timeout or all plugins errored — must NOT cache, or a
     // single blip poisons the 30-day TTL entry).
+    //
+    // When `had_results == false` we emit `MetadataPayload::Empty` rather
+    // than an empty per-verb variant so the TUI can cleanly distinguish
+    // "verb ran but found nothing" from "verb didn't run at all" — the
+    // UI draws a `(none)` placeholder for Empty and nothing for the
+    // empty-variant path.
     let (payload, had_results) = match verb {
         MetadataVerb::Enrich => {
             let fan = fan_out_enrich(engine, &sources, req);
@@ -188,9 +198,12 @@ async fn run_verb<E: MetadataDispatch>(
                     .await
                     .unwrap_or_default();
             let had_results = !results.is_empty();
-            let _merged = merge::merge_enrich(None, results);
-            // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Enrich(...)`.
-            (MetadataPayload::Empty, had_results)
+            let payload = if had_results {
+                wire::enrich_to_payload(merge::merge_enrich(None, results))
+            } else {
+                MetadataPayload::Empty
+            };
+            (payload, had_results)
         }
         MetadataVerb::Credits => {
             let fan = fan_out_credits(engine, &sources, req);
@@ -199,9 +212,12 @@ async fn run_verb<E: MetadataDispatch>(
                     .await
                     .unwrap_or_default();
             let had_results = !results.is_empty();
-            let _merged = merge::merge_credits(None, results);
-            // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Credits(...)`.
-            (MetadataPayload::Empty, had_results)
+            let payload = if had_results {
+                wire::credits_to_payload(merge::merge_credits(None, results))
+            } else {
+                MetadataPayload::Empty
+            };
+            (payload, had_results)
         }
         MetadataVerb::Artwork => {
             let fan = fan_out_artwork(engine, &sources, req);
@@ -210,9 +226,12 @@ async fn run_verb<E: MetadataDispatch>(
                     .await
                     .unwrap_or_default();
             let had_results = !results.is_empty();
-            let _merged = merge::merge_artwork(results);
-            // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Artwork(...)`.
-            (MetadataPayload::Empty, had_results)
+            let payload = if had_results {
+                wire::artwork_to_payload(merge::merge_artwork(results))
+            } else {
+                MetadataPayload::Empty
+            };
+            (payload, had_results)
         }
         MetadataVerb::Related => {
             let fan = fan_out_related(engine, &sources, req);
@@ -221,9 +240,12 @@ async fn run_verb<E: MetadataDispatch>(
                     .await
                     .unwrap_or_default();
             let had_results = !results.is_empty();
-            let _merged = merge::merge_related(results);
-            // TODO(chunk-5): wrap `_merged` in `MetadataPayload::Related(...)`.
-            (MetadataPayload::Empty, had_results)
+            let payload = if had_results {
+                wire::related_to_payload(merge::merge_related(results))
+            } else {
+                MetadataPayload::Empty
+            };
+            (payload, had_results)
         }
     };
 
@@ -323,6 +345,65 @@ fn id_source_as_str(s: &IdSource) -> String {
         IdSource::Musicbrainz => "musicbrainz".into(),
         IdSource::Discogs => "discogs".into(),
         IdSource::Other(s) => s.clone(),
+    }
+}
+
+/// Parse a wire-form id-source string back into [`IdSource`].
+/// Unknown sources round-trip through [`IdSource::Other`].
+fn parse_id_source(s: &str) -> IdSource {
+    match s {
+        "imdb" => IdSource::Imdb,
+        "tmdb" => IdSource::Tmdb,
+        "tvdb" => IdSource::Tvdb,
+        "anilist" => IdSource::Anilist,
+        "kitsu" => IdSource::Kitsu,
+        "musicbrainz" => IdSource::Musicbrainz,
+        "discogs" => IdSource::Discogs,
+        other => IdSource::Other(other.to_string()),
+    }
+}
+
+// ── Wire conversion ──────────────────────────────────────────────────────────
+
+/// Default per-verb timeout applied to a wire [`GetDetailMetadataRequest`].
+///
+/// 8 s is long enough that individual plugin calls can stretch on a slow
+/// network, but short enough that the user doesn't wait silently —
+/// the orchestrator substitutes `MetadataPayload::Empty` and the TUI
+/// still paints a useful card from whatever verbs finished in time.
+pub const DEFAULT_PER_VERB_TIMEOUT: Duration = Duration::from_millis(8_000);
+
+impl DetailMetadataRequest {
+    /// Convert a wire request to the engine-internal form.
+    pub fn from_wire(r: crate::ipc::v1::GetDetailMetadataRequest) -> Self {
+        DetailMetadataRequest {
+            entry_id: r.entry_id,
+            id_source: parse_id_source(&r.id_source),
+            kind: r.kind,
+            per_verb_timeout: DEFAULT_PER_VERB_TIMEOUT,
+        }
+    }
+}
+
+impl DetailMetadataPartial {
+    /// Convert an engine-internal partial to the IPC wire form.
+    ///
+    /// The payload field is already a `MetadataPayload` in both types
+    /// (since `cache::metadata` re-exports `ipc::v1::MetadataPayload`),
+    /// so only the `verb` enum needs to be serialised to its wire string.
+    pub fn into_wire(self) -> crate::ipc::v1::DetailMetadataPartial {
+        let verb = match self.verb {
+            MetadataVerb::Enrich => "enrich",
+            MetadataVerb::Credits => "credits",
+            MetadataVerb::Artwork => "artwork",
+            MetadataVerb::Related => "related",
+        }
+        .to_string();
+        crate::ipc::v1::DetailMetadataPartial {
+            entry_id: self.entry_id,
+            verb,
+            payload: self.payload,
+        }
     }
 }
 
