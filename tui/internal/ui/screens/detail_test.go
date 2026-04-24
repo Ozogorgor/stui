@@ -111,3 +111,84 @@ func TestDetail_BackdropCarouselShowsIndexWhenMultipleBackdrops(t *testing.T) {
 		t.Errorf("backdrop indicator missing: %q", out)
 	}
 }
+
+// ── Task 8.1: Progressive-render snapshot tests ───────────────────────────────
+
+// All four per-verb fetches start FetchPending; all four skeleton labels
+// (crew, artwork, related) must be present. The enrich verb has no visible
+// skeleton of its own — its loading state is reflected in the description
+// block's existing "Loading details…" row, not tested here.
+func TestDetail_AllFourLoading_ShowsSkeletons(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
+	for _, want := range []string{detailLoadingCrew, detailLoadingArtwork, detailLoadingRelated} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing skeleton %q in output", want)
+		}
+	}
+}
+
+// Credits land first; artwork + related still pending. The crew row
+// should render with "Nolan" while the other sections stay skeletons.
+func TestDetail_CreditsFirst_OtherSectionsStillLoading(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+	ds.Meta.Credits = ipc.MetadataPayload{
+		Type: "credits",
+		Crew: []ipc.CrewWire{{Name: "Nolan", Role: "director"}},
+	}
+	ds.Meta.CreditsStatus = FetchLoaded
+	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
+	if !strings.Contains(out, "Nolan") {
+		t.Error("credits not rendered")
+	}
+	if !strings.Contains(out, detailLoadingArtwork) {
+		t.Error("artwork skeleton missing")
+	}
+	if !strings.Contains(out, detailLoadingRelated) {
+		t.Error("related skeleton missing")
+	}
+}
+
+// All four verbs resolved empty — the main body swaps in the
+// "Metadata unavailable" fallback.
+func TestDetail_AllEmpty_ShowsMetadataUnavailableFallback(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+	ds.Meta.EnrichStatus = FetchEmpty
+	ds.Meta.CreditsStatus = FetchEmpty
+	ds.Meta.ArtworkStatus = FetchEmpty
+	ds.Meta.RelatedStatus = FetchEmpty
+	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
+	if !strings.Contains(out, detailAllEmptyFallbck) {
+		t.Errorf("fallback missing: %q", out)
+	}
+}
+
+// One verb empty, the others loaded — the all-empty fallback must NOT
+// fire; the single-empty label replaces only its own section.
+func TestDetail_OneEmpty_OthersLoaded(t *testing.T) {
+	ds := NewDetailState(ipc.DetailEntry{ID: "tt1", Title: "X"})
+	ds.Meta.CreditsStatus = FetchLoaded
+	ds.Meta.Credits = ipc.MetadataPayload{
+		Type: "credits",
+		Crew: []ipc.CrewWire{{Name: "Nolan", Role: "director"}},
+	}
+	ds.Meta.ArtworkStatus = FetchEmpty
+	ds.Meta.RelatedStatus = FetchLoaded
+	ds.Meta.Related = ipc.MetadataPayload{
+		Type:  "related",
+		Items: []ipc.RelatedItemWire{{Title: "Sequel"}},
+	}
+	out := renderDetailMain(&ds, 100, 40, state.TabMovies)
+	if !strings.Contains(out, "Nolan") {
+		t.Error("credits missing")
+	}
+	if !strings.Contains(out, detailEmptyArtwork) {
+		t.Error("artwork empty label missing")
+	}
+	if !strings.Contains(out, "Sequel") {
+		t.Error("related missing")
+	}
+	if strings.Contains(out, detailAllEmptyFallbck) {
+		t.Error("false all-empty fallback")
+	}
+}

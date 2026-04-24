@@ -15,18 +15,15 @@ import (
 )
 
 // renderBackdropCarousel returns a narrow strip listing the current
-// backdrop index and a navigation hint. Loading/empty states fall back
-// to a single dim label so the poster area never stays blank.
+// backdrop index and a navigation hint. This lives inside the poster
+// column and only renders once the "artwork" verb resolves with data.
+// Loading/empty labels are emitted by renderBackdropStatusStrip at
+// full width instead, so the long strings never get word-wrapped by
+// the narrow poster column.
 func renderBackdropCarousel(ds *DetailState, width int) string {
 	_ = width // kept for future responsive sizing
 
-	switch ds.Meta.ArtworkStatus {
-	case FetchPending:
-		// Stay quiet while we don't know if there'll be backdrops — no
-		// point shouting "Loading artwork…" when the poster placeholder
-		// is already filling the block.
-		return ""
-	case FetchEmpty:
+	if ds.Meta.ArtworkStatus != FetchLoaded {
 		return ""
 	}
 
@@ -49,4 +46,31 @@ func renderBackdropCarousel(ds *DetailState, width int) string {
 		Render("←/→ cycle")
 
 	return lipgloss.JoinHorizontal(lipgloss.Left, indicator, "  ", hint)
+}
+
+// renderBackdropStatusStrip returns a full-width, single-line faint
+// label describing the artwork-verb fetch state. Rendered as a row
+// between the main column split and the related row so the label has
+// enough horizontal room to stay on one line (the poster column is
+// only ~18 chars wide, which would word-wrap "No artwork available").
+// Returns "" when the verb has loaded successfully — data-loaded state
+// is surfaced by renderBackdropCarousel inside the poster column.
+func renderBackdropStatusStrip(ds *DetailState, width int) string {
+	switch ds.Meta.ArtworkStatus {
+	case FetchPending:
+		return lipgloss.NewStyle().
+			Foreground(theme.T.TextDim()).
+			Faint(true).
+			Width(width).
+			PaddingLeft(2).
+			Render(detailLoadingArtwork)
+	case FetchEmpty:
+		return lipgloss.NewStyle().
+			Foreground(theme.T.TextDim()).
+			Faint(true).
+			Width(width).
+			PaddingLeft(2).
+			Render(detailEmptyArtwork)
+	}
+	return ""
 }

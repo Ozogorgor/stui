@@ -99,8 +99,18 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 	header := renderDetailHeader(ds, w, tab)
 	relatedH := similarRowHeight + 2
 
+	// The artwork-status strip is a single full-width row between the
+	// two-column main body and the related row. It only renders while
+	// the artwork verb is pending or resolved empty — once backdrops
+	// load, the per-column carousel takes over.
+	artworkStatus := renderBackdropStatusStrip(ds, w)
+	statusH := 0
+	if artworkStatus != "" {
+		statusH = lipgloss.Height(artworkStatus)
+	}
+
 	// Split: poster|info section, then related row at bottom
-	mainH := h - lipgloss.Height(header) - relatedH
+	mainH := h - lipgloss.Height(header) - relatedH - statusH
 
 	left := renderPosterBlock(ds, detailPosterWidth, mainH)
 	right := renderInfoBlock(ds, w-detailPosterWidth-4, mainH)
@@ -113,9 +123,32 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
+	// All-empty fallback: when all four per-verb fetches resolved empty,
+	// swap the main body (not the header, not the related row) for a
+	// single centered "Metadata unavailable" message. Keeps the header
+	// breadcrumb and related-row empty-state visible.
+	if ds.Meta.EnrichStatus == FetchEmpty &&
+		ds.Meta.CreditsStatus == FetchEmpty &&
+		ds.Meta.ArtworkStatus == FetchEmpty &&
+		ds.Meta.RelatedStatus == FetchEmpty {
+		main = lipgloss.NewStyle().
+			Foreground(theme.T.TextDim()).
+			Faint(true).
+			Width(w).
+			Height(mainH).
+			Align(lipgloss.Center, lipgloss.Center).
+			Render(detailAllEmptyFallbck)
+	}
+
 	related := renderRelatedRow(ds, w, relatedH)
 
-	full := lipgloss.JoinVertical(lipgloss.Left, header, main, related)
+	parts := []string{header, main}
+	if artworkStatus != "" {
+		parts = append(parts, artworkStatus)
+	}
+	parts = append(parts, related)
+	full := lipgloss.JoinVertical(lipgloss.Left, parts...)
+
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
@@ -175,9 +208,9 @@ func renderPosterBlock(ds *DetailState, w, h int) string {
 		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, w-4, detailPosterHeight)
 	}
 
-	// Backdrop carousel strip — rendered directly under the poster once
-	// the "artwork" verb resolves with >1 backdrop. Returns "" otherwise
-	// and lipgloss.JoinVertical folds the empty row away.
+	// Backdrop carousel strip — rendered directly under the poster. Emits
+	// a faint loading/empty label while the "artwork" verb is in-flight or
+	// resolved empty; the index indicator once it lands with data.
 	carousel := renderBackdropCarousel(ds, w-4)
 
 	body := poster
