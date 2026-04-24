@@ -1,12 +1,13 @@
-//! Metadata (detail page) cache — TTL 24 hours.
+//! Per-verb metadata cache.
 //!
-//! Key: entry_id (IMDB id preferred, falls back to provider-internal id)
-//! Value: `DetailEntry` — the enriched full-detail struct
+//! Keys are `MetadataCacheKey { verb, id_source, id }`. Each verb has its
+//! own TTL:
+//!   Credits / Artwork: 30 days
+//!   Enrich:             7 days
+//!   Related:            3 days
 //!
-//! Metadata is expensive (multiple API calls for cast, credits, similar)
-//! and changes very rarely — cast lists, genres, and descriptions are
-//! essentially immutable once a title is released. 24 hours eliminates
-//! redundant round-trips for any title revisited within a day.
+//! Values are `MetadataPayload` (defined in `ipc::v1` starting Chunk 5;
+//! a minimal placeholder enum lives here until then).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,54 +16,75 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::debug;
 
+use crate::cache::metadata_key::{MetadataCacheKey, MetadataVerb};
 use crate::cache::Ttl;
-use crate::ipc::DetailEntry;
 
-#[allow(dead_code)] // pub API: used by engine metadata cache
-const TTL: Duration = Duration::from_secs(24 * 60 * 60);
+// TODO(chunk-5): replace with `pub use crate::ipc::v1::MetadataPayload;`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetadataPayload {
+    Empty,
+    // Enrich(EnrichData), Credits(CreditsData), ...  — filled in Chunk 5.
+}
 
-/// Thread-safe metadata / detail cache.
-#[allow(dead_code)] // pub API: used by engine metadata cache
+pub const CREDITS_TTL: Duration = Duration::from_secs(30 * 86_400);
+pub const ARTWORK_TTL: Duration = Duration::from_secs(30 * 86_400);
+pub const ENRICH_TTL:  Duration = Duration::from_secs( 7 * 86_400);
+pub const RELATED_TTL: Duration = Duration::from_secs( 3 * 86_400);
+
+fn ttl_for(verb: MetadataVerb) -> Duration {
+    match verb {
+        MetadataVerb::Credits => CREDITS_TTL,
+        MetadataVerb::Artwork => ARTWORK_TTL,
+        MetadataVerb::Enrich  => ENRICH_TTL,
+        MetadataVerb::Related => RELATED_TTL,
+    }
+}
+
 #[derive(Clone)]
-#[allow(clippy::type_complexity)]
 pub struct MetadataCache {
-    inner: Arc<RwLock<HashMap<String, Ttl<DetailEntry>>>>,
+    inner: Arc<RwLock<HashMap<MetadataCacheKey, Ttl<MetadataPayload>>>>,
+    override_ttl: Option<Duration>,
 }
 
 impl MetadataCache {
-    #[allow(dead_code)] // pub API: used by engine metadata cache
     pub fn new() -> Self {
-        MetadataCache { inner: Arc::new(RwLock::new(HashMap::new())) }
+        MetadataCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            override_ttl: None,
+        }
     }
 
-    #[allow(dead_code)] // pub API: used by engine metadata cache
-    /// Look up a cached detail entry.
-    pub async fn get(&self, id: &str) -> Option<DetailEntry> {
+    /// Constructor for tests where the standard TTLs (days) are impractical.
+    #[cfg(test)]
+    pub fn with_custom_ttl(ttl: Duration) -> Self {
+        MetadataCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            override_ttl: Some(ttl),
+        }
+    }
+
+    pub async fn get(&self, key: &MetadataCacheKey) -> Option<MetadataPayload> {
         let map = self.inner.read().await;
-        let entry = map.get(id)?;
+        let entry = map.get(key)?;
         if entry.is_valid() {
-            debug!("metadata cache HIT id={}", id);
+            debug!(verb = ?key.verb, id = %key.id, "metadata cache HIT");
             Some(entry.value.clone())
         } else {
-            debug!("metadata cache EXPIRED id={}", id);
+            debug!(verb = ?key.verb, id = %key.id, "metadata cache EXPIRED");
             None
         }
     }
 
-    #[allow(dead_code)] // pub API: used by engine metadata cache
-    /// Store enriched detail for an entry.
-    pub async fn insert(&self, id: impl Into<String>, detail: DetailEntry) {
-        let key = id.into();
-        debug!("metadata cache INSERT id={}", key);
-        self.inner.write().await.insert(key, Ttl::new(detail, TTL));
+    pub async fn insert(&self, key: MetadataCacheKey, payload: MetadataPayload) {
+        let ttl = self.override_ttl.unwrap_or_else(|| ttl_for(key.verb));
+        debug!(verb = ?key.verb, id = %key.id, "metadata cache INSERT");
+        self.inner.write().await.insert(key, Ttl::new(payload, ttl));
     }
 
-    #[allow(dead_code)] // pub API: used by engine metadata cache
     pub async fn evict_expired(&self) {
         self.inner.write().await.retain(|_, v| v.is_valid());
     }
 
-    #[allow(dead_code)] // pub API: used by engine metadata cache
     pub async fn clear(&self) {
         self.inner.write().await.clear();
     }
@@ -70,4 +92,41 @@ impl MetadataCache {
 
 impl Default for MetadataCache {
     fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::metadata_key::IdSource;
+    use std::time::Duration;
+
+    fn k(verb: MetadataVerb, id: &str) -> MetadataCacheKey {
+        MetadataCacheKey { verb, id_source: IdSource::Imdb, id: id.into() }
+    }
+
+    #[tokio::test]
+    async fn credits_insert_get_round_trip() {
+        let c = MetadataCache::new();
+        let payload = MetadataPayload::Empty;
+        c.insert(k(MetadataVerb::Credits, "tt1"), payload.clone()).await;
+        assert_eq!(c.get(&k(MetadataVerb::Credits, "tt1")).await, Some(payload));
+    }
+
+    #[tokio::test]
+    async fn distinct_verbs_distinct_slots() {
+        let c = MetadataCache::new();
+        c.insert(k(MetadataVerb::Credits, "tt1"), MetadataPayload::Empty).await;
+        c.insert(k(MetadataVerb::Artwork, "tt1"), MetadataPayload::Empty).await;
+        c.evict_expired().await;
+        assert!(c.get(&k(MetadataVerb::Credits, "tt1")).await.is_some());
+        assert!(c.get(&k(MetadataVerb::Artwork, "tt1")).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn expired_entry_not_served() {
+        let c = MetadataCache::with_custom_ttl(Duration::from_millis(1));
+        c.insert(k(MetadataVerb::Enrich, "tt1"), MetadataPayload::Empty).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(c.get(&k(MetadataVerb::Enrich, "tt1")).await.is_none());
+    }
 }

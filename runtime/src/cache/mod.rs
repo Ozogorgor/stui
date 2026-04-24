@@ -6,7 +6,7 @@
 //! | Cache             | Key                                | Value              | TTL    | Disk-persisted |
 //! |-------------------|------------------------------------|--------------------|--------|----------------|
 //! | `SearchCache`     | (plugin_id, query, scope, page)    | Vec<MediaEntry>    | 2 hr   | yes            |
-//! | `MetadataCache`   | imdb_id / entry_id                 | DetailEntry        | 24 hr  | no (unused)    |
+//! | `MetadataCache`   | (verb, id_source, id)              | MetadataPayload    | 3d-30d | no (disk wire-up deferred) |
 //! | `StreamCache`     | entry_id                           | Vec<Stream>        | 10 min | no (unused)    |
 //!
 //! `SearchCache` is the only one exercised by real call sites today — the
@@ -26,7 +26,7 @@ pub mod streams;
 pub mod persistent;
 
 pub use search::SearchCache;
-pub use metadata::MetadataCache;
+pub use metadata::{MetadataCache, MetadataPayload, CREDITS_TTL, ARTWORK_TTL, ENRICH_TTL, RELATED_TTL};
 pub use metadata_key::{MetadataVerb, IdSource, MetadataCacheKey};
 pub use streams::StreamCache;
 pub use persistent::{default_cache_db_path, SqliteKv};
