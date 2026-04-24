@@ -21,11 +21,13 @@
 
 pub mod search;
 pub mod metadata;
+pub mod metadata_key;
 pub mod streams;
 pub mod persistent;
 
 pub use search::SearchCache;
 pub use metadata::MetadataCache;
+pub use metadata_key::{MetadataVerb, IdSource, MetadataCacheKey};
 pub use streams::StreamCache;
 pub use persistent::{default_cache_db_path, SqliteKv};
 
