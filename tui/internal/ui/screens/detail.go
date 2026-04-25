@@ -45,10 +45,29 @@ import (
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/state"
 	"github.com/stui/stui/internal/ui/components"
+	posterpkg "github.com/stui/stui/internal/ui/components/poster"
 	"github.com/stui/stui/pkg/bidi"
 	"github.com/stui/stui/pkg/theme"
 	"github.com/stui/stui/pkg/watchhistory"
 )
+
+// detailPosterImageView caches the ImageView instance per poster path
+// so repeated renders reuse chafa's internal output cache and don't
+// re-shell for every frame. Keyed on the cached file path (which
+// changes per URL hash), so PosterURL-driven posters never leak
+// across entries.
+var detailPosterImageViews = map[string]*components.ImageView{}
+
+func detailCardImageView(path string, w, h int) *components.ImageView {
+	iv, ok := detailPosterImageViews[path]
+	if !ok {
+		iv = components.NewImageView(w, h)
+		iv.SetImage(path)
+		detailPosterImageViews[path] = iv
+	}
+	iv.SetSize(w, h)
+	return iv
+}
 
 const (
 	detailPosterWidth  = 22 // chars
@@ -95,7 +114,10 @@ func RenderDetailOverlay(
 // ── Main detail view ─────────────────────────────────────────────────────────
 
 func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
-	header := renderDetailHeader(ds, w, tab)
+	// No separate header — breadcrumb + back-affordance live elsewhere
+	// (the global status bar carries the hotkey hints via
+	// DetailState.FooterText), and the top row reserved for the header
+	// was worth reclaiming once RELATED needed the space.
 
 	// Related row: reserve height only if it has content. When the
 	// verb resolves empty the row is hidden entirely so the main body
@@ -115,8 +137,8 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 		statusH = lipgloss.Height(artworkStatus)
 	}
 
-	// Split: poster|info section, then related row at bottom
-	mainH := h - lipgloss.Height(header) - relatedH - statusH
+	// Split: poster|info section, then related row at bottom.
+	mainH := h - relatedH - statusH
 
 	left := renderPosterBlock(ds, detailPosterWidth, mainH)
 	right := renderInfoBlock(ds, w-detailPosterWidth-4, mainH)
@@ -129,7 +151,7 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 			Render(right),
 	)
 
-	parts := []string{header, main}
+	parts := []string{main}
 	if artworkStatus != "" {
 		parts = append(parts, artworkStatus)
 	}
@@ -138,6 +160,10 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 	}
 	full := lipgloss.JoinVertical(lipgloss.Left, parts...)
 
+	// No border here — the parent View wraps this in MainCardStyle
+	// (same style the grid/list screens use) so the detail overlay
+	// matches the rest of STUI's chrome (rounded border, accent
+	// color when focused, consistent side margins).
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
 		Width(w).
@@ -148,42 +174,43 @@ func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
 // ── Header bar ───────────────────────────────────────────────────────────────
 
 func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
+	// Header carries only the breadcrumb + back affordance now —
+	// focus-specific hotkey hints have moved to the global status bar
+	// via `DetailState.FooterText()` (mirrors the music-screen pattern
+	// at music_browse.go:FooterText). This keeps the hint style
+	// consistent with every other screen and reclaims a row on the card.
 	backHint := theme.T.DetailBackStyle().Render("← esc")
-
 	breadcrumb := theme.T.BreadcrumbStyle().Render("  " + ds.BreadcrumbTrail(tab.String()))
 
-	// Focus hint — changes based on which zone is active
-	var focusHint string
-	switch ds.Focus {
-	case FocusDetailCast:
-		focusHint = lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
-			Render("  ↑↓ navigate  enter search  tab → providers")
-	case FocusDetailProvider:
-		focusHint = lipgloss.NewStyle().Foreground(theme.T.Neon()).
-			Render("  ←→ select  enter ▶ play  tab → related")
-	case FocusDetailRelated:
-		focusHint = lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).
-			Render("  ←→ scroll  enter open  tab → cast")
-	default:
-		focusHint = lipgloss.NewStyle().Foreground(theme.T.TextDim()).
-			Render("  ↓/j cast  tab providers  1-4 quality  esc back")
-	}
-
-	// Right: tab + runtime pill
-	pill := theme.T.StatusAccentStyle().Render(" stui ")
-	hintW := lipgloss.Width(backHint) + lipgloss.Width(breadcrumb) + lipgloss.Width(focusHint)
-	rightW := lipgloss.Width(pill)
-	gap := max(0, w-hintW-rightW-4)
-
-	row := backHint + breadcrumb + focusHint + strings.Repeat(" ", gap) + pill
+	hintW := lipgloss.Width(backHint) + lipgloss.Width(breadcrumb)
+	gap := max(0, w-hintW-4)
+	row := backHint + breadcrumb + strings.Repeat(" ", gap)
 
 	return lipgloss.NewStyle().
 		Background(theme.T.Surface()).
-		BorderStyle(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(theme.T.Border()).
 		BorderBottom(true).
 		Width(w - 2).
 		Render(row)
+}
+
+// FooterText returns the focus-specific hotkey hint for the detail
+// overlay — read by `viewStatusBar` so the global footer carries the
+// hint the same way every other screen does.
+func (d *DetailState) FooterText() string {
+	switch d.Focus {
+	case FocusDetailCrew:
+		return "↑↓ crew · tab → cast · esc back"
+	case FocusDetailCast:
+		return "↑↓ navigate · enter search · tab → providers · esc back"
+	case FocusDetailProvider:
+		return "←→ select · enter ▶ play · tab → related · esc back"
+	case FocusDetailRelated:
+		return "←→ scroll · enter open · tab → info · esc back"
+	default:
+		return "tab → crew · j/↓ cast · 1-4 quality · esc back"
+	}
 }
 
 // ── Poster block ──────────────────────────────────────────────────────────────
@@ -191,10 +218,29 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 func renderPosterBlock(ds *DetailState, w, h int) string {
 	var poster string
 
-	if ds.Entry.PosterArt != "" {
+	// Precedence (mirrors the grid card at components/card.go:102-114):
+	//
+	//   1. PosterArt — runtime-pre-rendered block art (rare, reserved for
+	//      future cache warm-up).
+	//   2. PosterURL with on-disk cache hit → render through ImageView
+	//      (chafa / kitty graphics depending on terminal).
+	//   3. PosterURL with cache miss → enqueue for background download
+	//      and render the placeholder meanwhile. The grid's download pool
+	//      will fill the cache; a later detail re-render picks it up.
+	//   4. No poster data at all → placeholder.
+	posterW := w - 4
+	switch {
+	case ds.Entry.PosterArt != "":
 		poster = ds.Entry.PosterArt
-	} else {
-		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, w-4, detailPosterHeight)
+	case ds.Entry.PosterURL != "":
+		if cached, hit := posterpkg.CachedPath(ds.Entry.PosterURL); hit {
+			poster = detailCardImageView(cached, posterW, detailPosterHeight).View()
+		} else {
+			posterpkg.Global().Enqueue(ds.Entry.PosterURL)
+			poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, posterW, detailPosterHeight)
+		}
+	default:
+		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, posterW, detailPosterHeight)
 	}
 
 	// Backdrop carousel strip — rendered directly under the poster. Emits
@@ -248,9 +294,25 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	meta := theme.T.DetailMetaStyle().Render(strings.Join(metaParts, "  ·  "))
 	sections = append(sections, meta, "")
 
-	// Description — word-wrapped to panel width with BiDi support
+	// Description — word-wrapped to panel width with BiDi support.
+	// Clamped to `descMaxLines` so a long synopsis doesn't crowd out
+	// CREW / STREAM VIA / RELATED below it. Over-limit lines are
+	// truncated with a trailing "…" so it's clear there's more.
+	const descMaxLines = 4
 	if ds.Entry.Description != "" {
 		lines := bidi.WordWrap(ds.Entry.Description, w-2)
+		if len(lines) > descMaxLines {
+			lines = lines[:descMaxLines]
+			// Append ellipsis to the last visible line, truncating
+			// one character if needed to keep within panel width.
+			last := lines[len(lines)-1]
+			if lipgloss.Width(last)+1 > w-2 && len(last) > 0 {
+				// Drop the last rune to make room for the ellipsis.
+				rr := []rune(last)
+				last = string(rr[:len(rr)-1])
+			}
+			lines[len(lines)-1] = last + "…"
+		}
 		descStyle := bidi.AlignedStyle(theme.T.DetailDescStyle().Width(w-2), ds.Entry.Description)
 		desc := strings.Join(lines, "\n")
 		sections = append(sections, descStyle.Render(desc), "")

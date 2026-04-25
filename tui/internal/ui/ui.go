@@ -2972,14 +2972,29 @@ func (m Model) View() tea.View {
 	}
 	var content string
 	if m.screen == screenDetail && m.detail != nil {
+		// Wrap the detail overlay in MainCardStyle (same chrome the
+		// grid/list screens use) so border color, side margins, and
+		// rounded corners match across screens. Reserve rows for the
+		// statusbar (4) + a blank row + MainCardStyle's border+padding
+		// (2) so the overlay content fits cleanly inside the frame.
+		const statusBarRows = 4
+		const blankRow = 1
+		const cardChromeRows = 2 // top + bottom border
+		overlayH := max(1, m.state.Height-statusBarRows-blankRow-cardChromeRows)
 		overlay := screens.RenderDetailOverlay(
 			m.detail,
-			m.state.Width,
-			m.state.Height,
+			m.state.Width-4, // MainCardStyle adds margin(2) + border(2) of horizontal chrome
+			overlayH,
 			m.state.ActiveTab,
 			m.state.RuntimeStatus.String(),
 		)
-		content = m.applyToast(overlay)
+		framed := theme.T.MainCardStyle(true).Width(m.state.Width - 2).Render(overlay)
+		composed := lipgloss.JoinVertical(lipgloss.Left,
+			framed,
+			"",
+			m.viewStatusBar(),
+		)
+		content = m.applyToast(composed)
 	} else {
 		// Hide the footer (statusbar + preceding blank line) only on the
 		// Queue sub-tab, which uses every row for tracklist + visualizer.
@@ -3424,10 +3439,17 @@ func (m Model) viewStatusBar() string {
 	// hint/status text; that supersedes the global StatusMsg slot so the
 	// stale "Added X to queue" line from a previous action doesn't sit
 	// in the footer forever (the sub-screens apply their own statusTTL
-	// before reverting to a key-hint string).
+	// before reverting to a key-hint string). The detail overlay uses
+	// the same pattern — its focus-specific hotkey hints live here
+	// instead of in a handwritten header bar.
 	statusText := m.state.StatusMsg
 	if m.state.ActiveTab == state.TabMusic {
 		if t := m.musicScreen.FooterText(); t != "" {
+			statusText = t
+		}
+	}
+	if m.screen == screenDetail && m.detail != nil {
+		if t := m.detail.FooterText(); t != "" {
 			statusText = t
 		}
 	}
