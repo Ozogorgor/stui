@@ -32,8 +32,18 @@ use crate::ipc::v1::{
 /// additions (tracked in the Chunk-7 TUI task).
 pub(super) fn enrich_to_payload(resp: EnrichResponse) -> MetadataPayload {
     let mut data = EnrichData::default();
+    // Forward every cross-provider id the plugin returned (anilist, mal,
+    // tmdb, tvdb, kitsu, …).  This is the bridge that lets a kitsu-only
+    // entry's enrich result feed an AniList native id back into the
+    // orchestrator so credits/artwork/related can dispatch correctly.
+    for (k, v) in &resp.entry.external_ids {
+        data.external_ids.insert(k.clone(), v.clone());
+    }
+    // Some plugins populate the dedicated `imdb_id` field but not
+    // `external_ids["imdb"]`.  Mirror it across so consumers don't need
+    // to special-case both.
     if let Some(imdb) = resp.entry.imdb_id.clone() {
-        data.external_ids.insert("imdb".into(), imdb);
+        data.external_ids.entry("imdb".into()).or_insert(imdb);
     }
     MetadataPayload::Enrich(data)
 }

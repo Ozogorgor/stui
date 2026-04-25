@@ -114,8 +114,8 @@ impl MetadataDispatch for EngineMetadataDispatch {
     ) -> Result<EnrichResponse, String> {
         // `supervisor_enrich` returns the enriched PluginEntry only —
         // re-wrap into EnrichResponse with confidence=1.0 (the plugin-side
-        // confidence is discarded by supervisor_enrich; a future ABI
-        // rev can surface it here).
+        // confidence is discarded by supervisor_enrich; a future ABI rev
+        // can surface it here).
         self.engine
             .supervisor_enrich(plugin, req)
             .await

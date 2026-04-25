@@ -845,6 +845,50 @@ struct ExecResponse {
     stderr: String,
 }
 
+// ── WASM-only plugin instance cell ────────────────────────────────────────────
+
+/// Single-threaded plugin instance storage used by `stui_export_plugin!` /
+/// `stui_export_catalog_plugin!` on `wasm32-wasip1`.
+///
+/// The export macros previously wrapped the plugin in
+/// `OnceLock<std::sync::Mutex<T>>` purely to satisfy the `Sync` bound on
+/// statics. On `wasm32-wasip1` that path is actively harmful: the
+/// `no_threads.rs` mutex impl asserts on recursive lock attempts, and
+/// because wasm panics never run drop handlers, *any* verb panic leaves
+/// the mutex permanently locked — every subsequent verb call then traps
+/// with the misleading "cannot recursively acquire mutex" message,
+/// hiding the real underlying panic.
+///
+/// This cell drops the mutex entirely on wasm and lets verb dispatch hand
+/// out `&T` / `&mut T` directly. The `unsafe impl Sync` is sound because
+/// WASI plugins run single-threaded and the host supervisor serializes
+/// every verb call, so no two references can coexist.
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub struct WasmPluginCell<T>(::core::cell::UnsafeCell<Option<T>>);
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl<T> ::core::marker::Sync for WasmPluginCell<T> {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: Default> WasmPluginCell<T> {
+    pub const fn new() -> Self {
+        Self(::core::cell::UnsafeCell::new(None))
+    }
+
+    /// Get an exclusive reference, lazily creating `T::default()` on first call.
+    ///
+    /// # Safety
+    /// Caller must guarantee no other reference into the cell exists at
+    /// the same time. The export macros call this only from wasm ABI
+    /// entry points, which the host supervisor serializes — single-threaded
+    /// WASI satisfies the requirement.
+    pub unsafe fn borrow_mut(&self) -> &mut T {
+        let opt = unsafe { &mut *self.0.get() };
+        opt.get_or_insert_with(T::default)
+    }
+}
+
 // ── ABI glue macro ────────────────────────────────────────────────────────────
 
 /// Internal; always invoked by `stui_export_plugin!` / `stui_export_catalog_plugin!` — do not call directly.
@@ -915,14 +959,34 @@ macro_rules! __catalog_abi_fn {
 #[macro_export]
 macro_rules! stui_export_plugin {
     ($plugin_ty:ty) => {
-        // WASM is single-threaded so contention never occurs, but the static
-        // must be `Sync` to satisfy Rust's bound on statics when the crate is
-        // compiled for host targets (e.g. `cargo check --workspace`).
-        // `Mutex` gives us that `Sync` for free and `MutexGuard: Deref<Target=T>`
-        // preserves the `&*borrow` shape used by `__catalog_abi_fn!`.
+        // Plugin instance storage. Two paths:
+        //
+        // * `wasm32-wasip1` — uses `WasmPluginCell` (no lock). See its docs
+        //   for the rationale; tl;dr: the `Mutex<T>` we used to wrap this
+        //   was both pointless (single-threaded runtime) and dangerous
+        //   (any verb panic left the mutex permanently locked because wasm
+        //   panics never run drop handlers).
+        //
+        // * Host targets — keeps `OnceLock<Mutex<T>>` so the existing
+        //   host-side test infrastructure compiles and the static
+        //   continues to satisfy the `Sync` bound.
+        #[cfg(target_arch = "wasm32")]
+        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> =
+            $crate::WasmPluginCell::new();
+
+        #[cfg(not(target_arch = "wasm32"))]
         static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
             std::sync::OnceLock::new();
 
+        #[cfg(target_arch = "wasm32")]
+        fn get_plugin() -> &'static $plugin_ty {
+            // SAFETY: WASI is single-threaded and the host supervisor
+            // serializes every verb call into the same instance, so no
+            // two references into PLUGIN_INSTANCE can coexist.
+            unsafe { PLUGIN_INSTANCE.borrow_mut() }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         fn get_plugin() -> std::sync::MutexGuard<'static, $plugin_ty> {
             PLUGIN_INSTANCE
                 .get_or_init(|| std::sync::Mutex::new(<$plugin_ty>::default()))
@@ -1064,19 +1128,34 @@ macro_rules! stui_export_plugin {
 #[macro_export]
 macro_rules! stui_export_catalog_plugin {
     ($plugin_ty:ty) => {
-        // WASM is single-threaded so there is never real contention, but the
-        // static must be `Sync` to satisfy Rust's bound on statics when the
-        // crate is compiled for host targets (e.g. `cargo check --workspace`
-        // or host-side unit tests). `Mutex<T>` supplies `Sync`, and
-        // `MutexGuard: Deref<Target=T>` preserves the `&*borrow` / `&mut *inst`
-        // shapes used below.
+        // Plugin instance storage. See `WasmPluginCell` docs for why the
+        // wasm path drops the mutex; in short, wasm panics never run drop,
+        // so a `std::sync::Mutex` here would stay locked forever after any
+        // verb panic and trap every subsequent call with the misleading
+        // "cannot recursively acquire mutex" message. Host builds keep the
+        // mutex so the existing test infrastructure compiles.
+        #[cfg(target_arch = "wasm32")]
+        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> =
+            $crate::WasmPluginCell::new();
+
+        #[cfg(not(target_arch = "wasm32"))]
         static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
             std::sync::OnceLock::new();
 
+        #[cfg(not(target_arch = "wasm32"))]
         fn __plugin_cell() -> &'static std::sync::Mutex<$plugin_ty> {
             PLUGIN_INSTANCE.get_or_init(|| std::sync::Mutex::new(<$plugin_ty>::default()))
         }
 
+        #[cfg(target_arch = "wasm32")]
+        fn get_plugin() -> &'static $plugin_ty {
+            // SAFETY: WASI is single-threaded and the host supervisor
+            // serializes every verb call, so no two references into
+            // PLUGIN_INSTANCE can coexist.
+            unsafe { PLUGIN_INSTANCE.borrow_mut() }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         fn get_plugin() -> std::sync::MutexGuard<'static, $plugin_ty> {
             __plugin_cell().lock().unwrap_or_else(|p| p.into_inner())
         }
@@ -1127,8 +1206,18 @@ macro_rules! stui_export_catalog_plugin {
             };
             let logger = $crate::DefaultPluginLogger;
             let ctx = $crate::InitContext::from_request(&req, &logger);
-            let mut inst = __plugin_cell().lock().unwrap_or_else(|p| p.into_inner());
-            let result = <$plugin_ty as $crate::Plugin>::init(&mut *inst, &ctx);
+            #[cfg(target_arch = "wasm32")]
+            let result = {
+                // SAFETY: stui_init is the first call into the plugin and runs
+                // before any verb dispatch, so no other reference exists.
+                let inst: &mut $plugin_ty = unsafe { PLUGIN_INSTANCE.borrow_mut() };
+                <$plugin_ty as $crate::Plugin>::init(inst, &ctx)
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let result = {
+                let mut inst = __plugin_cell().lock().unwrap_or_else(|p| p.into_inner());
+                <$plugin_ty as $crate::Plugin>::init(&mut *inst, &ctx)
+            };
             let env: $crate::InitResultEnvelope = result.into();
             $crate::__write_result(&env)
         }

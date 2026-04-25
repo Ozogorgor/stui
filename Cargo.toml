@@ -30,6 +30,12 @@ opt-level     = 3
 lto           = true
 codegen-units = 1
 strip         = true
+# Plugins run on wasm32-wasip1 where panic-unwind cannot run drop handlers; the
+# old `OnceLock<Mutex<Plugin>>` pattern would leave the mutex permanently
+# locked after any verb panic. The SDK now uses `WasmPluginCell` on wasm to
+# avoid the mutex entirely, so this profile mirrors the build script's
+# nightly `panic_immediate_abort` path on stable.
+panic         = "abort"
 
 # Dev profile for runtime, sdk, and aria2
 [profile.dev]

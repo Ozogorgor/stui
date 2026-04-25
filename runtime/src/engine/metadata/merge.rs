@@ -83,6 +83,15 @@ fn fill_from_secondaries(
     fill!(season);
     fill!(episode);
     fill!(original_language);
+    // Union cross-provider native ids across all responses. Without this
+    // a kitsu primary that found nothing would shadow an anilist
+    // secondary that resolved an anilist id (which is how the
+    // kitsu-only-entry → AniList bridge has to land).
+    for s in &secondaries {
+        for (k, v) in &s.entry.external_ids {
+            base.entry.external_ids.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
     base
 }
 

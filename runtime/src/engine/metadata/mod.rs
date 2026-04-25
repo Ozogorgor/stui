@@ -40,6 +40,7 @@ use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
     EnrichResponse, PluginEntry, RelatedRequest,
 };
+use stui_plugin_sdk::EntryKind;
 use crate::cache::metadata::{MetadataCache, MetadataPayload};
 use crate::cache::metadata_key::{IdSource, MetadataCacheKey, MetadataVerb};
 
@@ -51,6 +52,12 @@ mod dispatch;
 // ── Request / Partial types ──────────────────────────────────────────────────
 
 /// Single top-level request to enrich a detail view for `entry_id`.
+///
+/// `title`/`year`/`external_ids` ride along so the orchestrator's enrich
+/// stage can title-search a foreign provider (e.g. resolve a `kitsu-…`
+/// entry's AniList id) and downstream verbs can dispatch each plugin
+/// using its native id from `external_ids` rather than blindly forwarding
+/// the entry's primary `(id_source, entry_id)` to every source.
 #[derive(Debug, Clone)]
 pub struct DetailMetadataRequest {
     pub entry_id: String,
@@ -58,6 +65,9 @@ pub struct DetailMetadataRequest {
     /// Lowercase TUI-tab label: `"movies" | "series" | "anime" | "music"`.
     pub kind: String,
     pub per_verb_timeout: Duration,
+    pub title: String,
+    pub year: Option<u16>,
+    pub external_ids: std::collections::BTreeMap<String, String>,
 }
 
 /// One merged per-verb payload streamed back to the TUI as soon as its
@@ -115,13 +125,37 @@ pub trait MetadataDispatch: Send + Sync {
 /// `tokio::spawn`. The real caller will pass an `Arc`-wrapped handle.
 pub async fn fetch_detail_metadata<E>(
     engine: E,
-    req: DetailMetadataRequest,
+    mut req: DetailMetadataRequest,
     tx: mpsc::Sender<DetailMetadataPartial>,
 ) where
     E: MetadataDispatch + Clone + 'static,
 {
+    // ── Phase 1 — Enrich ─────────────────────────────────────────────────
+    // Run enrich first (sequentially) so any external_ids it discovers
+    // are available to the credits/artwork/related fan-outs in phase 2.
+    // This is what bridges entries that arrived from one provider (e.g.
+    // kitsu, which doesn't implement credits) over to a richer source
+    // like AniList.
+    let enrich_payload = run_verb(&engine, MetadataVerb::Enrich, &req).await;
+    if let MetadataPayload::Enrich(ref e) = enrich_payload {
+        for (k, v) in &e.external_ids {
+            // Don't clobber pre-existing ids passed in from the catalog —
+            // those are authoritative; enrich's hits are best-effort.
+            req.external_ids.entry(k.clone()).or_insert(v.clone());
+        }
+    }
+    // Stream the enrich partial first so the TUI can populate Studio /
+    // Networks / etc. while phase 2 is still running.
+    let _ = tx
+        .send(DetailMetadataPartial {
+            entry_id: req.entry_id.clone(),
+            verb: MetadataVerb::Enrich,
+            payload: enrich_payload,
+        })
+        .await;
+
+    // ── Phase 2 — Credits / Artwork / Related (parallel) ─────────────────
     let verbs = [
-        MetadataVerb::Enrich,
         MetadataVerb::Credits,
         MetadataVerb::Artwork,
         MetadataVerb::Related,
@@ -143,12 +177,25 @@ pub async fn fetch_detail_metadata<E>(
             let _ = tx_c.send(partial).await;
         }));
     }
-    // Wait for every verb task to finish (or the spawn to panic).
-    // The orchestrator returns AFTER all partials are sent — callers
-    // who want fire-and-forget should wrap this in `tokio::spawn`.
     for h in handles {
         let _ = h.await;
     }
+}
+
+/// Resolve which `(id, id_source)` to send to a specific plugin given a
+/// request that may carry cross-provider external_ids.
+///
+/// Prefers the plugin's native id from `req.external_ids` when present;
+/// otherwise falls back to the request's primary `(entry_id, id_source)`.
+fn id_for_plugin(req: &DetailMetadataRequest, plugin: &str) -> (String, String) {
+    if let Some(id) = req.external_ids.get(plugin) {
+        return (id.clone(), plugin.to_string());
+    }
+    // Common alias: TUI prefix / config key uses the plugin's display
+    // name, but external_ids may key by the canonical id_source string.
+    // Today they coincide for our seven bundled providers, so a single
+    // lookup is enough.
+    (req.entry_id.clone(), id_source_as_str(&req.id_source))
 }
 
 /// Single-verb pipeline: cache lookup → source resolution → fan-out →
@@ -170,10 +217,36 @@ async fn run_verb<E: MetadataDispatch>(
         return cached;
     }
 
+    // Anime-shaped entries (id_source = anilist/kitsu) get filed under
+    // the "series" tab by the catalog merge, so the wire `kind` arriving
+    // from the TUI is "series" — but the series source list (tvdb/tmdb/
+    // omdb) won't resolve any anime-aware plugin, leaving every verb
+    // empty. Promote to the "anime" source list when the id_source
+    // signals anime origin.
+    let effective_kind: &str = match (req.kind.as_str(), &req.id_source) {
+        ("series", IdSource::Anilist | IdSource::Kitsu) => "anime",
+        _ => req.kind.as_str(),
+    };
+
     // Empty source list → no plugins can serve this (verb, kind). Bail.
-    let sources = engine.sources().resolve(verb, &req.kind);
+    let sources = engine.sources().resolve(verb, effective_kind);
+    debug!(
+        ?verb,
+        wire_kind = %req.kind,
+        effective_kind,
+        id_source = %id_source_as_str(&req.id_source),
+        entry_id = %req.entry_id,
+        sources = ?sources,
+        "metadata verb dispatch"
+    );
     if sources.is_empty() {
-        debug!(?verb, kind = %req.kind, "no sources for verb");
+        debug!(
+            ?verb,
+            id_source = %id_source_as_str(&req.id_source),
+            kind = %effective_kind,
+            entry_id = %req.entry_id,
+            "no sources for verb — entry will get empty payload"
+        );
         return MetadataPayload::Empty;
     }
 
@@ -258,23 +331,59 @@ async fn run_verb<E: MetadataDispatch>(
             "skipping cache write: fan-out produced no results (timeout or all errored)"
         );
     }
+    debug!(
+        ?verb,
+        id_source = %id_source_as_str(&req.id_source),
+        entry_id = %req.entry_id,
+        had_results,
+        "metadata verb result"
+    );
     payload
 }
 
 // ── Per-verb fan-out helpers ─────────────────────────────────────────────────
+
+/// Map the tab-flavoured `kind` string coming from the TUI
+/// (`"movies" | "series" | "anime" | "music"`) to the `EntryKind` the
+/// plugins expect on their verb requests.
+///
+/// Anime cards hit the same `/tv/{id}/credits` endpoint as series on
+/// TMDB, so they map to `Series`. Music maps to `Track` as a fallback —
+/// music providers (discogs/musicbrainz) route on scope internally and
+/// won't use kind for detail-level verbs today, but we pass something
+/// so the wire form isn't ambiguous.
+fn entry_kind_from_hint(hint: &str) -> EntryKind {
+    match hint {
+        "movies" => EntryKind::Movie,
+        "series" | "anime" => EntryKind::Series,
+        "music" => EntryKind::Track,
+        _ => EntryKind::Movie, // safest default — most verbs error cleanly on wrong-kind
+    }
+}
 
 async fn fan_out_enrich<E: MetadataDispatch>(
     engine: &E,
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<EnrichResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
+        // Each plugin's enrich gets the entry id it natively recognises
+        // (when known via external_ids) plus title/year so plugins that
+        // don't yet have a native id can title-search to discover one.
+        let (id, _id_src) = id_for_plugin(req, plugin);
         let er = EnrichRequest {
             partial: PluginEntry {
-                id: req.entry_id.clone(),
-                kind: Default::default(),
-                title: String::new(),
+                id,
+                kind,
+                title: req.title.clone(),
+                year: req.year.map(u32::from),
                 source: plugin.clone(),
+                external_ids: req
+                    .external_ids
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
                 ..Default::default()
             },
             prefer_id_source: Some(id_source_as_str(&req.id_source)),
@@ -289,12 +398,10 @@ async fn fan_out_credits<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<CreditsResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
-        let cr = CreditsRequest {
-            id: req.entry_id.clone(),
-            id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
-        };
+        let (id, id_source) = id_for_plugin(req, plugin);
+        let cr = CreditsRequest { id, id_source, kind };
         engine.call_credits(plugin, cr)
     });
     join_all(calls).await.into_iter().filter_map(Result::ok).collect()
@@ -305,11 +412,13 @@ async fn fan_out_artwork<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<ArtworkResponse> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
+        let (id, id_source) = id_for_plugin(req, plugin);
         let ar = ArtworkRequest {
-            id: req.entry_id.clone(),
-            id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
+            id,
+            id_source,
+            kind,
             size: crate::abi::types::ArtworkSize::Any,
         };
         engine.call_artwork(plugin, ar)
@@ -322,11 +431,13 @@ async fn fan_out_related<E: MetadataDispatch>(
     sources: &[String],
     req: &DetailMetadataRequest,
 ) -> Vec<Vec<PluginEntry>> {
+    let kind = entry_kind_from_hint(&req.kind);
     let calls = sources.iter().map(|plugin| {
+        let (id, id_source) = id_for_plugin(req, plugin);
         let rr = RelatedRequest {
-            id: req.entry_id.clone(),
-            id_source: id_source_as_str(&req.id_source),
-            kind: Default::default(),
+            id,
+            id_source,
+            kind,
             relation: crate::abi::types::RelationKind::Any,
             limit: 20,
         };
@@ -381,6 +492,9 @@ impl DetailMetadataRequest {
             id_source: parse_id_source(&r.id_source),
             kind: r.kind,
             per_verb_timeout: DEFAULT_PER_VERB_TIMEOUT,
+            title: r.title,
+            year: r.year,
+            external_ids: r.external_ids,
         }
     }
 }

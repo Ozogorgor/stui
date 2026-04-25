@@ -19,13 +19,32 @@ use std::collections::BTreeMap;
 /// `id_source` / `kind` are wire-form strings; the runtime maps `id_source`
 /// to `crate::cache::metadata_key::IdSource` and passes `kind` straight
 /// through to the `SourceResolver`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `title`, `year`, and `external_ids` are forwarded to per-plugin verb
+/// requests so the runtime's enrich stage can title-search when the entry
+/// arrived from one provider but the metadata source list points at
+/// another (e.g. a `kitsu-…` entry whose richer credits live in AniList).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GetDetailMetadataRequest {
     pub entry_id: String,
     /// `"imdb" | "tmdb" | "tvdb" | "anilist" | "kitsu" | "musicbrainz" | "discogs" | ...`
     pub id_source: String,
     /// `"movies" | "series" | "anime" | "music"`
     pub kind: String,
+    /// Display title — used by enrich title-search fallbacks when no
+    /// native id exists for a given metadata source.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    /// Release year (4-digit) — same purpose as `title`. Optional because
+    /// some music entries don't carry a year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u16>,
+    /// Pre-known cross-provider ids (e.g. `{"anilist": "5114", "kitsu": "1376"}`)
+    /// from the catalog merge. The orchestrator routes each verb call to
+    /// its plugin using these when available, falling back to
+    /// `(entry_id, id_source)` otherwise.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub external_ids: BTreeMap<String, String>,
 }
 
 /// One merged per-verb payload streamed back to the TUI as soon as its

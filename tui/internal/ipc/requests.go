@@ -329,7 +329,7 @@ func (c *Client) SwitchStream(url string) {
 //
 // Fire-and-forget — the per-verb partials don't share a request id
 // with this send; the TUI correlates them by EntryID instead.
-func (c *Client) GetDetailMetadata(entryID, idSource, kind string) {
+func (c *Client) GetDetailMetadata(entryID, idSource, kind, title string, year *uint16, externalIDs map[string]string) {
 	go func() {
 		id := c.nextID()
 		payload := map[string]any{
@@ -338,6 +338,15 @@ func (c *Client) GetDetailMetadata(entryID, idSource, kind string) {
 			"entry_id":  entryID,
 			"id_source": idSource,
 			"kind":      kind,
+		}
+		if title != "" {
+			payload["title"] = title
+		}
+		if year != nil {
+			payload["year"] = *year
+		}
+		if len(externalIDs) > 0 {
+			payload["external_ids"] = externalIDs
 		}
 		_ = c.sendRaw(payload)
 	}()

@@ -36,14 +36,9 @@ func renderRelatedRow(ds *DetailState, w, h int) string {
 	}
 
 	if len(items) == 0 {
-		empty := lipgloss.NewStyle().
-			Foreground(theme.T.TextDim()).
-			PaddingLeft(2).
-			Render(detailEmptyRelated)
-		return lipgloss.NewStyle().
-			Background(theme.T.Surface()).
-			Width(w).Height(h).
-			Render(lipgloss.JoinVertical(lipgloss.Left, header, empty))
+		// Plugins returned no related items — hide the whole row so
+		// we don't waste vertical space on an empty placeholder.
+		return ""
 	}
 
 	// Render up to similarCardCols mini cards

@@ -98,6 +98,11 @@ pub struct PluginEntry {
     /// ISO 639-1 original language. Mirrors `stui_plugin_sdk::PluginEntry`.
     /// Used by the engine's anime-mix classifier alongside genre.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub original_language: Option<String>,
+    /// Cross-provider native ids (e.g. `{"anilist": "5114", "kitsu": "1376"}`).
+    /// Mirrors `stui_plugin_sdk::PluginEntry::external_ids` so plugins can
+    /// fast-path enrich when their own native id is already known on a
+    /// foreign-provider entry.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub external_ids: HashMap<String, String>,
 }
 
 /// Returned by `stui_resolve`.

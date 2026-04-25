@@ -10,6 +10,8 @@ package screens
 //   FocusDetailRelated  — related titles row, horizontal cursor
 
 import (
+	"strings"
+
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/watchhistory"
@@ -116,7 +118,12 @@ func NewDetailState(entry ipc.DetailEntry) DetailState {
 // flip the corresponding FetchStatus to FetchEmpty so renderers can
 // distinguish "loading" from "none available".
 func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
-	if p.EntryID != d.Entry.ID {
+	// The TUI strips provider prefixes (e.g. "anilist-") off the entry id
+	// before sending GetDetailMetadata, so partials carry the stripped
+	// native id ("11061") while d.Entry.ID still has the prefixed form
+	// ("anilist-11061"). Accept both: exact match for TMDB-style ids, or
+	// suffix match (after a "-") for prefixed providers.
+	if p.EntryID != d.Entry.ID && !strings.HasSuffix(d.Entry.ID, "-"+p.EntryID) {
 		return
 	}
 	status := FetchLoaded
@@ -138,6 +145,25 @@ func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
 	case "credits":
 		d.Meta.Credits = p.Payload
 		d.Meta.CreditsStatus = status
+		// Mirror Cast into Entry.Cast so detail.go's CAST renderer (which
+		// pre-dates Meta.Credits and still reads Entry.Cast) populates.
+		// CastWire.Character is the user-facing role; fall back to Role
+		// (e.g. "actor") when a character isn't reported.
+		if len(p.Payload.Cast) > 0 {
+			cast := make([]ipc.CastMember, 0, len(p.Payload.Cast))
+			for _, c := range p.Payload.Cast {
+				role := c.Role
+				if c.Character != nil && *c.Character != "" {
+					role = *c.Character
+				}
+				cast = append(cast, ipc.CastMember{
+					Name:     c.Name,
+					Role:     role,
+					RoleType: "cast",
+				})
+			}
+			d.Entry.Cast = cast
+		}
 	case "artwork":
 		d.Meta.Artwork = p.Payload
 		d.Meta.ArtworkStatus = status

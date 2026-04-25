@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -2725,24 +2726,76 @@ func (m *Model) sendGetDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
 	if m.client == nil {
 		return nil
 	}
+
+	// Entries from non-TMDB providers carry a provider-prefixed id
+	// like "anilist-199" or "kitsu-6448"; the entry's Provider field
+	// may also be a comma-joined list of multiple providers (e.g.
+	// "anilist,kitsu" for titles that merged across catalogs).
+	//
+	// Plugin-side verb handlers strictly require `id_source` to match
+	// their own provider name and `id` to be the provider's native
+	// id form (usually numeric). So we strip the provider prefix and
+	// use *that* provider as the canonical id_source — whichever
+	// plugin receives the request then finds its own namespace.
+	entryID := entry.ID
 	idSource := entry.IDSource
 	if idSource == "" {
-		// Fallback: the catalog tracks provider, not id_source. For
-		// IMDb-flavoured entries the provider label is close enough;
-		// the runtime's parse_id_source maps unknown strings to
-		// IdSource::Other which is still safe to look up.
-		idSource = entry.Provider
+		// Prefer the prefix on the id itself — it's the most
+		// authoritative signal for which catalog owns this entry.
+		if prefix, rest, ok := splitProviderPrefix(entry.ID); ok {
+			idSource = prefix
+			entryID = rest
+		} else {
+			// Fall back to the first entry in the (possibly
+			// comma-separated) provider list.
+			idSource = firstProvider(entry.Provider)
+		}
 	}
 	kind := entry.Kind
 	if kind == "" {
 		kind = entry.Tab
 	}
-	entryID := entry.ID
+	// Pull title/year/external_ids forward so the runtime's enrich stage
+	// can title-search a foreign metadata source (e.g. resolve a kitsu-…
+	// entry's AniList equivalent) and route credits/artwork/related
+	// per-plugin via their native ids.
+	title := entry.Title
+	var yearPtr *uint16
+	if entry.Year != "" {
+		if y, err := strconv.Atoi(entry.Year); err == nil && y > 0 && y < 10000 {
+			yu := uint16(y)
+			yearPtr = &yu
+		}
+	}
+	externalIDs := entry.ExternalIDs
 	client := m.client
 	return func() tea.Msg {
-		client.GetDetailMetadata(entryID, idSource, kind)
+		client.GetDetailMetadata(entryID, idSource, kind, title, yearPtr, externalIDs)
 		return nil
 	}
+}
+
+// splitProviderPrefix recognises entry ids of the form
+// "<provider>-<native_id>" (e.g. "anilist-199", "kitsu-6448") and
+// returns (provider, native_id, true). For unprefixed numeric ids
+// (TMDB style, e.g. "83533") returns ("", "", false).
+func splitProviderPrefix(id string) (prefix, rest string, ok bool) {
+	// Known provider prefixes we emit on the catalog side.
+	for _, p := range []string{"anilist-", "kitsu-", "mal-", "tvdb-"} {
+		if strings.HasPrefix(id, p) {
+			return p[:len(p)-1], id[len(p):], true
+		}
+	}
+	return "", "", false
+}
+
+// firstProvider returns the leading provider name from a
+// possibly-comma-joined list like "anilist,kitsu".
+func firstProvider(p string) string {
+	if i := strings.IndexByte(p, ','); i > 0 {
+		return p[:i]
+	}
+	return p
 }
 
 // relatedItemToCatalogEntry reshapes a RelatedItemWire into the
@@ -2933,14 +2986,29 @@ func (m Model) View() tea.View {
 	}
 	var content string
 	if m.screen == screenDetail && m.detail != nil {
+		// Wrap the detail overlay in MainCardStyle (same chrome the
+		// grid/list screens use) so border color, side margins, and
+		// rounded corners match across screens. Reserve rows for the
+		// statusbar (4) + a blank row + MainCardStyle's border+padding
+		// (2) so the overlay content fits cleanly inside the frame.
+		const statusBarRows = 4
+		const blankRow = 1
+		const cardChromeRows = 2 // top + bottom border
+		overlayH := max(1, m.state.Height-statusBarRows-blankRow-cardChromeRows)
 		overlay := screens.RenderDetailOverlay(
 			m.detail,
-			m.state.Width,
-			m.state.Height,
+			m.state.Width-4, // MainCardStyle adds margin(2) + border(2) of horizontal chrome
+			overlayH,
 			m.state.ActiveTab,
 			m.state.RuntimeStatus.String(),
 		)
-		content = m.applyToast(overlay)
+		framed := theme.T.MainCardStyle(true).Width(m.state.Width - 2).Render(overlay)
+		composed := lipgloss.JoinVertical(lipgloss.Left,
+			framed,
+			"",
+			m.viewStatusBar(),
+		)
+		content = m.applyToast(composed)
 	} else {
 		// Hide the footer (statusbar + preceding blank line) only on the
 		// Queue sub-tab, which uses every row for tracklist + visualizer.
@@ -3385,10 +3453,17 @@ func (m Model) viewStatusBar() string {
 	// hint/status text; that supersedes the global StatusMsg slot so the
 	// stale "Added X to queue" line from a previous action doesn't sit
 	// in the footer forever (the sub-screens apply their own statusTTL
-	// before reverting to a key-hint string).
+	// before reverting to a key-hint string). The detail overlay uses
+	// the same pattern — its focus-specific hotkey hints live here
+	// instead of in a handwritten header bar.
 	statusText := m.state.StatusMsg
 	if m.state.ActiveTab == state.TabMusic {
 		if t := m.musicScreen.FooterText(); t != "" {
+			statusText = t
+		}
+	}
+	if m.screen == screenDetail && m.detail != nil {
+		if t := m.detail.FooterText(); t != "" {
 			statusText = t
 		}
 	}
