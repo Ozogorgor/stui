@@ -17,10 +17,11 @@ use serde::Deserialize;
 use stui_plugin_sdk::{
     parse_manifest,
     cache_get, error_codes, http_get,
-    id_sources,
+    id_sources, normalize_crew_role,
     plugin_error, plugin_info,
     stui_export_catalog_plugin,
-    CatalogPlugin,
+    CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse, CrewMember,
+    EnrichRequest, EnrichResponse,
     EntryKind,
     InitContext,
     LookupRequest, LookupResponse,
@@ -260,6 +261,164 @@ impl CatalogPlugin for OmdbPlugin {
 
         PluginResult::ok(LookupResponse { entry: detail.into_entry(kind) })
     }
+
+    fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
+        // Fast path: partial already carries an IMDB id (the only id_source
+        // OMDb natively understands). Reuse lookup verbatim.
+        let imdb = req
+            .partial
+            .external_ids
+            .get(id_sources::IMDB)
+            .cloned()
+            .or_else(|| req.partial.imdb_id.clone());
+        if let Some(imdb_id) = imdb {
+            let lookup_req = LookupRequest {
+                id: imdb_id,
+                id_source: id_sources::IMDB.to_string(),
+                kind: req.partial.kind,
+                locale: None,
+            };
+            return match self.lookup(lookup_req) {
+                PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
+                    entry: r.entry,
+                    confidence: 1.0,
+                }),
+                PluginResult::Err(e) => PluginResult::Err(e),
+            };
+        }
+
+        // Fallback: title + optional year search via OMDb's `?t=` endpoint
+        // (single best-match by title). `?s=` returns a list, but `?t=` is
+        // both cheaper and reflects OMDb's own match-quality preference.
+        let title = req.partial.title.trim();
+        if title.is_empty() {
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "omdb enrich: empty title and no imdb id",
+            );
+        }
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+        let mut url = format!(
+            "{BASE_URL}?t={}&plot=full&apikey={}",
+            urlencoding::encode(title),
+            api_key,
+        );
+        if let Some(y) = req.partial.year {
+            url.push_str(&format!("&y={y}"));
+        }
+        if let Some(t) = type_param(req.partial.kind) {
+            url.push_str(&format!("&type={t}"));
+        }
+        plugin_info!("omdb: enrich title-search {}", title);
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let detail: DetailResponse = match parse_json(&body) {
+            Ok(d) => d,
+            Err(e) => return PluginResult::Err(e),
+        };
+        if detail.response.eq_ignore_ascii_case("false") {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                detail.error.unwrap_or_else(|| format!("omdb: no match for '{title}'")),
+            );
+        }
+        let kind = match detail.media_type.as_deref() {
+            Some("movie")  => EntryKind::Movie,
+            Some("series") => EntryKind::Series,
+            _              => req.partial.kind,
+        };
+        // Title-search match is less precise than imdb-id lookup; reflect
+        // that in the confidence score.
+        PluginResult::ok(EnrichResponse {
+            entry: detail.into_entry(kind),
+            confidence: 0.7,
+        })
+    }
+
+    fn get_credits(&self, req: CreditsRequest) -> PluginResult<CreditsResponse> {
+        if req.id_source != id_sources::IMDB {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("omdb credits only supports imdb ids, got: {}", req.id_source),
+            );
+        }
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+        let url = format!(
+            "{BASE_URL}?i={}&plot=short&apikey={}",
+            urlencoding::encode(&req.id),
+            api_key,
+        );
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let detail: DetailResponse = match parse_json(&body) {
+            Ok(d) => d,
+            Err(e) => return PluginResult::Err(e),
+        };
+        if detail.response.eq_ignore_ascii_case("false") {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                detail.error.unwrap_or_else(|| format!("omdb: no entry for {}", req.id)),
+            );
+        }
+
+        // OMDb returns Director / Writer / Actors as comma-separated name
+        // strings (no character names, no billing order). Best-effort split
+        // and tag with the appropriate role.
+        let mut crew: Vec<CrewMember> = Vec::new();
+        for name in split_names(&detail.director) {
+            crew.push(CrewMember {
+                name,
+                role: normalize_crew_role("director"),
+                department: Some("Directing".to_string()),
+                external_ids: Default::default(),
+            });
+        }
+        for name in split_names(&detail.writer) {
+            crew.push(CrewMember {
+                name,
+                role: normalize_crew_role("writer"),
+                department: Some("Writing".to_string()),
+                external_ids: Default::default(),
+            });
+        }
+        let cast: Vec<CastMember> = split_names(&detail.actors)
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| CastMember {
+                name,
+                role: CastRole::Actor,
+                character: None, // OMDb doesn't expose character names
+                instrument: None,
+                billing_order: Some(i as u32 + 1),
+                external_ids: Default::default(),
+            })
+            .collect();
+
+        PluginResult::ok(CreditsResponse { cast, crew })
+    }
+}
+
+/// Split OMDb's comma-separated name lists into trimmed individual names.
+/// Filters out `"N/A"` (OMDb's literal placeholder) and empty entries.
+fn split_names(raw: &str) -> Vec<String> {
+    if raw.trim().is_empty() || raw == "N/A" {
+        return Vec::new();
+    }
+    raw.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "N/A")
+        .collect()
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -315,6 +474,9 @@ struct DetailResponse {
     #[serde(rename = "Genre",    default)]  genre:     String,
     #[serde(rename = "Runtime",  default)]  runtime:   String,
     #[serde(rename = "imdbRating", default)] rating:   String,
+    #[serde(rename = "Director", default)]  director:  String,
+    #[serde(rename = "Writer",   default)]  writer:    String,
+    #[serde(rename = "Actors",   default)]  actors:    String,
 }
 
 impl DetailResponse {

@@ -838,7 +838,11 @@ impl Media {
             year: self.season_year,
             // averageScore is 0–100; scale to 0.0–10.0 so it matches other providers.
             rating: self.average_score.map(|s| s / 10.0),
-            description: self.description,
+            // AniList descriptions arrive with `<br>` line breaks plus a
+            // trailing "(Source: …)" attribution even when `asHtml: false`
+            // is requested. Strip them through the SDK helper so the TUI
+            // gets readable text.
+            description: self.description.as_deref().map(stui_plugin_sdk::clean_description),
             duration: self.duration,
             genre: if self.genres.is_empty() { None } else { Some(self.genres.join(", ")) },
             ..Default::default()

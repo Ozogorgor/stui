@@ -356,7 +356,11 @@ impl Anime {
             title: attrs.title,
             year,
             rating,
-            description: attrs.synopsis,
+            // Kitsu synopses are mostly plain text, but a subset still
+            // ship with `(Source: …)` attribution and stray HTML — apply
+            // the same cleanup AniList uses so descriptions stay
+            // consistent across providers.
+            description: attrs.synopsis.as_deref().map(stui_plugin_sdk::clean_description),
             poster_url,
             duration: attrs.episode_length,
             ..Default::default()

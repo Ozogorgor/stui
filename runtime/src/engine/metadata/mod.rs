@@ -188,13 +188,18 @@ pub async fn fetch_detail_metadata<E>(
 /// Prefers the plugin's native id from `req.external_ids` when present;
 /// otherwise falls back to the request's primary `(entry_id, id_source)`.
 fn id_for_plugin(req: &DetailMetadataRequest, plugin: &str) -> (String, String) {
-    if let Some(id) = req.external_ids.get(plugin) {
-        return (id.clone(), plugin.to_string());
+    // Plugin → native id_source mapping. Most providers' plugin name
+    // matches their id_source name (anilist, kitsu, tmdb, tvdb, …) so the
+    // direct lookup wins. OMDb is the exception: it keys entries by IMDB
+    // id, not by an "omdb" id_source. Future providers that operate on a
+    // foreign id namespace get added here.
+    let preferred = match plugin {
+        "omdb" => "imdb",
+        other => other,
+    };
+    if let Some(id) = req.external_ids.get(preferred) {
+        return (id.clone(), preferred.to_string());
     }
-    // Common alias: TUI prefix / config key uses the plugin's display
-    // name, but external_ids may key by the canonical id_source string.
-    // Today they coincide for our seven bundled providers, so a single
-    // lookup is enough.
     (req.entry_id.clone(), id_source_as_str(&req.id_source))
 }
 

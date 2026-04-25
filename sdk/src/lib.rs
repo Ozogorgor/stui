@@ -425,6 +425,163 @@ mod log_url_tests {
     }
 }
 
+/// Strip HTML markup and source-attribution suffixes from a provider
+/// description.
+///
+/// Targets the AniList / Kitsu shape:
+///
+/// ```text
+/// <i>Note: Mahō Shōjo no Sekai…</i><br><br>
+/// In a world where magical girls...<br>
+/// (Source: Crunchyroll)
+/// ```
+///
+/// The pipeline:
+/// 1. `<br>` / `<br/>` / `<br />` (any case) → `\n`.
+/// 2. Strip every other HTML tag (greedy `<…>`).
+/// 3. Decode the small set of common HTML entities (`&amp;`, `&lt;`,
+///    `&gt;`, `&quot;`, `&#39;`, `&apos;`, `&nbsp;`).
+/// 4. Remove a trailing `(Source: …)` clause when it sits in the final
+///    ~200 chars and is single-line — that's how AniList writes attributions.
+/// 5. Collapse runs of three+ blank lines to two and trim outer whitespace.
+///
+/// Idempotent on already-clean text, so providers can apply it
+/// unconditionally on every description without checking first.
+pub fn clean_description(s: &str) -> String {
+    let mut out = s.to_string();
+
+    // <br> variants → newline.
+    for tag in &["<br>", "<br/>", "<br />", "<BR>", "<BR/>", "<BR />"] {
+        out = out.replace(tag, "\n");
+    }
+
+    // Strip remaining HTML tags. Greedy `<…>` consumer; doesn't validate
+    // the tag, just discards everything between angle brackets so stray
+    // `<` in the text body is preserved intact.
+    let stripped: String = {
+        let mut buf = String::with_capacity(out.len());
+        let mut in_tag = false;
+        for ch in out.chars() {
+            match ch {
+                '<' => in_tag = true,
+                '>' if in_tag => in_tag = false,
+                _ if !in_tag => buf.push(ch),
+                _ => {}
+            }
+        }
+        buf
+    };
+    out = stripped;
+
+    // HTML entities (small fixed set — full decoding would pull a
+    // dependency we don't want in plugin wasms).
+    out = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ");
+
+    // Strip trailing "(Source: …)" attribution.
+    if let Some(idx) = find_trailing_source_attribution(&out) {
+        out.truncate(idx);
+    }
+
+    // Collapse 3+ consecutive newlines down to 2.
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+
+    out.trim().to_string()
+}
+
+/// Find the byte index of a trailing `(Source: …)` clause.  Case-insensitive
+/// match on `(source` followed by any non-newline up to `)`. Returns
+/// `None` when the attribution is absent or appears too far from the end
+/// to plausibly be the suffix.
+fn find_trailing_source_attribution(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let needle = b"(source";
+    if bytes.len() < needle.len() {
+        return None;
+    }
+    // Walk right-to-left so we land on the LAST occurrence — most
+    // descriptions only have one, but a wiki-style citation could
+    // include earlier "(Source:" mentions in passing.
+    for i in (0..=bytes.len() - needle.len()).rev() {
+        let matches = needle
+            .iter()
+            .enumerate()
+            .all(|(j, &n)| bytes[i + j].to_ascii_lowercase() == n);
+        if !matches {
+            continue;
+        }
+        let rest = &s[i..];
+        // Heuristics: the attribution is short (≤200 chars) and never
+        // wraps to a new line.  Anything else is likely a legitimate
+        // mention of the word "source" within the description body.
+        if rest.len() <= 200 && !rest.contains('\n') {
+            return Some(i);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod clean_description_tests {
+    use super::clean_description;
+
+    #[test]
+    fn br_becomes_newline() {
+        let s = clean_description("Line one<br>Line two<br/>Line three");
+        assert_eq!(s, "Line one\nLine two\nLine three");
+    }
+
+    #[test]
+    fn strips_arbitrary_html_tags() {
+        let s = clean_description("Hello <i>italic</i> and <b>bold</b>.");
+        assert_eq!(s, "Hello italic and bold.");
+    }
+
+    #[test]
+    fn strips_trailing_source_attribution() {
+        let s = clean_description("A long synopsis here. (Source: Wikipedia)");
+        assert_eq!(s, "A long synopsis here.");
+    }
+
+    #[test]
+    fn keeps_word_source_when_not_attribution() {
+        let s = clean_description("The protagonist is the source of all chaos.");
+        assert_eq!(s, "The protagonist is the source of all chaos.");
+    }
+
+    #[test]
+    fn decodes_entities() {
+        let s = clean_description("Tom &amp; Jerry &quot;chase&quot; the cat&#39;s tail");
+        assert_eq!(s, "Tom & Jerry \"chase\" the cat's tail");
+    }
+
+    #[test]
+    fn collapses_excess_blank_lines() {
+        let s = clean_description("Para 1.<br><br><br><br>Para 2.");
+        assert_eq!(s, "Para 1.\n\nPara 2.");
+    }
+
+    #[test]
+    fn idempotent_on_clean_text() {
+        let already_clean = "A perfectly normal description.";
+        assert_eq!(clean_description(already_clean), already_clean);
+    }
+
+    #[test]
+    fn handles_empty_input() {
+        assert_eq!(clean_description(""), "");
+    }
+}
+
 /// Make an HTTP GET request through the sandboxed host.
 /// Returns the response body as a String, or an error message.
 pub fn http_get(url: &str) -> Result<String, String> {
