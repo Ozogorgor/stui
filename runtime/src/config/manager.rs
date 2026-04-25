@@ -401,9 +401,11 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
 // ── Type coercion helpers ─────────────────────────────────────────────────────
 
 fn apply_plugin_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
-    // Format: "plugins.{plugin_name}.{field_key}"
-    let parts: Vec<&str> = key.splitn(4, '.').collect();
-    if parts.len() != 4 || parts[0] != "plugins" {
+    // Format: "plugins.{plugin_name}.{field_key}" — three dot-separated parts.
+    // `splitn(3, '.')` yields at most 3 parts and preserves any dots inside
+    // field_key (rare, but harmless). Matches the DSP/MPD apply-fn pattern.
+    let parts: Vec<&str> = key.splitn(3, '.').collect();
+    if parts.len() != 3 || parts[0] != "plugins" {
         return Err(StuidError::config(format!(
             "invalid plugin config key format: {key} (expected plugins.{{name}}.{{field}})"
         )));

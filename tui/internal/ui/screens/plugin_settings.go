@@ -52,12 +52,19 @@ type PluginSettingsScreen struct {
 	provCursor  int // selected provider index
 	fieldCursor int // selected field index within provider
 
-	// One text input value per field per provider:
-	// inputs[provIdx][fieldIdx] = typed string
+	// Persisted buffer, one string per field per provider. Pre-populated
+	// from ProviderField.Value when the runtime's GetProviderSettings
+	// reply lands. The active textinput (when editing) copies its value
+	// back into this slice on save; otherwise the view reads directly
+	// from here.
 	inputs [][]string
 
-	// Whether each field input is in edit mode (cursor visible, keys captured)
-	editing bool
+	// Active text input while editing. Non-nil iff editing is in progress.
+	// Wraps bubbles/v2 textinput for full cursor movement, word-wise
+	// edits, delete-forward, home/end, bracketed paste, etc. The
+	// wrapper's Update method mutates its inner state on value-receiver
+	// Update returns — keep working with the same pointer.
+	editInput *components.StyledTextInput
 
 	loading bool
 	status  string // transient feedback ("Saved!", "Error: ...")
@@ -96,6 +103,20 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.setWindowSize(msg)
 
+	// Bracketed-paste events arrive here when the user hits ctrl+v /
+	// shift+insert / right-click-paste in a modern terminal. They are a
+	// top-level `tea.PasteMsg`, NOT wrapped in `tea.KeyPressMsg`, so the
+	// key-path below never sees them. Strip newlines (pasting multi-line
+	// content into a one-line URL/API-key field would break the layout),
+	// then forward to the active text input which inserts at cursor.
+	case tea.PasteMsg:
+		if m.editInput != nil {
+			content := strings.ReplaceAll(msg.Content, "\n", "")
+			content = strings.ReplaceAll(content, "\r", "")
+			cmd := m.editInput.Update(tea.PasteMsg{Content: content})
+			return m, cmd
+		}
+
 	// ── Provider data arrived ──────────────────────────────────────────────
 	case ipc.ProviderSettingsResultMsg:
 		m.loading = false
@@ -122,8 +143,8 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			return m, nil
 		}
 
-		// Editing mode: capture all printable keys + backspace + enter/esc
-		if m.editing {
+		// Editing mode: capture all keys through the text input.
+		if m.editInput != nil {
 			return m.updateEditing(msg)
 		}
 
@@ -164,9 +185,15 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			}
 
 		case "enter":
-			if m.rightFocus && len(m.currentProvider().Fields) > 0 {
-				m.editing = true
-				m.status = "Type API key, Enter to save, Esc to cancel"
+			// From left panel: jump straight into editing the first field
+			// of the selected provider. One keystroke to start configuring.
+			if len(m.currentProvider().Fields) > 0 {
+				if !m.rightFocus {
+					m.rightFocus = true
+					m.fieldCursor = 0
+				}
+				cmd := m.beginEdit()
+				return m, cmd
 			}
 
 		case "left", "h":
@@ -177,39 +204,98 @@ func (m *PluginSettingsScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	return m, nil
 }
 
-// updateEditing handles key input while a field is being edited.
+// beginEdit creates a fresh textinput for the current field pre-populated
+// with the stored value, focuses it, and returns the blink cmd. The
+// caller must return the cmd so the cursor animates.
+func (m *PluginSettingsScreen) beginEdit() tea.Cmd {
+	p := m.currentProvider()
+	if m.fieldCursor >= len(p.Fields) {
+		return nil
+	}
+	field := p.Fields[m.fieldCursor]
+
+	style := components.TextInputStyleDefault
+	if field.Masked {
+		style = components.TextInputStylePassword
+	}
+	ti := components.NewStyledTextInput(style, "")
+	ti.SetValue(m.inputs[m.provCursor][m.fieldCursor])
+	ti.CursorEnd()
+	ti.SetCharLimit(512)
+	// Box content width minus the rounded border and 1-cell padding on
+	// each side. Keep in sync with the box dimensions in View().
+	boxInner := m.width - 22 - 10
+	if boxInner < 20 {
+		boxInner = 20
+	}
+	ti.SetWidth(boxInner)
+	blinkCmd := ti.Focus()
+
+	m.editInput = ti
+	m.status = fmt.Sprintf("Editing %s — Enter saves, Tab next, Esc cancels", field.Label)
+	return blinkCmd
+}
+
+// updateEditing handles keys while a field is active. Explicit cases
+// (esc/enter/tab/shift+tab) handle the screen's own semantics; every
+// other key — arrows, home/end, ctrl+a/e/w/u, backspace, delete, printable
+// text, bracketed-paste fallback — is forwarded to the textinput which
+// handles cursor movement and edits natively.
 func (m *PluginSettingsScreen) updateEditing(msg tea.KeyPressMsg) (screen.Screen, tea.Cmd) {
-	switch msg.Code {
-	case tea.KeyEsc:
-		m.editing = false
+	switch msg.String() {
+	case "esc":
+		m.editInput = nil
 		m.status = ""
+		return m, nil
 
-	case tea.KeyEnter:
-		// Save the value via SetConfig
+	case "enter":
+		m.saveCurrentField()
+		return m, nil
+
+	case "tab":
+		// Save current field and advance to the next one, staying in
+		// edit mode so the user can chain "type URL → tab → type key →
+		// enter to save" without re-pressing enter between each field.
+		m.saveCurrentField()
 		p := m.currentProvider()
-		if m.fieldCursor < len(p.Fields) {
-			field := p.Fields[m.fieldCursor]
-			val := m.inputs[m.provCursor][m.fieldCursor]
-			m.client.SetConfig(field.Key, val)
-			m.editing = false
-			m.status = fmt.Sprintf("Saved %s.%s", p.Name, field.Label)
-			// Mark the field as configured locally for immediate feedback
-			m.providers[m.provCursor].Fields[m.fieldCursor].Configured = val != ""
+		if m.fieldCursor < len(p.Fields)-1 {
+			m.fieldCursor++
+			return m, m.beginEdit()
 		}
+		return m, nil
 
-	case tea.KeyBackspace:
-		cur := m.inputs[m.provCursor][m.fieldCursor]
-		if len(cur) > 0 {
-			m.inputs[m.provCursor][m.fieldCursor] = cur[:len(cur)-1]
+	case "shift+tab":
+		m.saveCurrentField()
+		if m.fieldCursor > 0 {
+			m.fieldCursor--
+			return m, m.beginEdit()
 		}
-
-	default:
-		if len(msg.Text) > 0 {
-			m.inputs[m.provCursor][m.fieldCursor] += msg.Text
-		}
+		return m, nil
 	}
 
-	return m, nil
+	// Everything else: forward to textinput. It mutates state via its
+	// pointer receivers inside StyledTextInput.Update.
+	cmd := m.editInput.Update(msg)
+	return m, cmd
+}
+
+// saveCurrentField reads the active textinput's value, persists it via
+// SetConfig, mirrors it into the local buffer, and drops out of edit
+// mode. Shared by Enter (save + exit) and Tab (save + advance).
+func (m *PluginSettingsScreen) saveCurrentField() {
+	p := m.currentProvider()
+	if m.fieldCursor >= len(p.Fields) || m.editInput == nil {
+		m.editInput = nil
+		return
+	}
+	field := p.Fields[m.fieldCursor]
+	val := m.editInput.Value()
+	m.inputs[m.provCursor][m.fieldCursor] = val
+	m.client.SetConfig(field.Key, val)
+	m.editInput = nil
+	m.status = fmt.Sprintf("Saved %s.%s", p.Name, field.Label)
+	// Local mirror for immediate Configured-indicator feedback.
+	m.providers[m.provCursor].Fields[m.fieldCursor].Configured = val != ""
 }
 
 func (m *PluginSettingsScreen) currentProvider() ipc.ProviderSchema {
@@ -317,19 +403,24 @@ func (m *PluginSettingsScreen) View() tea.View {
 			// Input box
 			rawVal := m.inputs[m.provCursor][fi]
 			var display string
-			if field.Masked && !m.editing {
+			switch {
+			case m.editInput != nil && focused:
+				// Active edit: let the textinput render its own cursor +
+				// text (masked automatically when style is Password). This
+				// gives the user a real blinking cursor, full arrow-key
+				// editing, home/end, delete, etc.
+				display = m.editInput.View()
+			case field.Masked:
+				// Not editing a masked field: hide the stored value
+				// behind 20 bullets if configured, else show (not set).
 				if field.Configured {
 					display = strings.Repeat("•", 20)
 				} else {
 					display = dimStyle.Render("(not set)")
 				}
-			} else if m.editing && focused {
-				// Show masked but with length indicator while typing
-				display = strings.Repeat("•", len(rawVal))
-				if len(rawVal) == 0 {
-					display = dimStyle.Render("_")
-				}
-			} else {
+			default:
+				// Not editing a non-masked field: show the plaintext
+				// value, or (not set) placeholder when empty.
 				if rawVal == "" && !field.Configured {
 					display = dimStyle.Render("(not set)")
 				} else {
@@ -337,17 +428,23 @@ func (m *PluginSettingsScreen) View() tea.View {
 				}
 			}
 
+			// MarginLeft instead of a leading "  " prefix: the box is
+			// multi-line (top border, content, bottom border), and
+			// string concatenation only indents the first line, leaving
+			// the middle + bottom flush-left — visually the top cap
+			// looks pushed right. MarginLeft indents every line.
 			boxStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				Width(rightW-6).
-				Padding(0, 1)
+				Padding(0, 1).
+				MarginLeft(2)
 			if focused {
 				boxStyle = boxStyle.BorderForeground(theme.T.Accent())
 			} else {
 				boxStyle = boxStyle.BorderForeground(theme.T.TextDim())
 			}
 
-			rightLines = append(rightLines, "  "+boxStyle.Render(display))
+			rightLines = append(rightLines, boxStyle.Render(display))
 
 			// Hint
 			if field.Hint != "" {
@@ -365,8 +462,8 @@ func (m *PluginSettingsScreen) View() tea.View {
 
 	// ── Footer ────────────────────────────────────────────────────────────
 	var hintStr string
-	if m.editing {
-		hintStr = hintBar("Type API key", "enter save", "esc cancel")
+	if m.editInput != nil {
+		hintStr = hintBar("type to edit", "enter save", "tab next field", "esc cancel")
 	} else {
 		hintStr = hintBar("↑↓ navigate", "tab switch panel", "enter edit", "esc back/cancel")
 	}

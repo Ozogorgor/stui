@@ -169,11 +169,16 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── When overlay is open, route input there; ESC/PopMsg close it ──────────
 	if r.overlay != nil {
-		// ESC / backspace pops back to the previous overlay if one was
-		// pushed (Settings → DSP), otherwise closes the overlay entirely.
+		// ESC pops back to the previous overlay if one was pushed
+		// (Settings → DSP), otherwise closes the overlay entirely.
+		//
+		// Backspace used to pop too, but that conflicts with text-input
+		// fields inside overlays — the key never reached the overlay's
+		// own edit handler. Users rely on ESC universally for cancel;
+		// backspace stays available for editing.
 		if key, ok := msg.(tea.KeyPressMsg); ok {
 			s := key.String()
-			if s == "esc" || s == "backspace" {
+			if s == "esc" {
 				if n := len(r.overlayHistory); n > 0 {
 					prev := r.overlayHistory[n-1]
 					r.overlayHistory = r.overlayHistory[:n-1]

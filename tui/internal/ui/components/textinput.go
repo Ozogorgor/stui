@@ -64,6 +64,8 @@ func NewStyledTextInput(style TextInputStyle, placeholder string) *StyledTextInp
 		})
 
 	case TextInputStylePassword:
+		ti.EchoMode = textinput.EchoPassword
+		ti.EchoCharacter = '•'
 		ti.SetStyles(textinput.Styles{
 			Blurred: textinput.StyleState{
 				Text:        lipgloss.NewStyle().Foreground(theme.T.Text()),
@@ -124,9 +126,10 @@ func (s *StyledTextInput) Value() string {
 	return s.model.Value()
 }
 
-func (s *StyledTextInput) Focus() textinput.Model {
-	s.model.Focus()
-	return s.model
+// Focus marks the input active and returns the cmd for cursor blink. Must
+// be returned through tea.Cmd so the blink loop runs.
+func (s *StyledTextInput) Focus() tea.Cmd {
+	return s.model.Focus()
 }
 
 func (s *StyledTextInput) Blur() {
@@ -137,8 +140,18 @@ func (s *StyledTextInput) Focused() bool {
 	return s.model.Focused()
 }
 
-func (s *StyledTextInput) Update(msg tea.Msg) (tea.Msg, tea.Cmd) {
-	return s.model.Update(msg)
+// Update forwards the message to the inner textinput.Model. textinput's
+// Update returns a new Model by value (value-receiver method) — we
+// capture and store it back into `s.model` so state mutations stick.
+func (s *StyledTextInput) Update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	s.model, cmd = s.model.Update(msg)
+	return cmd
+}
+
+// CursorEnd moves the cursor to the end of the current value.
+func (s *StyledTextInput) CursorEnd() {
+	s.model.CursorEnd()
 }
 
 func (s *StyledTextInput) View() string {

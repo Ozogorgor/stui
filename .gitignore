@@ -11,6 +11,10 @@ SCAFFOLD_TODOS.md
 # Git worktrees
 .worktrees/
 
+# Third-party projects accidentally cloned into the repo root
+# (e.g. braille-boogie audio visualizer reference).
+braille-boogie/
+
 # Rust build output
 target/
 
