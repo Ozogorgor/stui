@@ -7,8 +7,9 @@
 //!     in `engine::search_catalog_entries`. Results flow through the same
 //!     dedup/merge pass (by imdb_id / title+year), so duplicate entries
 //!     collapse and fields are unioned across sources.
-//!   - `client::TvdbClient::enrich_by_*` is available for on-demand lookups
-//!     from downstream callers that want to fill gaps for a specific entry.
+//!   - The `enrich`/`credits`/`artwork`/`episodes` verbs are served by the
+//!     `tvdb::source` adapters and dispatched alongside plugins by the
+//!     metadata orchestrator — same fan-out, same merge semantics.
 //!
 //! # Key management
 //!
@@ -27,9 +28,11 @@
 //! case because the key belongs to the project, not the user.
 
 pub mod client;
+pub mod http;
+pub mod source;
 pub mod types;
 
-pub use client::{EnrichedFields, SearchKind, TvdbClient, TvdbEntry};
+pub use client::{SearchKind, TvdbClient, TvdbEntry, TvdbEpisode};
 
 use std::sync::Arc;
 

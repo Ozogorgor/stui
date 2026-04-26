@@ -45,6 +45,15 @@ pub(super) fn enrich_to_payload(resp: EnrichResponse) -> MetadataPayload {
     if let Some(imdb) = resp.entry.imdb_id.clone() {
         data.external_ids.entry("imdb".into()).or_insert(imdb);
     }
+    data.season_count = resp.entry.season_count;
+    data.season_ids = resp.entry.season_ids.clone();
+    tracing::info!(
+        provider = %resp.entry.source,
+        title = %resp.entry.title,
+        season_count = ?resp.entry.season_count,
+        season_ids = ?resp.entry.season_ids,
+        "enrich_to_payload: emitting season_count"
+    );
     MetadataPayload::Enrich(data)
 }
 

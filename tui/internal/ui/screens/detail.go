@@ -45,37 +45,19 @@ import (
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/state"
 	"github.com/stui/stui/internal/ui/components"
-	posterpkg "github.com/stui/stui/internal/ui/components/poster"
+	"github.com/stui/stui/internal/ui/components/mediaheader"
 	"github.com/stui/stui/pkg/bidi"
 	"github.com/stui/stui/pkg/theme"
 	"github.com/stui/stui/pkg/watchhistory"
 )
 
-// detailPosterImageView caches the ImageView instance per poster path
-// so repeated renders reuse chafa's internal output cache and don't
-// re-shell for every frame. Keyed on the cached file path (which
-// changes per URL hash), so PosterURL-driven posters never leak
-// across entries.
-var detailPosterImageViews = map[string]*components.ImageView{}
-
-func detailCardImageView(path string, w, h int) *components.ImageView {
-	iv, ok := detailPosterImageViews[path]
-	if !ok {
-		iv = components.NewImageView(w, h)
-		iv.SetImage(path)
-		detailPosterImageViews[path] = iv
-	}
-	iv.SetSize(w, h)
-	return iv
-}
-
 const (
-	detailPosterWidth  = 22 // chars
-	detailPosterHeight = 14 // rows
-	similarCardCols    = 6  // cards in the similar row
-	similarRowHeight   = 8  // rows for similar section
-	detailHeaderHeight = 3  // top bar + border
-	detailStatusHeight = 2  // status bar
+	detailPosterWidth  = mediaheader.PosterWidth
+	detailPosterHeight = mediaheader.PosterHeight
+	similarCardCols    = 6 // cards in the similar row
+	similarRowHeight   = 8 // rows for similar section
+	detailHeaderHeight = 3 // top bar + border
+	detailStatusHeight = 2 // status bar
 )
 
 // Render string constants — shared across detail.go, detail_crew.go,
@@ -199,49 +181,39 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 // overlay — read by `viewStatusBar` so the global footer carries the
 // hint the same way every other screen does.
 func (d *DetailState) FooterText() string {
+	// Series-specific hint: advertise `e` so users can discover the
+	// episode browser. Movies don't have episodes so the hotkey is
+	// silently ignored there — keep their footer cleaner.
+	episodesHint := ""
+	if d.Entry.Tab == "series" || d.Entry.Tab == "Series" {
+		episodesHint = "e episodes · "
+	}
 	switch d.Focus {
 	case FocusDetailCrew:
 		return "↑↓ crew · tab → cast · esc back"
 	case FocusDetailCast:
-		return "↑↓ navigate · enter search · tab → providers · esc back"
+		return "↑↓ navigate · enter search · tab next · esc back"
+	case FocusDetailEpisodes:
+		return "enter open episodes · tab → providers · esc back"
 	case FocusDetailProvider:
 		return "←→ select · enter ▶ play · tab → related · esc back"
 	case FocusDetailRelated:
 		return "←→ scroll · enter open · tab → info · esc back"
 	default:
-		return "tab → crew · j/↓ cast · 1-4 quality · esc back"
+		return episodesHint + "tab → crew · j/↓ cast · 1-4 quality · esc back"
 	}
 }
 
 // ── Poster block ──────────────────────────────────────────────────────────────
 
 func renderPosterBlock(ds *DetailState, w, h int) string {
-	var poster string
-
-	// Precedence (mirrors the grid card at components/card.go:102-114):
-	//
-	//   1. PosterArt — runtime-pre-rendered block art (rare, reserved for
-	//      future cache warm-up).
-	//   2. PosterURL with on-disk cache hit → render through ImageView
-	//      (chafa / kitty graphics depending on terminal).
-	//   3. PosterURL with cache miss → enqueue for background download
-	//      and render the placeholder meanwhile. The grid's download pool
-	//      will fill the cache; a later detail re-render picks it up.
-	//   4. No poster data at all → placeholder.
 	posterW := w - 4
-	switch {
-	case ds.Entry.PosterArt != "":
-		poster = ds.Entry.PosterArt
-	case ds.Entry.PosterURL != "":
-		if cached, hit := posterpkg.CachedPath(ds.Entry.PosterURL); hit {
-			poster = detailCardImageView(cached, posterW, detailPosterHeight).View()
-		} else {
-			posterpkg.Global().Enqueue(ds.Entry.PosterURL)
-			poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, posterW, detailPosterHeight)
-		}
-	default:
-		poster = components.RenderPosterPlaceholder(ds.Entry.Title, ds.Entry.Genre, posterW, detailPosterHeight)
-	}
+	poster := mediaheader.RenderPoster(mediaheader.Inputs{
+		Title:     ds.Entry.Title,
+		Genre:     ds.Entry.Genre,
+		PosterArt: ds.Entry.PosterArt,
+		PosterURL: ds.Entry.PosterURL,
+	}, posterW, detailPosterHeight)
 
 	// Backdrop carousel strip — rendered directly under the poster. Emits
 	// a faint loading/empty label while the "artwork" verb is in-flight or
@@ -347,6 +319,36 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		sections = append(sections, "")
 	}
 
+	// EPISODES — series-only navigable badge that opens the season /
+	// episode browser (the same screen the `e` keypress launches).
+	// Rendered alongside STREAM VIA so the user discovers it through
+	// Tab navigation rather than needing to know the hidden keybind.
+	if ds.Entry.Tab == "series" || ds.Entry.Tab == "Series" {
+		sections = append(sections, theme.T.DetailSectionStyle().Render("EPISODES"))
+		focused := ds.Focus == FocusDetailEpisodes
+		var badge string
+		if focused {
+			badge = lipgloss.NewStyle().
+				Background(theme.T.Accent()).
+				Foreground(lipgloss.Color("#ffffff")).
+				PaddingLeft(1).PaddingRight(1).MarginRight(1).
+				Bold(true).
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(theme.T.Neon()).
+				BorderBackground(theme.T.Accent()).
+				Render("▶ Browse episodes")
+		} else {
+			badge = theme.T.DetailProviderStyle().Render("◆ Browse episodes")
+		}
+		sections = append(sections, badge)
+		if focused {
+			sections = append(sections, lipgloss.NewStyle().
+				Foreground(theme.T.TextMuted()).PaddingLeft(2).
+				Render("enter to open"))
+		}
+		sections = append(sections, "")
+	}
+
 	// STREAM VIA — selectable provider badges
 	if len(ds.Entry.Providers) > 0 {
 		sections = append(sections, theme.T.DetailSectionStyle().Render("STREAM VIA"))
@@ -389,8 +391,6 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	}
 
 	content := strings.Join(sections, "\n")
-
-	// Apply scroll offset
 	lines := strings.Split(content, "\n")
 	if len(lines) == 0 {
 		return lipgloss.NewStyle().
@@ -400,23 +400,60 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 			Height(h).
 			Render("")
 	}
-	scroll := ds.InfoScroll
-	if scroll >= len(lines) {
-		scroll = len(lines) - 1
-	}
-	visibleLines := lines[scroll:]
-	// Cap to available height
-	if len(visibleLines) > h-2 {
-		visibleLines = visibleLines[:h-2]
-	}
-	content = strings.Join(visibleLines, "\n")
 
+	// h-2 accounts for the outer Padding(1, 2) top/bottom rows; visibleH
+	// is the rows of actual content the panel can show. The scrollbar
+	// track is exactly visibleH cells so thumb position maps 1:1 to the
+	// visible window. Reserve 1 col of width for the scrollbar character;
+	// the content column shrinks accordingly so each row is
+	//   <content padded to (w-4)> <space> <bar char>
+	// which keeps the bar at a stable rightmost column under any focus.
+	visibleH := h - 2
+	if visibleH < 1 {
+		visibleH = 1
+	}
+	scroll := ds.InfoScroll
+	maxScroll := len(lines) - visibleH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim()).Background(theme.T.Bg())
+	barChars := components.ScrollbarChars(scroll, visibleH, len(lines), dim)
+
+	// Build each visible row as: content-line (padded to contentW) + " " + bar.
+	contentW := w - 4 // 2 col left pad, 1 col gap, 1 col scrollbar
+	if contentW < 1 {
+		contentW = 1
+	}
+	contentLineStyle := lipgloss.NewStyle().Width(contentW).MaxWidth(contentW)
+	rows := make([]string, 0, visibleH)
+	for r := 0; r < visibleH; r++ {
+		idx := scroll + r
+		var lineText string
+		if idx < len(lines) {
+			lineText = lines[idx]
+		}
+		row := contentLineStyle.Render(lineText) + " " + barChars[r]
+		rows = append(rows, row)
+	}
+
+	body := strings.Join(rows, "\n")
+	// Padding(1, 0, 1, 2) — top:1, right:0, bottom:1, left:2.  Inner
+	// horizontal area is w-2; each row is (w-4) content + 1 gap + 1 bar
+	// = w-2, exactly filling the inner width with no overflow.
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
-		Padding(1, 2).
+		Padding(1, 0, 1, 2).
 		Width(w).
 		Height(h).
-		Render(content)
+		Render(body)
 }
 
 func renderCastRow(

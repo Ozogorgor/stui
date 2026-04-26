@@ -77,6 +77,7 @@ pub use capabilities::{
     CreditsRequest, CreditsResponse,
     CastMember, CastRole, CrewMember, CrewRole,
     RelatedRequest, RelatedResponse, RelationKind,
+    EpisodesRequest, EpisodesResponse, EpisodeWire,
     err_not_implemented, normalize_crew_role,
     validate_manifest,
 };
@@ -162,6 +163,22 @@ pub struct PluginEntry {
     pub season: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub episode: Option<u32>,
+    /// For series entries: the total number of seasons. The episode
+    /// browser uses this to populate its season list — without it, the
+    /// browser falls back to a single-season default and over-shooting
+    /// hits 404s on providers that strict-validate the season number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season_count: Option<u32>,
+    /// Per-season provider-native ids, parallel to seasons 1..=N. Used
+    /// by providers (e.g. AniList) where each season is a SEPARATE
+    /// catalog entry rather than a season-numbered slice of one entry.
+    /// The TUI maps season N → `season_ids[N-1]` and sends `season=1`
+    /// to the plugin (since each id is self-contained).
+    ///
+    /// Leave empty for TMDB-style providers — the same id serves every
+    /// season, with the season number passed through.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub season_ids: Vec<String>,
 
     /// ISO 639-1 code of the entry's original spoken/produced language
     /// (e.g. `"en"`, `"ja"`, `"ko"`). Used by the runtime's post-merge
@@ -284,6 +301,8 @@ pub trait CatalogPlugin: Plugin {
     fn get_credits(&self, _req: CreditsRequest) -> PluginResult<CreditsResponse>
         { err_not_implemented() }
     fn related(&self, _req: RelatedRequest) -> PluginResult<RelatedResponse>
+        { err_not_implemented() }
+    fn episodes(&self, _req: EpisodesRequest) -> PluginResult<EpisodesResponse>
         { err_not_implemented() }
 }
 
@@ -1230,6 +1249,15 @@ macro_rules! stui_export_plugin {
             resp_ty  = $crate::RelatedResponse,
         }
 
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_episodes,
+            method   = episodes,
+            req_ty   = $crate::EpisodesRequest,
+            resp_ty  = $crate::EpisodesResponse,
+        }
+
         // ── Legacy StuiPlugin resolve export (untouched) ──────────────────────
 
         /// Resolve entry point. Input: ResolveRequest JSON. Output: packed (ptr<<32)|len.
@@ -1433,6 +1461,15 @@ macro_rules! stui_export_catalog_plugin {
             method   = related,
             req_ty   = $crate::RelatedRequest,
             resp_ty  = $crate::RelatedResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_episodes,
+            method   = episodes,
+            req_ty   = $crate::EpisodesRequest,
+            resp_ty  = $crate::EpisodesResponse,
         }
 
         // Note: stui_resolve is intentionally absent — catalog-only plugins do not

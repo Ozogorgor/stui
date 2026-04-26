@@ -24,6 +24,7 @@ const (
 	FocusDetailInfo     DetailFocus = iota // poster + meta + description
 	FocusDetailCrew                        // crew (director/writer/etc.)
 	FocusDetailCast                        // cast
+	FocusDetailEpisodes                    // "▶ Episodes" badge — series only
 	FocusDetailProvider                    // STREAM VIA provider badges
 	FocusDetailRelated                     // related titles row
 )
@@ -141,6 +142,12 @@ func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
 		if len(p.Payload.ExternalIDs) > 0 {
 			d.Entry.ExternalIDs = p.Payload.ExternalIDs
 		}
+		if p.Payload.SeasonCount != nil && *p.Payload.SeasonCount > 0 {
+			d.Entry.SeasonCount = *p.Payload.SeasonCount
+		}
+		if len(p.Payload.SeasonIDs) > 0 {
+			d.Entry.SeasonIDs = append([]string(nil), p.Payload.SeasonIDs...)
+		}
 		d.Meta.EnrichStatus = status
 	case "credits":
 		d.Meta.Credits = p.Payload
@@ -180,7 +187,8 @@ func isPayloadEmpty(p ipc.MetadataPayload) bool {
 	return len(p.Cast) == 0 && len(p.Crew) == 0 &&
 		len(p.Backdrops) == 0 && len(p.Posters) == 0 &&
 		len(p.Items) == 0 && p.Studio == nil &&
-		len(p.Networks) == 0 && len(p.ExternalIDs) == 0
+		len(p.Networks) == 0 && len(p.ExternalIDs) == 0 &&
+		p.SeasonCount == nil && len(p.SeasonIDs) == 0
 }
 
 func (d *DetailState) SelectedCastMember() *ipc.CastMember {

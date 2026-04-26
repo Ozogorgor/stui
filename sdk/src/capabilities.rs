@@ -304,6 +304,45 @@ pub struct RelatedResponse {
     pub items: Vec<PluginEntry>,
 }
 
+// ── Episodes verb ─────────────────────────────────────────────────────────────
+
+/// Request for one season's episode list.
+///
+/// `season` is the natural-numbered season (e.g. 1, 2, 3 — never 0 for
+/// "Specials" since most providers shape that differently and stui's
+/// EpisodeScreen treats it as out-of-band).  `id_source` is included so
+/// providers that key by foreign ids (e.g. OMDb on imdb) can refuse a
+/// request meant for a different namespace cleanly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodesRequest {
+    pub series_id: String,
+    pub id_source: String,
+    pub season: u32,
+}
+
+/// Single episode descriptor. Mirrors the TUI's `ipc.EpisodeEntry` shape;
+/// the runtime forwards each item straight through to the wire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeWire {
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_mins: Option<u32>,
+    pub provider: String,
+    /// Provider-native id for the individual episode (used later to
+    /// resolve streams).  When the provider doesn't expose a per-episode
+    /// id, plugins should synthesise `<series_id>:s<season>e<episode>`.
+    pub entry_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodesResponse {
+    pub episodes: Vec<EpisodeWire>,
+}
+
 // ── err_not_implemented helper ────────────────────────────────────────────────
 
 /// Canonical helper for default-method bodies on optional `CatalogPlugin`

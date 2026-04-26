@@ -86,7 +86,18 @@ async fn run_one_scope(
     async move {
         let plugins = engine.plugins_for_scope(scope).await;
 
-        if plugins.is_empty() {
+        // TVDB joins as a runtime-native source for Movie / Series scopes.
+        // Decided here so an empty plugin set doesn't short-circuit when
+        // TVDB can still answer alone.
+        let tvdb_kind: Option<crate::tvdb::SearchKind> = match scope {
+            SearchScope::Movie => Some(crate::tvdb::SearchKind::Movie),
+            SearchScope::Series => Some(crate::tvdb::SearchKind::Series),
+            _ => None,
+        };
+        let tvdb_handle =
+            tvdb_kind.and_then(|kind| engine.tvdb().map(|client| (client, kind)));
+
+        if plugins.is_empty() && tvdb_handle.is_none() {
             emit(&out, Event::ScopeResults(ScopeResultsMsg {
                 query_id,
                 scope,
@@ -101,7 +112,7 @@ async fn run_one_scope(
         // plugin-call semaphore internally, so we don't acquire it here again.
         // Each task is instrumented with the parent scope span so tracing
         // hierarchies (e.g. tokio-console, Jaeger) show them as children.
-        let handles: Vec<JoinHandle<Result<Vec<MediaEntry>, PluginCallError>>> = plugins
+        let mut handles: Vec<JoinHandle<Result<Vec<MediaEntry>, PluginCallError>>> = plugins
             .iter()
             .map(|pid| {
                 let pid = pid.clone();
@@ -121,10 +132,72 @@ async fn run_one_scope(
             })
             .collect();
 
-        run_scope_timing(handles, query_id, scope, cfg, out).await;
+        // Runtime-native TVDB task. Returns the same Result shape as the
+        // plugin handles so the timing state machine treats it uniformly.
+        // Errors are wrapped in PluginCallError::Other — TVDB is best-effort,
+        // never fatal to the scope.
+        if let Some((client, kind)) = tvdb_handle {
+            let q = query.clone();
+            let tvdb_span = tracing::info_span!(
+                parent: &tracing::Span::current(),
+                "search_scoped::tvdb",
+            );
+            handles.push(tokio::spawn(
+                async move {
+                    match client.search(&q, kind, 30).await {
+                        Ok(items) => Ok(tvdb_items_to_entries(items, scope)),
+                        Err(e) => Err(PluginCallError::Other(format!("tvdb: {e}"))),
+                    }
+                }
+                .instrument(tvdb_span),
+            ));
+        }
+
+        run_scope_timing(handles, query_id, scope, cfg, Some(engine.anime_bridge()), out).await;
     }
     .instrument(span)
     .await
+}
+
+/// Map TVDB's native `TvdbEntry` shape onto `MediaEntry` so its results
+/// mix freely with plugin output. Mirrors the conversion used by
+/// `search_catalog_entries` (engine/mod.rs ~1027) — kept duplicated for
+/// now since the two paths diverge in non-trivial ways; consolidate
+/// when one of them retires.
+fn tvdb_items_to_entries(items: Vec<crate::tvdb::TvdbEntry>, scope: SearchScope) -> Vec<MediaEntry> {
+    let tab = match scope {
+        SearchScope::Movie => crate::ipc::MediaTab::Movies,
+        SearchScope::Series => crate::ipc::MediaTab::Series,
+        _ => crate::ipc::MediaTab::Library,
+    };
+    items
+        .into_iter()
+        .map(|e| MediaEntry {
+            id: format!("tvdb-{}", e.tvdb_id),
+            title: e.title,
+            year: e.year,
+            genre: (!e.genres.is_empty()).then(|| e.genres.join(", ")),
+            rating: None,
+            description: e.overview,
+            poster_url: e.image_url,
+            provider: "tvdb".to_string(),
+            tab: tab.clone(),
+            media_type: crate::ipc::MediaType::default(),
+            ratings: std::collections::HashMap::new(),
+            imdb_id: e.imdb_id,
+            tmdb_id: e.tmdb_id,
+            mal_id: None,
+            original_language: e.original_language,
+            kind: stui_plugin_sdk::EntryKind::default(),
+            source: "tvdb".to_string(),
+            artist_name: None,
+            album_name: None,
+            track_number: None,
+            season: None,
+            episode: None,
+            season_count: None,
+        })
+        .collect()
 }
 
 // ── Timing state machine (testable inner core) ────────────────────────────────
@@ -141,6 +214,7 @@ pub(crate) async fn run_scope_timing(
     query_id: u64,
     scope: SearchScope,
     cfg: ScopedSearchConfig,
+    bridge: Option<std::sync::Arc<crate::anime_bridge::AnimeBridge>>,
     out: EventSender,
 ) {
     if handles.is_empty() {
@@ -193,7 +267,23 @@ pub(crate) async fn run_scope_timing(
             // ── Plugin result received ─────────────────────────────────────
             maybe = rx.recv() => match maybe {
                 Some(Ok(entries)) => {
+                    let n_new = entries.len();
                     collected.extend(entries);
+                    // Cross-tier id enrichment. Fills missing mal_id /
+                    // imdb_id / tmdb_id from the Fribb-fed anime bridge
+                    // so both the partial-emission and final-emission
+                    // `merge_dedupe` calls below see the same enriched
+                    // view (one enrichment per entry, not per emit).
+                    // `bridge` is `None` only in unit tests that drive
+                    // `run_scope_timing` directly without an Engine.
+                    if n_new > 0 {
+                        if let Some(b) = bridge.as_deref() {
+                            let start = collected.len() - n_new;
+                            for entry in &mut collected[start..] {
+                                crate::anime_bridge::enrich::enrich_entry(entry, b);
+                            }
+                        }
+                    }
                     pending -= 1;
                     // Start the partial deadline timer on the first response.
                     if partial_timer.is_none() {
@@ -223,7 +313,7 @@ pub(crate) async fn run_scope_timing(
                 emit(&out, Event::ScopeResults(ScopeResultsMsg {
                     query_id,
                     scope,
-                    entries: collected.clone(),
+                    entries: merge_dedupe(collected.clone()),
                     partial: true,
                     error: None,
                 })).await;
@@ -259,10 +349,126 @@ pub(crate) async fn run_scope_timing(
     emit(&out, Event::ScopeResults(ScopeResultsMsg {
         query_id,
         scope,
-        entries: collected,
+        entries: merge_dedupe(collected),
         partial: false,
         error,
     })).await;
+}
+
+// ── Cross-provider dedup / merge ──────────────────────────────────────────────
+
+/// Group key for collapsing the same entity across providers.
+///
+/// **Precedence:**
+/// 1. `mal_id` — anime tier (AniList exposes `idMal`; Kitsu exposes
+///    via `?include=mappings`).
+/// 2. `imdb_id` — western tier (TVDB and OMDb both surface it at
+///    search time; TMDB doesn't, so TMDB falls through to fallback).
+/// 3. `normalize_title:year` — fallback for entries without a foreign
+///    id (TMDB, AniList originals without MAL, Kitsu without mappings).
+///
+/// Empty-string foreign ids are treated as missing — defensive, prevents
+/// `"mal:"` from collapsing all empty entries into one bucket.
+///
+/// Cross-tier merges (anime↔western) don't happen here — entries select
+/// different keys. That's intentional; the cross-mapping bridge that
+/// would unify them is milestone β.
+fn dedup_key(e: &MediaEntry) -> String {
+    if let Some(mal) = e.mal_id.as_deref().filter(|s| !s.is_empty()) {
+        return format!("mal:{mal}");
+    }
+    if let Some(imdb) = e.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+        return format!("imdb:{imdb}");
+    }
+    format!(
+        "title:{}:{}",
+        crate::catalog::normalize_title(&e.title),
+        e.year.as_deref().unwrap_or("?"),
+    )
+}
+
+/// Collapse cross-provider duplicates into one entry per logical title.
+/// Preserves first-seen order so streaming partials don't reshuffle the
+/// grid as new providers respond.
+///
+/// Within a duplicate group we keep the highest-priority provider's
+/// entry as the spine, then fold in fields from the others where the
+/// spine is missing them — that way an OMDb-only `imdb_id` upgrades a
+/// TMDB winner instead of being dropped.
+fn merge_dedupe(entries: Vec<MediaEntry>) -> Vec<MediaEntry> {
+    use std::collections::HashMap;
+
+    let entries_count = entries.len();
+
+    // First pass: bucket by key, preserving the order keys are first seen.
+    let mut order: Vec<String> = Vec::new();
+    let mut buckets: HashMap<String, Vec<MediaEntry>> = HashMap::new();
+    for e in entries {
+        let k = dedup_key(&e);
+        if !buckets.contains_key(&k) {
+            order.push(k.clone());
+        }
+        buckets.entry(k).or_default().push(e);
+    }
+
+    // Second pass: collapse each bucket.
+    let merged: Vec<MediaEntry> = order
+        .into_iter()
+        .filter_map(|k| {
+            let mut group = buckets.remove(&k)?;
+            // Lowest priority value wins. Stable sort preserves relative
+            // order for ties (= same-provider duplicates).
+            group.sort_by_key(|e| crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &k));
+            let mut primary = group.remove(0);
+            // Fold non-empty fields from secondaries into the primary's
+            // None-shaped slots. Skip provider-distinguishing fields
+            // (`id`, `provider`, `source`) — those identify the spine.
+            for s in group {
+                if primary.imdb_id.is_none() {
+                    primary.imdb_id = s.imdb_id;
+                }
+                if primary.tmdb_id.is_none() {
+                    primary.tmdb_id = s.tmdb_id;
+                }
+                if primary.mal_id.is_none() {
+                    primary.mal_id = s.mal_id;
+                }
+                if primary.year.is_none() {
+                    primary.year = s.year;
+                }
+                if primary.genre.is_none() {
+                    primary.genre = s.genre;
+                }
+                if primary.rating.is_none() {
+                    primary.rating = s.rating;
+                }
+                if primary.description.is_none() {
+                    primary.description = s.description;
+                }
+                if primary.poster_url.is_none() {
+                    primary.poster_url = s.poster_url;
+                }
+                if primary.original_language.is_none() {
+                    primary.original_language = s.original_language;
+                }
+                // Per-provider raw scores merge — handy for the detail
+                // ratings panel even after the duplicates collapse.
+                for (k, v) in s.ratings {
+                    primary.ratings.entry(k).or_insert(v);
+                }
+            }
+            Some(primary)
+        })
+        .collect();
+
+    tracing::debug!(
+        input = entries_count,
+        output = merged.len(),
+        "merge_dedupe collapsed {} entries into {}",
+        entries_count,
+        merged.len(),
+    );
+    merged
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -346,6 +552,7 @@ mod tests {
             1,
             SearchScope::Track,
             cfg,
+            None,
             tx.clone(),
         );
         tokio::pin!(timing_fut);
@@ -409,6 +616,7 @@ mod tests {
             2,
             SearchScope::Artist,
             cfg,
+            None,
             tx.clone(),
         ));
 
@@ -457,6 +665,7 @@ mod tests {
             3,
             SearchScope::Movie,
             cfg,
+            None,
             tx,
         )
         .await;
@@ -546,6 +755,7 @@ mod tests {
             4,
             SearchScope::Artist,
             cfg,
+            None,
             tx_artist,
         ));
         let track_task = tokio::spawn(run_scope_timing(
@@ -553,6 +763,7 @@ mod tests {
             4,
             SearchScope::Track,
             cfg,
+            None,
             tx_track,
         ));
 
@@ -618,6 +829,7 @@ mod tests {
             5,
             SearchScope::Album,
             cfg,
+            None,
             tx.clone(),
         );
         tokio::pin!(timing_fut);
@@ -642,5 +854,202 @@ mod tests {
             "all-fail should set AllFailed error"
         );
         assert!(finalized[0].entries.is_empty());
+    }
+
+    // ── dedup_key precedence tests ────────────────────────────────────────────
+
+    #[test]
+    fn dedup_key_prefers_mal_over_imdb_when_both_present() {
+        let mut e = make_entry("anilist-16498");
+        e.title = "AoT".into();
+        e.year = Some("2013".into());
+        e.mal_id = Some("16498".into());
+        e.imdb_id = Some("tt2560140".into());
+        assert_eq!(dedup_key(&e), "mal:16498");
+    }
+
+    #[test]
+    fn dedup_key_falls_back_to_imdb_when_mal_missing() {
+        let mut e = make_entry("omdb-tt1375666");
+        e.title = "Inception".into();
+        e.year = Some("2010".into());
+        e.imdb_id = Some("tt1375666".into());
+        assert_eq!(dedup_key(&e), "imdb:tt1375666");
+    }
+
+    #[test]
+    fn dedup_key_falls_back_to_title_year_when_no_foreign_id() {
+        let mut e = make_entry("tmdb-27205");
+        e.title = "Inception".into();
+        e.year = Some("2010".into());
+        let k = dedup_key(&e);
+        assert!(k.starts_with("title:"), "expected title-keyed, got {k}");
+        assert!(k.contains("2010"), "expected year in key, got {k}");
+    }
+
+    #[test]
+    fn dedup_key_treats_empty_mal_as_missing() {
+        let mut e = make_entry("anilist-X");
+        e.title = "X".into();
+        e.year = Some("2020".into());
+        e.mal_id = Some("".into());
+        e.imdb_id = Some("tt0".into());
+        // Empty MAL → falls through to imdb.
+        assert_eq!(dedup_key(&e), "imdb:tt0");
+    }
+
+    // ── merge_dedupe collapse tests ───────────────────────────────────────────
+
+    #[test]
+    fn merge_dedupe_collapses_anilist_kitsu_via_mal() {
+        let mut anilist = make_entry("anilist-16498");
+        anilist.provider = "anilist".into();
+        anilist.title = "Attack on Titan".into();
+        anilist.year = Some("2013".into());
+        anilist.mal_id = Some("16498".into());
+
+        let mut kitsu = make_entry("kitsu-7442");
+        kitsu.provider = "kitsu".into();
+        kitsu.title = "Shingeki no Kyojin".into();
+        kitsu.year = Some("2013".into());
+        kitsu.mal_id = Some("16498".into());
+
+        let merged = merge_dedupe(vec![anilist, kitsu]);
+        assert_eq!(merged.len(), 1, "AniList and Kitsu with same MAL should collapse");
+        // AniList wins by priority (3 < 4).
+        assert_eq!(merged[0].provider, "anilist");
+        // English title preserved (AniList's), not romaji (Kitsu's).
+        assert_eq!(merged[0].title, "Attack on Titan");
+    }
+
+    #[test]
+    fn merge_dedupe_collapses_tvdb_omdb_via_imdb() {
+        let mut tvdb = make_entry("tvdb-81189");
+        tvdb.provider = "tvdb".into();
+        tvdb.title = "Breaking Bad".into();
+        tvdb.year = Some("2008".into());
+        tvdb.imdb_id = Some("tt0903747".into());
+
+        let mut omdb = make_entry("omdb-tt0903747");
+        omdb.provider = "omdb".into();
+        omdb.title = "Breaking Bad: The Series".into();
+        omdb.year = Some("2008".into());
+        omdb.imdb_id = Some("tt0903747".into());
+
+        let merged = merge_dedupe(vec![tvdb, omdb]);
+        assert_eq!(merged.len(), 1, "TVDB and OMDb with same imdb should collapse");
+        // TVDB wins by priority (1 < 2).
+        assert_eq!(merged[0].provider, "tvdb");
+        assert_eq!(merged[0].title, "Breaking Bad");
+    }
+
+    #[test]
+    fn merge_dedupe_collapses_anilist_omdb_via_bridge() {
+        use crate::anime_bridge::enrich::enrich_entry;
+        use crate::anime_bridge::AnimeBridge;
+
+        let mut anilist = make_entry("anilist-1");
+        anilist.provider = "anilist".into();
+        anilist.title = "Cowboy Bebop".into();
+        anilist.year = Some("1998".into());
+        anilist.mal_id = Some("1".into());
+
+        let mut omdb = make_entry("omdb-tt0213338");
+        omdb.provider = "omdb".into();
+        omdb.title = "Cowboy Bebop".into();
+        omdb.year = Some("1998".into());
+        omdb.imdb_id = Some("tt0213338".into());
+
+        // Bridge enrichment runs in production via the engine; replicate
+        // here so the test exercises the full β collapse behaviour.
+        let bridge = AnimeBridge::new();
+        enrich_entry(&mut anilist, &bridge);
+        enrich_entry(&mut omdb, &bridge);
+
+        let merged = merge_dedupe(vec![anilist, omdb]);
+        assert_eq!(
+            merged.len(),
+            1,
+            "AniList (mal-keyed) and OMDb (imdb-keyed) should collapse via the bridge in milestone β",
+        );
+        // AniList wins as spine on mal-keyed merges per provider_priority_for_key.
+        assert_eq!(merged[0].provider, "anilist");
+        assert_eq!(merged[0].title, "Cowboy Bebop"); // AniList's title
+    }
+
+    #[test]
+    fn mal_keyed_merge_picks_anilist_over_tvdb_as_spine() {
+        use crate::anime_bridge::enrich::enrich_entry;
+        use crate::anime_bridge::AnimeBridge;
+
+        // Use Cowboy Bebop (mal=1) — it has a clean 1:1 cross-mapping
+        // in the bundled Fribb snapshot. AOT (mal=16498) shares imdb
+        // tt2560140 across 6 season records, so a TVDB→imdb→mal lookup
+        // resolves to whichever season HashMap-insert last wrote
+        // (non-deterministic mal_id), which would defeat the bridge
+        // collapse in this test. Bebop is single-season → unambiguous.
+        let mut anilist = make_entry("anilist-1");
+        anilist.provider = "anilist".into();
+        anilist.title = "Cowboy Bebop".into();
+        anilist.year = Some("1998".into());
+        anilist.mal_id = Some("1".into());
+
+        let mut tvdb = make_entry("tvdb-76885");
+        tvdb.provider = "tvdb".into();
+        tvdb.title = "Cowboy Bebop".into();
+        tvdb.year = Some("1998".into());
+        tvdb.imdb_id = Some("tt0213338".into());
+
+        let bridge = AnimeBridge::new();
+        enrich_entry(&mut anilist, &bridge);
+        enrich_entry(&mut tvdb, &bridge);
+
+        let merged = merge_dedupe(vec![anilist, tvdb]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].provider, "anilist");
+    }
+
+    #[test]
+    fn imdb_keyed_merge_keeps_tvdb_over_anilist_as_spine() {
+        // Western series — neither entry has mal_id; bridge enrichment is
+        // a no-op; merge keys on imdb. TVDB still wins (existing α behaviour).
+        let mut tvdb = make_entry("tvdb-81189");
+        tvdb.provider = "tvdb".into();
+        tvdb.title = "Breaking Bad".into();
+        tvdb.year = Some("2008".into());
+        tvdb.imdb_id = Some("tt0903747".into());
+
+        let mut anilist = make_entry("anilist-X");
+        anilist.provider = "anilist".into();
+        anilist.title = "Breaking Bad".into();
+        anilist.year = Some("2008".into());
+        anilist.imdb_id = Some("tt0903747".into());
+
+        let merged = merge_dedupe(vec![tvdb, anilist]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].provider, "tvdb"); // imdb-keyed → existing priority
+    }
+
+    #[test]
+    fn merge_dedupe_field_fold_fills_holes_from_secondary() {
+        let mut anilist = make_entry("anilist-100");
+        anilist.provider = "anilist".into();
+        anilist.title = "X".into();
+        anilist.year = Some("2020".into());
+        anilist.mal_id = Some("100".into());
+        anilist.description = None; // missing on spine
+
+        let mut kitsu = make_entry("kitsu-100");
+        kitsu.provider = "kitsu".into();
+        kitsu.title = "X".into();
+        kitsu.year = Some("2020".into());
+        kitsu.mal_id = Some("100".into());
+        kitsu.description = Some("Filled by secondary".into());
+
+        let merged = merge_dedupe(vec![anilist, kitsu]);
+        assert_eq!(merged.len(), 1);
+        // AniList is the spine, but the description hole filled from Kitsu.
+        assert_eq!(merged[0].provider, "anilist");
+        assert_eq!(merged[0].description.as_deref(), Some("Filled by secondary"));
     }
 }

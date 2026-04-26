@@ -353,6 +353,7 @@ fn catalog_entries_to_media(
         ratings:     e.ratings,
         imdb_id:     e.imdb_id,
         tmdb_id:     e.tmdb_id,
+        mal_id:      None,
         original_language: e.original_language,
         kind:        Default::default(),
         source:      String::new(),
@@ -361,6 +362,7 @@ fn catalog_entries_to_media(
         track_number: None,
         season:      None,
         episode:     None,
+        season_count: None,
     }).collect()
 }
 
@@ -426,6 +428,12 @@ pub struct Engine {
     /// a key — all plugin search still works; TVDB simply doesn't contribute
     /// to the fan-out. See `crate::tvdb` for storage and auth details.
     tvdb: Option<Arc<crate::tvdb::TvdbClient>>,
+    /// Cross-tier anime ID bridge (Fribb's anime-lists snapshot). Maps between
+    /// MAL/AniList/Kitsu/IMDB/TMDB/TVDB ids so the pipeline can deduplicate
+    /// anime fan-out across tiers. Bundled snapshot loads synchronously in
+    /// `new`; the optional async refresh task is started by
+    /// `start_anime_bridge_refresh` after the tokio runtime is up.
+    anime_bridge: Arc<crate::anime_bridge::AnimeBridge>,
 }
 
 impl Engine {
@@ -454,6 +462,10 @@ impl Engine {
                 RuntimeCache::new()
             }
         };
+        // Cross-tier anime bridge. Bundled snapshot load is synchronous and
+        // infallible (falls back to an empty index on parse error), so this
+        // never blocks engine startup beyond the snapshot read.
+        let anime_bridge = crate::anime_bridge::AnimeBridge::new();
         Self {
             registry:     Arc::new(RwLock::new(PluginRegistry::default())),
             cache_dir,
@@ -463,6 +475,7 @@ impl Engine {
             plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
             anime_ratio: anime_ratio.clamp(0.0, 1.0),
             tvdb,
+            anime_bridge,
         }
     }
 
@@ -470,6 +483,39 @@ impl Engine {
     /// enrichment stage can use the same client instance (auth cache shared).
     pub fn tvdb(&self) -> Option<Arc<crate::tvdb::TvdbClient>> {
         self.tvdb.clone()
+    }
+
+    /// Cross-tier anime bridge. Cheap clone — wraps an `Arc`. Pipeline stages
+    /// that need to dedupe MAL/AniList/Kitsu/IMDB/TMDB/TVDB ids (Task 5+) get
+    /// the same loaded index every clone of `Engine` shares.
+    pub fn anime_bridge(&self) -> Arc<crate::anime_bridge::AnimeBridge> {
+        Arc::clone(&self.anime_bridge)
+    }
+
+    /// Spawn the anime-bridge refresh task. Must be called from an async
+    /// context (i.e., from `main.rs` after the tokio runtime is up).
+    /// NOT idempotent: calling twice spawns two refresh tasks — DON'T
+    /// do that.
+    pub fn start_anime_bridge_refresh(&self, cache_dir: std::path::PathBuf) {
+        let http = match crate::anime_bridge::fetch::ReqwestBridgeHttp::new() {
+            Ok(h) => Arc::new(h) as Arc<dyn crate::anime_bridge::fetch::BridgeHttp>,
+            Err(e) => {
+                tracing::warn!(err = %e, "anime_bridge: HTTP client init failed; refresh disabled");
+                return;
+            }
+        };
+        crate::anime_bridge::fetch::spawn_refresh_task(
+            Arc::clone(&self.anime_bridge),
+            http,
+            cache_dir,
+        );
+    }
+
+    /// Read-only access to the daemon's cache directory. Used by background
+    /// task spawners in `main.rs` (e.g. `start_anime_bridge_refresh`) that
+    /// need to persist refreshed snapshots alongside other on-disk caches.
+    pub fn cache_dir(&self) -> &std::path::Path {
+        &self.cache_dir
     }
 
     // ── Plugin lifecycle ──────────────────────────────────────────────────
@@ -698,6 +744,21 @@ impl Engine {
     ) -> Result<Vec<crate::abi::types::PluginEntry>, PluginCallError> {
         self.call_plugin_verb(plugin_id, |sup| async move {
             sup.related(&req).await.map(|resp| resp.items)
+        })
+        .await
+    }
+
+    /// Call `stui_episodes` on the named plugin, returning the typed
+    /// episode list. Routing parity with the other verbs: errors bubble
+    /// as `PluginCallError` so the IPC dispatcher can convert them into
+    /// a structured wire-error response instead of panicking the loop.
+    pub async fn supervisor_episodes(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::EpisodesRequest,
+    ) -> Result<Vec<crate::abi::types::EpisodeWire>, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.episodes(&req).await.map(|resp| resp.episodes)
         })
         .await
     }
@@ -1028,6 +1089,7 @@ impl Engine {
                                 ratings: std::collections::HashMap::new(),
                                 imdb_id: e.imdb_id,
                                 tmdb_id: e.tmdb_id,
+                                mal_id: None,
                                 original_language: e.original_language,
                                 kind: stui_plugin_sdk::EntryKind::default(),
                                 source: "tvdb".to_string(),
@@ -1036,6 +1098,7 @@ impl Engine {
                                 track_number: None,
                                 season: None,
                                 episode: None,
+                                season_count: None,
                             })
                             .collect();
                         cache.insert(cache_key_for_task, entries.clone()).await;
@@ -1115,6 +1178,7 @@ impl Engine {
                                         ratings:     std::collections::HashMap::new(),
                                         imdb_id:     e.imdb_id,
                                         tmdb_id:     None,
+                                        mal_id:      e.external_ids.get("myanimelist").cloned(),
                                         original_language: e.original_language,
                                         kind:        e.kind,
                                         source:      e.source,
@@ -1123,6 +1187,7 @@ impl Engine {
                                         track_number: e.track_number,
                                         season:      e.season,
                                         episode:     e.episode,
+                                        season_count: e.season_count,
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })
@@ -1187,6 +1252,14 @@ impl Engine {
         // the same normalization step. Previously this lived inline in the
         // WASM arm only, leaving the scraper arm unstamped.
         let tab_str = format!("{:?}", tab).to_lowercase();
+        // Cross-tier id enrichment. Fills missing mal_id/imdb_id/tmdb_id from
+        // the Fribb-fed anime bridge so the existing α dedup_key precedence
+        // collapses cross-tier dupes (AniList AoT + TVDB AoT etc.).
+        let bridge = self.anime_bridge.clone();
+        let mut all_items = all_items;
+        for entry in &mut all_items {
+            crate::anime_bridge::enrich::enrich_entry(entry, &bridge);
+        }
         let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
             let (genre, original_language) =
                 stamp_anime_fields(&e.provider, e.genre, e.original_language);
@@ -1203,6 +1276,7 @@ impl Engine {
                 tab:         tab_str.clone(),
                 imdb_id:     e.imdb_id,
                 tmdb_id:     e.tmdb_id,
+                mal_id:      e.mal_id,
                 media_type:  e.media_type,
                 ratings:     e.ratings,
                 original_language,
@@ -1629,6 +1703,7 @@ fn abi_entry_to_media_entry(
         ratings:      std::collections::HashMap::new(),
         imdb_id:      e.imdb_id,
         tmdb_id:      None,
+        mal_id:       e.external_ids.get("myanimelist").cloned(),
         original_language,
         kind:         e.kind,
         source:       e.source,
@@ -1637,6 +1712,7 @@ fn abi_entry_to_media_entry(
         track_number: e.track_number,
         season:       e.season,
         episode:      e.episode,
+        season_count: e.season_count,
     }
 }
 

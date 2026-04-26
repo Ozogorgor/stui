@@ -30,6 +30,7 @@ mod scraper;
 mod stremio;
 mod streamer;
 mod tvdb;
+mod anime_bridge;
 mod pipeline;
 mod plugin_rpc;
 mod registry;
@@ -153,6 +154,13 @@ async fn main() -> Result<()> {
         cfg.data_dir.clone(),
         cfg.catalog.anime_ratio,
     ));
+
+    // Spawn the anime-bridge background refresh task. Must run AFTER the
+    // tokio runtime is up (we're inside `#[tokio::main]` here) — the bundled
+    // snapshot is already loaded synchronously in `Engine::new`. Refresh is
+    // a best-effort enhancement: if the HTTP client fails to init or upstream
+    // is down the daemon keeps running on the bundled snapshot.
+    engine.start_anime_bridge_refresh(engine.cache_dir().to_path_buf());
 
     // ── Watch history ──────────────────────────────────────────────────────
     let watch_history = Arc::new(watchhistory::WatchHistoryStore::new(
@@ -973,6 +981,7 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         tab, media_type: e.media_type.clone(),
         imdb_id: e.imdb_id.clone(),
         tmdb_id: e.tmdb_id.clone(),
+        mal_id: None,
         original_language: e.original_language.clone(),
         kind: Default::default(),
         source: String::new(),
@@ -981,6 +990,7 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         track_number: None,
         season: None,
         episode: None,
+        season_count: None,
     }
 }
 
@@ -1057,6 +1067,127 @@ fn plugin_toast_wire(t: &PluginToast) -> Result<String> {
     }))?;
     s.push('\n');
     Ok(s)
+}
+
+// ── Episodes verb dispatch ────────────────────────────────────────────────────
+
+/// Resolve the plugin id that owns this entry. Empty `id_source` peels a
+/// `<provider>-<rest>` prefix from `entry_id`, falling back to `"tmdb"`
+/// since that is the only provider whose `episodes()` is wired today.
+fn id_source_for_episodes(entry_id: &str, id_source: &str) -> String {
+    if !id_source.is_empty() {
+        return id_source.to_string();
+    }
+    if let Some((p, _)) = entry_id.split_once('-') {
+        if matches!(p, "tmdb" | "tvdb" | "anilist" | "kitsu" | "imdb" | "omdb") {
+            return p.to_string();
+        }
+    }
+    "tmdb".to_string()
+}
+
+/// Strip the `"<provider>-"` prefix from a stui composite id, leaving the
+/// provider-native id the plugin's `episodes()` expects in `series_id`.
+fn strip_provider_prefix<'a>(entry_id: &'a str, provider: &str) -> &'a str {
+    let pat = format!("{provider}-");
+    entry_id.strip_prefix(&pat).unwrap_or(entry_id)
+}
+
+/// Handle a `Metadata { kind = "episodes" }` request: route to the resolved
+/// plugin's `stui_episodes` verb and emit an `EpisodesLoaded` response (or
+/// a structured `Error` envelope on failure). The TUI's `LoadEpisodes`
+/// path consumes both shapes.
+async fn run_load_episodes(engine: &Arc<Engine>, r: ipc::MetadataRequest) -> Response {
+    if r.season < 1 {
+        warn!("load_episodes: season must be >= 1");
+        return Response::error(
+            Some(r.id),
+            ipc::ErrorCode::InvalidRequest,
+            "season must be >= 1".to_string(),
+        );
+    }
+
+    let id_source = id_source_for_episodes(&r.entry_id, &r.id_source);
+    let series_id = strip_provider_prefix(&r.entry_id, &id_source).to_string();
+
+    // TVDB is a runtime-native provider, not a WASM plugin — short-circuit
+    // before the supervisor dispatch, since `engine.supervisor_episodes`
+    // would have no plugin to call for it.
+    if id_source == "tvdb" {
+        return run_load_episodes_tvdb(engine, r.id, &series_id, r.season).await;
+    }
+
+    let req = crate::abi::types::EpisodesRequest {
+        series_id,
+        id_source: id_source.clone(),
+        season: r.season,
+    };
+
+    info!(plugin = %id_source, season = r.season, "load_episodes: dispatching to plugin");
+
+    match engine.supervisor_episodes(&id_source, req).await {
+        Ok(episodes) => {
+            info!(plugin = %id_source, episodes = episodes.len(), "load_episodes: plugin returned");
+            let wire: Vec<ipc::EpisodeEntryWire> = episodes.into_iter().map(Into::into).collect();
+            // Truncated preview keeps the log line bounded; full data is on the wire.
+            let preview = serde_json::to_string(&serde_json::json!({ "episodes": &wire }))
+                .unwrap_or_default();
+            let preview = if preview.len() > 200 { &preview[..200] } else { &preview[..] };
+            info!(preview = %preview, "ipc episodes wire preview");
+            Response::EpisodesLoaded(ipc::EpisodesLoadedResponse {
+                id: r.id,
+                episodes: wire,
+            })
+        }
+        Err(err) => {
+            warn!(plugin = %id_source, err = %err, "load_episodes: plugin call failed");
+            Response::error(
+                Some(r.id),
+                ipc::ErrorCode::MetadataFailed,
+                err.to_string(),
+            )
+        }
+    }
+}
+
+/// Runtime-native counterpart to `run_load_episodes`. TVDB ships in the
+/// runtime binary so its episodes verb bypasses the WASM supervisor and
+/// goes straight to `TvdbClient`. Surfaces the same `EpisodesLoaded` /
+/// `Error` envelopes so the TUI's `LoadEpisodes` consumer is unaware of
+/// the dispatch split.
+async fn run_load_episodes_tvdb(
+    engine: &Arc<Engine>,
+    request_id: String,
+    series_id: &str,
+    season: u32,
+) -> Response {
+    let Some(client) = engine.tvdb() else {
+        warn!("load_episodes (tvdb): client unavailable — no api key");
+        return Response::error(
+            Some(request_id),
+            ipc::ErrorCode::MetadataFailed,
+            "tvdb is not configured (no API key)".to_string(),
+        );
+    };
+    info!(provider = "tvdb", season = season, "load_episodes: dispatching to runtime-native tvdb");
+    match client.episodes(series_id, season).await {
+        Ok(eps) => {
+            info!(provider = "tvdb", episodes = eps.len(), "load_episodes: tvdb returned");
+            let wire: Vec<ipc::EpisodeEntryWire> = eps.into_iter().map(Into::into).collect();
+            Response::EpisodesLoaded(ipc::EpisodesLoadedResponse {
+                id: request_id,
+                episodes: wire,
+            })
+        }
+        Err(err) => {
+            warn!(provider = "tvdb", err = %err, "load_episodes: tvdb call failed");
+            Response::error(
+                Some(request_id),
+                ipc::ErrorCode::MetadataFailed,
+                format!("tvdb episodes: {err}"),
+            )
+        }
+    }
 }
 
 // ── Request dispatch ──────────────────────────────────────────────────────────
@@ -1165,10 +1296,16 @@ async fn handle_line(
 
         Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, trace, r).await,
 
-        Request::Metadata(r) => Response::error(
-            Some(r.id), ErrorCode::MetadataFailed,
-            "Metadata plugins not yet implemented".to_string(),
-        ),
+        Request::Metadata(r) => {
+            if r.kind == "episodes" {
+                run_load_episodes(engine, r).await
+            } else {
+                Response::error(
+                    Some(r.id), ErrorCode::MetadataFailed,
+                    "Metadata plugins not yet implemented".to_string(),
+                )
+            }
+        }
 
         Request::GetDetailMetadata(r) => {
             // Fire-and-forget: four verb partials stream back via

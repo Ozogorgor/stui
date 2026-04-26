@@ -2,7 +2,7 @@
 //! AniList GraphQL API. No API key required.
 //!
 //! Implements `Plugin` + `CatalogPlugin::{search, lookup, enrich,
-//! get_artwork, get_credits, related}`.
+//! get_artwork, get_credits, related, episodes}`.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ use stui_plugin_sdk::{
     CrewMember,
     EnrichRequest, EnrichResponse,
     EntryKind,
+    EpisodeWire, EpisodesRequest, EpisodesResponse,
     InitContext,
     LookupRequest, LookupResponse,
     Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
@@ -241,7 +242,28 @@ impl CatalogPlugin for AnilistPlugin {
                 format!("anilist: no match for {}={}", req.id_source, req.id),
             );
         };
-        PluginResult::ok(LookupResponse { entry: media.into_entry(entry_kind) })
+        // Walk the prequel→sequel chain so the EpisodeScreen can list
+        // every cour as a separate season. Skip for movies — they have
+        // no episodic concept and the relations chain often points at
+        // unrelated franchise spinoffs which would mislead the UI.
+        let chain = if matches!(entry_kind, EntryKind::Movie) {
+            Vec::new()
+        } else {
+            walk_chain(media.id, media.relations.as_ref())
+        };
+        let mut entry = media.into_entry(entry_kind);
+        if chain.len() > 1 {
+            entry.season_count = Some(chain.len() as u32);
+            entry.season_ids = chain
+                .into_iter()
+                .map(|id| format!("anilist-{id}"))
+                .collect();
+        } else {
+            // Single cour or movie: explicit 1 so the UI doesn't fall
+            // back to the unknown-count placeholder.
+            entry.season_count = Some(1);
+        }
+        PluginResult::ok(LookupResponse { entry })
     }
 
     fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
@@ -467,6 +489,94 @@ impl CatalogPlugin for AnilistPlugin {
         };
         PluginResult::ok(RelatedResponse { items })
     }
+
+    fn episodes(&self, req: EpisodesRequest) -> PluginResult<EpisodesResponse> {
+        if req.id_source != id_sources::ANILIST {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("anilist episodes only supports anilist id_source, got: {}", req.id_source),
+            );
+        }
+        // Each cour is its own AniList Media id (the chain-walk in `lookup`
+        // emits one season_id per cour), so `series_id` is the cour's
+        // numeric AniList id and `season` is conventionally 1. We don't
+        // reject `season != 1` — the value is forwarded to the wire so the
+        // TUI's grouping stays correct if the caller chose otherwise.
+        let id: i64 = match req.series_id.parse() {
+            Ok(n) => n,
+            Err(_) => return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("anilist id must be numeric, got: {}", req.series_id),
+            ),
+        };
+        plugin_info!("anilist: episodes id={} season={}", id, req.season);
+
+        let raw = match gql(EPISODES_QUERY, serde_json::json!({ "id": id })) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(e),
+        };
+        let env: GqlEnvelope<SingleEpisodesMedia> = match parse_json(&raw) {
+            Ok(r) => r,
+            Err(e) => return PluginResult::Err(e),
+        };
+        if env.errors.as_ref().is_some_and(|e| !e.is_empty()) {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("anilist episodes: no media for id={id}"),
+            );
+        }
+        let Some(payload) = env.data.and_then(|d| d.media) else {
+            return PluginResult::err(error_codes::UNKNOWN_ID, "anilist episodes: media not found");
+        };
+
+        let episodes = build_episodes(&req.series_id, req.season, payload);
+        PluginResult::ok(EpisodesResponse { episodes })
+    }
+}
+
+// ── Episodes builder ──────────────────────────────────────────────────────────
+
+/// Build the per-episode wire list from an AniList `Media` payload.
+///
+/// AniList exposes two adjacent fields that together describe the cour:
+///   - `episodes` (Int): canonical episode count for the cour.
+///   - `streamingEpisodes` ([{ title, thumbnail }]): per-episode display
+///     metadata for sites that have it. Returned in airing order, but
+///     NOT episode-numbered — we derive `episode = i + 1` from list
+///     position. May be shorter than the count, longer (rare, e.g.
+///     specials folded in), or absent entirely.
+///
+/// We emit `max(streamingEpisodes.len(), episodes)` rows so the TUI
+/// always sees a populated grid. Slots without streaming data fall back
+/// to `"Episode N"` so the screen stays usable while still calling out
+/// missing metadata visually.
+///
+/// `air_date` and `runtime_mins` stay `None` — AniList's public API
+/// doesn't expose either at the per-episode level (`Media.duration` is
+/// the cour-wide average and would mislead).
+fn build_episodes(series_id: &str, season: u32, payload: EpisodesPayload) -> Vec<EpisodeWire> {
+    let count = payload.episodes.unwrap_or(0) as usize;
+    let stream = payload.streaming_episodes.unwrap_or_default();
+    let total = stream.len().max(count);
+    (0..total)
+        .map(|i| {
+            let n = (i + 1) as u32;
+            let title = stream
+                .get(i)
+                .and_then(|s| s.title.clone())
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| format!("Episode {n}"));
+            EpisodeWire {
+                season,
+                episode: n,
+                title,
+                air_date: None,
+                runtime_mins: None,
+                provider: "anilist".to_string(),
+                entry_id: format!("anilist-{series_id}:e{n}"),
+            }
+        })
+        .collect()
 }
 
 // ── Scoring helper ────────────────────────────────────────────────────────────
@@ -550,6 +660,7 @@ query ($id: Int) {
         coverImage { medium large extraLarge }
         bannerImage
         genres
+        relations { edges { relationType node { id } } }
     }
 }
 "#;
@@ -564,6 +675,19 @@ query ($idMal: Int) {
         coverImage { medium large extraLarge }
         bannerImage
         genres
+        relations { edges { relationType node { id } } }
+    }
+}
+"#;
+
+/// Lightweight query used while walking the prequel/sequel chain.
+/// Skips media-detail fields — we only need the next hop, so fetching
+/// title/poster/etc. per chain step is wasted bandwidth.
+const CHAIN_HOP_QUERY: &str = r#"
+query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+        id
+        relations { edges { relationType node { id } } }
     }
 }
 "#;
@@ -584,6 +708,20 @@ query ($id: Int) {
                 node { name { full } }
             }
         }
+    }
+}
+"#;
+
+/// Per-cour episode list. `episodes` is the canonical count; the
+/// `streamingEpisodes` array carries per-episode display titles when
+/// available. We deliberately don't query `thumbnail` — the TUI's
+/// episode grid is text-only today and dragging thumbnails through the
+/// wire would inflate the response without payoff.
+const EPISODES_QUERY: &str = r#"
+query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+        episodes
+        streamingEpisodes { title }
     }
 }
 "#;
@@ -728,6 +866,26 @@ struct StaffNode {
 }
 
 #[derive(Debug, Deserialize)]
+struct SingleEpisodesMedia {
+    #[serde(rename = "Media", default)]
+    media: Option<EpisodesPayload>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct EpisodesPayload {
+    #[serde(default)]
+    episodes: Option<u32>,
+    #[serde(rename = "streamingEpisodes", default)]
+    streaming_episodes: Option<Vec<StreamingEpisode>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamingEpisode {
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RelatedMedia {
     #[serde(rename = "Media", default)]
     media: Option<RelatedPayload>,
@@ -796,6 +954,19 @@ struct Media {
     banner_image: Option<String>,
     #[serde(default)]
     genres: Vec<String>,
+    /// Adjacency edges to other Media (sequel/prequel/sidestory/etc.).
+    /// Lookup uses these to walk the prequel→sequel chain so the
+    /// EpisodeScreen can list every cour as a separate "season".
+    #[serde(default)]
+    relations: Option<RelationConnection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChainNode {
+    #[allow(dead_code)]
+    id: u64,
+    #[serde(default)]
+    relations: Option<RelationConnection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -803,6 +974,9 @@ struct MediaStub {
     id: u64,
     #[serde(rename = "idMal", default)]
     id_mal: Option<u64>,
+    /// Optional so the chain-walk query (which only fetches `id`) still
+    /// deserializes — the chain only needs the node id, not display data.
+    #[serde(default)]
     title: AnimeTitle,
     #[serde(rename = "seasonYear", default)]
     season_year: Option<u32>,
@@ -826,6 +1000,119 @@ struct CoverImage {
 
 fn pick_title(t: AnimeTitle) -> String {
     t.english.or(t.romaji).or(t.native).unwrap_or_default()
+}
+
+/// Maximum chain depth — anti-cycle bound. Anime franchises rarely
+/// exceed this in either direction; capping protects against malformed
+/// `relations` graphs (cycles, self-edges) that would otherwise loop
+/// the chain walker forever.
+const CHAIN_MAX_DEPTH: usize = 20;
+
+/// Pull the first PREQUEL or SEQUEL id from a relations connection.
+/// Returns None when no such edge exists, so callers can stop walking.
+fn first_relation_id(rel: Option<&RelationConnection>, want: &str) -> Option<u64> {
+    rel?.edges.iter().find_map(|e| {
+        let kind = e.relation_type.as_deref()?;
+        if kind.eq_ignore_ascii_case(want) {
+            e.node.as_ref().map(|n| n.id)
+        } else {
+            None
+        }
+    })
+}
+
+/// Fetch only the chain-relevant fields of a Media. Used to traverse
+/// prequel/sequel hops without paying for the full Media payload at
+/// every step.
+fn chain_hop(id: u64) -> Result<Option<ChainNode>, PluginError> {
+    let raw = gql(CHAIN_HOP_QUERY, serde_json::json!({ "id": id }))?;
+    let env: GqlEnvelope<SingleChainNode> = parse_json(&raw)?;
+    if env.errors.as_ref().is_some_and(|e| !e.is_empty()) {
+        return Ok(None);
+    }
+    Ok(env.data.and_then(|d| d.media))
+}
+
+/// Walk the prequel→sequel chain from `anchor_id`. Result is the
+/// ordered list of media ids from earliest cour to latest, INCLUDING
+/// the anchor at its true position in the chain.
+///
+/// Returns `vec![anchor_id]` when no relations exist or the chain is
+/// degenerate — callers should treat a length-1 result as "single
+/// season" rather than a special case.
+fn walk_chain(anchor_id: u64, anchor_relations: Option<&RelationConnection>) -> Vec<u64> {
+    // ── Step 1: walk PREQUEL backward to chain root. ──────────────────
+    let mut prefix: Vec<u64> = Vec::new();
+    let mut current_relations: Option<RelationConnection> =
+        anchor_relations.map(|r| RelationConnection {
+            edges: r.edges.iter().map(|e| RelationEdge {
+                relation_type: e.relation_type.clone(),
+                node: e.node.as_ref().map(|n| MediaStub {
+                    id: n.id,
+                    id_mal: n.id_mal,
+                    title: AnimeTitle::default(),
+                    season_year: n.season_year,
+                    cover_image: None,
+                }),
+            }).collect(),
+        });
+    let mut hops = 0;
+    while let Some(prev_id) = first_relation_id(current_relations.as_ref(), "PREQUEL") {
+        if hops >= CHAIN_MAX_DEPTH || prefix.contains(&prev_id) || prev_id == anchor_id {
+            break;
+        }
+        prefix.push(prev_id);
+        match chain_hop(prev_id) {
+            Ok(Some(node)) => current_relations = node.relations,
+            _ => break,
+        }
+        hops += 1;
+    }
+    prefix.reverse(); // now [oldest .. just-before-anchor]
+
+    // ── Step 2: walk SEQUEL forward from anchor. ──────────────────────
+    let mut suffix: Vec<u64> = Vec::new();
+    // Restart from anchor's relations (we may have mutated current_relations above).
+    current_relations = anchor_relations.map(|r| RelationConnection {
+        edges: r.edges.iter().map(|e| RelationEdge {
+            relation_type: e.relation_type.clone(),
+            node: e.node.as_ref().map(|n| MediaStub {
+                id: n.id,
+                id_mal: n.id_mal,
+                title: AnimeTitle::default(),
+                season_year: n.season_year,
+                cover_image: None,
+            }),
+        }).collect(),
+    });
+    hops = 0;
+    while let Some(next_id) = first_relation_id(current_relations.as_ref(), "SEQUEL") {
+        if hops >= CHAIN_MAX_DEPTH
+            || suffix.contains(&next_id)
+            || prefix.contains(&next_id)
+            || next_id == anchor_id
+        {
+            break;
+        }
+        suffix.push(next_id);
+        match chain_hop(next_id) {
+            Ok(Some(node)) => current_relations = node.relations,
+            _ => break,
+        }
+        hops += 1;
+    }
+
+    // [oldest .. anchor .. latest]
+    let mut chain = prefix;
+    chain.push(anchor_id);
+    chain.extend(suffix);
+    chain
+}
+
+#[derive(Debug, Deserialize)]
+struct SingleChainNode {
+    #[serde(rename = "Media")]
+    media: Option<ChainNode>,
 }
 
 impl Media {
@@ -970,6 +1257,7 @@ mod tests {
             cover_image: Some(CoverImage { medium: Some("m.jpg".into()), large: Some("l.jpg".into()), extra_large: Some("xl.jpg".into()) }),
             banner_image: Some("b.jpg".into()),
             genres: vec!["Action".into(), "Drama".into()],
+            relations: None,
         };
         let e = m.into_entry(EntryKind::Series);
         assert_eq!(e.source, "anilist");
@@ -996,5 +1284,112 @@ mod tests {
         assert_eq!(guess_mime("https://x/y.webp"), "image/webp");
         assert_eq!(guess_mime("https://x/y.jpg"), "image/jpeg");
         assert_eq!(guess_mime("https://x/y.unknown"), "image/jpeg");
+    }
+
+    #[test]
+    fn build_episodes_uses_streaming_titles_when_present() {
+        let payload = EpisodesPayload {
+            episodes: Some(3),
+            streaming_episodes: Some(vec![
+                StreamingEpisode { title: Some("To You, in 2000 Years".into()) },
+                StreamingEpisode { title: Some("That Day".into()) },
+                StreamingEpisode { title: Some("A Dim Light Amid Despair".into()) },
+            ]),
+        };
+        let eps = build_episodes("16498", 1, payload);
+        assert_eq!(eps.len(), 3);
+        assert_eq!(eps[0].episode, 1);
+        assert_eq!(eps[0].title, "To You, in 2000 Years");
+        assert_eq!(eps[2].title, "A Dim Light Amid Despair");
+        assert!(eps.iter().all(|e| e.season == 1 && e.provider == "anilist"));
+    }
+
+    #[test]
+    fn build_episodes_pads_with_episode_number_when_count_exceeds_streaming() {
+        let payload = EpisodesPayload {
+            episodes: Some(5),
+            streaming_episodes: Some(vec![
+                StreamingEpisode { title: Some("Pilot".into()) },
+                StreamingEpisode { title: Some("Take Two".into()) },
+            ]),
+        };
+        let eps = build_episodes("99", 1, payload);
+        assert_eq!(eps.len(), 5);
+        assert_eq!(eps[0].title, "Pilot");
+        assert_eq!(eps[1].title, "Take Two");
+        assert_eq!(eps[2].title, "Episode 3");
+        assert_eq!(eps[4].title, "Episode 5");
+    }
+
+    #[test]
+    fn build_episodes_handles_blank_streaming_titles() {
+        let payload = EpisodesPayload {
+            episodes: Some(2),
+            streaming_episodes: Some(vec![
+                StreamingEpisode { title: Some("   ".into()) },
+                StreamingEpisode { title: None },
+            ]),
+        };
+        let eps = build_episodes("1", 1, payload);
+        assert_eq!(eps[0].title, "Episode 1");
+        assert_eq!(eps[1].title, "Episode 2");
+    }
+
+    #[test]
+    fn build_episodes_emits_anilist_prefixed_entry_ids() {
+        let payload = EpisodesPayload {
+            episodes: Some(2),
+            streaming_episodes: None,
+        };
+        let eps = build_episodes("16498", 1, payload);
+        assert_eq!(eps[0].entry_id, "anilist-16498:e1");
+        assert_eq!(eps[1].entry_id, "anilist-16498:e2");
+    }
+
+    #[test]
+    fn build_episodes_returns_empty_when_no_signal() {
+        let payload = EpisodesPayload { episodes: None, streaming_episodes: None };
+        assert!(build_episodes("1", 1, payload).is_empty());
+    }
+
+    #[test]
+    fn build_episodes_uses_streaming_length_when_count_missing() {
+        let payload = EpisodesPayload {
+            episodes: None,
+            streaming_episodes: Some(vec![
+                StreamingEpisode { title: Some("A".into()) },
+                StreamingEpisode { title: Some("B".into()) },
+            ]),
+        };
+        let eps = build_episodes("1", 1, payload);
+        assert_eq!(eps.len(), 2);
+    }
+
+    #[test]
+    fn episodes_rejects_non_anilist_id_source() {
+        let p = AnilistPlugin::new();
+        let req = EpisodesRequest {
+            series_id: "16498".into(),
+            id_source: "tmdb".into(),
+            season: 1,
+        };
+        match p.episodes(req) {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID rejection"),
+        }
+    }
+
+    #[test]
+    fn episodes_rejects_non_numeric_id() {
+        let p = AnilistPlugin::new();
+        let req = EpisodesRequest {
+            series_id: "not-a-number".into(),
+            id_source: id_sources::ANILIST.to_string(),
+            season: 1,
+        };
+        match p.episodes(req) {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID rejection"),
+        }
     }
 }

@@ -511,33 +511,23 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
         return entry;
     }
 
-    // Sort by field completeness (more fields = higher priority).
-    group.sort_by_key(|e| {
-        let mut score = 0usize;
-        if e.year.is_some() {
-            score += 1;
-        }
-        if e.genre.is_some() {
-            score += 1;
-        }
-        if e.rating.is_some() {
-            score += 1;
-        }
-        if e.description.is_some() {
-            score += 1;
-        }
-        if e.poster_url.is_some() {
-            score += 1;
-        }
-        if e.imdb_id.is_some() {
-            score += 2;
-        } // especially valuable
-        if e.tmdb_id.is_some() {
-            score += 1;
-        }
-        score
-    });
-    group.reverse(); // highest score first
+    // The bucket key is the same for every entry (they collapsed here).
+    let key = group[0].dedup_key();
+
+    // Two-key sort: provider_priority_for_key primary (lower = better),
+    // field_completeness_score secondary (higher = better, expressed
+    // via Reverse so it sorts descending within a tier).
+    //
+    // NOTE: this intentionally diverges from the prior sort (which used
+    // field-completeness only and then `group.reverse()`-ed). With the
+    // two-key tuple-sort here, ascending is already correct
+    // (priority 0 wins; within the same priority, Reverse(score) wins),
+    // so no `.reverse()` needed.
+    group.sort_by_key(|e| (
+        crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &key),
+        std::cmp::Reverse(field_completeness_score(e)),
+    ));
+    // group[0] is now the spine.
 
     let mut base = group.remove(0);
     let all_providers: Vec<String> = std::iter::once(base.provider.clone())
@@ -571,6 +561,9 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
         if base.tmdb_id.is_none() {
             base.tmdb_id = secondary.tmdb_id.clone();
         }
+        if base.mal_id.is_none() {
+            base.mal_id = secondary.mal_id.clone();
+        }
         if base.original_language.is_none() {
             base.original_language = secondary.original_language.clone();
         }
@@ -587,6 +580,23 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
     // Record all contributing providers.
     base.provider = all_providers.join(",");
     base
+}
+
+/// Field-completeness score, extracted from the prior inline sort.
+/// Higher score = more fields populated. Used as a tiebreaker when
+/// `provider_priority_for_key` returns equal values (e.g., multiple
+/// entries from the same provider — extremely rare).
+fn field_completeness_score(e: &CatalogEntry) -> usize {
+    let mut score = 0;
+    if e.year.is_some()        { score += 1; }
+    if e.genre.is_some()       { score += 1; }
+    if e.rating.is_some()      { score += 1; }
+    if e.description.is_some() { score += 1; }
+    if e.poster_url.is_some()  { score += 1; }
+    if e.imdb_id.is_some()     { score += 2; }
+    if e.mal_id.is_some()      { score += 2; }
+    if e.tmdb_id.is_some()     { score += 1; }
+    score
 }
 
 /// If an entry has a plain `rating` string but an empty `ratings` map,
@@ -716,6 +726,7 @@ mod tests {
             tab: "movies".to_string(),
             imdb_id: Some(imdb_id.to_string()),
             tmdb_id: None,
+            mal_id: None,
             media_type,
             ratings: ratings_map,
             original_language: None,
@@ -996,6 +1007,191 @@ mod tests {
         assert_eq!(result.len(), 1);
         // Should still get a rating from available source (tmdb)
         assert!(result[0].rating.is_some());
+    }
+
+    /// Regression test for the user-reported "Jujutsu Kaisen Culling Game
+    /// Part 1 appears twice (once from AniList, once from Kitsu)" bug. Both
+    /// providers expose `mal_id`; the dedup key now collapses them via the
+    /// MAL precedence even when titles differ (English vs romaji).
+    #[test]
+    fn test_merge_collapses_anilist_kitsu_via_mal() {
+        let mut anilist = make_entry("JJK Culling Game", "", None, &[], MediaType::Series);
+        anilist.imdb_id = None;
+        anilist.mal_id = Some("57658".to_string());
+        anilist.provider = "anilist".to_string();
+
+        let mut kitsu = make_entry(
+            "Jujutsu Kaisen: Shimetsu Kaiyū Zenpen",
+            "",
+            None,
+            &[],
+            MediaType::Series,
+        );
+        kitsu.imdb_id = None;
+        kitsu.mal_id = Some("57658".to_string());
+        kitsu.provider = "kitsu".to_string();
+
+        let merged = CatalogAggregator::new().merge(vec![anilist, kitsu]);
+        assert_eq!(merged.len(), 1, "AniList and Kitsu with same MAL should collapse");
+    }
+
+    #[test]
+    fn test_merge_collapses_anime_and_western_tiers_via_bridge() {
+        use crate::anime_bridge::AnimeBridge;
+        use crate::anime_bridge::enrich::enrich_entry;
+        use crate::ipc::v1::MediaEntry;
+
+        // Build MediaEntry-shaped inputs first so we can run bridge
+        // enrichment, then convert to CatalogEntry as the production
+        // search_catalog_entries path does.
+        let mut anilist_me = MediaEntry {
+            id: "anilist-1".into(),
+            title: "Cowboy Bebop".into(),
+            year: Some("1998".into()),
+            provider: "anilist".into(),
+            mal_id: Some("1".into()),
+            ..Default::default()
+        };
+        let mut omdb_me = MediaEntry {
+            id: "omdb-tt0213338".into(),
+            title: "Cowboy Bebop".into(),
+            year: Some("1998".into()),
+            provider: "omdb".into(),
+            imdb_id: Some("tt0213338".into()),
+            ..Default::default()
+        };
+
+        let bridge = AnimeBridge::new();
+        enrich_entry(&mut anilist_me, &bridge);
+        enrich_entry(&mut omdb_me, &bridge);
+
+        // Convert to CatalogEntry — mirror the production conversion at
+        // engine/mod.rs:1211 (mal_id, imdb_id, tmdb_id all carry over).
+        let to_catalog = |e: MediaEntry| CatalogEntry {
+            id: e.id,
+            title: e.title,
+            year: e.year,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
+            provider: e.provider,
+            tab: "movies".into(),
+            imdb_id: e.imdb_id,
+            tmdb_id: e.tmdb_id,
+            mal_id: e.mal_id,
+            media_type: MediaType::default(),
+            ratings: HashMap::new(),
+            original_language: None,
+        };
+
+        let merged = CatalogAggregator::new().merge(vec![
+            to_catalog(anilist_me),
+            to_catalog(omdb_me),
+        ]);
+        assert_eq!(merged.len(), 1, "AniList and OMDb should collapse via bridge");
+        // `merge_group` joins all contributing providers into a comma list,
+        // spine first → assert starts_with rather than exact match.
+        assert!(
+            merged[0].provider.starts_with("anilist"),
+            "AniList must lead the provider list as spine on mal-keyed merge; got {}",
+            merged[0].provider,
+        );
+    }
+
+    #[test]
+    fn test_merge_picks_anilist_over_tvdb_on_mal_key() {
+        use crate::anime_bridge::AnimeBridge;
+        use crate::anime_bridge::enrich::enrich_entry;
+        use crate::ipc::v1::MediaEntry;
+
+        // Use Cowboy Bebop — same rationale as the search_scoped test:
+        // AOT (mal=16498) shares imdb tt2560140 across 6 season records
+        // in the bundled Fribb snapshot, so TVDB→imdb→mal enrichment
+        // can resolve to a non-canonical mal_id. Bebop's single-record
+        // mapping (mal=1, imdb=tt0213338) is unambiguous.
+        let mut anilist_me = MediaEntry {
+            id: "anilist-1".into(),
+            title: "Cowboy Bebop".into(),
+            year: Some("1998".into()),
+            provider: "anilist".into(),
+            mal_id: Some("1".into()),
+            ..Default::default()
+        };
+        let mut tvdb_me = MediaEntry {
+            id: "tvdb-76885".into(),
+            title: "Cowboy Bebop".into(),
+            year: Some("1998".into()),
+            provider: "tvdb".into(),
+            imdb_id: Some("tt0213338".into()),
+            ..Default::default()
+        };
+
+        let bridge = AnimeBridge::new();
+        enrich_entry(&mut anilist_me, &bridge);
+        enrich_entry(&mut tvdb_me, &bridge);
+
+        let to_catalog = |e: MediaEntry| CatalogEntry {
+            id: e.id, title: e.title, year: e.year,
+            genre: None, rating: None, description: None,
+            poster_url: None, poster_art: None,
+            provider: e.provider, tab: "series".into(),
+            imdb_id: e.imdb_id, tmdb_id: e.tmdb_id, mal_id: e.mal_id,
+            media_type: MediaType::default(),
+            ratings: HashMap::new(), original_language: None,
+        };
+
+        let merged = CatalogAggregator::new().merge(vec![
+            to_catalog(anilist_me),
+            to_catalog(tvdb_me),
+        ]);
+        assert_eq!(merged.len(), 1);
+        // `merge_group` joins all contributing providers into a comma list,
+        // spine first → assert starts_with rather than exact match.
+        assert!(
+            merged[0].provider.starts_with("anilist"),
+            "AniList must lead provider list; got {}",
+            merged[0].provider,
+        );
+    }
+
+    #[test]
+    fn test_merge_keeps_tvdb_over_anilist_on_imdb_key() {
+        // Western series; bridge enrichment no-ops; key is imdb:; existing
+        // α priority keeps TVDB as spine.
+        let tvdb = CatalogEntry {
+            id: "tvdb-81189".into(),
+            title: "Breaking Bad".into(),
+            year: Some("2008".into()),
+            genre: None, rating: None, description: None,
+            poster_url: None, poster_art: None,
+            provider: "tvdb".into(), tab: "series".into(),
+            imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
+            media_type: MediaType::default(),
+            ratings: HashMap::new(), original_language: None,
+        };
+        let anilist = CatalogEntry {
+            id: "anilist-X".into(),
+            title: "Breaking Bad".into(),
+            year: Some("2008".into()),
+            genre: None, rating: None, description: None,
+            poster_url: None, poster_art: None,
+            provider: "anilist".into(), tab: "series".into(),
+            imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
+            media_type: MediaType::default(),
+            ratings: HashMap::new(), original_language: None,
+        };
+
+        let merged = CatalogAggregator::new().merge(vec![tvdb, anilist]);
+        assert_eq!(merged.len(), 1);
+        // `merge_group` joins all contributing providers into a comma list,
+        // spine first → assert starts_with rather than exact match.
+        assert!(
+            merged[0].provider.starts_with("tvdb"),
+            "TVDB must lead provider list on imdb-keyed merge; got {}",
+            merged[0].provider,
+        );
     }
 
     #[test]

@@ -84,6 +84,8 @@ pub use v1::{
     MediaTab,
     // Domain types
     MediaType,
+    EpisodeEntryWire,
+    EpisodesLoadedResponse,
     MetadataRequest,
     MetadataResponse,
     // MPD output types

@@ -683,6 +683,9 @@ pub mod test_engine {
             id_source: IdSource::Imdb,
             kind: "movies".into(),
             per_verb_timeout: Duration::from_secs(8),
+            title: String::new(),
+            year: None,
+            external_ids: Default::default(),
         }
     }
 
@@ -692,6 +695,9 @@ pub mod test_engine {
             id_source: IdSource::Imdb,
             kind: "movies".into(),
             per_verb_timeout: Duration::from_millis(ms),
+            title: String::new(),
+            year: None,
+            external_ids: Default::default(),
         }
     }
 

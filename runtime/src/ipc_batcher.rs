@@ -135,6 +135,7 @@ mod tests {
                     tab: tab.to_string(),
                     imdb_id: None,
                     tmdb_id: None,
+                    mal_id: None,
                     media_type: MediaType::default(),
                     ratings: Default::default(),
                     original_language: None,

@@ -1,8 +1,8 @@
 //! OMDb metadata provider — movies and series via the Open Movie Database.
 //!
-//! Implements `Plugin` + `CatalogPlugin::{search, lookup}`. OMDb has no
-//! related / credits / artwork-catalog / enrich endpoints, so those verbs
-//! default to `NOT_IMPLEMENTED` from the trait.
+//! Implements `Plugin` + `CatalogPlugin::{search, lookup, enrich,
+//! get_credits, episodes}`. OMDb has no related / artwork-catalog
+//! endpoints, so those verbs default to `NOT_IMPLEMENTED` from the trait.
 //!
 //! ## API key
 //!
@@ -23,6 +23,7 @@ use stui_plugin_sdk::{
     CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse, CrewMember,
     EnrichRequest, EnrichResponse,
     EntryKind,
+    EpisodeWire, EpisodesRequest, EpisodesResponse,
     InitContext,
     LookupRequest, LookupResponse,
     Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
@@ -407,6 +408,97 @@ impl CatalogPlugin for OmdbPlugin {
 
         PluginResult::ok(CreditsResponse { cast, crew })
     }
+
+    fn episodes(&self, req: EpisodesRequest) -> PluginResult<EpisodesResponse> {
+        // OMDb's plugin id is "omdb" but its canonical id source is "imdb"
+        // (every OMDb id IS an imdb tt-id). The runtime's episodes
+        // dispatcher routes by plugin id, so `req.id_source` arrives as
+        // `"omdb"`; older callers that key by canonical source send
+        // `"imdb"`. Accept both — anything else is genuinely wrong.
+        if req.id_source != id_sources::IMDB && req.id_source != "omdb" {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("omdb episodes only supports imdb/omdb id_source, got: {}", req.id_source),
+            );
+        }
+        if req.season < 1 {
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "omdb episodes: season must be >= 1",
+            );
+        }
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+
+        let url = format!(
+            "{BASE_URL}?i={}&Season={}&apikey={}",
+            urlencoding::encode(&req.series_id),
+            req.season,
+            api_key,
+        );
+        plugin_info!("omdb: episodes id={} season={}", req.series_id, req.season);
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let resp: SeasonResponse = match parse_json(&body) {
+            Ok(r) => r,
+            Err(e) => return PluginResult::Err(e),
+        };
+        if resp.response.eq_ignore_ascii_case("false") {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                resp.error.unwrap_or_else(|| format!(
+                    "omdb: no season {} for {}", req.season, req.series_id,
+                )),
+            );
+        }
+
+        let episodes = build_episodes(&req.series_id, req.season, resp.episodes);
+        PluginResult::ok(EpisodesResponse { episodes })
+    }
+}
+
+// ── Episodes builder ──────────────────────────────────────────────────────────
+
+/// Convert OMDb's per-season `Episodes[]` rows into wire shape.
+///
+/// OMDb's season endpoint returns title + release date + per-episode
+/// `imdbID` but no per-episode runtime — fetching runtime would require
+/// one extra request per episode (`?i={imdbID}`), which is a poor trade
+/// for a list view. `runtime_mins` stays `None`.
+///
+/// `entry_id` is `"omdb-{imdbID}"` when present so the runtime's
+/// future stream-resolve dispatcher can route on the prefix; falls back
+/// to a synthetic `"omdb-{series}:s{S}e{E}"` when OMDb omits the imdb id
+/// (rare but possible for unreleased episodes).
+fn build_episodes(series_id: &str, season: u32, raw: Vec<RawEpisode>) -> Vec<EpisodeWire> {
+    raw.into_iter()
+        .map(|ep| {
+            let n = ep.episode.trim().parse::<u32>().unwrap_or(0);
+            let title = match opt_non_na(&ep.title) {
+                Some(t) => t,
+                None    => format!("Episode {n}"),
+            };
+            let imdb = opt_non_na(&ep.imdb_id);
+            let entry_id = match imdb {
+                Some(id) => format!("omdb-{id}"),
+                None     => format!("omdb-{series_id}:s{season}e{n}"),
+            };
+            EpisodeWire {
+                season,
+                episode: n,
+                title,
+                air_date: opt_non_na(&ep.released),
+                runtime_mins: None,
+                provider: "omdb".to_string(),
+                entry_id,
+            }
+        })
+        .collect()
 }
 
 /// Split OMDb's comma-separated name lists into trimmed individual names.
@@ -506,6 +598,21 @@ impl DetailResponse {
 /// `"142 min"` → `Some(142)`. Anything else → `None`.
 fn parse_runtime_minutes(raw: &str) -> Option<u32> {
     raw.split_whitespace().next().and_then(|n| n.parse::<u32>().ok())
+}
+
+#[derive(Debug, Deserialize)]
+struct SeasonResponse {
+    #[serde(rename = "Response", default)] response: String,
+    #[serde(rename = "Error",    default)] error:    Option<String>,
+    #[serde(rename = "Episodes", default)] episodes: Vec<RawEpisode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEpisode {
+    #[serde(rename = "Title",    default)] title:    String,
+    #[serde(rename = "Released", default)] released: String,
+    #[serde(rename = "Episode",  default)] episode:  String,
+    #[serde(rename = "imdbID",   default)] imdb_id:  String,
 }
 
 /// OMDb stringifies `totalResults`; accept both string and number shapes.
@@ -680,5 +787,127 @@ mod tests {
         assert_eq!(resp.items[0].poster_url.as_deref(), Some("https://p/1.jpg"));
         // Second entry has Poster=N/A which `opt_non_na` strips out.
         assert_eq!(resp.items[1].poster_url, None);
+    }
+
+    // ── Episodes verb ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn build_episodes_uses_omdb_imdb_id_as_entry_id() {
+        let raw = vec![
+            RawEpisode {
+                title: "Winter Is Coming".into(),
+                released: "2011-04-17".into(),
+                episode: "1".into(),
+                imdb_id: "tt1480055".into(),
+            },
+        ];
+        let eps = build_episodes("tt0944947", 1, raw);
+        assert_eq!(eps.len(), 1);
+        assert_eq!(eps[0].entry_id, "omdb-tt1480055");
+        assert_eq!(eps[0].provider, "omdb");
+        assert_eq!(eps[0].season, 1);
+        assert_eq!(eps[0].episode, 1);
+        assert_eq!(eps[0].title, "Winter Is Coming");
+        assert_eq!(eps[0].air_date.as_deref(), Some("2011-04-17"));
+        assert!(eps[0].runtime_mins.is_none());
+    }
+
+    #[test]
+    fn build_episodes_synthesises_entry_id_when_imdb_missing() {
+        let raw = vec![RawEpisode {
+            title: "Future".into(),
+            released: "N/A".into(),
+            episode: "3".into(),
+            imdb_id: "N/A".into(),
+        }];
+        let eps = build_episodes("tt0944947", 2, raw);
+        assert_eq!(eps[0].entry_id, "omdb-tt0944947:s2e3");
+        assert!(eps[0].air_date.is_none());
+    }
+
+    #[test]
+    fn build_episodes_falls_back_to_episode_n_for_na_title() {
+        let raw = vec![
+            RawEpisode { title: "N/A".into(),  released: "".into(), episode: "1".into(), imdb_id: "tt1".into() },
+            RawEpisode { title: "".into(),     released: "".into(), episode: "2".into(), imdb_id: "tt2".into() },
+            RawEpisode { title: "Real".into(), released: "".into(), episode: "3".into(), imdb_id: "tt3".into() },
+        ];
+        let eps = build_episodes("tt0", 1, raw);
+        assert_eq!(eps[0].title, "Episode 1");
+        assert_eq!(eps[1].title, "Episode 2");
+        assert_eq!(eps[2].title, "Real");
+    }
+
+    #[test]
+    fn build_episodes_handles_empty_episodes_list() {
+        assert!(build_episodes("tt0", 1, vec![]).is_empty());
+    }
+
+    #[test]
+    fn episodes_rejects_non_imdb_or_omdb_id_source() {
+        let p = OmdbPlugin::new_for_test("fake");
+        let req = EpisodesRequest {
+            series_id: "tt0944947".into(),
+            id_source: id_sources::TMDB.to_string(),
+            season: 1,
+        };
+        match p.episodes(req) {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID rejection"),
+        }
+    }
+
+    #[test]
+    fn episodes_rejects_zero_season() {
+        let p = OmdbPlugin::new_for_test("fake");
+        let req = EpisodesRequest {
+            series_id: "tt0944947".into(),
+            id_source: "omdb".into(),
+            season: 0,
+        };
+        match p.episodes(req) {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::INVALID_REQUEST),
+            PluginResult::Ok(_) => panic!("expected INVALID_REQUEST rejection"),
+        }
+    }
+
+    /// End-to-end through MockHost: stub the season endpoint and verify the
+    /// plugin parses + maps episodes through the full call path. Mirrors the
+    /// existing `search_roundtrips_through_mock_host` pattern.
+    #[test]
+    fn episodes_roundtrips_through_mock_host() {
+        use stui_plugin_sdk::testing::MockHost;
+
+        MockHost::reset();
+        let fixture = r#"{
+            "Title":"Game of Thrones",
+            "Season":"1",
+            "totalSeasons":"8",
+            "Episodes":[
+                {"Title":"Winter Is Coming","Released":"2011-04-17","Episode":"1","imdbRating":"9.1","imdbID":"tt1480055"},
+                {"Title":"The Kingsroad","Released":"2011-04-24","Episode":"2","imdbRating":"8.8","imdbID":"tt1668746"}
+            ],
+            "Response":"True"
+        }"#;
+        let _h = MockHost::new().with_fixture_response(
+            "https://www.omdbapi.com/?i=tt0944947&Season=1&apikey=fake",
+            fixture,
+        );
+
+        let plugin = OmdbPlugin::new_for_test("fake");
+        let req = EpisodesRequest {
+            series_id: "tt0944947".into(),
+            id_source: "omdb".into(),
+            season: 1,
+        };
+        let resp = match plugin.episodes(req) {
+            PluginResult::Ok(r) => r,
+            PluginResult::Err(e) => panic!("episodes Err {}: {}", e.code, e.message),
+        };
+        assert_eq!(resp.episodes.len(), 2);
+        assert_eq!(resp.episodes[0].title, "Winter Is Coming");
+        assert_eq!(resp.episodes[0].entry_id, "omdb-tt1480055");
+        assert_eq!(resp.episodes[1].episode, 2);
+        assert_eq!(resp.episodes[1].air_date.as_deref(), Some("2011-04-24"));
     }
 }

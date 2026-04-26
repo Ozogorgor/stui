@@ -10,11 +10,9 @@
 //! dispatcher just builds the resolver from whatever config is current
 //! at request time.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use stui_plugin_sdk::EntryKind;
 
 use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
@@ -25,7 +23,6 @@ use crate::cache::metadata_key::MetadataVerb;
 use crate::config::types::MetadataSources;
 use crate::engine::Engine;
 use crate::plugin::manifest::PluginMetaExt;
-use crate::tvdb::{SearchKind, TvdbClient, TvdbEntry};
 
 use super::sources::{SourceCapabilityProbe, SourceResolver};
 use super::MetadataDispatch;
@@ -82,10 +79,14 @@ impl ManifestCapabilityProbe {
 impl SourceCapabilityProbe for ManifestCapabilityProbe {
     fn supports(&self, plugin: &str, verb: MetadataVerb, _kind_hint: &str) -> bool {
         if plugin == TVDB_SOURCE {
-            // TVDB only contributes to enrich today (cross-provider id
-            // resolution + scalar fields).  Credits/artwork/related
-            // would need new TVDB endpoints — track separately.
-            return self.tvdb_available && matches!(verb, MetadataVerb::Enrich);
+            // TVDB now contributes to enrich, credits, and artwork via the
+            // cached /extended endpoint. Related stays excluded — TVDB has
+            // no "similar shows" endpoint worth surfacing.
+            return self.tvdb_available
+                && matches!(
+                    verb,
+                    MetadataVerb::Enrich | MetadataVerb::Credits | MetadataVerb::Artwork,
+                );
         }
         self.metadata_plugin_ids.iter().any(|p| p == plugin)
     }
@@ -137,7 +138,7 @@ impl MetadataDispatch for EngineMetadataDispatch {
                 .engine
                 .tvdb()
                 .ok_or_else(|| "tvdb: client not available".to_string())?;
-            return tvdb_enrich(&client, req).await;
+            return crate::tvdb::source::enrich(&client, req).await;
         }
         // `supervisor_enrich` returns the enriched PluginEntry only —
         // re-wrap into EnrichResponse with confidence=1.0 (the plugin-side
@@ -159,10 +160,11 @@ impl MetadataDispatch for EngineMetadataDispatch {
         req: CreditsRequest,
     ) -> Result<CreditsResponse, String> {
         if plugin == TVDB_SOURCE {
-            // TVDB credits/artwork/related not implemented yet.  The
-            // capability probe already filters these out, but guard in
-            // case sources end up calling us anyway.
-            return Err("tvdb: credits not implemented".into());
+            let client = self
+                .engine
+                .tvdb()
+                .ok_or_else(|| "tvdb: client not available".to_string())?;
+            return crate::tvdb::source::credits(&client, req).await;
         }
         self.engine
             .supervisor_get_credits(plugin, req)
@@ -176,7 +178,11 @@ impl MetadataDispatch for EngineMetadataDispatch {
         req: ArtworkRequest,
     ) -> Result<ArtworkResponse, String> {
         if plugin == TVDB_SOURCE {
-            return Err("tvdb: artwork not implemented".into());
+            let client = self
+                .engine
+                .tvdb()
+                .ok_or_else(|| "tvdb: client not available".to_string())?;
+            return crate::tvdb::source::artwork(&client, req).await;
         }
         self.engine
             .supervisor_get_artwork(plugin, req)
@@ -199,99 +205,49 @@ impl MetadataDispatch for EngineMetadataDispatch {
     }
 }
 
-// ── TVDB enrich adapter ──────────────────────────────────────────────────────
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
 
-/// Run an enrich request through the runtime-native TVDB client and
-/// reshape the result into the same `EnrichResponse` the supervisor
-/// path would produce.
-///
-/// Lookup order: imdb id (precise) → title+year search (best-effort).
-/// Confidence reflects which path produced the hit.
-async fn tvdb_enrich(client: &TvdbClient, req: EnrichRequest) -> Result<EnrichResponse, String> {
-    let kind = match req.partial.kind {
-        EntryKind::Movie => SearchKind::Movie,
-        EntryKind::Series | EntryKind::Episode => SearchKind::Series,
-        _ => return Err("tvdb: unsupported kind".into()),
-    };
-
-    // Prefer imdb-id lookup when available — TVDB's /search/remoteid is
-    // much more precise than free-text search.
-    let imdb_lookup = req
-        .partial
-        .imdb_id
-        .clone()
-        .or_else(|| req.partial.external_ids.get("imdb").cloned());
-
-    let (entry, confidence) = if let Some(imdb) = imdb_lookup {
-        // /search returns an array; for a remote-id query we expect at
-        // most one match, so take the first.
-        let items = client
-            .search(&imdb, kind, 1)
-            .await
-            .map_err(|e| e.to_string())?;
-        match items.into_iter().next() {
-            Some(t) => (t, 1.0_f32),
-            None => return Err("tvdb: no match for imdb id".into()),
+    fn probe(tvdb_available: bool) -> ManifestCapabilityProbe {
+        ManifestCapabilityProbe {
+            metadata_plugin_ids: vec!["tmdb".into(), "anilist".into()],
+            tvdb_available,
         }
-    } else {
-        let title = req.partial.title.trim();
-        if title.is_empty() {
-            return Err("tvdb: empty title and no imdb id".into());
-        }
-        let mut query = title.to_string();
-        if let Some(y) = req.partial.year {
-            query.push(' ');
-            query.push_str(&y.to_string());
-        }
-        let items = client
-            .search(&query, kind, 1)
-            .await
-            .map_err(|e| e.to_string())?;
-        match items.into_iter().next() {
-            Some(t) => (t, 0.7_f32),
-            None => return Err("tvdb: no title match".into()),
-        }
-    };
-
-    Ok(EnrichResponse {
-        entry: tvdb_entry_to_plugin_entry(entry, req.partial.kind),
-        confidence,
-    })
-}
-
-/// Convert a [`TvdbEntry`] into the runtime's [`PluginEntry`] shape.
-///
-/// The whole point of running TVDB through enrich is to harvest its
-/// cross-provider ids — `tvdb` for itself, plus `imdb` and `tmdb` when
-/// TVDB knows them.  Those land in `external_ids` so the orchestrator's
-/// per-plugin id router can dispatch credits/artwork/related to the
-/// matching provider.
-fn tvdb_entry_to_plugin_entry(t: TvdbEntry, kind: EntryKind) -> PluginEntry {
-    let mut external_ids = HashMap::new();
-    external_ids.insert("tvdb".to_string(), t.tvdb_id.clone());
-    if let Some(ref imdb) = t.imdb_id {
-        external_ids.insert("imdb".to_string(), imdb.clone());
-    }
-    if let Some(ref tmdb) = t.tmdb_id {
-        external_ids.insert("tmdb".to_string(), tmdb.clone());
     }
 
-    PluginEntry {
-        id: format!("tvdb-{}", t.tvdb_id),
-        kind,
-        title: t.title,
-        source: TVDB_SOURCE.to_string(),
-        year: t.year.as_deref().and_then(|s| s.parse::<u32>().ok()),
-        genre: if t.genres.is_empty() {
-            None
-        } else {
-            Some(t.genres.join(", "))
-        },
-        description: t.overview,
-        poster_url: t.image_url,
-        imdb_id: t.imdb_id,
-        external_ids,
-        original_language: t.original_language,
-        ..Default::default()
+    #[test]
+    fn tvdb_supports_enrich_credits_artwork_when_available() {
+        let p = probe(true);
+        assert!(p.supports("tvdb", MetadataVerb::Enrich, "movies"));
+        assert!(p.supports("tvdb", MetadataVerb::Credits, "movies"));
+        assert!(p.supports("tvdb", MetadataVerb::Artwork, "movies"));
+    }
+
+    #[test]
+    fn tvdb_does_not_support_related_even_when_available() {
+        let p = probe(true);
+        assert!(!p.supports("tvdb", MetadataVerb::Related, "movies"));
+    }
+
+    #[test]
+    fn tvdb_disabled_when_no_api_key() {
+        let p = probe(false);
+        assert!(!p.supports("tvdb", MetadataVerb::Enrich, "movies"));
+        assert!(!p.supports("tvdb", MetadataVerb::Credits, "movies"));
+        assert!(!p.supports("tvdb", MetadataVerb::Artwork, "movies"));
+    }
+
+    #[test]
+    fn known_plugins_supported_regardless_of_tvdb_availability() {
+        let p = probe(false);
+        assert!(p.supports("tmdb", MetadataVerb::Enrich, "movies"));
+        assert!(p.supports("anilist", MetadataVerb::Credits, "anime"));
+    }
+
+    #[test]
+    fn unknown_plugin_not_supported() {
+        let p = probe(true);
+        assert!(!p.supports("madeup", MetadataVerb::Enrich, "movies"));
     }
 }

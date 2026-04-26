@@ -39,6 +39,7 @@ pub mod scraper;
 pub mod stremio;
 pub mod streamer;
 pub mod tvdb;
+pub mod anime_bridge;
 pub mod storage;
 pub mod watchhistory;
 pub mod mediacache;

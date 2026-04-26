@@ -353,7 +353,12 @@ func (c *Client) GetDetailMetadata(entryID, idSource, kind, title string, year *
 }
 
 // LoadEpisodes requests episode metadata for a series season.
-func (c *Client) LoadEpisodes(seriesID string, season int) {
+//
+// `idSource` tells the runtime which plugin owns this entry (today only
+// "tmdb" returns real data; other id_sources resolve to NOT_IMPLEMENTED
+// at the plugin layer). When empty the runtime falls back to peeling a
+// "<provider>-<id>" prefix off the id, with a final default of "tmdb".
+func (c *Client) LoadEpisodes(seriesID, idSource string, season int) {
 	go func() {
 		id := c.nextID()
 		payload := map[string]any{
@@ -363,10 +368,39 @@ func (c *Client) LoadEpisodes(seriesID string, season int) {
 			"kind":     "episodes",
 			"season":   season,
 		}
+		if idSource != "" {
+			payload["id_source"] = idSource
+		}
 		ch := c.sendWithID(id, payload)
 		raw := receiveWithTimeout(ch)
 		if raw.Err != nil {
 			c.send(StatusMsg{Text: "episodes load failed: " + raw.Err.Error()})
+			c.send(EpisodesLoadFailedMsg{
+				SeriesID: seriesID,
+				Season:   season,
+				Reason:   raw.Err.Error(),
+			})
+			return
+		}
+		// Runtime-side error envelopes arrive with type=="error" but no
+		// transport error; surface the message so the screen exits the
+		// loading state instead of silently rendering an empty list.
+		if raw.Type == "error" {
+			var env struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(raw.Raw, &env)
+			reason := env.Message
+			if env.Code != "" {
+				reason = env.Code + ": " + env.Message
+			}
+			c.send(StatusMsg{Text: "episodes load failed: " + reason})
+			c.send(EpisodesLoadFailedMsg{
+				SeriesID: seriesID,
+				Season:   season,
+				Reason:   reason,
+			})
 			return
 		}
 		var resp struct {
@@ -374,6 +408,11 @@ func (c *Client) LoadEpisodes(seriesID string, season int) {
 		}
 		if err := raw.decodeData(&resp); err != nil {
 			c.send(StatusMsg{Text: "episodes load failed: " + err.Error()})
+			c.send(EpisodesLoadFailedMsg{
+				SeriesID: seriesID,
+				Season:   season,
+				Reason:   err.Error(),
+			})
 			return
 		}
 		c.send(EpisodesLoadedMsg{

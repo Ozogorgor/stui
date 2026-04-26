@@ -292,6 +292,7 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
         tab:         format!("{tab:?}").to_lowercase(),
         imdb_id:     None,
         tmdb_id:     None,
+        mal_id:      None,
         media_type:  MediaType::Movie,
         ratings:     std::collections::HashMap::new(),
         original_language: None,

@@ -421,7 +421,24 @@ pub struct GetStreamsRequest {
 pub struct MetadataRequest {
     pub id: String,
     pub entry_id: String,
+    /// Legacy field kept for the original "fetch the bag of metadata for
+    /// this entry" callers. The episodes path leaves it empty and routes
+    /// via `id_source` instead.
+    #[serde(default)]
     pub provider: String,
+    /// Discriminator selecting the metadata sub-flow. Today only
+    /// `"episodes"` is honoured; legacy callers omit this and receive the
+    /// generic detail-bag flow.
+    #[serde(default)]
+    pub kind: String,
+    /// Plugin id to route the request to (e.g. `"tmdb"`). When empty the
+    /// runtime peels a `<provider>-<id>` prefix from `entry_id`, falling
+    /// back to `"tmdb"` for the episodes verb.
+    #[serde(default)]
+    pub id_source: String,
+    /// Season number for the episodes verb. Ignored otherwise.
+    #[serde(default)]
+    pub season: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -680,6 +697,11 @@ pub enum Response {
     /// `GetDetailMetadata` fan-out.  Multiple partials arrive per request
     /// (one per completed verb, out-of-order).
     DetailMetadataPartial(DetailMetadataPartial),
+
+    /// Response to a `Metadata { kind = "episodes" }` request.  Carries a
+    /// flat list of episodes for the requested season; the TUI's
+    /// `EpisodeScreen` decodes the `episodes` array directly.
+    EpisodesLoaded(EpisodesLoadedResponse),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1148,6 +1170,71 @@ pub struct RelatedIpcResponse {
     pub items: Vec<crate::abi::types::PluginEntry>,
 }
 
+/// Wire shape for a single episode. Mirrors the TUI's `ipc.EpisodeEntry`
+/// (and `sdk::EpisodeWire`) field-for-field — Go side decodes by JSON tag
+/// so no Rust-level type alias on the TUI is needed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeEntryWire {
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_mins: Option<u32>,
+    pub provider: String,
+    pub entry_id: String,
+}
+
+/// Response payload for `Response::EpisodesLoaded`. The `id` field is
+/// echoed by `inject_id_into_response` only if missing, but we set it
+/// explicitly so the TUI's pending-id router always finds a match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodesLoadedResponse {
+    pub id: String,
+    pub episodes: Vec<EpisodeEntryWire>,
+}
+
+impl From<crate::abi::types::EpisodeWire> for EpisodeEntryWire {
+    fn from(e: crate::abi::types::EpisodeWire) -> Self {
+        EpisodeEntryWire {
+            season: e.season,
+            episode: e.episode,
+            title: e.title,
+            air_date: e.air_date,
+            runtime_mins: e.runtime_mins,
+            provider: e.provider,
+            entry_id: e.entry_id,
+        }
+    }
+}
+
+/// Runtime-native TVDB episodes flow through this conversion. WASM
+/// plugins build `abi::EpisodeWire` themselves with their own title
+/// fallback, but `TvdbEpisode` keeps `title: Option<String>` upstream so
+/// the fallback lives at the IPC boundary — applied here once.
+impl From<crate::tvdb::TvdbEpisode> for EpisodeEntryWire {
+    fn from(e: crate::tvdb::TvdbEpisode) -> Self {
+        let n = e.episode;
+        let title = e
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+            .unwrap_or_else(|| format!("Episode {n}"));
+        EpisodeEntryWire {
+            season: e.season,
+            episode: n,
+            title,
+            air_date: e.air_date,
+            runtime_mins: e.runtime_mins,
+            provider: "tvdb".to_string(),
+            entry_id: format!("tvdb-{}", e.id),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SetPluginReposRequest {
     pub repos: Vec<String>,
@@ -1428,6 +1515,8 @@ pub struct MediaEntry {
     pub imdb_id: Option<String>,
     #[serde(default)]
     pub tmdb_id: Option<String>,
+    #[serde(default)]
+    pub mal_id: Option<String>,
     /// ISO 639-1 code of the entry's original language (e.g. "ja", "en").
     /// Populated by plugins that know it (tmdb, kitsu, anilist). The runtime's
     /// anime-mix classifier uses this together with genre to identify
@@ -1465,6 +1554,12 @@ pub struct MediaEntry {
     pub season: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub episode: Option<u32>,
+    /// For series entries: total seasons reported by the provider's
+    /// lookup. The TUI uses this to populate its episode browser's
+    /// season list. `None` (e.g. catalog entries that haven't been
+    /// looked up) keeps the TUI on its single-season default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season_count: Option<u32>,
 }
 
 /// A single stream candidate as sent to the TUI.
@@ -1968,6 +2063,7 @@ mod detail_metadata_tests {
             entry_id: "tt1".into(),
             id_source: "imdb".into(),
             kind: "movies".into(),
+            ..Default::default()
         });
         let s = serde_json::to_string(&req).unwrap();
         // Wire tag lives on the Request enum itself.

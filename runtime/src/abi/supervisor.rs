@@ -39,6 +39,7 @@ use super::types::{
     ArtworkRequest, ArtworkResponse,
     CreditsRequest, CreditsResponse,
     EnrichRequest, EnrichResponse,
+    EpisodesRequest, EpisodesResponse,
     LookupRequest, LookupResponse,
     PluginResult,
     RelatedRequest, RelatedResponse,
@@ -339,6 +340,11 @@ impl WasmSupervisor {
     /// Call `stui_related` with timeout and crash tracking.
     pub async fn related(&self, req: &RelatedRequest) -> Result<RelatedResponse, AbiError> {
         self.call_verb("stui_related", "related", req).await
+    }
+
+    /// Call `stui_episodes` with timeout and crash tracking.
+    pub async fn episodes(&self, req: &EpisodesRequest) -> Result<EpisodesResponse, AbiError> {
+        self.call_verb("stui_episodes", "episodes", req).await
     }
 
     // ── Internals ─────────────────────────────────────────────────────────

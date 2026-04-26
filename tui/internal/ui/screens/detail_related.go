@@ -13,8 +13,28 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stui/stui/internal/ui/components"
+	posterpkg "github.com/stui/stui/internal/ui/components/poster"
 	"github.com/stui/stui/pkg/theme"
 )
+
+// Per-URL chafa ImageView cache for related-row posters. Keyed on the
+// resolved on-disk cache path so the chafa rasteriser doesn't re-shell
+// every frame, and so each item's poster is independent of every other.
+// Mirrors the detailPosterImageViews map detail.go keeps for the main
+// poster column — same lifetime semantics (process-wide), same eviction
+// model (none; relies on stui's session length being bounded).
+var relatedPosterImageViews = map[string]*components.ImageView{}
+
+func relatedCardImageView(path string, w, h int) *components.ImageView {
+	iv, ok := relatedPosterImageViews[path]
+	if !ok {
+		iv = components.NewImageView(w, h)
+		iv.SetImage(path)
+		relatedPosterImageViews[path] = iv
+	}
+	iv.SetSize(w, h)
+	return iv
+}
 
 // renderRelatedRow is the bottom-of-detail carousel. It owns the outer
 // frame and the loading/empty fallbacks; the card rendering is delegated
@@ -59,21 +79,44 @@ func renderRelatedRow(ds *DetailState, w, h int) string {
 		e := items[i]
 		selected := (ds.Focus == FocusDetailRelated && i == ds.Meta.RelatedCursor)
 
-		// Minimal card: just colored block + title
-		bg := similarCardBg(e.Title)
-		inits := components.PosterInitials(e.Title)
+		posterH := cardH - 3
+		// Render chafa poster when the URL has been cached on disk;
+		// otherwise enqueue the URL for background download and show
+		// the initials-on-color fallback so the card never goes blank.
+		var posterBlock string
+		var posterURL string
+		if e.PosterURL != nil {
+			posterURL = *e.PosterURL
+		}
+		if posterURL != "" {
+			if cached, hit := posterpkg.CachedPath(posterURL); hit {
+				posterBlock = relatedCardImageView(cached, miniW, posterH).View()
+			} else {
+				posterpkg.Global().Enqueue(posterURL)
+			}
+		}
+		if posterBlock == "" {
+			bg := similarCardBg(e.Title)
+			inits := components.PosterInitials(e.Title)
+			posterBlock = lipgloss.NewStyle().
+				Background(bg).
+				Width(miniW).
+				Height(posterH).
+				Align(lipgloss.Center, lipgloss.Center).
+				Render(inits)
+		}
 
-		posterBlock := lipgloss.NewStyle().
-			Background(bg).
-			Width(miniW).
-			Height(cardH-3).
-			Align(lipgloss.Center, lipgloss.Center).
-			Render(inits)
-
+		// Hard-clamp the title to a single row regardless of the rune
+		// count Truncate produced. Wide-character titles (CJK, full-width
+		// punctuation) and stray newlines used to expand the card vertically
+		// because lipgloss wraps when the rendered width exceeds Width().
+		// Height(1) + MaxHeight(1) pins the card height to posterH + 1.
 		titleStr := components.Truncate(e.Title, miniW)
 		titleBlock := lipgloss.NewStyle().
 			Foreground(theme.T.Text()).
 			Width(miniW).
+			Height(1).
+			MaxHeight(1).
 			Render(titleStr)
 
 		var border lipgloss.Style

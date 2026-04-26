@@ -95,6 +95,15 @@ pub struct PluginEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub track_number: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub season: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub episode: Option<u32>,
+    /// Total seasons for series entries (populated by lookup/enrich on
+    /// providers that have it; absent otherwise). Mirrors
+    /// `stui_plugin_sdk::PluginEntry::season_count`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub season_count: Option<u32>,
+    /// Per-season provider-native ids, parallel to seasons 1..=N. Used
+    /// by providers (e.g. AniList) where each season is a separate
+    /// catalog entry. Mirrors
+    /// `stui_plugin_sdk::PluginEntry::season_ids`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub season_ids: Vec<String>,
     /// ISO 639-1 original language. Mirrors `stui_plugin_sdk::PluginEntry`.
     /// Used by the engine's anime-mix classifier alongside genre.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub original_language: Option<String>,
@@ -312,6 +321,37 @@ pub struct RelatedRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelatedResponse {
     pub items: Vec<PluginEntry>,
+}
+
+// ── Episodes ──────────────────────────────────────────────────────────────────
+
+/// Payload passed to `stui_episodes`. Mirrors sdk::EpisodesRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodesRequest {
+    pub series_id: String,
+    pub id_source: String,
+    pub season: u32,
+}
+
+/// One episode descriptor. Mirrors sdk::EpisodeWire exactly so what plugins
+/// emit goes straight onto the IPC wire to the TUI.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodeWire {
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub air_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_mins: Option<u32>,
+    pub provider: String,
+    pub entry_id: String,
+}
+
+/// Returned by `stui_episodes`. Mirrors sdk::EpisodesResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EpisodesResponse {
+    pub episodes: Vec<EpisodeWire>,
 }
 
 // ── Host import payloads ──────────────────────────────────────────────────────

@@ -139,6 +139,15 @@ type DetailEntry struct {
 	Studio      string            `json:"studio,omitempty"`
 	Networks    []string          `json:"networks,omitempty"`
 	ExternalIDs map[string]string `json:"external_ids,omitempty"`
+	// Series only: total seasons reported by the provider's lookup verb.
+	// Zero means "unknown" — EpisodeScreen falls back to a single-season
+	// list rather than guessing.
+	SeasonCount uint32 `json:"season_count,omitempty"`
+	// Per-season provider-native ids (AniList-style: each entry has its
+	// own id). Empty for TMDB-style providers where one id covers every
+	// season. EpisodeScreen uses this to pick the right id when fetching
+	// episodes for season N.
+	SeasonIDs []string `json:"season_ids,omitempty"`
 }
 
 // CastMember is a single person in the cast/crew list.
@@ -232,6 +241,16 @@ type EpisodesLoadedMsg struct {
 	SeriesID string
 	Season   int
 	Episodes []EpisodeEntry
+}
+
+// EpisodesLoadFailedMsg is sent when the runtime returns an error or
+// the response can't be decoded. Lets EpisodeScreen exit its loading
+// state and surface the failure in-screen rather than silently sitting
+// on a spinner forever.
+type EpisodesLoadFailedMsg struct {
+	SeriesID string
+	Season   int
+	Reason   string
 }
 
 // BingeContextMsg is fired by EpisodeScreen when the user plays an episode with
@@ -466,6 +485,8 @@ type MetadataPayload struct {
 	Studio      *string           `json:"studio,omitempty"`
 	Networks    []string          `json:"networks,omitempty"`
 	ExternalIDs map[string]string `json:"external_ids,omitempty"`
+	SeasonCount *uint32           `json:"season_count,omitempty"`
+	SeasonIDs   []string          `json:"season_ids,omitempty"`
 
 	// Credits fields
 	Cast []CastWire `json:"cast,omitempty"`

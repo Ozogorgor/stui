@@ -1739,6 +1739,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			// Focused screen is not Searchable — ignore the keystroke.
 		case actions.ActionNextTab:
+			// In detail view tab cycles focus zones (info → crew → cast →
+			// providers → related), not the top tab bar. Fall through to
+			// handleDetailKey instead of switching tabs.
+			if m.screen == screenDetail && m.detail != nil {
+				break
+			}
 			next := (int(m.state.ActiveTab) + 1) % len(state.Tabs())
 			m.switchTab(state.Tab(next))
 			if m.state.IsLoading {
@@ -1746,6 +1752,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case actions.ActionPrevTab:
+			if m.screen == screenDetail && m.detail != nil {
+				break
+			}
 			prev := (int(m.state.ActiveTab) - 1 + len(state.Tabs())) % len(state.Tabs())
 			m.switchTab(state.Tab(prev))
 			if m.state.IsLoading {
@@ -2026,6 +2035,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// here is defensive — fall through silently.
 			if s := focusedSearchable(&m); s != nil {
 				m.state.StatusMsg = fmt.Sprintf("Searching for \u201c%s\u201d\u2026", query)
+				// Hand focus back to the grid so j/k/arrows/enter
+				// navigate the streamed results instead of being
+				// re-captured by the textinput. The query string stays
+				// visible in the bar so the user can see what they
+				// searched for; pressing `/` re-focuses for refinement.
+				m.search.Blur()
+				m.state.Focus = state.FocusTabs
+				m.state.SearchActive = false
 				return m, s.StartSearch(query)
 			}
 			m.state.Focus = state.FocusTabs
@@ -2365,54 +2382,24 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	// Cycle focus zones: Info → Crew → Cast → Provider → Related → Info.
-	// Zones with no content are skipped so the user never lands on an
-	// empty section.
+	// Cycle focus zones in the order they're rendered: Info → Crew →
+	// Cast → Episodes (series only) → Provider → Related → Info. Empty
+	// zones are skipped via detailFocusOrder so the user never lands on
+	// an unrenderable section.
 	case "tab":
 		if ds.PersonMode {
 			return m, nil
 		}
-		switch ds.Focus {
-		case screens.FocusDetailInfo:
-			switch {
-			case len(ds.Meta.Credits.Crew) > 0:
-				ds.Focus = screens.FocusDetailCrew
-			case len(ds.Entry.Cast) > 0:
-				ds.Focus = screens.FocusDetailCast
-			case len(ds.Entry.Providers) > 0:
-				ds.Focus = screens.FocusDetailProvider
-			case len(ds.Meta.Related.Items) > 0:
-				ds.Focus = screens.FocusDetailRelated
-			}
-		case screens.FocusDetailCrew:
-			switch {
-			case len(ds.Entry.Cast) > 0:
-				ds.Focus = screens.FocusDetailCast
-			case len(ds.Entry.Providers) > 0:
-				ds.Focus = screens.FocusDetailProvider
-			case len(ds.Meta.Related.Items) > 0:
-				ds.Focus = screens.FocusDetailRelated
-			default:
-				ds.Focus = screens.FocusDetailInfo
-			}
-		case screens.FocusDetailCast:
-			switch {
-			case len(ds.Entry.Providers) > 0:
-				ds.Focus = screens.FocusDetailProvider
-			case len(ds.Meta.Related.Items) > 0:
-				ds.Focus = screens.FocusDetailRelated
-			default:
-				ds.Focus = screens.FocusDetailInfo
-			}
-		case screens.FocusDetailProvider:
-			if len(ds.Meta.Related.Items) > 0 {
-				ds.Focus = screens.FocusDetailRelated
-			} else {
-				ds.Focus = screens.FocusDetailInfo
-			}
-		case screens.FocusDetailRelated:
-			ds.Focus = screens.FocusDetailInfo
+		order := detailFocusOrder(ds)
+		ds.Focus = stepFocus(order, ds.Focus, +1)
+		return m, nil
+
+	case "shift+tab":
+		if ds.PersonMode {
+			return m, nil
 		}
+		order := detailFocusOrder(ds)
+		ds.Focus = stepFocus(order, ds.Focus, -1)
 		return m, nil
 
 	case "j", "down":
@@ -2545,6 +2532,34 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			ds.PersonCursor = screens.GridCursor{}
 			return m, m.dispatchPersonSearch(member.Name)
 
+		case ds.Focus == screens.FocusDetailEpisodes:
+			// Same path as the `e` keybind below — opens the season /
+			// episode browser.  Repeated here so users who Tab into the
+			// EPISODES badge can launch it without learning a separate key.
+			idSource := ds.Entry.IDSource
+			if idSource == "" {
+				if prefix, _, ok := splitProviderPrefix(ds.Entry.ID); ok {
+					idSource = prefix
+				} else {
+					idSource = firstProvider(ds.Entry.Provider)
+				}
+			}
+			backdropURL := ""
+			if len(ds.Meta.Artwork.Backdrops) > 0 {
+				backdropURL = ds.Meta.Artwork.Backdrops[0].URL
+			}
+			s := screens.NewEpisodeScreen(m.client, ds.Entry.Title, ds.Entry.ID, idSource, m.state.Settings.AutoplayNext, screens.EpisodeScreenOpts{
+				Year:        ds.Entry.Year,
+				Genre:       ds.Entry.Genre,
+				Rating:      ds.Entry.Rating,
+				PosterURL:   ds.Entry.PosterURL,
+				PosterArt:   ds.Entry.PosterArt,
+				BackdropURL: backdropURL,
+				Seasons:     seasonsList(ds.Entry.SeasonCount),
+				SeasonIDs:   ds.Entry.SeasonIDs,
+			})
+			return m, screen.TransitionCmd(s, true)
+
 		case ds.Focus == screens.FocusDetailProvider:
 			// ▶ Play via selected provider — resume from saved position if available
 			provider := ds.SelectedProvider()
@@ -2591,9 +2606,33 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "e", "E":
-		// Open episode browser for series items
+		// Open episode browser for series items. Resolve id_source so the
+		// runtime knows which plugin owns this entry — prefer the entry's
+		// own field, then peel a "<provider>-<id>" prefix off the id, then
+		// fall back to the first comma-separated provider.
 		if ds.Entry.Tab == "series" || ds.Entry.Tab == "Series" {
-			s := screens.NewEpisodeScreen(m.client, ds.Entry.Title, ds.Entry.ID, m.state.Settings.AutoplayNext)
+			idSource := ds.Entry.IDSource
+			if idSource == "" {
+				if prefix, _, ok := splitProviderPrefix(ds.Entry.ID); ok {
+					idSource = prefix
+				} else {
+					idSource = firstProvider(ds.Entry.Provider)
+				}
+			}
+			backdropURL := ""
+			if len(ds.Meta.Artwork.Backdrops) > 0 {
+				backdropURL = ds.Meta.Artwork.Backdrops[0].URL
+			}
+			s := screens.NewEpisodeScreen(m.client, ds.Entry.Title, ds.Entry.ID, idSource, m.state.Settings.AutoplayNext, screens.EpisodeScreenOpts{
+				Year:        ds.Entry.Year,
+				Genre:       ds.Entry.Genre,
+				Rating:      ds.Entry.Rating,
+				PosterURL:   ds.Entry.PosterURL,
+				PosterArt:   ds.Entry.PosterArt,
+				BackdropURL: backdropURL,
+				Seasons:     seasonsList(ds.Entry.SeasonCount),
+				SeasonIDs:   ds.Entry.SeasonIDs,
+			})
 			return m, screen.TransitionCmd(s, true)
 		}
 		return m, nil
@@ -2775,6 +2814,54 @@ func (m *Model) sendGetDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
 	}
 }
 
+// detailFocusOrder returns the visible focus zones in render order,
+// skipping zones that have nothing to show (no crew → skip Crew, etc.).
+// Drives Tab / Shift+Tab navigation so neither key ever lands on an
+// empty section.  Episodes zone is series-only.
+func detailFocusOrder(ds *screens.DetailState) []screens.DetailFocus {
+	order := []screens.DetailFocus{screens.FocusDetailInfo}
+	if len(ds.Meta.Credits.Crew) > 0 {
+		order = append(order, screens.FocusDetailCrew)
+	}
+	if len(ds.Entry.Cast) > 0 {
+		order = append(order, screens.FocusDetailCast)
+	}
+	if ds.Entry.Tab == "series" || ds.Entry.Tab == "Series" {
+		order = append(order, screens.FocusDetailEpisodes)
+	}
+	if len(ds.Entry.Providers) > 0 {
+		order = append(order, screens.FocusDetailProvider)
+	}
+	if len(ds.Meta.Related.Items) > 0 {
+		order = append(order, screens.FocusDetailRelated)
+	}
+	return order
+}
+
+// stepFocus walks the visible focus order by `delta` (+1 forward, -1
+// back), wrapping around at either end.  Returns the current zone
+// unchanged if the order is empty (defensive — order always contains at
+// least FocusDetailInfo so this branch never fires in practice).
+func stepFocus(order []screens.DetailFocus, current screens.DetailFocus, delta int) screens.DetailFocus {
+	if len(order) == 0 {
+		return current
+	}
+	idx := -1
+	for i, f := range order {
+		if f == current {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Current zone is no longer visible (e.g. focus was on Crew,
+		// then credits empty-cleared) — snap to the start of the order.
+		return order[0]
+	}
+	next := (idx + delta + len(order)) % len(order)
+	return order[next]
+}
+
 // splitProviderPrefix recognises entry ids of the form
 // "<provider>-<native_id>" (e.g. "anilist-199", "kitsu-6448") and
 // returns (provider, native_id, true). For unprefixed numeric ids
@@ -2787,6 +2874,21 @@ func splitProviderPrefix(id string) (prefix, rest string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// seasonsList expands a season-count integer into [1, 2, …, n]. Returns
+// nil for a zero count so EpisodeScreen falls back to its single-season
+// default — providers that don't expose `number_of_seasons` should
+// undercount rather than have the UI fabricate seasons.
+func seasonsList(count uint32) []int {
+	if count == 0 {
+		return nil
+	}
+	out := make([]int, count)
+	for i := range out {
+		out[i] = i + 1
+	}
+	return out
 }
 
 // firstProvider returns the leading provider name from a

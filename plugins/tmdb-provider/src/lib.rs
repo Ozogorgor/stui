@@ -35,6 +35,7 @@ use stui_plugin_sdk::{
     CreditsRequest, CreditsResponse,
     CrewMember,
     EnrichRequest, EnrichResponse,
+    EpisodeWire, EpisodesRequest, EpisodesResponse,
     EntryKind,
     InitContext,
     LookupRequest, LookupResponse,
@@ -267,6 +268,11 @@ struct TvDetail {
     poster_path: Option<String>,
     #[serde(default)]
     external_ids: Option<ExternalIds>,
+    /// Total number of seasons for the series. The TUI's episode browser
+    /// uses this to populate its season list — without it the browser
+    /// falls back to a single-season default.
+    #[serde(default)]
+    number_of_seasons: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -451,6 +457,7 @@ impl TvDetail {
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
             imdb_id: ext_imdb,
             external_ids: external,
+            season_count: self.number_of_seasons,
             ..Default::default()
         }
     }
@@ -943,6 +950,83 @@ impl CatalogPlugin for TmdbPlugin {
         };
         PluginResult::ok(RelatedResponse { items })
     }
+
+    fn episodes(&self, req: EpisodesRequest) -> PluginResult<EpisodesResponse> {
+        if req.id_source != id_sources::TMDB {
+            return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("tmdb episodes only supports tmdb id_source, got: {}", req.id_source),
+            );
+        }
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+        let path = format!("/tv/{}/season/{}", req.series_id, req.season);
+        let url = build_url(&path, "language=en-US", &api_key);
+        plugin_info!("tmdb: episodes {}", log_url(&url));
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let payload: SeasonResponse = match parse_json(&body) {
+            Ok(p) => p,
+            Err(e) => return PluginResult::Err(e),
+        };
+
+        let episodes: Vec<EpisodeWire> = payload
+            .episodes
+            .into_iter()
+            .map(|ep| {
+                // TMDB exposes a per-episode id; `<series>:s<S>e<E>` is a
+                // stable fallback used only if the id is missing.
+                let entry_id = ep
+                    .id
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| format!(
+                        "{}:s{}e{}",
+                        req.series_id, ep.season_number, ep.episode_number
+                    ));
+                EpisodeWire {
+                    season: ep.season_number,
+                    episode: ep.episode_number,
+                    title: ep.name.unwrap_or_default(),
+                    air_date: ep.air_date,
+                    runtime_mins: ep.runtime,
+                    provider: "tmdb".to_string(),
+                    entry_id,
+                }
+            })
+            .collect();
+        PluginResult::ok(EpisodesResponse { episodes })
+    }
+}
+
+// ── Season response shape ─────────────────────────────────────────────────────
+
+/// `/tv/{id}/season/{n}` response — season-level metadata plus the list
+/// of episodes. We only deserialise the fields we actually surface.
+#[derive(Deserialize)]
+struct SeasonResponse {
+    #[serde(default)]
+    episodes: Vec<TmdbEpisode>,
+}
+
+#[derive(Deserialize)]
+struct TmdbEpisode {
+    #[serde(default)]
+    id: Option<u64>,
+    #[serde(rename = "season_number")]
+    season_number: u32,
+    #[serde(rename = "episode_number")]
+    episode_number: u32,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    air_date: Option<String>,
+    #[serde(default)]
+    runtime: Option<u32>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

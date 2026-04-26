@@ -138,6 +138,11 @@ pub struct CatalogEntry {
     pub imdb_id: Option<String>,
     #[serde(default, deserialize_with = "tmdb_id_from_num_or_str")]
     pub tmdb_id: Option<String>,
+    /// MyAnimeList id, populated from `PluginEntry.external_ids["myanimelist"]`
+    /// at the MediaEntry→CatalogEntry conversion in `engine::search`. Absent
+    /// for catalog/tvdb-derived entries that have no MAL mapping.
+    #[serde(default)]
+    pub mal_id: Option<String>,
     #[serde(default)]
     pub media_type: MediaType,
     #[serde(default)]
@@ -149,11 +154,35 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
+    /// Group key for collapsing the same entity across providers.
+    ///
+    /// **Precedence:**
+    /// 1. `mal_id` — anime tier (AniList exposes `idMal`; Kitsu exposes via
+    ///    `?include=mappings`). Catches AniList↔Kitsu duplicates of the same
+    ///    cour even when titles differ (English vs romaji).
+    /// 2. `imdb_id` — western tier (TVDB and OMDb both surface it at search
+    ///    time; TMDB doesn't, so TMDB falls through to fallback).
+    /// 3. `normalize_title:year` — fallback for entries without a foreign id.
+    ///
+    /// Empty-string foreign ids are treated as missing — defensive, prevents
+    /// `"mal:"` from collapsing all empty entries into one bucket. Keys are
+    /// prefixed with their tier (`mal:`, `imdb:`, `title:`) so a numeric
+    /// fallback title can't accidentally collide with a foreign id.
+    ///
+    /// Cross-tier merges (anime↔western) don't happen here — different keys
+    /// stay separate. The cross-mapping bridge is milestone β.
     pub fn dedup_key(&self) -> String {
-        if let Some(ref id) = self.imdb_id {
-            return id.clone();
+        if let Some(mal) = self.mal_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("mal:{mal}");
         }
-        format!("{}:{}", normalize_title(&self.title), self.year.as_deref().unwrap_or("?"))
+        if let Some(imdb) = self.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("imdb:{imdb}");
+        }
+        format!(
+            "title:{}:{}",
+            normalize_title(&self.title),
+            self.year.as_deref().unwrap_or("?"),
+        )
     }
 }
 
@@ -469,6 +498,7 @@ mod tests {
                 tab: "movies".to_string(),
                 imdb_id: Some("tt0001".to_string()),
                 tmdb_id: None,
+                mal_id: None,
                 media_type: MediaType::default(),
                 ratings: HashMap::new(),
                 original_language: None,
@@ -486,6 +516,7 @@ mod tests {
                 tab: "movies".to_string(),
                 imdb_id: Some("tt0001".to_string()),
                 tmdb_id: None,
+                mal_id: None,
                 media_type: MediaType::default(),
                 ratings: HashMap::new(),
                 original_language: None,
@@ -511,12 +542,13 @@ mod tests {
             tab: "movies".to_string(),
             imdb_id: Some("tt0001".to_string()),
             tmdb_id: None,
+            mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(),
             original_language: None,
         };
-        
-        assert_eq!(entry.dedup_key(), "tt0001");
+
+        assert_eq!(entry.dedup_key(), "imdb:tt0001");
     }
 
     #[test]
@@ -534,11 +566,12 @@ mod tests {
             tab: "movies".to_string(),
             imdb_id: None,
             tmdb_id: None,
+            mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(),
             original_language: None,
         };
-        
-        assert_eq!(entry.dedup_key(), "movie:2024");
+
+        assert_eq!(entry.dedup_key(), "title:movie:2024");
     }
 }

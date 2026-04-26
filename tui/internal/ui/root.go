@@ -113,6 +113,41 @@ func (r RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// ── fromIPC routing across pushed screens ─────────────────────────────────
+	//
+	// `listenIPC` (ui.go) wraps every IPC event in a `fromIPC` envelope; the
+	// inner `Model` unwraps it AND re-arms `listenIPC` so the next event can
+	// flow. When `TransitionMsg` pushes a non-Model screen as `r.active`, the
+	// Model is parked in `r.history` and stops receiving messages — `fromIPC`
+	// envelopes then hit the active (non-Model) screen, are silently dropped,
+	// and `listenIPC` never re-arms, stalling the entire IPC stream until the
+	// pushed screen pops.
+	//
+	// Fix: when the active screen is NOT the IPC-owning Model, hand the
+	// envelope to the parked Model in history (so it can re-arm) and forward
+	// the unwrapped inner message to the active screen and overlay.
+	if f, ok := msg.(fromIPC); ok {
+		if _, activeIsModel := r.active.(LegacyScreen); !activeIsModel {
+			for i := len(r.history) - 1; i >= 0; i-- {
+				if _, ok := r.history[i].(LegacyScreen); !ok {
+					continue
+				}
+				modelUpdated, modelCmd := r.history[i].Update(msg)
+				r.history[i] = modelUpdated
+				inner := f.Msg
+				activeNext, activeCmd := r.active.Update(inner)
+				r.active = activeNext
+				cmds := []tea.Cmd{modelCmd, activeCmd}
+				if r.overlay != nil {
+					overlayNext, overlayCmd := r.overlay.Update(inner)
+					r.overlay = overlayNext
+					cmds = append(cmds, overlayCmd)
+				}
+				return r, tea.Batch(cmds...)
+			}
+		}
+	}
+
 	// ── Open overlay (from screen.OpenOverlayCmd) ──────────────────────────────
 	if o, ok := msg.(screen.OpenOverlayMsg); ok {
 		r.overlay = o.Screen

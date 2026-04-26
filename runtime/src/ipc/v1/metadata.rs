@@ -78,6 +78,16 @@ pub struct EnrichData {
     pub networks: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub external_ids: BTreeMap<String, String>,
+    /// For series entries: total seasons reported by the provider.
+    /// Forwarded from `PluginEntry::season_count` so the TUI's episode
+    /// browser can populate its season list with the real count rather
+    /// than a single-season default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season_count: Option<u32>,
+    /// Per-season provider-native ids (AniList-style multi-entry shows).
+    /// Empty for TMDB-style providers. See `PluginEntry::season_ids`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub season_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
