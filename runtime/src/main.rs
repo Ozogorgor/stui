@@ -116,7 +116,14 @@ async fn main() -> Result<()> {
         "stui-runtime starting"
     );
 
-    // Load config from ~/.stui/config/stui.toml + STUI_* env overrides
+    // One-shot migration of any legacy ~/.stui/ tree to the
+    // XDG-compliant split (~/.config/stui/ for config + plugins +
+    // data; ~/.cache/stui/ for caches). Idempotent: re-runs are
+    // no-ops, and any path whose new home already exists is left
+    // alone — we never overwrite. Caches don't need migration.
+    config::migrate::migrate_legacy_paths();
+
+    // Load config from ~/.config/stui/runtime.toml + STUI_* env overrides
     let mut cfg = config::load();
 
     // Auto-detect MPD paths from mpd.conf if not set in stui.toml.
@@ -985,7 +992,7 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         original_language: e.original_language.clone(),
         kind: Default::default(),
         source: String::new(),
-        artist_name: None,
+        artist_name: e.artist.clone(),
         album_name: None,
         track_number: None,
         season: None,

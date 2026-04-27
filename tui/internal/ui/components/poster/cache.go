@@ -59,7 +59,7 @@ func CachedPath(u string) (string, bool) {
 }
 
 // cacheDir resolves to <xdg-cache-home>/stui/posters/, falling back to
-// ~/.stui/cache/posters/. The directory is NOT created here — callers
+// ~/.cache/stui/posters/. The directory is NOT created here — callers
 // (pool.go) create it lazily on first successful download.
 func cacheDir() string {
 	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
@@ -69,5 +69,5 @@ func cacheDir() string {
 	if err != nil || home == "" {
 		return filepath.Join(os.TempDir(), "stui-posters")
 	}
-	return filepath.Join(home, ".stui", "cache", "posters")
+	return filepath.Join(home, ".cache", "stui", "posters")
 }

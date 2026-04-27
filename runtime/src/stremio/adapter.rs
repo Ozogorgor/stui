@@ -163,6 +163,7 @@ fn meta_to_entry(m: super::manifest::StremioMeta, tab: &MediaTab, provider: &str
         poster_art:  None,
         provider:    provider.to_string(),
         tab:         format!("{:?}", tab).to_lowercase(),
+        artist:      None, // Stremio meta has no artist field.
         imdb_id:     m.imdb_id,
         tmdb_id:     None,
         mal_id:      None,

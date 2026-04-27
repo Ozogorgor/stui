@@ -3,7 +3,6 @@ package components
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -148,99 +147,6 @@ func (v *VirtualizedList) ScrollIndicator(dim lipgloss.Style) string {
 		return above + "  " + below
 	}
 	return above + below
-}
-
-func (v *VirtualizedList) Scrollbar(dim lipgloss.Style) string {
-	if v.totalItems == 0 {
-		return ""
-	}
-	visibleItems := v.visibleEnd - v.visibleStart
-	if visibleItems >= v.totalItems {
-		return ""
-	}
-
-	trackHeight := visibleItems
-	if trackHeight < 3 {
-		trackHeight = 3
-	}
-
-	position := float64(v.visibleStart) / float64(v.totalItems)
-	thumbSize := float64(visibleItems) / float64(v.totalItems)
-	if thumbSize < 0.1 {
-		thumbSize = 0.1
-	}
-	if thumbSize > 1.0 {
-		thumbSize = 1.0
-	}
-
-	thumbLen := int(float64(trackHeight) * thumbSize)
-	if thumbLen < 1 {
-		thumbLen = 1
-	}
-
-	thumbPos := int(float64(trackHeight-thumbLen) * position)
-	if thumbPos < 0 {
-		thumbPos = 0
-	}
-	if thumbPos > trackHeight-thumbLen {
-		thumbPos = trackHeight - thumbLen
-	}
-
-	var bar strings.Builder
-	bar.Grow(trackHeight)
-	for i := 0; i < trackHeight; i++ {
-		if i >= thumbPos && i < thumbPos+thumbLen {
-			bar.WriteRune('█')
-		} else {
-			bar.WriteRune('░')
-		}
-	}
-	return dim.Render(bar.String())
-}
-
-func (v *VirtualizedList) VerticalScrollbar(width int, dim lipgloss.Style) string {
-	if v.totalItems == 0 || width < 1 {
-		return ""
-	}
-	visibleItems := v.visibleEnd - v.visibleStart
-	if visibleItems >= v.totalItems {
-		return ""
-	}
-
-	position := float64(v.visibleStart) / float64(v.totalItems)
-	thumbSize := float64(visibleItems) / float64(v.totalItems)
-	if thumbSize < 0.05 {
-		thumbSize = 0.05
-	}
-	if thumbSize > 1.0 {
-		thumbSize = 1.0
-	}
-
-	thumbLen := int(float64(width) * thumbSize)
-	if thumbLen < 1 {
-		thumbLen = 1
-	}
-
-	thumbPos := int(float64(width-thumbLen) * position)
-	if thumbPos < 0 {
-		thumbPos = 0
-	}
-	if thumbPos > width-thumbLen {
-		thumbPos = width - thumbLen
-	}
-
-	var bar strings.Builder
-	bar.Grow(width + 2)
-	bar.WriteString("│")
-	for i := 0; i < width; i++ {
-		if i >= thumbPos && i < thumbPos+thumbLen {
-			bar.WriteRune('█')
-		} else {
-			bar.WriteRune('│')
-		}
-	}
-	bar.WriteString("│")
-	return dim.Render(bar.String())
 }
 
 func (v *VirtualizedList) RangeIndicator(dim lipgloss.Style) string {

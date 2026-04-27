@@ -1,6 +1,8 @@
 package config
 
 import (
+	"embed"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +11,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stui/stui/pkg/theme"
 )
+
+// bundledThemes is the set of starter theme TOML files embedded in
+// the binary. Written to ~/.config/stui/themes/ on first launch (see
+// EnsureBundledThemes) so users have something to copy and tweak.
+//
+//go:embed themes/*.toml
+var bundledThemes embed.FS
 
 // ThemesDir returns ~/.config/stui/themes.
 func ThemesDir() string {
@@ -139,6 +148,37 @@ func loadThemeFromPath(path string) (theme.Palette, error) {
 		p.TabTextDim = lipgloss.Color(tf.TabTextDim)
 	}
 	return p, nil
+}
+
+// EnsureBundledThemes writes the binary-embedded starter theme TOML
+// files into ThemesDir() the first time the directory is missing.
+// Idempotent: if the directory already exists, this is a no-op so a
+// user who deleted a bundled theme won't see it silently reappear on
+// every launch. Per-file errors are logged and skipped — a partial
+// drop is better than refusing to start.
+func EnsureBundledThemes() error {
+	dir := ThemesDir()
+	if dir == "" {
+		return nil
+	}
+	if _, err := os.Stat(dir); err == nil {
+		// Directory already exists; preserve whatever's there.
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return fs.WalkDir(bundledThemes, "themes", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		data, err := bundledThemes.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(dir, filepath.Base(path))
+		return os.WriteFile(out, data, 0o644)
+	})
 }
 
 // ListThemes returns available theme names: built-ins first, then

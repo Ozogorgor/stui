@@ -126,12 +126,12 @@ pub const WEIGHTS_MOVIE: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -160,12 +160,12 @@ const WEIGHTS_SERIES: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -194,12 +194,12 @@ const WEIGHTS_ANIME: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.30,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.20,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -228,12 +228,12 @@ const WEIGHTS_DOCUMENTARY: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -262,12 +262,12 @@ const WEIGHTS_HORROR: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -296,12 +296,12 @@ const WEIGHTS_MUSIC: &[RatingWeight] = &[
     RatingWeight {
         key: "anilist",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
     RatingWeight {
         key: "kitsu",
         weight: 0.00,
-        normalize: 10.0,
+        normalize: 1.0,
     },
 ];
 
@@ -622,7 +622,12 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 /// (set by the provider) is preserved unchanged. The raw ratings map may contain
 /// values on unknown scales so they are never used as a direct fallback.
 #[allow(dead_code)] // pub API: used by CatalogEngine and engine/mod.rs
-fn apply_weighted_rating(entry: &mut CatalogEntry) {
+/// Recompute `entry.rating` from `entry.ratings` using the weight
+/// profile selected by media_type + genre. Public so post-search
+/// enrichment passes (e.g. video_enrich's OMDb fan-out) can refresh
+/// the composite headline score after injecting per-source values
+/// into the ratings map.
+pub fn apply_weighted_rating(entry: &mut CatalogEntry) {
     let weights = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
 
     if !has_sufficient_sources(&entry.ratings, weights, 1) {
@@ -724,6 +729,7 @@ mod tests {
             poster_art: None,
             provider: "test".to_string(),
             tab: "movies".to_string(),
+            artist: None,
             imdb_id: Some(imdb_id.to_string()),
             tmdb_id: None,
             mal_id: None,
@@ -750,12 +756,14 @@ mod tests {
 
     #[test]
     fn test_anime_weights_prefer_anilist() {
-        // AniList is on 100-scale, so 92.0 normalises to 9.2
+        // anilist plugin pre-normalises its 0-100 averageScore to
+        // 0-10 (lib.rs:1127), so 92 → 9.2 reaches the aggregator
+        // already scaled and the weight profile uses normalize=1.0.
         let entries = vec![make_entry(
             "Attack on Titan",
             "tt12345678",
             Some("9.0"),
-            &[("imdb", 8.5), ("anilist", 92.0)],
+            &[("imdb", 8.5), ("anilist", 9.2)],
             MediaType::Series,
         )];
         let aggregator = CatalogAggregator::new();
@@ -769,12 +777,13 @@ mod tests {
 
     #[test]
     fn test_kitsu_triggers_anime_profile() {
-        // A kitsu score alone (no anilist, no "anime" genre) should select the anime profile.
+        // kitsu plugin pre-normalises its 0-100 averageRating to
+        // 0-10 (lib.rs:572), so 88 → 8.8 arrives already scaled.
         let entries = vec![make_entry(
             "Fullmetal Alchemist",
             "tt0421955",
             None,
-            &[("imdb", 9.1), ("kitsu", 88.0)],
+            &[("imdb", 9.1), ("kitsu", 8.8)],
             MediaType::Series,
         )];
         let aggregator = CatalogAggregator::new();
@@ -794,11 +803,16 @@ mod tests {
     #[test]
     fn test_kitsu_anilist_combined() {
         // Both kitsu and anilist present — their combined weight (0.50) dominates imdb (0.20).
+        // The kitsu and anilist plugins pre-normalize their 0-100
+        // averageScore/averageRating to 0-10 before publishing
+        // (kitsu/lib.rs:572, anilist/lib.rs:1127). The aggregator's
+        // weight profile uses normalize=1.0 for both keys, so input
+        // here is already on the 0-10 scale.
         let entries = vec![make_entry(
             "Spirited Away",
             "tt0245429",
             None,
-            &[("imdb", 8.6), ("anilist", 90.0), ("kitsu", 92.0)],
+            &[("imdb", 8.6), ("anilist", 9.0), ("kitsu", 9.2)],
             MediaType::Movie,
         )];
         let aggregator = CatalogAggregator::new();
@@ -1078,6 +1092,7 @@ mod tests {
             poster_art: None,
             provider: e.provider,
             tab: "movies".into(),
+            artist: None,
             imdb_id: e.imdb_id,
             tmdb_id: e.tmdb_id,
             mal_id: e.mal_id,
@@ -1136,7 +1151,7 @@ mod tests {
             id: e.id, title: e.title, year: e.year,
             genre: None, rating: None, description: None,
             poster_url: None, poster_art: None,
-            provider: e.provider, tab: "series".into(),
+            provider: e.provider, tab: "series".into(), artist: None,
             imdb_id: e.imdb_id, tmdb_id: e.tmdb_id, mal_id: e.mal_id,
             media_type: MediaType::default(),
             ratings: HashMap::new(), original_language: None,
@@ -1166,7 +1181,7 @@ mod tests {
             year: Some("2008".into()),
             genre: None, rating: None, description: None,
             poster_url: None, poster_art: None,
-            provider: "tvdb".into(), tab: "series".into(),
+            provider: "tvdb".into(), tab: "series".into(), artist: None,
             imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(), original_language: None,
@@ -1177,7 +1192,7 @@ mod tests {
             year: Some("2008".into()),
             genre: None, rating: None, description: None,
             poster_url: None, poster_art: None,
-            provider: "anilist".into(), tab: "series".into(),
+            provider: "anilist".into(), tab: "series".into(), artist: None,
             imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(), original_language: None,

@@ -181,12 +181,9 @@ func (s DownloadsScreen) View() tea.View {
 		end = len(s.entries)
 	}
 
-	var scrollbar string
-	if len(s.entries) > maxRows {
-		vl := components.NewVirtualizedList(len(s.entries), s.cursor, maxRows)
-		scrollbar = vl.VerticalScrollbar(1, dim)
-	}
+	bar := components.Scrollbar(start, end-start, len(s.entries))
 
+	var entryLines []string
 	for i := start; i < end; i++ {
 		e := s.entries[i]
 		sel := i == s.cursor
@@ -235,11 +232,12 @@ func (s DownloadsScreen) View() tea.View {
 			line = "  " + line
 		}
 
-		// Add scrollbar for first item if scrolling is active
-		if i == start && scrollbar != "" {
-			line = line + " " + scrollbar
-		}
-		sb.WriteString(line + "\n")
+		entryLines = append(entryLines, line)
+	}
+
+	// Place scrollbar as a separate column adjacent to the entry rows.
+	if len(entryLines) > 0 {
+		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(entryLines, "\n"), " ", bar) + "\n")
 	}
 
 	// ── Footer ───────────────────────────────────────────────────────────

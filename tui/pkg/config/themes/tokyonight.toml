@@ -1,0 +1,26 @@
+# tokyonight — blue-and-violet palette inspired by folke/tokyonight.nvim.
+name = "tokyonight"
+
+bg          = "#1a1b26"
+surface     = "#16161e"
+border      = "#292e42"
+border_foc  = "#7aa2f7"
+
+text        = "#c0caf5"
+text_dim    = "#565f89"
+text_muted  = "#737aa2"
+
+accent      = "#bb9af7"
+accent_alt  = "#7dcfff"
+neon        = "#7aa2f7"
+
+green       = "#9ece6a"
+red         = "#f7768e"
+yellow      = "#e0af68"
+warn        = "#e0af68"
+success     = "#9ece6a"
+
+tab_active   = "#bb9af7"
+tab_inactive = "#16161e"
+tab_text     = "#c0caf5"
+tab_text_dim = "#565f89"

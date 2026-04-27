@@ -137,6 +137,7 @@ impl From<MediaItem> for CatalogEntry {
             poster_art: m.poster_art,
             provider: m.provider,
             tab: m.tab,
+            artist: None, // MediaItem doesn't carry artist; populated only from PluginEntry path.
             imdb_id: m.imdb_id,
             tmdb_id: m.tmdb_id.map(|id| id.to_string()),
             mal_id: None,

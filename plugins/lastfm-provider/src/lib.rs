@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use stui_plugin_sdk::{
     parse_manifest,
-    cache_get, error_codes, http_get,
+    cache_get, error_codes, http_get, id_sources,
     plugin_error, plugin_info,
     stui_export_catalog_plugin,
     CatalogPlugin,
@@ -200,11 +200,27 @@ impl CatalogPlugin for LastfmPlugin {
         let query = req.query.trim();
         let limit = if req.limit == 0 { 20 } else { req.limit.min(50) as usize };
 
+        // Default-state Album browse (no query) needs special handling:
+        // Last.fm has no chart.gettopalbums endpoint, so we aggregate
+        // tag.gettopalbums across a small list of popular seed tags. This
+        // shape stays as the "All / no filter" code path even after the
+        // future genre-filter dropdown lands — that just routes a single
+        // user-selected tag through the same per-tag fetch.
+        if matches!(req.scope, SearchScope::Album) && query.is_empty() {
+            let items = aggregate_top_albums_by_tags(
+                &api_key,
+                AGGREGATE_SEED_TAGS,
+                limit,
+                entry_kind,
+            );
+            let total = items.len() as u32;
+            return PluginResult::ok(SearchResponse { items, total });
+        }
+
         let url = if query.is_empty() {
-            // Charts: different top-list per scope.
+            // Artist + Track charts still use the chart.* endpoints.
             let method = match req.scope {
                 SearchScope::Artist => "chart.gettopartists",
-                SearchScope::Album  => "chart.gettopartists",  // Last.fm has no chart.gettopalbums today — fall back to top-artists for now.
                 _                   => "chart.gettoptracks",
             };
             format!("{API_BASE}?method={method}&api_key={api_key}&format=json&limit={limit}")
@@ -231,13 +247,14 @@ impl CatalogPlugin for LastfmPlugin {
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
 
+        // SearchScope::Album + empty query is handled by the early return above.
         let parsed: Result<Vec<PluginEntry>, PluginError> = match (req.scope, query.is_empty()) {
             (SearchScope::Artist, true)  => parse_top_artists(&body),
             (SearchScope::Artist, false) => parse_artist_search(&body, entry_kind),
-            (SearchScope::Album,  true)  => parse_top_artists(&body),
             (SearchScope::Album,  false) => parse_album_search(&body, entry_kind),
-            (_, true)                    => parse_top_tracks(&body, entry_kind),
-            (_, false)                   => parse_track_search(&body, entry_kind),
+            (SearchScope::Track,  true)  => parse_top_tracks(&body, entry_kind),
+            (SearchScope::Track,  false) => parse_track_search(&body, entry_kind),
+            _                            => parse_top_tracks(&body, entry_kind),
         };
         let items = match parsed {
             Ok(v) => v,
@@ -253,7 +270,23 @@ impl CatalogPlugin for LastfmPlugin {
             return PluginResult::err(error_codes::INVALID_REQUEST, "enrich: partial.title is empty");
         }
 
-        // Route by the partial's kind; fall back to track if no artist hint.
+        // Album fast path: when we have both album title and artist
+        // we can hit album.getInfo directly and pull listeners +
+        // playcount + tags + wiki summary in a single round-trip.
+        // Listeners gets normalized to a synthetic 0-5 rating since
+        // last.fm has no actual rating field — see
+        // synth_rating_from_listeners for the formula.
+        if matches!(req.partial.kind, EntryKind::Album) {
+            if let Some(artist) = req.partial.artist_name.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return self.enrich_album_via_get_info(title, artist);
+            }
+        }
+
+        // Fallback for artist/track or albums without an artist hint:
+        // fan out a search and pick the highest-confidence match.
         let scope = match req.partial.kind {
             EntryKind::Artist => SearchScope::Artist,
             EntryKind::Album  => SearchScope::Album,
@@ -284,6 +317,245 @@ impl CatalogPlugin for LastfmPlugin {
     }
 }
 
+impl LastfmPlugin {
+    /// Album-specific enrich via `album.getInfo`. Returns a PluginEntry
+    /// with synthetic rating (from listeners), genre (top tag), and
+    /// description (wiki.summary) populated. The runtime's
+    /// music_enrich layer prefers Discogs's real community rating
+    /// when present and falls back to this synthetic one when Discogs
+    /// has no data — coverage from this path is much higher (every
+    /// album with any listeners) than from Discogs (only releases
+    /// with community votes).
+    fn enrich_album_via_get_info(&self, album: &str, artist: &str) -> PluginResult<EnrichResponse> {
+        let api_key = match self.api_key() {
+            Ok(k) => k.to_string(),
+            Err(e) => return PluginResult::Err(e),
+        };
+        // `autocorrect=1` lets last.fm fix common artist/album spelling
+        // variants ("the beatles" → "The Beatles"), reducing
+        // unknown-id errors on the cold path.
+        let url = format!(
+            "{API_BASE}?method=album.getInfo&api_key={api_key}&artist={a}&album={al}&format=json&autocorrect=1",
+            a  = urlencoding::encode(artist),
+            al = urlencoding::encode(album),
+        );
+        plugin_info!("lastfm: album.getInfo artist='{}' album='{}'", artist, album);
+
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let resp: AlbumInfoEnvelope = match parse_json(&body) {
+            Ok(r) => r,
+            Err(e) => return PluginResult::Err(e),
+        };
+        let info = match resp.album {
+            Some(a) => a,
+            None => return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("lastfm: album.getInfo returned no album for '{album}' / '{artist}'"),
+            ),
+        };
+
+        let listeners = info.listeners.as_deref().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let rating = if listeners > 0 {
+            Some(synth_rating_from_listeners(listeners))
+        } else {
+            None
+        };
+        // Last.fm's top tags are user-contributed and routinely include
+        // non-genre noise: "5 stars", "favorite", "owned", "2021",
+        // "seen-live", "vinyl", etc. Walk the list in count order and
+        // pick the first tag that passes pick_genre_tag's heuristic
+        // filter. If none qualify we leave genre empty rather than
+        // surface a star-rating string as the card's genre badge.
+        let genre = info.tags
+            .as_ref()
+            .and_then(|t| pick_genre_tag(&t.tag));
+        let description = info.wiki
+            .as_ref()
+            .and_then(|w| w.summary.clone())
+            .filter(|s| !s.is_empty())
+            // last.fm's wiki.summary trails with a "Read more on Last.fm"
+            // link tag — strip it for cleaner card text.
+            .map(|s| s.split("<a href=").next().unwrap_or(&s).trim().to_string());
+        let poster_url = info.image
+            .as_ref()
+            .and_then(|imgs| imgs.iter().rev().find_map(|i| {
+                if i.text.is_empty() { None } else { Some(i.text.clone()) }
+            }));
+
+        let mut entry = PluginEntry {
+            id:           format!("lastfm-album-{}-{}", artist, album),
+            kind:         EntryKind::Album,
+            source:       "lastfm".to_string(),
+            title:        info.name.unwrap_or_else(|| album.to_string()),
+            year:         None,
+            artist_name:  Some(info.artist.unwrap_or_else(|| artist.to_string())),
+            album_name:   Some(album.to_string()),
+            genre,
+            description,
+            poster_url,
+            rating,
+            ..Default::default()
+        };
+        if let Some(mbid) = info.mbid.filter(|s| !s.is_empty()) {
+            entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), mbid);
+        }
+
+        // Confidence is high when we have a populated rating signal
+        // (album was matched and has scrobbles); lower if last.fm
+        // returned the album shell with no listeners.
+        let confidence = if rating.is_some() { 0.9 } else { 0.5 };
+        PluginResult::ok(EnrichResponse { entry, confidence })
+    }
+}
+
+/// Normalize last.fm `listeners` count to a 0-5 star rating using a
+/// log10 scale. Justified by the long-tail distribution of listeners:
+/// most albums sit in the 1k-100k range, popular ones reach millions,
+/// only a handful exceed 10M. Linear scaling would crush all but the
+/// mega-hits to ~0; log scaling gives meaningful spread across the
+/// realistic range.
+///
+/// Formula: `clamp(log10(listeners + 1) - 2, 0, 5)`
+///
+/// | listeners | rating |
+/// |-----------|--------|
+/// | 100       | 0.0    |
+/// | 1,000     | 1.0    |
+/// | 10,000    | 2.0    |
+/// | 100,000   | 3.0    |
+/// | 1,000,000 | 4.0    |
+/// | 10,000,000| 5.0    |
+///
+/// Anchor at `listeners=100,000 → 3.0` matches the intuitive "mid-tier
+/// popular" feeling — albums most active listeners would recognize.
+fn synth_rating_from_listeners(listeners: u64) -> f32 {
+    let log = ((listeners + 1) as f64).log10();
+    let raw = log - 2.0;
+    raw.clamp(0.0, 5.0) as f32
+}
+
+/// Walk lastfm's top-tags list (already ordered by community vote
+/// count) and return the first tag that looks like an actual genre.
+/// Last.fm tags are user-submitted and the list routinely contains
+/// non-genre noise: rating-style ("5 stars", "five stars"), year
+/// stamps ("2021", "1970s"), decade markers ("80s", "90s"),
+/// personal-state ("favorite", "owned", "wishlist"), and
+/// concert-tracking ("seen-live"). When the top tag is one of those,
+/// we want to fall through to whatever genre-shaped tag came next.
+fn pick_genre_tag(tags: &[AlbumTag]) -> Option<String> {
+    tags.iter()
+        .map(|t| t.name.trim())
+        .find(|name| !name.is_empty() && is_genre_like(name))
+        .map(|s| s.to_string())
+}
+
+/// Heuristic: does this tag look like a genre rather than a personal
+/// marker, rating, year, or other lastfm-tagging artifact?
+fn is_genre_like(tag: &str) -> bool {
+    let lower = tag.to_lowercase();
+    let lower = lower.trim();
+    if lower.is_empty() {
+        return false;
+    }
+
+    // Star ratings: "5 stars", "four stars", "5/5", "10/10".
+    if lower.contains("star") {
+        let rest = lower.replace("star", "").replace("s", "");
+        if rest.trim().is_empty() || rest.trim().chars().all(|c| c.is_ascii_digit() || c.is_whitespace()) {
+            return false;
+        }
+    }
+    if lower.contains('/') && lower.chars().all(|c| c.is_ascii_digit() || c == '/' || c.is_whitespace()) {
+        return false;
+    }
+
+    // 4-digit year stamp.
+    if lower.len() == 4 && lower.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    // Decade markers: "80s", "1990s", "70's", etc. We strip optional
+    // century prefix and trailing 's' / "'s" then check the residue
+    // is just two digits — if so, it's a decade tag.
+    let decade_check = lower
+        .trim_end_matches("'s")
+        .trim_end_matches('s')
+        .trim_start_matches("19")
+        .trim_start_matches("20");
+    if decade_check.len() == 2 && decade_check.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    // Personal-state / opinion / format / event markers. Each is
+    // matched as the entire trimmed tag (lowercased) since these
+    // appear standalone, not embedded in compound genre names.
+    const PERSONAL_TAGS: &[&str] = &[
+        "favorite", "favorites", "favourite", "favourites",
+        "love", "loved", "love it", "loves",
+        "best", "best of", "best ever", "best albums",
+        "great", "good", "cool", "amazing", "awesome",
+        "perfect", "epic", "masterpiece", "classic",
+        "underrated", "overrated", "must hear",
+        "owned", "own", "have", "i own this",
+        "wishlist", "want", "to listen", "to listen to",
+        "to buy", "checked", "heard", "listened",
+        "my albums", "my favorites", "my favourites", "my collection",
+        "albums i own", "albums i love",
+        "seen live", "seen-live", "concert", "live",
+        "vinyl", "cd", "cassette", "tape",
+        "english", "spanish", "french", "german", "italian", "japanese",
+        "male vocalists", "female vocalists", "male vocalist", "female vocalist",
+        "albums",
+    ];
+    if PERSONAL_TAGS.iter().any(|p| *p == lower) {
+        return false;
+    }
+
+    true
+}
+
+// ── album.getInfo response ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct AlbumInfoEnvelope {
+    #[serde(default)]
+    album: Option<AlbumInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlbumInfo {
+    #[serde(default)] name:      Option<String>,
+    #[serde(default)] artist:    Option<String>,
+    #[serde(default)] mbid:      Option<String>,
+    #[serde(default)] listeners: Option<String>,
+    #[serde(default)] image:     Option<Vec<AlbumImage>>,
+    #[serde(default)] tags:      Option<AlbumTags>,
+    #[serde(default)] wiki:      Option<AlbumWiki>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlbumImage {
+    #[serde(rename = "#text", default)] text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlbumTags {
+    #[serde(default)] tag: Vec<AlbumTag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlbumTag {
+    #[serde(default)] name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlbumWiki {
+    #[serde(default)] summary: Option<String>,
+}
+
 /// Enrich-confidence heuristic [0.0, 1.0]:
 /// - +0.6 on case-insensitive exact title match (else +0.3 if candidate starts with it)
 /// - +0.4 if both sides carry an artist_name and they match case-insensitively
@@ -302,6 +574,61 @@ fn enrich_score(partial: &PluginEntry, candidate: &PluginEntry) -> f32 {
         _ => 0.0,
     };
     title + artist
+}
+
+// ── Aggregated album browse (seed tags) ──────────────────────────────────────
+
+/// Default seed tags for the album-browse "All" / no-filter state. When
+/// the future genre-filter dropdown lands, a user-selected tag bypasses
+/// this list and queries `tag.gettopalbums` for that one tag. The list
+/// is intentionally short to keep the worst-case HTTP fan-out small.
+const AGGREGATE_SEED_TAGS: &[&str] = &[
+    "rock", "pop", "indie", "electronic", "hip-hop",
+];
+
+/// Fan out `tag.gettopalbums` across `tags`, merge results, dedup by
+/// `(artist, title)` (preserves the input order so seed-tag priority is
+/// respected). Failures from individual tags are swallowed so one bad
+/// tag doesn't kill the whole browse.
+fn aggregate_top_albums_by_tags(
+    api_key: &str,
+    tags: &[&str],
+    per_tag_limit: usize,
+    kind: EntryKind,
+) -> Vec<PluginEntry> {
+    let mut out: Vec<PluginEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for tag in tags {
+        let url = format!(
+            "{API_BASE}?method=tag.gettopalbums&tag={}&api_key={api_key}&format=json&limit={per_tag_limit}",
+            urlencoding::encode(tag),
+        );
+        plugin_info!("lastfm: tag.gettopalbums tag='{tag}' limit={per_tag_limit}");
+        let body = match http_get(&url) {
+            Ok(b) => b,
+            Err(e) => {
+                plugin_info!("lastfm: tag '{tag}' failed: {e}");
+                continue;
+            }
+        };
+        let entries = match parse_tag_top_albums(&body, kind) {
+            Ok(v) => v,
+            Err(e) => {
+                plugin_info!("lastfm: tag '{tag}' parse failed: {}", e.message);
+                continue;
+            }
+        };
+        for e in entries {
+            let key = match (&e.artist_name, &e.album_name) {
+                (Some(a), Some(t)) => format!("{}|{}", a.to_lowercase(), t.to_lowercase()),
+                _                  => e.title.to_lowercase(),
+            };
+            if seen.insert(key) {
+                out.push(e);
+            }
+        }
+    }
+    out
 }
 
 // ── Search-response parsers ───────────────────────────────────────────────────
@@ -329,6 +656,11 @@ fn parse_album_search(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, P
 fn parse_top_artists(body: &str) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: TopArtistsResponse = parse_json(body)?;
     Ok(resp.artists.artist.into_iter().filter_map(|a| a.into_entry(EntryKind::Artist)).collect())
+}
+
+fn parse_tag_top_albums(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
+    let resp: TagTopAlbumsResponse = parse_json(body)?;
+    Ok(resp.albums.album.into_iter().filter_map(|a| a.into_entry(kind)).collect())
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -488,6 +820,58 @@ impl Album {
 struct TopArtistsResponse { artists: TopArtistsWrap }
 #[derive(Debug, Deserialize)]
 struct TopArtistsWrap { #[serde(default)] artist: Vec<Artist> }
+
+// tag.gettopalbums: {"albums": {"album": [{"name", "artist": {"name"}, "image": [...], "mbid"}]}}
+#[derive(Debug, Deserialize)]
+struct TagTopAlbumsResponse { albums: TagTopAlbumsWrap }
+#[derive(Debug, Deserialize)]
+struct TagTopAlbumsWrap { #[serde(default)] album: Vec<TagAlbum> }
+
+#[derive(Debug, Deserialize)]
+struct TagAlbum {
+    #[serde(default)] name: String,
+    #[serde(default)] artist: TagAlbumArtist,
+    #[serde(default)] image: Vec<Image>,
+    #[serde(default)] mbid: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TagAlbumArtist {
+    #[serde(default)] name: String,
+}
+
+impl TagAlbum {
+    fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
+        if self.name.is_empty() { return None; }
+        let artist = self.artist.name;
+        let desc = if artist.is_empty() { None } else { Some(format!("by {artist}")) };
+        // Lastfm's image URLs are usually populated for albums. When
+        // they're not (rare), fall back to Cover Art Archive via the
+        // release-group MBID. CAA 404s gracefully if no art exists.
+        let mut poster = pick_image(self.image);
+        if poster.is_none() && !self.mbid.is_empty() {
+            poster = Some(format!(
+                "https://coverartarchive.org/release-group/{}/front-250",
+                self.mbid,
+            ));
+        }
+        let mut entry = PluginEntry {
+            id: make_id(&artist, &self.name),
+            kind,
+            source: "lastfm".to_string(),
+            title: self.name.clone(),
+            artist_name: opt_non_empty(artist),
+            album_name: Some(self.name),
+            poster_url: poster,
+            description: desc,
+            ..Default::default()
+        };
+        if !self.mbid.is_empty() {
+            entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.mbid);
+        }
+        Some(entry)
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

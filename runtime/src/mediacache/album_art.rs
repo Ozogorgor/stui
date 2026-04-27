@@ -70,7 +70,12 @@ pub fn extract(audio_path: &Path) -> Option<PathBuf> {
 }
 
 fn art_cache_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".stui").join("cache").join("art"))
+    // Album-art tiles are caches, so they live under XDG_CACHE_HOME
+    // (`~/.cache/stui/art/`) — safe to delete, regenerated on next
+    // playback. Falls back to `~/.cache/` if XDG_CACHE_HOME is unset.
+    dirs::cache_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
+        .map(|c| c.join("stui").join("art"))
 }
 
 #[cfg(test)]

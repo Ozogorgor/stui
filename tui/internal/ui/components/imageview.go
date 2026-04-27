@@ -93,6 +93,18 @@ func (iv *ImageView) SetPlaceholder(s string) {
 // Lines returns the rendered image as a slice of strings, one per row.
 // Always returns exactly `height` lines. Safe for embedding in a
 // line-by-line TUI layout.
+//
+// Two-tier cache + async fallback:
+//
+//   1. L1 (in-memory, per ImageView): hit → return immediately.
+//   2. L2 (disk): hit → load + populate L1 → return.
+//   3. Miss → enqueue an async chafa job, return placeholder lines.
+//      The pool emits ChafaRenderedMsg on completion; the controller
+//      triggers a View() refresh and the next Lines() call hits L1
+//      via L2 (the worker wrote the result to disk).
+//
+// This keeps View() non-blocking: the grid paints immediately with
+// placeholders, and posters fade in as their renders complete.
 func (iv *ImageView) Lines() []string {
 	iv.mu.Lock()
 	defer iv.mu.Unlock()
@@ -101,18 +113,27 @@ func (iv *ImageView) Lines() []string {
 		return iv.placeholderLines()
 	}
 
-	// Check cache
+	// L1 in-memory cache.
 	if iv.cachedPath == iv.path && iv.cachedW == iv.width && iv.cachedH == iv.height && len(iv.cachedLines) > 0 {
 		return iv.cachedLines
 	}
 
-	// Render via chafa
-	lines := iv.render()
-	iv.cachedPath = iv.path
-	iv.cachedW = iv.width
-	iv.cachedH = iv.height
-	iv.cachedLines = lines
-	return lines
+	// L2 disk cache. Skip chafa entirely on warm hit.
+	if cached, hit := chafaCacheGet(iv.path, iv.width, iv.height); hit {
+		lines := iv.parseRendered(string(cached))
+		iv.cachedPath = iv.path
+		iv.cachedW = iv.width
+		iv.cachedH = iv.height
+		iv.cachedLines = lines
+		return lines
+	}
+
+	// Miss on both tiers. Kick an async render and return placeholder
+	// lines for this frame — the worker pool will refill the disk
+	// cache and fire ChafaRenderedMsg, which triggers a View() refresh
+	// that hits L2 on the next pass.
+	EnqueueChafaRender(iv.path, iv.width, iv.height)
+	return iv.placeholderLines()
 }
 
 // View returns the rendered image as a single string (lines joined with \n).
@@ -124,6 +145,15 @@ func (iv *ImageView) render() []string {
 	format := "symbols"
 	if iv.protocol == ImageProtocolKitty {
 		format = "kitty"
+	}
+
+	// L2 disk cache: skip chafa entirely on a warm hit. The cache
+	// key includes the source file's mtime, so swapped posters
+	// invalidate automatically. Kitty protocol output is also
+	// cacheable — it's a single escape sequence the disk happily
+	// stores.
+	if cached, hit := chafaCacheGet(iv.path, iv.width, iv.height); hit {
+		return iv.parseRendered(string(cached))
 	}
 
 	cmd := exec.Command("chafa",
@@ -148,7 +178,18 @@ func (iv *ImageView) render() []string {
 		return iv.placeholderLines()
 	}
 
-	raw := strings.TrimRight(string(out), "\n")
+	// Cache the raw output (before our line-parsing) so the next
+	// launch can skip chafa entirely.
+	chafaCachePut(iv.path, iv.width, iv.height, out)
+
+	return iv.parseRendered(string(out))
+}
+
+// parseRendered splits chafa's raw output into one line per row,
+// padded/trimmed to exactly iv.height lines. Shared by the live-render
+// and disk-cache-hit paths so they produce identical layouts.
+func (iv *ImageView) parseRendered(raw string) []string {
+	raw = strings.TrimRight(raw, "\n")
 
 	if iv.protocol == ImageProtocolKitty {
 		// Kitty output is a single escape sequence that occupies
@@ -162,9 +203,9 @@ func (iv *ImageView) render() []string {
 		return lines
 	}
 
-	// Symbols: one text line per row
+	// Symbols: one text line per row.
 	lines := strings.Split(raw, "\n")
-	// Pad or trim to exact height
+	// Pad or trim to exact height.
 	for len(lines) < iv.height {
 		lines = append(lines, "")
 	}

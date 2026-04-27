@@ -11,9 +11,12 @@ package components
 // Card dimensions are computed dynamically from terminal width / column count.
 
 import (
+	"fmt"
 	"image/color"
+	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 
@@ -84,10 +87,17 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	if innerW < 1 {
 		innerW = 1
 	}
-	// Poster now fills the full card interior (was CardPosterRows = 9 with
-	// meta rows stacked below). The bottom two lines are overwritten by the
-	// meta bar, so the visible poster art is effectively innerH-2 rows tall.
-	posterH := CardContentRows
+	// Render chafa at the VISIBLE poster height (innerH minus the 2 rows
+	// the meta bar will occupy). Rendering at the full interior height
+	// caused chafa to fit-to-height using all 12 rows, then the meta bar
+	// cropped the bottom of the image — visually squishing portrait
+	// posters (movies/series, 2:3) since their bottom 2 rows of actual
+	// art were hidden. Square album posters happened to render with
+	// empty padding in those rows, so they weren't affected.
+	//
+	// We pad the rendered output back to CardContentRows below so the
+	// meta bar still sits at the card's bottom edge.
+	posterH := CardContentRows - 2
 
 	// ── Poster area ───────────────────────────────────────────────────────
 	//
@@ -113,12 +123,31 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 		poster = renderPlaceholderPoster(entry, innerW, posterH)
 	}
 
-	// Splice the meta bar onto the last two rows of the rendered poster.
+	// Center the rendered poster horizontally within the card's inner
+	// width. Chafa left-aligns its output, so portrait posters (which
+	// don't fill the full innerW) had visible empty space on the right.
+	// Width+Align(Center) pads each line equally on both sides.
+	poster = lipgloss.NewStyle().
+		Width(innerW).
+		Align(lipgloss.Center).
+		Render(poster)
+
+	// Pad the rendered poster up to the full inner card height so the
+	// meta-bar overlay below lands on the bottom 2 rows of the card,
+	// not the bottom 2 rows of the image. Empty rows go between the
+	// image and the meta bar — so portrait images (rendered to fit
+	// within posterH-2) keep their full visible height, square images
+	// stay nested at the top, and the meta bar always sits flush
+	// against the card's bottom border.
 	posterLines := strings.Split(poster, "\n")
-	posterLines = overlayMetaBar(posterLines, entry.Title, buildCompactMeta(entry), innerW)
+	for len(posterLines) < CardContentRows {
+		posterLines = append(posterLines, "")
+	}
+	posterLines = overlayRatingBadge(posterLines, entry, innerW)
+	posterLines = overlayMetaBar(posterLines, buildTitleLine(entry), buildCompactMeta(entry), innerW)
 	content := strings.Join(posterLines, "\n")
-	// Defense-in-depth: if chafa returned fewer lines than requested, pad
-	// to CardContentRows so the card frame doesn't collapse.
+	// Defense-in-depth: if chafa returned MORE lines than expected (rare
+	// but possible with some symbol maps), trim/pad to CardContentRows.
 	content = clampLines(content, CardContentRows)
 
 	borderColor := theme.T.Border()
@@ -138,20 +167,100 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	return cardStyle.Render(content)
 }
 
-// buildCompactMeta joins year · ★rating · genre on one line. Parts that
-// aren't present are skipped, so cards with partial metadata stay tidy.
+// buildTitleLine returns the album/movie title with the release year
+// appended in parentheses if present. Year used to live in the meta
+// row alongside artist + genre; pulling it up to the title row gives
+// the artist+genre pair more breathing room and reads more naturally
+// ("OK Computer (1997)" mirrors how album titles are written
+// elsewhere). When year is absent the title stands alone.
+func buildTitleLine(entry ipc.CatalogEntry) string {
+	if entry.Year != nil && *entry.Year != "" {
+		return entry.Title + " (" + *entry.Year + ")"
+	}
+	return entry.Title
+}
+
+// buildCompactMeta joins artist · genre on one line. Year used to
+// be here too but moved up to the title row (see buildTitleLine).
+// Genre is taken as the first comma-separated token only — Discogs
+// sometimes returns "Rock, Indie Rock, Alternative" and the long
+// form crowds out the artist on narrow cards.
+//
+// Rating is NOT in the meta line — it's overlaid as a top-right
+// badge on the poster (see overlayRatingBadge).
 func buildCompactMeta(entry ipc.CatalogEntry) string {
 	var parts []string
-	if entry.Year != nil && *entry.Year != "" {
-		parts = append(parts, *entry.Year)
-	}
-	if entry.Rating != nil && *entry.Rating != "" {
-		parts = append(parts, "★"+*entry.Rating)
+	if entry.Artist != nil && *entry.Artist != "" {
+		parts = append(parts, *entry.Artist)
 	}
 	if entry.Genre != nil && *entry.Genre != "" {
-		parts = append(parts, *entry.Genre)
+		g := *entry.Genre
+		if i := strings.Index(g, ","); i >= 0 {
+			g = g[:i]
+		}
+		g = titleCaseGenre(strings.TrimSpace(g))
+		if g != "" {
+			parts = append(parts, g)
+		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// titleCaseGenre uppercases the first letter of each word/segment.
+// Word boundaries are whitespace OR hyphens — so "indie rock" →
+// "Indie Rock" and "hip-hop" → "Hip-Hop". Everything else is
+// lowercased so source variations like "ROCK", "Rock", and "rock"
+// all collapse to "Rock".
+func titleCaseGenre(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	capitalize := true
+	for _, r := range s {
+		if unicode.IsSpace(r) || r == '-' {
+			b.WriteRune(r)
+			capitalize = true
+			continue
+		}
+		if capitalize {
+			b.WriteRune(unicode.ToUpper(r))
+			capitalize = false
+		} else {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// overlayRatingBadge replaces the rightmost cells of posterLines[0]
+// with a "★X.X" rating badge (one decimal, accent-colored, bold).
+// No-op when posterLines is empty or the entry has no rating.
+//
+// Ratings arrive as raw numeric strings (often more than one
+// decimal — "8.456"). We round to one decimal here for display;
+// the underlying weighted-rating logic stays untouched.
+func overlayRatingBadge(posterLines []string, entry ipc.CatalogEntry, innerW int) []string {
+	if len(posterLines) == 0 || entry.Rating == nil || *entry.Rating == "" {
+		return posterLines
+	}
+	rating := *entry.Rating
+	if r, err := strconv.ParseFloat(rating, 64); err == nil {
+		rating = fmt.Sprintf("%.1f", r)
+	}
+	badge := lipgloss.NewStyle().
+		Foreground(theme.T.Accent()).
+		Background(theme.T.Bg()).
+		Bold(true).
+		Render("★" + rating)
+	badgeW := lipgloss.Width(badge)
+	if badgeW >= innerW {
+		// Pathological narrow card — bail rather than blow out the layout.
+		return posterLines
+	}
+	// Truncate the first poster row to (innerW - badgeW) cells so the
+	// badge fits on the right. lipgloss's MaxWidth is ANSI-aware.
+	leftStyle := lipgloss.NewStyle().Width(innerW - badgeW).MaxWidth(innerW - badgeW)
+	posterLines[0] = leftStyle.Render(posterLines[0]) + badge
+	return posterLines
 }
 
 // overlayMetaBar paints a 2-row dark bar onto the last two elements of

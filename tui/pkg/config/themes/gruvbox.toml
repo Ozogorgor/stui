@@ -1,0 +1,26 @@
+# gruvbox — warm tan-and-orange palette inspired by morhetz/gruvbox.
+name = "gruvbox"
+
+bg          = "#282828"
+surface     = "#1d2021"
+border      = "#3c3836"
+border_foc  = "#fabd2f"
+
+text        = "#ebdbb2"
+text_dim    = "#928374"
+text_muted  = "#a89984"
+
+accent      = "#fabd2f"
+accent_alt  = "#83a598"
+neon        = "#fe8019"
+
+green       = "#b8bb26"
+red         = "#fb4934"
+yellow      = "#fabd2f"
+warn        = "#fabd2f"
+success     = "#b8bb26"
+
+tab_active   = "#fe8019"
+tab_inactive = "#1d2021"
+tab_text     = "#ebdbb2"
+tab_text_dim = "#928374"

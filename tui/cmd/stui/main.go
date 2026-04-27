@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui"
 	"github.com/stui/stui/internal/ui/components"
 	"github.com/stui/stui/pkg/config"
@@ -36,8 +37,13 @@ type SplashScreenModel struct {
 	started   bool
 }
 
+// Init kicks off BOTH the splash animation and the main model in parallel.
+// Running mainModel.Init() here (instead of waiting for the splash to finish)
+// lets the runtime handshake, plugin discovery, and initial grid load happen
+// behind the splash — turning it from pure eye-candy into a real loading
+// indicator backed by the progress bar at the bottom.
 func (m *SplashScreenModel) Init() tea.Cmd {
-	return m.splash.Init()
+	return tea.Batch(m.splash.Init(), m.mainModel.Init())
 }
 
 func (m *SplashScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -45,25 +51,57 @@ func (m *SplashScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.mainModel.Update(msg)
 	}
 
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// Forward to existing splash so it updates dimensions without re-initializing timers.
-		var splashCmd tea.Cmd
-		_, splashCmd = m.splash.Update(msg)
-		// Forward to main model so it has correct dimensions when the splash finishes.
-		// Without this, mainModel.state.Width == 0 on takeover and View() returns
-		// "Loading…" without AltScreen=true, causing BubbleTea to exit alt screen.
-		var mainCmd tea.Cmd
-		m.mainModel, mainCmd = m.mainModel.Update(msg)
-		return m, tea.Batch(splashCmd, mainCmd)
+	// Tap milestone messages BEFORE forwarding so the splash progress
+	// bar advances as the runtime, plugins, and first grid arrive.
+	// We don't consume the messages — the main model still needs them
+	// to populate its own state.
+	//
+	// IPC messages reach this layer wrapped in a `fromIPC` envelope
+	// (see ui/init.go) — the inner Model unwraps them on its end.
+	// We use the public `ui.UnwrapIPC` helper to peek inside without
+	// consuming the envelope.
+	var milestoneCmd tea.Cmd
+	inner := msg
+	if unwrapped, ok := ui.UnwrapIPC(msg); ok {
+		inner = unwrapped
+	}
+	switch ev := inner.(type) {
+	case ipc.RuntimeReadyMsg:
+		milestoneCmd = m.splash.MarkRuntimeReady()
+	case ipc.PluginListMsg:
+		milestoneCmd = m.splash.MarkPluginsLoaded()
+	case ipc.GridUpdateMsg:
+		milestoneCmd = m.splash.MarkGridReady(ev.Tab)
 	}
 
-	_, cmd := m.splash.Update(msg)
+	// WindowSizeMsg needs to reach both: the splash uses it for centering
+	// and the main model needs it before takeover so View() doesn't render
+	// without AltScreen=true and bounce out of alt screen.
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		_, splashCmd := m.splash.Update(msg)
+		var mainCmd tea.Cmd
+		m.mainModel, mainCmd = m.mainModel.Update(msg)
+		return m, tea.Batch(splashCmd, mainCmd, milestoneCmd)
+	}
+
+	// Drive the splash (animation tick + progress.FrameMsg) AND the main
+	// model in parallel during the splash phase. The main model's IPC
+	// pumps, plugin loaders, and grid hydration all run while the
+	// animation plays — when the splash dismisses, the user is dropped
+	// into a fully-warm UI instead of a "Loading…" placeholder.
+	_, splashCmd := m.splash.Update(msg)
+	var mainCmd tea.Cmd
+	m.mainModel, mainCmd = m.mainModel.Update(msg)
+
 	if m.splash.IsDone() {
 		m.started = true
-		return m.mainModel, m.mainModel.Init()
+		// mainModel.Init() already ran from our Init(); don't re-call
+		// it or its IPC pumps will be subscribed twice. Just emit any
+		// pending Cmds from this turn and let the main model take over
+		// on the next message.
+		return m.mainModel, tea.Batch(splashCmd, mainCmd, milestoneCmd)
 	}
-	return m, cmd
+	return m, tea.Batch(splashCmd, mainCmd, milestoneCmd)
 }
 
 func (m *SplashScreenModel) View() tea.View {
@@ -119,6 +157,17 @@ func main() {
 	)
 
 	cfgPath := config.DefaultPath()
+	// First-launch bootstrap: write a populated config.toml + the
+	// bundled starter theme files if either is missing. Both are
+	// idempotent — an existing file or non-empty themes/ dir is
+	// left alone — so user edits and deletions persist across
+	// launches.
+	if err := config.EnsureExists(cfgPath); err != nil {
+		log.Warn("failed to write default config", "path", cfgPath, "error", err)
+	}
+	if err := config.EnsureBundledThemes(); err != nil {
+		log.Warn("failed to write bundled themes", "error", err)
+	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Warn("failed to load config, using defaults", "error", err)

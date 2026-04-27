@@ -109,6 +109,13 @@ type CatalogEntry struct {
 	Provider    string  `json:"provider"`
 	Tab         string  `json:"tab"`
 	ImdbID      *string `json:"imdb_id"`
+	// Artist / creator name. Populated for music tab entries from
+	// `PluginEntry.artist_name` on the runtime side. The IPC layer
+	// converts runtime CatalogEntry → MediaEntry before sending
+	// (see `catalog_entry_to_media_entry` in runtime/src/main.rs),
+	// so the JSON key on the wire is `artist_name` (MediaEntry's
+	// field). Nil for non-music entries.
+	Artist *string `json:"artist_name,omitempty"`
 	// Fields added for scoped search (Chunk 4).
 	Kind   EntryKind `json:"kind,omitempty"`
 	Source string    `json:"source,omitempty"`

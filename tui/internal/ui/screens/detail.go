@@ -424,9 +424,6 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		scroll = 0
 	}
 
-	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim()).Background(theme.T.Bg())
-	barChars := components.ScrollbarChars(scroll, visibleH, len(lines), dim)
-
 	// Build each visible row as: content-line (padded to contentW) + " " + bar.
 	contentW := w - 4 // 2 col left pad, 1 col gap, 1 col scrollbar
 	if contentW < 1 {
@@ -440,11 +437,13 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		if idx < len(lines) {
 			lineText = lines[idx]
 		}
-		row := contentLineStyle.Render(lineText) + " " + barChars[r]
+		row := contentLineStyle.Render(lineText)
 		rows = append(rows, row)
 	}
 
-	body := strings.Join(rows, "\n")
+	body := lipgloss.JoinHorizontal(lipgloss.Top,
+		strings.Join(rows, "\n"), " ", components.Scrollbar(scroll, visibleH, len(lines)),
+	)
 	// Padding(1, 0, 1, 2) — top:1, right:0, bottom:1, left:2.  Inner
 	// horizontal area is w-2; each row is (w-4) content + 1 gap + 1 bar
 	// = w-2, exactly filling the inner width with no overflow.

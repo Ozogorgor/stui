@@ -23,6 +23,14 @@ use crate::sandbox::SandboxCtx;
 
 const WASM_HTTP_TIMEOUT_SECS: u64 = 15;
 
+/// User-Agent advertised on every plugin HTTP request. Several upstream
+/// APIs (MusicBrainz, Discogs) hard-403 requests with reqwest's default
+/// blank UA, citing "your application has not identified itself". This
+/// default keeps every plugin honest by default; plugins that need a
+/// per-service UA can still override via __stui_headers on stui_http_post.
+const PLUGIN_USER_AGENT: &str =
+    "stui-runtime/0.1.0 ( https://github.com/stui/stui )";
+
 // ── Public interface ──────────────────────────────────────────────────────────
 
 /// A loaded, ready-to-call WASM plugin instance.
@@ -377,6 +385,7 @@ mod inner_impl {
                         }
                         let client = reqwest::Client::builder()
                             .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .user_agent(PLUGIN_USER_AGENT)
                             .build();
                         let client = match client {
                             Ok(c) => c,
@@ -384,6 +393,7 @@ mod inner_impl {
                                 warn!(plugin=%caller.data().ctx.plugin_name, err=%e, "client builder failed, using default");
                                 reqwest::Client::builder()
                                     .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                                    .user_agent(PLUGIN_USER_AGENT)
                                     .build()
                                     .unwrap_or_else(|_| reqwest::Client::default())
                             }
@@ -435,6 +445,7 @@ mod inner_impl {
 
                         let client = reqwest::Client::builder()
                             .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .user_agent(PLUGIN_USER_AGENT)
                             .build()
                             .unwrap_or_else(|_| reqwest::Client::new());
                         let mut req = client.post(&url)

@@ -2,12 +2,9 @@ package screens
 
 // episode.go — EpisodeScreen: season/episode browser.
 //
-// Two display modes toggled with 'v':
-//
-//   List view (default)  — seasons left, episode rows right
-//   Grid view            — seasons left, episode cells right
-//                          e.g. [01] [02] [03] [04]
-//                               [05] [06] [07] [08]
+// Layout: seasons left, episode rows right (list view only).
+// A grid view existed previously and may be reintroduced; the
+// scaffolding was removed to keep the file focused.
 //
 // 'b' toggles binge mode — BingeContextMsg is fired on play so Model can
 // auto-queue the next episode when playback ends.
@@ -55,7 +52,6 @@ type EpisodeScreen struct {
 	loading      bool
 	everLoaded   bool   // true once the first EpisodesLoadedMsg has rendered the layout.
 	loadErr      string // last load failure (empty = no error). Rendered in place of the spinner.
-	gridView     bool   // true = grid cell layout; false = list layout
 	bingeEnabled bool   // true = auto-play next episode on end-of-file
 	spinner      components.Spinner
 }
@@ -102,29 +98,10 @@ func NewEpisodeScreen(client *ipc.Client, title, seriesID, idSource string, auto
 		backdropURL:  opts.BackdropURL,
 		seasonIDs:    append([]string(nil), opts.SeasonIDs...),
 		loading: true,
-		// Caller supplies the season list when the provider's lookup
-		// response carries `season_count`. Empty/nil → fall back to a
-		// single season; we'd rather undercount than manufacture
-		// seasons that don't exist (every miss is a 404 round-trip).
 		seasons:      seasonsOrDefault(opts.Seasons),
 		bingeEnabled: autoplayDefault,
 		spinner:      *components.NewSpinner("loading episodes…", dimStyle),
 	}
-}
-
-// gridCols returns how many cells fit across the episode panel.
-func (s EpisodeScreen) gridCols() int {
-	seasonW := mediaheader.PosterWidth
-	const cellW = 6 // "[E01] " — 6 chars per cell
-	avail := s.width - seasonW - 4
-	if avail < cellW {
-		return 1
-	}
-	cols := avail / cellW
-	if cols < 1 {
-		return 1
-	}
-	return cols
 }
 
 func (s EpisodeScreen) Init() tea.Cmd {
@@ -178,15 +155,26 @@ func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			s.spinner.Stop()
 		}
 
+	case tea.MouseMsg:
+		// Mouse wheel scrolls the episode list.
+		if s.inEpisodes {
+			mouse := m.Mouse()
+			if mouse.Button == tea.MouseWheelUp {
+				if s.epCursor > 0 {
+					s.epCursor--
+				}
+			} else if mouse.Button == tea.MouseWheelDown {
+				if s.epCursor < len(s.episodes)-1 {
+					s.epCursor++
+				}
+			}
+		}
+
 	case tea.KeyPressMsg:
 		key := m.String()
 
 		// ── Mode toggles (checked first so they always fire) ──────────────
-		switch key {
-		case "v":
-			s.gridView = !s.gridView
-			return s, nil
-		case "b":
+		if key == "b" {
 			s.bingeEnabled = !s.bingeEnabled
 			return s, nil
 		}
@@ -194,55 +182,29 @@ func (s EpisodeScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if action, ok := actions.FromKey(key); ok {
 			switch action {
 
-			// ── Season navigation (same in both modes) ────────────────────
 			case actions.ActionNavigateDown:
 				if !s.inEpisodes {
 					s.loadSeason(s.seasonCursor + 1)
-				} else if s.gridView {
-					cols := s.gridCols()
-					next := s.epCursor + cols
-					if next < len(s.episodes) {
-						s.epCursor = next
-					}
-				} else {
-					if s.epCursor < len(s.episodes)-1 {
-						s.epCursor++
-					}
+				} else if s.epCursor < len(s.episodes)-1 {
+					s.epCursor++
 				}
 
 			case actions.ActionNavigateUp:
 				if !s.inEpisodes {
 					s.loadSeason(s.seasonCursor - 1)
-				} else if s.gridView {
-					cols := s.gridCols()
-					if s.epCursor >= cols {
-						s.epCursor -= cols
-					}
-				} else {
-					if s.epCursor > 0 {
-						s.epCursor--
-					}
+				} else if s.epCursor > 0 {
+					s.epCursor--
 				}
 
 			case actions.ActionNavigateRight:
 				if !s.inEpisodes {
 					s.inEpisodes = true
-				} else if s.gridView {
-					if s.epCursor < len(s.episodes)-1 {
-						s.epCursor++
-					}
 				}
 				// In list mode right does nothing extra (enter plays)
 
 			case actions.ActionNavigateLeft:
 				if s.inEpisodes {
-					if s.gridView && s.epCursor%s.gridCols() > 0 {
-						// Not at left edge of grid row — move left
-						s.epCursor--
-					} else {
-						// At left edge or list mode — exit to seasons pane
-						s.inEpisodes = false
-					}
+					s.inEpisodes = false
 				}
 
 			case actions.ActionBack:
@@ -310,6 +272,41 @@ func seasonsOrDefault(in []int) []int {
 	return out
 }
 
+// verticalSlack is a defensive margin against off-by-one in lipgloss
+// height accounting. Set to 1 by default; drop to 0 if smoke-testing
+// reveals a row of dead space below the footer, raise to 2 if the
+// bottom border clips.
+const verticalSlack = 1
+
+// computeEpisodeViewport carves chrome out of `screenH` and returns
+// the visible [start, end) range plus the panel height available for
+// the episode panel. extraReserve subtracts trailing rows the caller
+// reserves for non-list content (grid mode reserves 2 for the info
+// strap; list mode passes 0).
+//
+// The chrome budget mirrors View(): poster header + 2 blank rows + 1
+// footer line + 2 rows of MainCardStyle border + verticalSlack.
+// MainCardStyle has no vertical padding, so the slack is purely
+// defensive.
+func computeEpisodeViewport(total, cursor, screenH, extraReserve int) (start, end, panelH int) {
+	chrome := mediaheader.PosterHeight + 1 + 1 + 1 + 2 + verticalSlack
+	bodyH := screenH - chrome
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	panelH = bodyH - extraReserve
+	if panelH < 1 {
+		panelH = 1
+	}
+	if total == 0 {
+		return 0, 0, panelH
+	}
+	vl := components.NewVirtualizedList(total, cursor, panelH,
+		components.WithScrollMode(components.ScrollModePush))
+	start, end = vl.VisibleRange()
+	return start, end, panelH
+}
+
 // humanizeLoadErr trims the raw runtime/plugin error string into
 // something readable. Runtime errors arrive as
 // "METADATA_FAILED: unknown_id: TMDB HTTP 404: {…json…}" — fine for
@@ -353,30 +350,22 @@ func (s EpisodeScreen) View() tea.View {
 		// aligns vertically and there's room to drop a small backdrop
 		// underneath the season list.
 		seasonW := mediaheader.PosterWidth
-		leftPanel := s.renderSeasonColumn(acc, dim, seasonW)
-		var rightPanel string
-		if s.gridView {
-			rightPanel = s.renderGridPanel(acc, dim, neon)
-		} else {
-			rightPanel = s.renderListPanel(acc, dim, seasonW)
-		}
+		_, _, bodyH := computeEpisodeViewport(0, 0, s.height, 0)
+		leftPanel := s.renderSeasonColumn(acc, dim, seasonW, bodyH)
+		rightPanel := s.renderListPanel(acc, dim, seasonW)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 	}
 
 	// Footer hints
-	var modeHint, bingeHint string
-	if s.gridView {
-		modeHint = neon.Render("v  grid")
-	} else {
-		modeHint = dim.Render("v  list")
-	}
+	var bingeHint string
 	if s.bingeEnabled {
 		bingeHint = neon.Render("b  binge ON")
 	} else {
 		bingeHint = dim.Render("b  binge off")
 	}
 	navHint := hintBar("←→↑↓ navigate", "enter play", "esc back")
-	footer := navHint + "   " + modeHint + "   " + bingeHint
+	footer := navHint + "   " + bingeHint
+	_ = neon
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		header,
@@ -390,8 +379,11 @@ func (s EpisodeScreen) View() tea.View {
 	// side margins) matches the grid/detail screens. Width is bounded by
 	// the cached terminal width minus MainCardStyle's own margin+border
 	// budget — same calculation Model.View uses for the detail overlay.
-	if s.width > 4 {
-		framed := theme.T.MainCardStyle(true).Width(s.width - 2).Render(content)
+	if s.width > 4 && s.height > 4 {
+		framed := theme.T.MainCardStyle(true).
+			Width(s.width - 2).
+			Height(s.height - 2).
+			Render(content)
 		return tea.NewView(framed)
 	}
 	return tea.NewView(content)
@@ -450,24 +442,26 @@ func (s EpisodeScreen) renderHeader(acc, dim lipgloss.Style) string {
 // renderSeasonColumn returns the season list with an optional backdrop
 // chafa-rendered below it. Sized to match the poster column above so
 // the chrome aligns vertically.
-func (s EpisodeScreen) renderSeasonColumn(acc, dim lipgloss.Style, w int) string {
+func (s EpisodeScreen) renderSeasonColumn(acc, dim lipgloss.Style, w, bodyH int) string {
 	seasons := s.renderSeasonList(acc, dim, w)
 
-	// Backdrop slot. Returns "" when no URL or cache miss — the season
-	// list just sits without anything below in that case (pre-cache or
-	// no-artwork series). Width matches the column; height is half the
-	// poster height so the screen doesn't push the seasons too far up.
 	const backdropHeight = mediaheader.PosterHeight / 2
 	backdrop := mediaheader.RenderBackdrop(s.backdropURL, w-2, backdropHeight)
+	var content string
 	if backdrop == "" {
-		return seasons
+		content = seasons
+	} else {
+		backdropBlock := lipgloss.NewStyle().
+			Width(w).
+			Padding(0, 1).
+			Render(backdrop)
+		content = lipgloss.JoinVertical(lipgloss.Left, seasons, "", backdropBlock)
 	}
-	backdropBlock := lipgloss.NewStyle().
-		Width(w).
-		Padding(0, 1).
-		Render(backdrop)
 
-	return lipgloss.JoinVertical(lipgloss.Left, seasons, "", backdropBlock)
+	if bodyH < 1 {
+		return content
+	}
+	return lipgloss.NewStyle().Height(bodyH).Render(content)
 }
 
 func (s EpisodeScreen) renderSeasonList(acc, dim lipgloss.Style, w int) string {
@@ -492,88 +486,57 @@ func (s EpisodeScreen) renderSeasonList(acc, dim lipgloss.Style, w int) string {
 }
 
 func (s EpisodeScreen) renderListPanel(acc, dim lipgloss.Style, seasonW int) string {
-	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
-	epW := s.width - seasonW - 8
+	if s.loading && len(s.episodes) == 0 {
+		return s.spinner.View()
+	}
+	if len(s.episodes) == 0 {
+		return ""
+	}
+
+	total := len(s.episodes)
+	start, end, panelH := computeEpisodeViewport(total, s.epCursor, s.height, 0)
+
+	// -8 preserved from prior code (gutter + season border + padding);
+	// -2 reserves the gap (1 col) + scrollbar (1 col) on the right.
+	epW := s.width - seasonW - 8 - 2
 	if epW < 20 {
 		epW = 20
 	}
-	if s.loading && len(s.episodes) == 0 {
-		return s.spinner.View()
-	}
-	var lines []string
-	for i, ep := range s.episodes {
-		cursor := "  "
-		var style lipgloss.Style
-		if i == s.epCursor && s.inEpisodes {
-			cursor = "▶ "
-			style = acc
-		} else {
-			style = normal
-		}
-		epNum := fmt.Sprintf("E%02d", ep.Episode)
-		title := ep.Title
-		maxT := epW - 10
-		if maxT > 0 && len(title) > maxT {
-			title = title[:maxT-1] + "\u2026"
-		}
-		line := cursor + dim.Render(epNum) + "  " + style.Render(title)
-		if ep.AirDate != "" {
-			line += "  " + dim.Render(ep.AirDate[:min(len(ep.AirDate), 10)])
-		}
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
-}
+	contentW := epW
 
-func (s EpisodeScreen) renderGridPanel(acc, dim, neon lipgloss.Style) string {
 	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
-	cols := s.gridCols()
 
-	if s.loading && len(s.episodes) == 0 {
-		return s.spinner.View()
-	}
-	var rows []string
-	for i := 0; i < len(s.episodes); i += cols {
-		var cells []string
-		for c := 0; c < cols; c++ {
-			idx := i + c
-			if idx >= len(s.episodes) {
-				cells = append(cells, "      ") // pad last row
-				continue
-			}
+	rows := make([]string, 0, panelH)
+	for r := 0; r < panelH; r++ {
+		idx := start + r
+		var line string
+		if idx < end {
 			ep := s.episodes[idx]
-			num := fmt.Sprintf("%02d", ep.Episode)
-			var cell string
+			cursor := "  "
+			var style lipgloss.Style
 			if idx == s.epCursor && s.inEpisodes {
-				cell = acc.Render("[") + acc.Render("E"+num) + acc.Render("]")
-			} else if ep.AirDate == "" {
-				// future / unaired
-				cell = dim.Render("[E" + num + "]")
+				cursor = "▶ "
+				style = acc
 			} else {
-				cell = normal.Render("[E" + num + "]")
+				style = normal
 			}
-			cells = append(cells, cell+" ")
+			epNum := fmt.Sprintf("E%02d", ep.Episode)
+			title := ep.Title
+			maxT := contentW - 10
+			if maxT > 0 && len(title) > maxT {
+				title = title[:maxT-1] + "\u2026"
+			}
+			raw := cursor + dim.Render(epNum) + "  " + style.Render(title)
+			if ep.AirDate != "" {
+				raw += "  " + dim.Render(ep.AirDate[:min(len(ep.AirDate), 10)])
+			}
+			line = raw
 		}
-		rows = append(rows, strings.Join(cells, ""))
+		rows = append(rows, padRightANSI(line, contentW))
 	}
-
-	// Info line: show selected episode title below the grid
-	infoLine := ""
-	if s.inEpisodes && s.epCursor >= 0 && s.epCursor < len(s.episodes) {
-		ep := s.episodes[s.epCursor]
-		info := fmt.Sprintf("E%02d", ep.Episode)
-		if ep.Title != "" {
-			info += "  " + ep.Title
-		}
-		if ep.AirDate != "" {
-			info += "  " + dim.Render(ep.AirDate[:min(len(ep.AirDate), 10)])
-		}
-		if ep.Runtime > 0 {
-			info += "  " + dim.Render(fmt.Sprintf("%dm", ep.Runtime))
-		}
-		infoLine = "\n\n  " + acc.Render(info)
-		_ = neon // used for binge hint in View; suppress lint
-	}
-
-	return strings.Join(rows, "\n") + infoLine
+	content := strings.Join(rows, "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		content, " ", components.Scrollbar(start, panelH, total),
+	)
 }
+

@@ -28,8 +28,14 @@ kinds = ["movie", "series"]
 
 search  = true
 lookup  = { id_sources = ["imdb"] }
-# OMDb has no enrich / artwork / credits / related endpoints; those verbs are
-# omitted so they fall through to the trait's NOT_IMPLEMENTED default.
+# OMDb's `enrich` reuses the same ?i=<imdb_id> endpoint as lookup —
+# the response carries IMDb rating + Rotten Tomatoes + Metacritic in
+# the Ratings[] array, which the plugin projects into
+# PluginEntry.ratings for the catalog aggregator's weighted composite.
+# Falls back to title+year search when the partial entry has no IMDb id.
+enrich  = { id_sources = ["imdb"] }
+# Artwork / credits / related verbs aren't implemented; they fall
+# through to the trait's NOT_IMPLEMENTED default.
 
 [meta]
 author   = "stui"

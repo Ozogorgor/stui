@@ -727,7 +727,10 @@ func (m AudioSettingsModel) View() tea.View {
 
 	// ── Left panel: tabs as a vertical category list ─────────────────────
 	const leftInnerW = 20
-	leftInnerH := len(audioTabNames)
+	leftInnerH := m.height - 6 // 1 header + 2 blank + 1 footer + 2 border
+	if leftInnerH < len(audioTabNames) {
+		leftInnerH = len(audioTabNames)
+	}
 	if leftInnerH < 4 {
 		leftInnerH = 4
 	}
@@ -820,8 +823,6 @@ func (m AudioSettingsModel) View() tea.View {
 			scroll = visibleCount - itemsViewH
 		}
 	}
-	barChars := components.ScrollbarChars(scroll, itemsViewH, visibleCount, dimStyle)
-
 	// Map each visible (non-info) item to its index in items[] so we can
 	// render starting from `scroll` in display order.
 	visIndices := make([]int, 0, visibleCount)
@@ -841,6 +842,7 @@ func (m AudioSettingsModel) View() tea.View {
 	if labelW < 10 {
 		labelW = 10
 	}
+	itemRows := make([]string, 0, itemsViewH)
 	for r := 0; r < itemsViewH; r++ {
 		var rowText string
 		idx := scroll + r
@@ -876,12 +878,13 @@ func (m AudioSettingsModel) View() tea.View {
 			rowText = style.Render(prefix+labelPad) + val
 		}
 		rowText = padOrTruncate(rowText, rightListW)
-		if r < len(barChars) {
-			rowText = rowText + " " + barChars[r]
-		} else {
-			rowText = rowText + "  "
-		}
-		rightLines = append(rightLines, padOrTruncate(rowText, rightInnerW))
+		itemRows = append(itemRows, rowText)
+	}
+	itemBlock := lipgloss.JoinHorizontal(lipgloss.Top,
+		strings.Join(itemRows, "\n"), " ", components.Scrollbar(scroll, itemsViewH, visibleCount),
+	)
+	for _, line := range strings.Split(itemBlock, "\n") {
+		rightLines = append(rightLines, padOrTruncate(line, rightInnerW))
 	}
 
 	// Footer rows: blank + description of the focused item.

@@ -15,6 +15,7 @@ package screens
 import (
 	"fmt"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/stui/stui/internal/ipc"
@@ -300,7 +301,7 @@ func (s MusicScreen) Update(msg tea.Msg) (MusicScreen, tea.Cmd) {
 }
 
 // View renders the sub-tab bar followed by the active sub-screen.
-func (s MusicScreen) View() tea.View {
+func (s MusicScreen) View(isLoading bool, loadingStart int64, runtimeStatus string, plugins []string, sp *spinner.Model) tea.View {
 	tabBar := s.renderSubTabBar()
 	// Tab bar is 3 rows: top border + label row + bottom border/underline.
 	const tabBarRows = 3
@@ -315,7 +316,7 @@ func (s MusicScreen) View() tea.View {
 	var body string
 	switch s.active {
 	case MusicBrowse:
-		body = s.browse.View(s.width, subH)
+		body = s.browse.View(s.width, subH, isLoading, loadingStart, runtimeStatus, plugins, sp)
 	case MusicQueue:
 		body = s.queue.View(s.width, subH+footerBonus)
 	case MusicLibrary:

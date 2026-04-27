@@ -133,6 +133,7 @@ mod tests {
                     poster_art: None,
                     provider: "test".to_string(),
                     tab: tab.to_string(),
+                    artist: None,
                     imdb_id: None,
                     tmdb_id: None,
                     mal_id: None,

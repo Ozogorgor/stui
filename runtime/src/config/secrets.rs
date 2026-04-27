@@ -144,7 +144,12 @@ const KNOWN_SECRET_VARS: &[&str] = &[
 ];
 
 fn secrets_file_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".stui").join("secrets.env"))
+    // Secrets co-located with config under ~/.config/stui/. Same
+    // ownership/permissions semantics as before — only the parent
+    // directory moved (XDG-compliant instead of legacy ~/.stui/).
+    dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|c| c.join("stui").join("secrets.env"))
 }
 
 fn load_env_file(path: &Path) -> anyhow::Result<HashMap<String, String>> {

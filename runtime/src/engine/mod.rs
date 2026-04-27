@@ -23,7 +23,9 @@ pub use pipeline::Pipeline;
 
 pub mod metadata;
 
+pub mod music_enrich;
 pub mod search_scoped;
+pub mod video_enrich;
 pub use search_scoped::{search_scoped, ScopedSearchConfig};
 
 pub mod subtitles;
@@ -357,7 +359,7 @@ fn catalog_entries_to_media(
         original_language: e.original_language,
         kind:        Default::default(),
         source:      String::new(),
-        artist_name: None,
+        artist_name: e.artist,
         album_name:  None,
         track_number: None,
         season:      None,
@@ -1015,7 +1017,7 @@ impl Engine {
         // keeping the derivation here too lets the cache key be computed
         // before any spawn/dispatch.
         let scope = match tab {
-            crate::ipc::MediaTab::Music  => stui_plugin_sdk::SearchScope::Track,
+            crate::ipc::MediaTab::Music  => stui_plugin_sdk::SearchScope::Album,
             crate::ipc::MediaTab::Movies => stui_plugin_sdk::SearchScope::Movie,
             crate::ipc::MediaTab::Series => stui_plugin_sdk::SearchScope::Series,
             _ => stui_plugin_sdk::SearchScope::Track,
@@ -1150,7 +1152,7 @@ impl Engine {
                             let result = std::panic::AssertUnwindSafe(async move {
                                 // Derive scope from tab; catalog walk uses Track as default.
                                 let scope = match t {
-                                    crate::ipc::MediaTab::Music    => stui_plugin_sdk::SearchScope::Track,
+                                    crate::ipc::MediaTab::Music    => stui_plugin_sdk::SearchScope::Album,
                                     crate::ipc::MediaTab::Movies   => stui_plugin_sdk::SearchScope::Movie,
                                     crate::ipc::MediaTab::Series   => stui_plugin_sdk::SearchScope::Series,
                                     _ => stui_plugin_sdk::SearchScope::Track,
@@ -1274,6 +1276,7 @@ impl Engine {
                 poster_art:  None,
                 provider:    e.provider,
                 tab:         tab_str.clone(),
+                artist:      e.artist_name.clone(),
                 imdb_id:     e.imdb_id,
                 tmdb_id:     e.tmdb_id,
                 mal_id:      e.mal_id,
@@ -1689,6 +1692,16 @@ fn abi_entry_to_media_entry(
     let (genre, original_language) =
         stamp_anime_fields(provider_name, e.genre, e.original_language);
 
+    // Forward the plugin's per-source ratings map (OMDb populates
+    // imdb / tomatometer / metacritic in one response) up to the
+    // MediaEntry layer so the catalog aggregator can compose a
+    // weighted composite. Empty when the plugin only carries a
+    // single headline score in `rating`.
+    let ratings: std::collections::HashMap<String, f64> = e
+        .ratings
+        .iter()
+        .map(|(k, v): (&String, &f32)| (k.clone(), *v as f64))
+        .collect();
     crate::ipc::MediaEntry {
         id:           e.id,
         title:        e.title,
@@ -1700,7 +1713,7 @@ fn abi_entry_to_media_entry(
         provider:     provider_name.to_string(),
         tab,
         media_type:   crate::ipc::MediaType::default(),
-        ratings:      std::collections::HashMap::new(),
+        ratings,
         imdb_id:      e.imdb_id,
         tmdb_id:      None,
         mal_id:       e.external_ids.get("myanimelist").cloned(),

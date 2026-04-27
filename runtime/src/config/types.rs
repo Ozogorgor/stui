@@ -676,14 +676,27 @@ impl Default for RuntimeConfig {
 mod defaults {
     use std::path::PathBuf;
 
+    /// Plugins live under the user's config dir alongside config.toml
+    /// and themes/ — they're user-installed artifacts, not regenerable
+    /// caches, and survive uninstall the same way config does.
     pub fn plugin_dir() -> PathBuf {
-        base().join("plugins")
+        config_base().join("plugins")
     }
+    /// Caches go to XDG_CACHE_HOME (`~/.cache/stui`). They're
+    /// regenerable by definition: grid snapshots, chafa-rendered
+    /// posters, sqlite HTTP response cache, album art tiles. Putting
+    /// them under config would bloat dotfile-sync setups; the
+    /// XDG_CACHE_HOME convention is what backup tools and uninstall
+    /// scripts skip by default.
     pub fn cache_dir() -> PathBuf {
-        base().join("cache")
+        cache_base()
     }
+    /// Persistent application data (history db, watchlists,
+    /// downloads metadata) lives next to config — it's per-user
+    /// state worth backing up but not part of the editable config
+    /// surface.
     pub fn data_dir() -> PathBuf {
-        base().join("data")
+        config_base().join("data")
     }
     pub fn theme_mode() -> String {
         "dark".to_string()
@@ -804,10 +817,34 @@ mod defaults {
         8000
     }
 
-    fn base() -> PathBuf {
+    /// Legacy single-root used before the XDG split. Retained only
+    /// for migration helpers (see `migrate_legacy_paths`); all
+    /// production paths now go through `config_base()` or
+    /// `cache_base()`.
+    pub(super) fn legacy_base() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".stui")
+    }
+
+    /// `~/.config/stui` (or platform equivalent via `dirs::config_dir`).
+    /// Holds: config.toml, runtime.toml, themes/, plugins/, secrets.env,
+    /// data/, history.db, mediacache.json.
+    pub(super) fn config_base() -> PathBuf {
+        dirs::config_dir()
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("stui")
+    }
+
+    /// `~/.cache/stui` (or `XDG_CACHE_HOME/stui`). Holds: grid/,
+    /// chafa/, posters/, art/, response.db. Anything under here is
+    /// safe to delete — the runtime regenerates on demand.
+    pub(super) fn cache_base() -> PathBuf {
+        dirs::cache_dir()
+            .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("stui")
     }
 
     // Storage directory defaults (base paths, files organized into subfolders)

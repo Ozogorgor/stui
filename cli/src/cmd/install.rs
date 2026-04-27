@@ -40,8 +40,15 @@ pub fn run(dev: bool) -> Result<()> {
         anyhow::bail!("invalid plugin.name in plugin.toml: {name:?}");
     }
 
-    let home = dirs::home_dir().context("no home directory found")?;
-    let plugins_dir = home.join(".stui").join("plugins");
+    // Plugins live alongside the user's stui config (XDG-compliant
+    // location, matches the runtime's `defaults::plugin_dir`). Falls
+    // back to `~/.config/stui/plugins` on systems where dirs::config_dir
+    // returns None.
+    let plugins_dir = dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .context("no config directory found")?
+        .join("stui")
+        .join("plugins");
     std::fs::create_dir_all(&plugins_dir)
         .with_context(|| format!("create {}", plugins_dir.display()))?;
 

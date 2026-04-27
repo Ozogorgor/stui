@@ -891,8 +891,6 @@ func (m SettingsModel) View() tea.View {
 	valStyle := lipgloss.NewStyle().
 		Foreground(theme.T.TextDim())
 
-	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-
 	// ── Header ─────────────────────────────────────────────────────────────
 	header := headerStyle.Render("⚙  Settings")
 
@@ -991,8 +989,6 @@ func (m SettingsModel) View() tea.View {
 			scroll = len(visibleItems) - itemsViewH
 		}
 	}
-	barChars := components.ScrollbarChars(scroll, itemsViewH, len(visibleItems), dimStyle)
-
 	// Build right column content rows.
 	rightLines := make([]string, 0, boxInnerH)
 	rightLines = append(rightLines, padOrTruncate(catActiveStyle.Render("  "+cat.icon+" "+cat.name), rightInnerW))
@@ -1002,6 +998,7 @@ func (m SettingsModel) View() tea.View {
 	if labelW < 10 {
 		labelW = 10
 	}
+	itemRows := make([]string, 0, itemsViewH)
 	for r := 0; r < itemsViewH; r++ {
 		idx := scroll + r
 		var rowText string
@@ -1045,13 +1042,13 @@ func (m SettingsModel) View() tea.View {
 			rowText = style.Render(prefix+labelPad) + val
 		}
 		rowText = padOrTruncate(rowText, rightListW)
-		// Append gap + scrollbar cell.
-		if r < len(barChars) {
-			rowText = rowText + " " + barChars[r]
-		} else {
-			rowText = rowText + "  "
-		}
-		rightLines = append(rightLines, padOrTruncate(rowText, rightInnerW))
+		itemRows = append(itemRows, rowText)
+	}
+	itemBlock := lipgloss.JoinHorizontal(lipgloss.Top,
+		strings.Join(itemRows, "\n"), " ", components.Scrollbar(scroll, itemsViewH, len(visibleItems)),
+	)
+	for _, line := range strings.Split(itemBlock, "\n") {
+		rightLines = append(rightLines, padOrTruncate(line, rightInnerW))
 	}
 
 	// Description footer (2 rows) aligned to the selected item.

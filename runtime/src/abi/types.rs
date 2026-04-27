@@ -112,6 +112,14 @@ pub struct PluginEntry {
     /// fast-path enrich when their own native id is already known on a
     /// foreign-provider entry.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub external_ids: HashMap<String, String>,
+    /// Per-source rating breakdown — mirrors
+    /// `stui_plugin_sdk::PluginEntry::ratings`. Plugins like OMDb that
+    /// aggregate multiple providers in one response (IMDb + Rotten
+    /// Tomatoes + Metacritic) populate this so the runtime's catalog
+    /// aggregator can compose a weighted composite with full
+    /// provenance. The keys must match the aggregator's RatingWeight
+    /// names (e.g. `imdb`, `tomatometer`, `metacritic`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub ratings: HashMap<String, f32>,
 }
 
 /// Returned by `stui_resolve`.

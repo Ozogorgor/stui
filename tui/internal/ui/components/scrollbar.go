@@ -1,26 +1,47 @@
 package components
 
 import (
+	"strings"
+
 	"charm.land/lipgloss/v2"
+
+	"github.com/stui/stui/pkg/theme"
 )
 
-// ScrollbarChars returns scrollbar characters for a list view.
-// Returns a slice of viewH single-character strings forming a vertical
-// scrollbar track. The track channel (░) is ALWAYS rendered — when all
-// items fit, the thumb (█) fills the full height so the user sees a solid
-// bar, keeping the column visually reserved and layout stable.
-func ScrollbarChars(scroll, viewH, totalItems int, style lipgloss.Style) []string {
+// Scrollbar renders a fixed-width vertical scrollbar (1 char wide,
+// viewH lines tall) ready to drop into a horizontal layout next to
+// scrollable content.
+//
+// Always renders the track even when all items fit, so the column
+// stays visually reserved and layout doesn't shift between short
+// and overflowing lists.
+//
+// Colors are read from theme.T (Accent for thumb, TextDim for track)
+// — callers do not pass a style. Use:
+//
+//	bar := components.Scrollbar(scroll, viewH, total)
+//	return lipgloss.JoinHorizontal(lipgloss.Top, content, " ", bar)
+//
+// to place the bar as a separate column adjacent to scrollable
+// content.
+func Scrollbar(scroll, viewH, totalItems int) string {
 	if viewH <= 0 {
-		return nil
+		return ""
 	}
-	chars := make([]string, viewH)
+	thumb := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	track := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 
+	// All items visible (or empty list) — thumb fills the whole track.
 	if totalItems <= viewH {
-		// All items visible — thumb fills the whole track.
-		for i := range chars {
-			chars[i] = style.Render("█")
+		out := strings.Builder{}
+		out.Grow(viewH * 8)
+		for i := 0; i < viewH; i++ {
+			if i > 0 {
+				out.WriteString("\n")
+			}
+			out.WriteString(thumb.Render("█"))
 		}
-		return chars
+		return out.String()
 	}
 
 	// Thumb size proportional to viewport/total ratio, min 1.
@@ -29,57 +50,28 @@ func ScrollbarChars(scroll, viewH, totalItems int, style lipgloss.Style) []strin
 		thumbH = 1
 	}
 	maxScroll := totalItems - viewH
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
 	thumbPos := 0
 	if maxScroll > 0 {
 		thumbPos = scroll * (viewH - thumbH) / maxScroll
 	}
+
+	out := strings.Builder{}
+	out.Grow(viewH * 8)
 	for i := 0; i < viewH; i++ {
+		if i > 0 {
+			out.WriteString("\n")
+		}
 		if i >= thumbPos && i < thumbPos+thumbH {
-			chars[i] = style.Render("█")
+			out.WriteString(thumb.Render("█"))
 		} else {
-			chars[i] = style.Render("░")
+			out.WriteString(track.Render("░"))
 		}
 	}
-	return chars
-}
-
-// ScrollbarStyle returns a styled scrollbar component for a list.
-// cursor - current cursor position
-// viewHeight - number of visible rows
-// totalItems - total number of items in the list
-// dim - lipgloss style for the scrollbar (usually theme.T.TextDim())
-// Always shows scrollbar track even if all items fit (like standard scrollbars)
-func ScrollbarStyle(cursor, viewHeight, totalItems int, dim lipgloss.Style) string {
-	if totalItems == 0 || viewHeight <= 0 {
-		return ""
-	}
-
-	// Always show scrollbar - calculate thumb position even if no scrolling needed
-	thumbH := viewHeight * viewHeight / totalItems
-	if thumbH < 1 {
-		thumbH = 1
-	}
-	maxScroll := totalItems - viewHeight
-	scroll := cursor
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
-	if scroll < 0 {
-		scroll = 0
-	}
-	thumbPos := 0
-	if maxScroll > 0 {
-		thumbPos = scroll * (viewHeight - thumbH) / maxScroll
-	}
-
-	// Build scrollbar string (always shows track)
-	var bar string
-	for i := 0; i < viewHeight; i++ {
-		if i >= thumbPos && i < thumbPos+thumbH {
-			bar += "█"
-		} else {
-			bar += "░"
-		}
-	}
-	return dim.Render(bar)
+	return out.String()
 }

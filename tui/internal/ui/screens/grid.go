@@ -119,7 +119,7 @@ func RenderGrid(
 	needsScrollbar := totalRows > visibleRows
 	gridWidth := termWidth
 	if needsScrollbar {
-		gridWidth -= 1 // reserve 1 column for the scrollbar (no extra padding — the card's internal right margin separates it visually)
+		gridWidth -= 1 // reserve 1 column for the scrollbar
 	}
 
 	cw := components.CardWidth(gridWidth)
@@ -129,37 +129,6 @@ func RenderGrid(
 		startRow = cursor.row - visibleRows + 1
 	}
 	endRow := min(startRow+visibleRows, totalRows)
-
-	// Build scrollbar (one styled char per visible row). The component
-	// always renders the track — we only allocate the column when
-	// totalRows > visibleRows; otherwise gridWidth keeps its full span.
-	//
-	// Note: we intentionally use components.ScrollbarChars (returns
-	// []string — one char per row) rather than components.ScrollbarStyle
-	// (a single concatenated string). The grid's per-row render loop below
-	// interleaves scrollbar chars into each row, so the per-row shape is
-	// load-bearing.
-	var sbChars []string
-	if needsScrollbar {
-		// Background must match MainCardStyle's bg so non-thumb track chars
-		// (░) don't show terminal default between the rightmost card and
-		// the scrollbar column.
-		sbStyle := lipgloss.NewStyle().
-			Foreground(theme.T.Accent()).
-			Background(theme.T.Bg())
-		// Compute the scrollbar in TERMINAL-LINE units, not card-row units.
-		// Each card-row is rowH terminal lines tall, so the track has
-		// visibleRows*rowH positions to represent totalRows*rowH "items".
-		// Calling ScrollbarChars with card-row units collapses the track to
-		// visibleRows positions — tiny integer-division buckets mean the
-		// thumb doesn't move until the very last row is reached.
-		sbChars = components.ScrollbarChars(
-			startRow*rowH,
-			visibleRows*rowH,
-			totalRows*rowH,
-			sbStyle,
-		)
-	}
 
 	// Render grid rows.
 	var rowStrings []string
@@ -182,36 +151,28 @@ func RenderGrid(
 		rowStrings = append(rowStrings, row)
 	}
 
+	gridContent := strings.Join(rowStrings, "\n")
+
 	if !needsScrollbar {
-		return fixedHeightGrid(strings.Join(rowStrings, "\n"), termWidth, availH)
+		return fixedHeightGrid(gridContent, termWidth, availH)
 	}
 
-	// Attach scrollbar flush-right — one char per terminal line so the
-	// thumb position changes smoothly as the viewport scrolls. sbChars is
-	// sized visibleRows*rowH to match. The gap between the rightmost card
-	// and the scrollbar column is padded with MainCard's bg so the seam
-	// is invisible against the card background.
-	bgStyle := lipgloss.NewStyle().Background(theme.T.Bg())
-	sbIdx := 0
-	var finalRows []string
-	for _, rowStr := range rowStrings {
-		lines := strings.Split(rowStr, "\n")
-		for li := range lines {
-			line := lines[li]
-			rendered := lipgloss.Width(line)
-			if gap := gridWidth - rendered; gap > 0 {
-				line = line + bgStyle.Render(strings.Repeat(" ", gap))
-			}
-			tail := bgStyle.Render(" ")
-			if sbIdx < len(sbChars) {
-				tail = sbChars[sbIdx]
-			}
-			sbIdx++
-			lines[li] = line + tail
-		}
-		finalRows = append(finalRows, strings.Join(lines, "\n"))
-	}
-	return fixedHeightGrid(strings.Join(finalRows, "\n"), termWidth, availH)
+	// Wrap the bar in the card-panel background so the seam between the
+	// rightmost card and the bar column is invisible against the card
+	// background. Scrollbar tracking is in TERMINAL-LINE units, not
+	// card-row units: each card-row is rowH terminal lines tall, so the
+	// track represents visibleRows*rowH viewport positions out of
+	// totalRows*rowH total — passing card-row units would collapse the
+	// track to visibleRows positions and the thumb wouldn't move until
+	// the very last row.
+	bg := lipgloss.NewStyle().Background(theme.T.Bg())
+	bar := bg.Render(components.Scrollbar(startRow*rowH, visibleRows*rowH, totalRows*rowH))
+	// Force the grid content to exactly gridWidth visual chars so the bar
+	// lands flush against the panel's right edge. CardWidth's integer
+	// division can leave a few cols of slack; without this clamp,
+	// fixedHeightGrid's left-alignment would push the bar inward.
+	gridContent = lipgloss.NewStyle().Width(gridWidth).Render(gridContent)
+	return fixedHeightGrid(lipgloss.JoinHorizontal(lipgloss.Top, gridContent, bar), termWidth, availH)
 }
 
 // fixedHeightGrid forces the grid's output to occupy exactly `availH` rows

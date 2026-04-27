@@ -189,6 +189,24 @@ pub struct PluginEntry {
     /// filters but not required for the anime quota to work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_language: Option<String>,
+
+    /// Per-source rating breakdown. Plugins that aggregate multiple
+    /// rating providers in a single response (e.g. OMDb returns
+    /// IMDb + Rotten Tomatoes + Metacritic in one payload) populate
+    /// this map so the runtime's catalog aggregator can compose a
+    /// weighted composite score with full provenance. Keys should
+    /// match the `key` field of the aggregator's RatingWeight
+    /// profiles — e.g. `imdb`, `tomatometer`, `audience_score`,
+    /// `metacritic`. Values are stored on whatever native scale the
+    /// upstream uses; the aggregator's per-key `normalize` field
+    /// scales them to 0-10 at composite time.
+    ///
+    /// The single `rating` field above remains the plugin's
+    /// authoritative "headline" score (typically the best-known or
+    /// most-trusted source for that provider) and is what shows on
+    /// the card when no per-source breakdown is needed.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub ratings: HashMap<String, f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -499,8 +499,8 @@ func (s StreamPickerScreen) viewManualMode() string {
 		listHeight = 5
 	}
 	vl := components.NewVirtualizedList(len(s.streams), s.cursor, listHeight)
-	scrollbar := vl.VerticalScrollbar(1, dim)
 	start, end := vl.VisibleRange()
+	bar := components.Scrollbar(start, end-start, len(s.streams))
 
 	// ── Sort header ───────────────────────────────────────────────────────
 	arrow := "\u2193"
@@ -599,25 +599,14 @@ func (s StreamPickerScreen) viewManualMode() string {
 		rowLines = append(rowLines, line)
 	}
 
-	// Add scrollbar characters to each row
-	if scrollbar != "" && len(rowLines) > 0 {
-		scrollRunes := []rune(scrollbar)
-		for i := range rowLines {
-			scrollChar := " "
-			if i < len(scrollRunes) {
-				scrollChar = string(scrollRunes[i])
-			}
-			rowLines[i] = rowLines[i] + " " + scrollChar
-		}
-	}
-
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(theme.T.Border()).
 		Padding(0, 1)
 
-	// Join all rows and wrap with single border
-	content := strings.Join(rowLines, "\n")
+	// Place scrollbar as a separate column adjacent to the rows, then wrap
+	// with single border.
+	content := lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(rowLines, "\n"), " ", bar)
 	if content != "" {
 		sb.WriteString(borderStyle.Render(content) + "\n")
 	}

@@ -135,6 +135,10 @@ pub struct CatalogEntry {
     pub poster_art: Option<String>,
     pub provider: String,
     pub tab: String,
+    /// Artist / creator name. Populated for music tab entries (album artist,
+    /// track artist) from `PluginEntry.artist_name`. None for movies/series.
+    #[serde(default)]
+    pub artist: Option<String>,
     pub imdb_id: Option<String>,
     #[serde(default, deserialize_with = "tmdb_id_from_num_or_str")]
     pub tmdb_id: Option<String>,
@@ -426,7 +430,70 @@ impl Catalog {
             warn!(tab = tab_str, error = %e, "failed to write cache");
         }
 
-        self.emit_update(&tab, merged, GridUpdateSource::Live).await;
+        self.emit_update(&tab, merged.clone(), GridUpdateSource::Live).await;
+
+        // ── Progressive enrichment pass ─────────────────────────────
+        // Music: lastfm albums arrive without year/rating; fan out to
+        //   MB+Discogs+lastfm for year, rating, genre, description.
+        // Movies/Series: TMDB/TVDB entries carry a single-source
+        //   rating; fan out to OMDb to fill in IMDb + Rotten Tomatoes
+        //   + Metacritic into the per-source ratings map, then
+        //   recompute the weighted composite via the aggregator.
+        // Both paths stream snapshots back every PROGRESS_BATCH_SIZE
+        // entries so cards repaint in waves rather than after the
+        // whole pass completes; HTTP responses are cached in sqlite,
+        // so subsequent boots are effectively free.
+        enum EnrichKind { Music, Video }
+        let enrich_kind = match tab {
+            MediaTab::Music => Some(EnrichKind::Music),
+            MediaTab::Movies | MediaTab::Series => Some(EnrichKind::Video),
+            _ => None,
+        };
+        if let Some(kind) = enrich_kind {
+            let this = self.clone();
+            let tab_clone = tab.clone();
+            tokio::spawn(async move {
+                let cb_this = this.clone();
+                let cb_tab = tab_clone.clone();
+                let on_progress = move |snapshot: Vec<CatalogEntry>| {
+                    let this = cb_this.clone();
+                    let tab = cb_tab.clone();
+                    async move {
+                        let tab_str = tab_key(&tab).to_string();
+                        {
+                            let mut grids = this.grids.write().await;
+                            grids.insert(tab_str.clone(), snapshot.clone());
+                        }
+                        let path = cache_path(&this.cache_dir, &tab);
+                        if let Err(e) = write_cache(&path, &snapshot) {
+                            warn!(tab = %tab_str, error = %e, "failed to write enriched cache");
+                        }
+                        info!(
+                            tab = %tab_str,
+                            count = snapshot.len(),
+                            "enrich: progressive snapshot",
+                        );
+                        this.emit_update(&tab, snapshot, GridUpdateSource::Live).await;
+                    }
+                };
+                match kind {
+                    EnrichKind::Music => {
+                        crate::engine::music_enrich::enrich_grid_progressive(
+                            this.engine.clone(),
+                            merged,
+                            on_progress,
+                        ).await;
+                    }
+                    EnrichKind::Video => {
+                        crate::engine::video_enrich::enrich_grid_progressive(
+                            this.engine.clone(),
+                            merged,
+                            on_progress,
+                        ).await;
+                    }
+                }
+            });
+        }
     }
 
     async fn emit_update(
@@ -496,6 +563,7 @@ mod tests {
                 poster_art: None,
                 provider: "tmdb".to_string(),
                 tab: "movies".to_string(),
+                artist: None,
                 imdb_id: Some("tt0001".to_string()),
                 tmdb_id: None,
                 mal_id: None,
@@ -514,6 +582,7 @@ mod tests {
                 poster_art: None,
                 provider: "anilist".to_string(),
                 tab: "movies".to_string(),
+                artist: None,
                 imdb_id: Some("tt0001".to_string()),
                 tmdb_id: None,
                 mal_id: None,
@@ -540,6 +609,7 @@ mod tests {
             poster_art: None,
             provider: "tmdb".to_string(),
             tab: "movies".to_string(),
+                artist: None,
             imdb_id: Some("tt0001".to_string()),
             tmdb_id: None,
             mal_id: None,
@@ -564,6 +634,7 @@ mod tests {
             poster_art: None,
             provider: "tmdb".to_string(),
             tab: "movies".to_string(),
+                artist: None,
             imdb_id: None,
             tmdb_id: None,
             mal_id: None,

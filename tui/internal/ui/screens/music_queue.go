@@ -596,8 +596,6 @@ func (s MusicQueueScreen) View(w, h int) string {
 		components.WithScrollMode(components.ScrollModeCenter),
 	)
 	start, end := vl.VisibleRange()
-	// Always-visible per-row scrollbar (shows track even when all fit).
-	barChars := components.ScrollbarChars(start, TH, len(s.tracks), dimStyle)
 
 	var trackLines []string
 	for i := start; i < end; i++ {
@@ -641,12 +639,16 @@ func (s MusicQueueScreen) View(w, h int) string {
 		trackLines = append(trackLines, "")
 	}
 
-	// Append per-row scrollbar char (always reserved, even if no scrolling).
+	// Pad each row to the content width, then join the bar as an
+	// adjacent column so the scrollbar lives inside the box border.
 	for i := range trackLines {
-		if i < len(barChars) {
-			trackLines[i] = padRightANSI(trackLines[i], innerLForCols) + " " + barChars[i]
-		}
+		trackLines[i] = padRightANSI(trackLines[i], innerLForCols)
 	}
+	trackContent := strings.Join(trackLines, "\n")
+	inner := lipgloss.JoinHorizontal(lipgloss.Top,
+		trackContent, " ", components.Scrollbar(start, TH, len(s.tracks)),
+	)
+	innerLines := strings.Split(inner, "\n")
 
 	// ── Build left bordered box ───────────────────────────────────────────
 	queueTitle := fmt.Sprintf("Queue (%d tracks · %s)", len(s.tracks), fmtMusicDuration(s.totalDuration()))
@@ -665,8 +667,8 @@ func (s MusicQueueScreen) View(w, h int) string {
 	var leftLines []string
 	leftLines = append(leftLines, topLeft)
 	leftLines = append(leftLines, borderVert+padRightANSI(colHeaderStyled, innerL)+borderVert)
-	for _, tl := range trackLines {
-		// trackLines are already padded to innerLForCols + space + scrollbar,
+	for _, tl := range innerLines {
+		// innerLines are content padded to innerLForCols + space + scrollbar,
 		// which should equal innerL.
 		leftLines = append(leftLines, borderVert+padRightANSI(tl, innerL)+borderVert)
 	}
@@ -688,11 +690,12 @@ func (s MusicQueueScreen) View(w, h int) string {
 	resolveAlbumArt(innerR, trackFile)
 	artLines := queueImageView.Lines()
 	artH := len(artLines)
-	// Art box = artH content + 2 border rows
-	artBoxH := artH + 2
 
-	// Metadata panel: fills remaining height
-	metaH := innerBoxH - artBoxH - 2 // -2 for metadata border top+bottom
+	// Metadata panel sized so right column's bottom aligns with left's.
+	// Left rows  = TH + 3      (topLeft + col header + TH tracks + botLeft).
+	// Right rows = artH + metaH + 4   (4 borders + art + meta content blocks).
+	// Solve: metaH = TH - artH - 1.
+	metaH := TH - artH - 1
 	if metaH < 4 {
 		metaH = 4
 	}
@@ -900,20 +903,29 @@ func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int
 	lines = append(lines, accentStyle.Render(volBar))
 	lines = append(lines, dimStyle.Render(volHint))
 
+	// Blank row for spacing
+	lines = append(lines, dimStyle.Render(" "))
+
 	// 5. Playback mode icons (1 row) — dimmed when off, accent when on
-	repeatIcon := dimStyle.Render("🔁")
-	if s.nowRepeat {
-		repeatIcon = accentStyle.Render("🔁")
-	}
-	singleIcon := dimStyle.Render("🔂")
-	if s.nowSingle {
-		singleIcon = accentStyle.Render("🔂")
-	}
-	shuffleIcon := dimStyle.Render("🔀")
+	// shuffle (⇄), track replay (🗘), queue replay (∞)
+	// Center within innerR=22 width: 6*3 + 2 gaps = 20
+	iconStyleOff := lipgloss.NewStyle().
+		Width(6).Align(lipgloss.Center).Foreground(theme.T.TextDim())
+	iconStyleOn := lipgloss.NewStyle().
+		Width(6).Align(lipgloss.Center).Foreground(theme.T.Accent()).Bold(true)
+	shuffleIcon := iconStyleOff.Render("⇄")
 	if s.nowRandom {
-		shuffleIcon = accentStyle.Render("🔀")
+		shuffleIcon = iconStyleOn.Render("⇄")
 	}
-	lines = append(lines, repeatIcon+" "+singleIcon+" "+shuffleIcon)
+	singleIcon := iconStyleOff.Render("🗘") // track replay: repeat one track
+	if s.nowSingle {
+		singleIcon = iconStyleOn.Render("🗘")
+	}
+	repeatIcon := iconStyleOff.Render("∞") // queue replay: repeat entire queue
+	if s.nowRepeat {
+		repeatIcon = iconStyleOn.Render("∞")
+	}
+	lines = append(lines, shuffleIcon+" "+singleIcon+" "+repeatIcon)
 
 	// Truncate to availH. Seekbar and volume are essential — trim the art
 	// placeholder from the top instead of cutting essential controls from
@@ -966,8 +978,8 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 	var sb strings.Builder
 	sb.WriteString(header + "\n")
 
-	start, _ := vl.VisibleRange()
-	scrollbar := vl.VerticalScrollbar(1, dimStyle)
+	start, end := vl.VisibleRange()
+	bar := components.Scrollbar(start, end-start, len(s.tracks))
 	if start > 0 {
 		sb.WriteString(dimStyle.Render("↑ more\n"))
 	}
@@ -1007,7 +1019,6 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 		artistW = 4
 	}
 
-	_, end := vl.VisibleRange()
 	var listLines []string
 	for i := start; i < end; i++ {
 		tr := s.tracks[i]
@@ -1041,13 +1052,8 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 		listLines = append(listLines, "")
 	}
 
-	if scrollbar != "" {
-		for i := range listLines {
-			listLines[i] = listLines[i] + " " + scrollbar
-		}
-	}
-
-	sb.WriteString(strings.Join(listLines, "\n"))
+	// Place scrollbar as a separate column adjacent to the track rows.
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(listLines, "\n"), " ", bar))
 	sb.WriteString("\n")
 
 	if vizEnabled {

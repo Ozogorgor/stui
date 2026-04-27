@@ -33,6 +33,11 @@ kinds = ["artist", "album"]
 
 search = true
 lookup = { id_sources = ["discogs"] }
+# Album enrich: returns community rating from /releases/{id}. Falls
+# back to a title+artist search when no discogs id is on the partial
+# entry, so lastfm-sourced albums (which only have a musicbrainz id)
+# can still be enriched.
+enrich = { id_sources = ["discogs"] }
 
 [meta]
 author   = "stui"

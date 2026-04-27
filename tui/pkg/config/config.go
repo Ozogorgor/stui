@@ -252,6 +252,22 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+// EnsureExists writes Default() to path if no file exists there yet.
+// Idempotent: an existing file is left untouched, so user edits are
+// always preserved across launches. The first launch of stui ends
+// with a populated config.toml the user can open, read, and edit —
+// rather than the previous behaviour of silently using in-memory
+// defaults with nothing on disk to discover.
+func EnsureExists(path string) error {
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	return Save(path, Default())
+}
+
 // Save writes cfg to path atomically (temp file + rename).
 // Creates parent directories as needed.
 func Save(path string, cfg Config) error {

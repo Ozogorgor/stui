@@ -1,0 +1,29 @@
+# default — stui's built-in violet/neon palette.
+# Copy this file to a new name (e.g. mytheme.toml) and tweak any
+# field. Missing fields fall back to the built-in default, so
+# partial overrides are fine.
+name = "default"
+
+bg          = "#0a0a0f"
+surface     = "#0f0f1a"
+border      = "#1e1e2e"
+border_foc  = "#7c3aed"
+
+text        = "#e2e8f0"
+text_dim    = "#4a5568"
+text_muted  = "#718096"
+
+accent      = "#7c3aed"
+accent_alt  = "#06b6d4"
+neon        = "#a855f7"
+
+green       = "#10b981"
+red         = "#ef4444"
+yellow      = "#f59e0b"
+warn        = "#e5c07b"
+success     = "#98c379"
+
+tab_active   = "#a855f7"
+tab_inactive = "#1a1a2e"
+tab_text     = "#e2e8f0"
+tab_text_dim = "#4a5568"

@@ -82,8 +82,23 @@ func (c *Client) sendRaw(payload map[string]any) error {
 }
 
 // readLoop continuously reads response lines from the runtime's stdout.
+//
+// Wrapped in a panic recovery: a panic here (e.g. from a malformed
+// payload that slips past json.Unmarshal into a downstream handler)
+// would otherwise kill the goroutine silently and freeze the entire
+// IPC pipeline — pending requests would block forever and no future
+// runtime messages would reach the TUI. Instead we log the panic,
+// surface it as a RuntimeErrorMsg, and drain pending channels so
+// callers unblock with an explicit error rather than hanging.
 func (c *Client) readLoop() {
 	logger := log.NewIPCLogger().With("component", "ipc.readLoop")
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("read loop panicked", "panic", fmt.Sprintf("%v", r))
+			c.send(RuntimeErrorMsg{Err: fmt.Errorf("ipc: read loop panic: %v", r)})
+			c.drainPending(fmt.Errorf("ipc: read loop panic: %v", r))
+		}
+	}()
 	for c.stdout.Scan() {
 		line := c.stdout.Bytes()
 		if len(line) == 0 {

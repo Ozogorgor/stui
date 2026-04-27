@@ -1,0 +1,26 @@
+# dracula — purple-and-pink palette inspired by draculatheme.com.
+name = "dracula"
+
+bg          = "#282a36"
+surface     = "#21222c"
+border      = "#44475a"
+border_foc  = "#bd93f9"
+
+text        = "#f8f8f2"
+text_dim    = "#6272a4"
+text_muted  = "#8a8aa3"
+
+accent      = "#bd93f9"
+accent_alt  = "#8be9fd"
+neon        = "#ff79c6"
+
+green       = "#50fa7b"
+red         = "#ff5555"
+yellow      = "#f1fa8c"
+warn        = "#ffb86c"
+success     = "#50fa7b"
+
+tab_active   = "#bd93f9"
+tab_inactive = "#21222c"
+tab_text     = "#f8f8f2"
+tab_text_dim = "#6272a4"

@@ -290,6 +290,7 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
         poster_art:  None,
         provider:    "rpc-plugin".to_string(),
         tab:         format!("{tab:?}").to_lowercase(),
+        artist:      None, // RPC plugin protocol has no artist field today.
         imdb_id:     None,
         tmdb_id:     None,
         mal_id:      None,

@@ -70,7 +70,14 @@ fn append_missing(user: &mut Vec<String>, canonical: &[String]) {
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".stui").join("config").join("stui.toml"))
+    // Runtime config sits next to the TUI's config.toml under
+    // ~/.config/stui/. Distinct filename keeps the two schemas
+    // (TUI Config vs RuntimeConfig) cleanly separated; merging them
+    // is a future call once the overlap (playback/streaming/mpd) is
+    // factored out.
+    dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|c| c.join("stui").join("runtime.toml"))
 }
 
 fn apply_secrets(cfg: &mut RuntimeConfig) {

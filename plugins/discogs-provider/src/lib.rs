@@ -19,6 +19,7 @@ use stui_plugin_sdk::{
     plugin_error, plugin_info,
     stui_export_catalog_plugin,
     CatalogPlugin,
+    EnrichRequest, EnrichResponse,
     EntryKind,
     InitContext,
     LookupRequest, LookupResponse,
@@ -175,16 +176,22 @@ impl CatalogPlugin for DiscogsPlugin {
         let per_page = if req.limit == 0 { 20 } else { req.limit.min(50) } as usize;
         let query    = req.query.trim();
 
-        let url = if query.is_empty() {
-            format!(
-                "{API_BASE}/database/search?sort=date_added,desc&type={search_type}&page={page}&per_page={per_page}{auth_suffix}"
-            )
-        } else {
-            format!(
-                "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}{auth_suffix}",
-                urlencoding::encode(query),
-            )
-        };
+        // Discogs has no meaningful "trending" surface — the closest API
+        // (sort=date_added,desc) returns recently-cataloged releases, which
+        // are dominated by indie pressings with missing cover art and
+        // "Artist - Album" formatted titles. Returning those for empty
+        // queries pollutes the runtime's catalog trending grid (which on
+        // the music tab is lastfm-driven via tag.gettopalbums). Short-
+        // circuit to an empty result so discogs only contributes to
+        // explicit user searches; the enrich path stays unaffected.
+        if query.is_empty() {
+            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+        }
+
+        let url = format!(
+            "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}{auth_suffix}",
+            urlencoding::encode(query),
+        );
         plugin_info!("discogs: search '{}' type={search_type} (page {page})", query);
 
         let body = match http_get(&url) {
@@ -248,6 +255,88 @@ impl CatalogPlugin for DiscogsPlugin {
         };
         PluginResult::ok(LookupResponse { entry })
     }
+
+    fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
+        // Fast path: caller already carries a discogs id (e.g. from a
+        // prior lookup). Reuse lookup verbatim so the rating gets
+        // populated from the same /releases/{id} response.
+        if let Some(discogs_id) = req.partial.external_ids.get(id_sources::DISCOGS).cloned() {
+            let lookup_req = LookupRequest {
+                id:        discogs_id,
+                id_source: id_sources::DISCOGS.to_string(),
+                kind:      req.partial.kind,
+                locale:    None,
+            };
+            return match self.lookup(lookup_req) {
+                PluginResult::Ok(r)  => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 1.0 }),
+                PluginResult::Err(e) => PluginResult::Err(e),
+            };
+        }
+
+        // Fallback: title + artist search via /database/search?type=release.
+        // We only support album kind here — rating data is meaningless on
+        // an artist record, so artist enrich short-circuits to a no-op
+        // error (the caller treats EnrichResponse as best-effort).
+        if !matches!(req.partial.kind, EntryKind::Album) {
+            return PluginResult::err(
+                error_codes::UNSUPPORTED_SCOPE,
+                "discogs enrich: only album kind is supported (rating data)",
+            );
+        }
+        let title = req.partial.title.trim();
+        if title.is_empty() {
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "discogs enrich: empty title and no discogs id",
+            );
+        }
+        // Compose "title artist" so Discogs's search ranking gives us a
+        // tightly-matched release. Releases without an artist still get
+        // a useful query (just the album title).
+        let query = match req.partial.artist_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(artist) => format!("{title} {artist}"),
+            None         => title.to_string(),
+        };
+        let auth_suffix = auth_suffix_for(self.api_key());
+        let search_url = format!(
+            "{API_BASE}/database/search?q={}&type=release&per_page=5{auth_suffix}",
+            urlencoding::encode(&query),
+        );
+        plugin_info!("discogs: enrich search '{}'", query);
+
+        let body = match http_get(&search_url) {
+            Ok(b)  => b,
+            Err(e) => return PluginResult::Err(classify_http_err(&e)),
+        };
+        let resp: SearchEnvelope = match parse_json(&body) {
+            Ok(r)  => r,
+            Err(e) => return PluginResult::Err(e),
+        };
+        let hit = match resp.results.into_iter().find(|h| h.id > 0) {
+            Some(h) => h,
+            None    => return PluginResult::err(
+                error_codes::UNKNOWN_ID,
+                format!("discogs: no release matched '{query}'"),
+            ),
+        };
+        // Hop into the per-release endpoint to pick up community.rating —
+        // search hits don't include it. This is the second of the two
+        // round-trips we accept on the cold path; subsequent enrich calls
+        // for the same album reuse the result via the runtime's HTTP
+        // response cache.
+        let lookup_req = LookupRequest {
+            id:        hit.id.to_string(),
+            id_source: id_sources::DISCOGS.to_string(),
+            kind:      EntryKind::Album,
+            locale:    None,
+        };
+        match self.lookup(lookup_req) {
+            // Title-search is less precise than direct id lookup, so
+            // surface that in the confidence score.
+            PluginResult::Ok(r)  => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 0.7 }),
+            PluginResult::Err(e) => PluginResult::Err(e),
+        }
+    }
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
@@ -268,7 +357,12 @@ struct Pagination {
 struct SearchHit {
     #[serde(default)] id: i64,
     #[serde(default)] title: String,
-    #[serde(default)] year: Option<i32>,
+    /// Discogs's `/database/search` endpoint returns `year` as a JSON
+    /// string (e.g. `"2024"`); the `/releases/{id}` detail endpoint
+    /// returns it as a number. Accept either via `flexible_year` so
+    /// both code paths share this struct.
+    #[serde(default, deserialize_with = "flexible_year")]
+    year: Option<i32>,
     #[serde(default)] country: Option<String>,
     #[serde(default)] format: Vec<String>,
     #[serde(default)] label: Vec<String>,
@@ -276,6 +370,34 @@ struct SearchHit {
     #[serde(rename = "thumb", default)]        thumb: Option<String>,
     #[serde(default)] genre: Vec<String>,
     #[serde(default)] style: Vec<String>,
+}
+
+/// Deserialize a year that Discogs may emit as either a JSON number
+/// or a JSON string. Search-result hits use the string form; lookup
+/// detail uses the number form. Empty / non-numeric strings → None.
+fn flexible_year<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Either {
+        Int(i32),
+        Str(String),
+        Null,
+    }
+    match Option::<Either>::deserialize(deserializer)? {
+        None | Some(Either::Null) => Ok(None),
+        Some(Either::Int(i)) => Ok(Some(i)),
+        Some(Either::Str(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed.parse::<i32>().map(Some).map_err(D::Error::custom)
+        }
+    }
 }
 
 impl SearchHit {
@@ -318,6 +440,18 @@ struct ReleaseDetail {
     #[serde(default)] labels:  Vec<ReleaseLabel>,
     #[serde(default)] images:  Vec<ReleaseImage>,
     #[serde(default)] notes:   Option<String>,
+    #[serde(default)] community: Option<ReleaseCommunity>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ReleaseCommunity {
+    #[serde(default)] rating: Option<ReleaseRating>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ReleaseRating {
+    #[serde(default)] average: f32,
+    #[serde(default)] count:   u32,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -351,6 +485,14 @@ impl ReleaseDetail {
             };
         }
         let poster_url = self.images.into_iter().find_map(|i| i.uri.clone().or(i.uri150.clone()));
+        // Discogs surfaces a community-aggregated rating on every release
+        // (0-5 scale) plus the voter count. Skip ratings with zero votes
+        // since the average is meaningless then; downstream UI treats a
+        // None as "no rating" and hides the badge.
+        let rating = self.community
+            .and_then(|c| c.rating)
+            .filter(|r| r.count > 0 && r.average > 0.0)
+            .map(|r| r.average);
 
         let mut entry = PluginEntry {
             id: format!("discogs-{}", self.id),
@@ -359,6 +501,7 @@ impl ReleaseDetail {
             title: self.title,
             year,
             genre,
+            rating,
             description,
             poster_url,
             ..Default::default()
@@ -512,5 +655,38 @@ mod tests {
         assert_eq!(auth_suffix_for(None),     "");
         assert_eq!(auth_suffix_for(Some("")), "");
         assert_eq!(auth_suffix_for(Some("abc")), "&key=abc");
+    }
+
+    #[test]
+    fn release_detail_parses_community_rating() {
+        let body = r#"{
+            "id": 1234,
+            "title": "Kid A",
+            "year": 2000,
+            "community": { "rating": { "average": 4.55, "count": 19234 } }
+        }"#;
+        let detail: ReleaseDetail = serde_json::from_str(body).unwrap();
+        let entry = detail.into_entry();
+        assert_eq!(entry.rating, Some(4.55));
+    }
+
+    #[test]
+    fn release_detail_drops_zero_count_rating() {
+        // Discogs returns `count: 0` with a stale average for releases
+        // nobody has rated yet — those numbers are noise. Keep `rating`
+        // None so the UI doesn't render a meaningless badge.
+        let body = r#"{
+            "id": 1, "title": "x",
+            "community": { "rating": { "average": 3.0, "count": 0 } }
+        }"#;
+        let detail: ReleaseDetail = serde_json::from_str(body).unwrap();
+        assert_eq!(detail.into_entry().rating, None);
+    }
+
+    #[test]
+    fn release_detail_handles_missing_community_block() {
+        let body = r#"{ "id": 1, "title": "x" }"#;
+        let detail: ReleaseDetail = serde_json::from_str(body).unwrap();
+        assert_eq!(detail.into_entry().rating, None);
     }
 }

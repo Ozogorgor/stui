@@ -505,6 +505,14 @@ impl ReleaseGroupHit {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let artist = join_artist_credit(&self.artist_credit);
         let year = first_year(self.first_release_date.as_deref());
+        // Cover Art Archive serves a 250px-wide thumbnail by MBID at a
+        // stable URL. 404s gracefully when no art is available — the TUI
+        // card falls back to its placeholder. Doing this here avoids a
+        // second round-trip per result during search.
+        let poster_url = Some(format!(
+            "{COVER_ART_BASE}/release-group/{}/front-250",
+            self.id,
+        ));
         let mut entry = PluginEntry {
             id: format!("mb-{}", self.id),
             kind,
@@ -515,6 +523,7 @@ impl ReleaseGroupHit {
             album_name: Some(self.title),
             genre: self.primary_type,
             description: self.disambiguation,
+            poster_url,
             ..Default::default()
         };
         entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.id);

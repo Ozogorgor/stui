@@ -569,11 +569,55 @@ struct DetailResponse {
     #[serde(rename = "Director", default)]  director:  String,
     #[serde(rename = "Writer",   default)]  writer:    String,
     #[serde(rename = "Actors",   default)]  actors:    String,
+    /// OMDb's `Ratings` array carries the multi-source breakdown:
+    /// IMDb (X.Y/10), Rotten Tomatoes (X%), Metacritic (X/100). We
+    /// project these into PluginEntry.ratings so the aggregator can
+    /// compose a weighted composite using the catalog_engine's
+    /// existing `imdb`/`tomatometer`/`metacritic` weight keys.
+    #[serde(rename = "Ratings", default)]   ratings: Vec<RatingSource>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RatingSource {
+    #[serde(rename = "Source", default)] source: String,
+    #[serde(rename = "Value",  default)] value:  String,
+}
+
+/// Parse a single OMDb rating value into (aggregator_key, score)
+/// where `score` is on the upstream's native scale. Returns None for
+/// unrecognised sources or values that don't parse — those simply
+/// don't contribute to the composite.
+///
+/// Format examples seen in OMDb responses:
+///   - `Internet Movie Database` → `"8.4/10"`        → ("imdb", 8.4)
+///   - `Rotten Tomatoes`         → `"92%"`           → ("tomatometer", 92.0)
+///   - `Metacritic`              → `"78/100"`        → ("metacritic", 78.0)
+fn parse_omdb_rating_source(r: &RatingSource) -> Option<(&'static str, f32)> {
+    let key = match r.source.as_str() {
+        "Internet Movie Database" => "imdb",
+        "Rotten Tomatoes"         => "tomatometer",
+        "Metacritic"              => "metacritic",
+        _                          => return None,
+    };
+    let v = r.value.trim();
+    // Strip the suffix to extract just the numeric portion. OMDb is
+    // consistent enough that splitting on '/' and '%' handles every
+    // form we've seen, but `parse` errors fall through to None.
+    let num_str = v.split_once('/').map(|(n, _)| n).unwrap_or_else(|| v.trim_end_matches('%'));
+    num_str.trim().parse::<f32>().ok().map(|n| (key, n))
 }
 
 impl DetailResponse {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let imdb = opt_non_na(&self.imdb_id);
+        // Project the multi-source Ratings[] block into PluginEntry's
+        // ratings map. Unrecognised sources are ignored.
+        let mut ratings = std::collections::HashMap::new();
+        for r in &self.ratings {
+            if let Some((key, score)) = parse_omdb_rating_source(r) {
+                ratings.insert(key.to_string(), score);
+            }
+        }
         let mut entry = PluginEntry {
             id:          imdb.clone().unwrap_or_else(|| self.title.clone()),
             kind,
@@ -586,6 +630,7 @@ impl DetailResponse {
             genre:       opt_non_na(&self.genre),
             rating:      opt_non_na(&self.rating).and_then(|s| s.parse::<f32>().ok()),
             duration:    parse_runtime_minutes(&self.runtime),
+            ratings,
             ..Default::default()
         };
         if let Some(id) = imdb {
