@@ -37,6 +37,11 @@ pub struct SandboxCtx {
     /// Default env var values declared in plugin.toml [env].
     /// Key = var name (e.g. "PROWLARR_API_KEY"), value = default string.
     pub env_defaults: std::collections::HashMap<String, String>,
+    /// User-supplied env var overrides resolved from `runtime.toml [plugins.<name>]`.
+    /// Highest precedence: wins over both `secrets.env` and process env when
+    /// populating the plugin's `__env:<VAR>` cache. Key = env var name (e.g.
+    /// "JACKETT_API_KEY"), value = the user's TUI-entered string.
+    pub user_env_overrides: std::collections::HashMap<String, String>,
 }
 
 impl SandboxCtx {
@@ -53,7 +58,18 @@ impl SandboxCtx {
             cache_dir,
             data_dir,
             env_defaults: plugin.manifest.env.clone(),
+            user_env_overrides: std::collections::HashMap::new(),
         }
+    }
+
+    /// Attach user-supplied env overrides (from runtime.toml `[plugins.<name>]`).
+    /// Builder-style so call sites can chain after `SandboxCtx::new(...)`.
+    pub fn with_user_env_overrides(
+        mut self,
+        overrides: std::collections::HashMap<String, String>,
+    ) -> Self {
+        self.user_env_overrides = overrides;
+        self
     }
 
     /// Check whether this plugin is allowed to use a given capability.
@@ -196,6 +212,7 @@ mod tests {
             cache_dir: PathBuf::from("/tmp/stui-test/cache"),
             data_dir: PathBuf::from("/tmp/stui-test/data"),
             env_defaults: std::collections::HashMap::new(),
+            user_env_overrides: std::collections::HashMap::new(),
         }
     }
 

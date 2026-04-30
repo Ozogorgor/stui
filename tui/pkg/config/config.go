@@ -43,12 +43,23 @@ type PlaybackConfig struct {
 }
 
 type StreamingConfig struct {
-	PreferHTTP      bool `toml:"prefer_http"`
-	AutoFallback    bool `toml:"auto_fallback"`
-	MaxCandidates   int  `toml:"max_candidates"`
+	PreferHTTP       bool `toml:"prefer_http"`
+	AutoFallback     bool `toml:"auto_fallback"`
+	MaxCandidates    int  `toml:"max_candidates"`
 	BenchmarkStreams bool `toml:"benchmark_streams"`
-	AutoDeleteVideo bool `toml:"auto_delete_video"`
-	AutoDeleteAudio bool `toml:"auto_delete_audio"`
+	AutoDeleteVideo  bool `toml:"auto_delete_video"`
+	AutoDeleteAudio  bool `toml:"auto_delete_audio"`
+	// MinSeeders drops torrent streams whose seeder count is at or
+	// below this value before they reach the picker. Default 5 —
+	// streams without seeder info (HTTP, debrid) always pass through.
+	MinSeeders int `toml:"min_seeders"`
+	// RequireSeeders is a debug toggle: when true, streams whose
+	// seeder count is unknown (None) are also filtered out. Useful
+	// for diagnosing why a plugin's results show no `↑N` indicator.
+	RequireSeeders bool `toml:"require_seeders"`
+	// RequireResolution drops streams whose resolution couldn't be
+	// extracted from the release title (Unknown). Off by default.
+	RequireResolution bool `toml:"require_resolution"`
 }
 
 type DownloadsConfig struct {
@@ -83,6 +94,10 @@ type ProvidersConfig struct {
 	EnableTorrentio     bool `toml:"enable_torrentio"`
 	EnableProwlarr      bool `toml:"enable_prowlarr"`
 	EnableOpenSubtitles bool `toml:"enable_opensubtitles"`
+	// RatingSourceWeights maps plugin/source names to weight multipliers
+	// for enriching ratings in the UI. Higher weights rank sources
+	// more prominently.
+	RatingSourceWeights map[string]float64 `toml:"rating_source_weights"`
 }
 
 type NotificationsConfig struct {
@@ -190,8 +205,18 @@ func Default() Config {
 			PreferredLanguage: "eng",
 		},
 		Providers: ProvidersConfig{
-			EnableTMDB:      true,
-			EnableTorrentio: true,
+			EnableTMDB:          true,
+			EnableOMDB:          true,
+			EnableTorrentio:     true,
+			EnableProwlarr:      true,
+			EnableOpenSubtitles: true,
+			// Default weights for rating sources — can be overridden in config.toml
+			RatingSourceWeights: map[string]float64{
+				"omdb":        1.0,
+				"tmdb":        1.0,
+				"musicbrainz": 1.0,
+				"lastfm":      1.0,
+			},
 		},
 		Notifications: NotificationsConfig{
 			Enabled:    true,
@@ -367,6 +392,18 @@ func ApplyChange(cfg Config, key string, value interface{}) Config {
 		if v, ok := value.(int); ok {
 			cfg.Streaming.MaxCandidates = v
 		}
+	case "streaming.min_seeders":
+		if v, ok := value.(int); ok {
+			cfg.Streaming.MinSeeders = v
+		}
+	case "streaming.require_seeders":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.RequireSeeders = v
+		}
+	case "streaming.require_resolution":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.RequireResolution = v
+		}
 	case "streaming.benchmark_streams":
 		if v, ok := value.(bool); ok {
 			cfg.Streaming.BenchmarkStreams = v
@@ -442,6 +479,32 @@ func ApplyChange(cfg Config, key string, value interface{}) Config {
 	case "providers.enable_opensubtitles":
 		if v, ok := value.(bool); ok {
 			cfg.Providers.EnableOpenSubtitles = v
+		}
+	case "rating_weights":
+		// The rating-weights editor (screens/rating_weights.go) ships
+		// the full updated map as one payload so the local config and
+		// the runtime overlay stay in sync. Accept either the typed
+		// `map[string]float64` (direct path) or the looser
+		// `map[string]interface{}` shape that may arrive after a
+		// JSON round-trip — both flatten to the same field.
+		switch v := value.(type) {
+		case map[string]float64:
+			cfg.Providers.RatingSourceWeights = v
+		case map[string]interface{}:
+			out := make(map[string]float64, len(v))
+			for k, raw := range v {
+				switch n := raw.(type) {
+				case float64:
+					out[k] = n
+				case float32:
+					out[k] = float64(n)
+				case int:
+					out[k] = float64(n)
+				case int64:
+					out[k] = float64(n)
+				}
+			}
+			cfg.Providers.RatingSourceWeights = out
 		}
 	case "notifications.enabled":
 		if v, ok := value.(bool); ok {

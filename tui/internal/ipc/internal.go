@@ -8,7 +8,11 @@ import (
 	"github.com/stui/stui/pkg/log"
 )
 
-const defaultRequestTimeout = 30 * time.Second
+// IPC request ceiling. Sized to cover stream-resolution responses
+// (Jackett/Prowlarr Torznab fan-outs across many indexers legitimately
+// take 20-30 s), with a few seconds of headroom so the user sees the
+// runtime's "no streams found" response rather than an IPC timeout.
+const defaultRequestTimeout = 60 * time.Second
 
 // ping sends a versioned handshake ping and validates the response.
 func (c *Client) ping() (bool, error) {
@@ -361,6 +365,49 @@ func (c *Client) dispatchUnsolicited(raw RawResponse) {
 			c.logger.Warn("failed to parse detail_metadata_partial", "error", err)
 		} else {
 			c.send(msg)
+		}
+	case "streams_partial":
+		// Per-provider chunk from an in-flight find_streams. The TUI
+		// appends to its per-(season, episode) cache; the spinner
+		// clears on `streams_complete`.
+		var wire struct {
+			EntryID  string       `json:"entry_id"`
+			Season   uint32       `json:"season"`
+			Episode  uint32       `json:"episode"`
+			Provider string       `json:"provider"`
+			Streams  []StreamInfo `json:"streams"`
+		}
+		if err := json.Unmarshal(raw.Raw, &wire); err != nil {
+			c.logger.Warn("failed to parse streams_partial", "error", err)
+		} else {
+			c.send(EpisodeStreamsPartialMsg{
+				EntryID:  wire.EntryID,
+				Season:   int(wire.Season),
+				Episode:  int(wire.Episode),
+				Provider: wire.Provider,
+				Streams:  wire.Streams,
+			})
+		}
+	case "streams_complete":
+		var wire struct {
+			EntryID string  `json:"entry_id"`
+			Season  uint32  `json:"season"`
+			Episode uint32  `json:"episode"`
+			Error   *string `json:"error"`
+		}
+		if err := json.Unmarshal(raw.Raw, &wire); err != nil {
+			c.logger.Warn("failed to parse streams_complete", "error", err)
+		} else {
+			errStr := ""
+			if wire.Error != nil {
+				errStr = *wire.Error
+			}
+			c.send(EpisodeStreamsCompleteMsg{
+				EntryID: wire.EntryID,
+				Season:  int(wire.Season),
+				Episode: int(wire.Episode),
+				Err:     errStr,
+			})
 		}
 	}
 }

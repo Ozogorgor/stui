@@ -63,6 +63,22 @@ func (sc sortColumn) label() string {
 	return ""
 }
 
+// SortStreamsByQualityThenSeeders re-orders a streams slice in place so
+// that higher resolutions come first, with seeders descending as the
+// secondary key. Streams arrive incrementally during a streaming
+// fan-out (provider-by-provider, in arrival order) so this final
+// pass — fired on `streams_complete` — turns the accumulated batch
+// into a canonical "best at the top" view without disturbing the
+// during-wait progressive UX.
+func SortStreamsByQualityThenSeeders(streams []ipc.StreamInfo) {
+	sort.SliceStable(streams, func(i, j int) bool {
+		qi := qualityScore(streams[i].Quality)
+		qj := qualityScore(streams[j].Quality)
+		if qi != qj { return qi > qj }
+		return streams[i].Seeders > streams[j].Seeders
+	})
+}
+
 // qualityRank maps quality label prefixes to a numeric rank (higher = better).
 var qualityRank = map[string]int{
 	"4k": 7, "2160p": 7, "uhd": 7,

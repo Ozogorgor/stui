@@ -15,7 +15,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
-PLUGIN_DIR="${PLUGIN_DIR:-$HOME/.stui/plugins}"
+# Default install target follows the XDG split — plugins live next
+# to config under ~/.config/stui/plugins/ (or $XDG_CONFIG_HOME/stui/
+# when set). Override with PLUGIN_DIR=… to install elsewhere; the
+# legacy ~/.stui/plugins/ path is no longer used by current
+# stui-runtime builds.
+PLUGIN_DIR="${PLUGIN_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/stui/plugins}"
 TARGET="wasm32-wasip1"
 # Respect CARGO_TARGET_DIR so builds land where cargo actually writes them.
 # Common developer setup: `CARGO_TARGET_DIR=~/.cargo/target` for shared caching.
@@ -51,9 +56,12 @@ if ! rustup target list --installed 2>/dev/null | grep -q "$TARGET"; then
 fi
 
 # ── Plugin definitions ────────────────────────────────────────────────────────
-# The 7 canonical bundled metadata plugins (post-refactor). The dropped
-# plugins (imdb, javdb, r18, listenbrainz, subscene, kitsunekko, yify-subs,
-# torrentio-rpc) are gone from the tree — don't re-add them here.
+# The bundled metadata plugins (post-refactor). Dropped plugins
+# (imdb, javdb, r18, listenbrainz, subscene, kitsunekko, yify-subs,
+# torrentio-rpc, rym) are gone from the tree — don't re-add them here.
+# rym was retired because RYM is Cloudflare-protected and has no public
+# API yet; once an official key lands, a fresh plugin can be added back
+# without runtime code changes (see music_enrich's dynamic discovery).
 declare -A PLUGINS=(
     ["anilist"]="anilist-provider"
     ["discogs"]="discogs-provider"

@@ -187,6 +187,8 @@ fn tvdb_items_to_entries(items: Vec<crate::tvdb::TvdbEntry>, scope: SearchScope)
             imdb_id: e.imdb_id,
             tmdb_id: e.tmdb_id,
             mal_id: None,
+            anilist_id: None,
+            kitsu_id: None,
             original_language: e.original_language,
             kind: stui_plugin_sdk::EntryKind::default(),
             source: "tvdb".to_string(),
@@ -370,15 +372,33 @@ pub(crate) async fn run_scope_timing(
 /// Empty-string foreign ids are treated as missing — defensive, prevents
 /// `"mal:"` from collapsing all empty entries into one bucket.
 ///
-/// Cross-tier merges (anime↔western) don't happen here — entries select
-/// different keys. That's intentional; the cross-mapping bridge that
-/// would unify them is milestone β.
+/// Series and Episode entries use a Western-spine precedence
+/// (tmdb → imdb → mal → title) so multi-cour anime collapse under the
+/// shared TMDB/IMDb id after the bridge enriches them. Movies / Music
+/// keep the anime-tier-first precedence (mal → imdb → title) which
+/// catches anime films across providers.
 fn dedup_key(e: &MediaEntry) -> String {
-    if let Some(mal) = e.mal_id.as_deref().filter(|s| !s.is_empty()) {
-        return format!("mal:{mal}");
-    }
-    if let Some(imdb) = e.imdb_id.as_deref().filter(|s| !s.is_empty()) {
-        return format!("imdb:{imdb}");
+    let series_spine = matches!(
+        e.media_type,
+        crate::ipc::MediaType::Series | crate::ipc::MediaType::Episode,
+    );
+    if series_spine {
+        if let Some(tmdb) = e.tmdb_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("tmdb:{tmdb}");
+        }
+        if let Some(imdb) = e.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("imdb:{imdb}");
+        }
+        if let Some(mal) = e.mal_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("mal:{mal}");
+        }
+    } else {
+        if let Some(mal) = e.mal_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("mal:{mal}");
+        }
+        if let Some(imdb) = e.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+            return format!("imdb:{imdb}");
+        }
     }
     format!(
         "title:{}:{}",
@@ -696,11 +716,17 @@ mod tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let cfg = ScopedSearchConfig::default();
         let (tx, mut rx) = make_event_channel(8);
 
-        run_one_scope(engine, "test".into(), SearchScope::Series, 99, cfg, tx.clone()).await;
+        // SearchScope::Track skips the TVDB always-on fallback (TVDB only
+        // contributes to Movie/Series), so the no-plugins early-return
+        // fires as the test expects. Used to be Series, but TVDB now joins
+        // the Series fan-out unconditionally and emits a 2nd ScopeResults
+        // message, breaking the `msgs.len() == 1` assertion below.
+        run_one_scope(engine, "test".into(), SearchScope::Track, 99, cfg, tx.clone()).await;
         drop(tx);
         rx.close();
 
@@ -896,6 +922,32 @@ mod tests {
         e.imdb_id = Some("tt0".into());
         // Empty MAL → falls through to imdb.
         assert_eq!(dedup_key(&e), "imdb:tt0");
+    }
+
+    /// Series spine merge: AniList cours have their own MAL ids but
+    /// share the parent series' TMDB id after bridge enrichment. With
+    /// Series media_type the dedup_key now prefers tmdb first so all
+    /// cours collapse into one bucket. Movie media_type keeps the
+    /// historical mal-first precedence (covered by the test above).
+    #[test]
+    fn dedup_key_series_collapses_cours_via_tmdb() {
+        let mut s1 = make_entry("anilist-16498");
+        s1.media_type = crate::ipc::MediaType::Series;
+        s1.title = "Attack on Titan".into();
+        s1.year = Some("2013".into());
+        s1.mal_id = Some("16498".into());
+        s1.imdb_id = Some("tt2560140".into());
+        s1.tmdb_id = Some("1429".into());
+
+        let mut s4 = make_entry("anilist-38524");
+        s4.media_type = crate::ipc::MediaType::Series;
+        s4.title = "Attack on Titan: Final Season".into();
+        s4.mal_id = Some("38524".into());
+        s4.imdb_id = Some("tt2560140".into());
+        s4.tmdb_id = Some("1429".into());
+
+        assert_eq!(dedup_key(&s1), "tmdb:1429");
+        assert_eq!(dedup_key(&s4), "tmdb:1429");
     }
 
     // ── merge_dedupe collapse tests ───────────────────────────────────────────

@@ -5,6 +5,7 @@ version      = "1.0.0"
 abi_version  = 1
 description  = "The Movie Database — movies, TV series, episodes"
 repository   = "https://github.com/Ozogorgor/stui_plugins"
+tags         = ["movies", "series"]
 
 [env]
 TMDB_API_KEY = ""

@@ -130,7 +130,7 @@ pub struct ResolveResponse {
     pub subtitles: Vec<SubtitleTrack>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubtitleTrack {
     pub language: String,
     pub url: String,
@@ -360,6 +360,63 @@ pub struct EpisodeWire {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EpisodesResponse {
     pub episodes: Vec<EpisodeWire>,
+}
+
+// ── FindStreams ───────────────────────────────────────────────────────────────
+
+/// Payload passed to `stui_find_streams`. Mirrors sdk::FindStreamsRequest exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct FindStreamsRequest {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    #[serde(default)]
+    pub kind: EntryKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub external_ids: std::collections::HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imdb_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmdb_id: Option<String>,
+}
+
+/// Returned by `stui_find_streams`. Mirrors sdk::FindStreamsResponse exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FindStreamsResponse {
+    pub streams: Vec<Stream>,
+}
+
+/// One stream candidate from a StreamProvider. Mirrors sdk::Stream
+/// exactly so the JSON wire shape across the WASM boundary stays
+/// identical.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Stream {
+    pub url: String,
+    pub title: String,
+    pub provider: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub hdr: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeders: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtitles: Vec<SubtitleTrack>,
 }
 
 // ── Host import payloads ──────────────────────────────────────────────────────

@@ -899,6 +899,8 @@ fn format_description(artist: &str, album: Option<&str>, stats: Option<&str>) ->
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for LastfmPlugin {}
+
 stui_export_catalog_plugin!(LastfmPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

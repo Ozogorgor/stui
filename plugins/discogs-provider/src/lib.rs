@@ -546,6 +546,8 @@ impl ArtistDetail {
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for DiscogsPlugin {}
+
 stui_export_catalog_plugin!(DiscogsPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

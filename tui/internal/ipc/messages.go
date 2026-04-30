@@ -109,6 +109,19 @@ type CatalogEntry struct {
 	Provider    string  `json:"provider"`
 	Tab         string  `json:"tab"`
 	ImdbID      *string `json:"imdb_id"`
+	// TMDB id mirrored across the wire. Populated by the runtime
+	// either from the plugin's own external_ids or from the
+	// anime-bridge enrichment (Fribb maps anilist/kitsu cours to the
+	// parent series' TMDB id, which the spine merge keys on). Used
+	// by the detail screen to route episode lookups through TMDB
+	// even when the catalog entry is anilist-spined — without this,
+	// collapsed anime series produce empty episode lists because the
+	// anilist plugin doesn't implement the episodes verb.
+	TmdbID *string `json:"tmdb_id,omitempty"`
+	// MAL id, mirrored same way. Optional; carries through for
+	// anime-aware detail flows (e.g. mapping into kitsu/myanimelist
+	// links). Nil for non-anime catalog entries.
+	MalID *string `json:"mal_id,omitempty"`
 	// Artist / creator name. Populated for music tab entries from
 	// `PluginEntry.artist_name` on the runtime side. The IPC layer
 	// converts runtime CatalogEntry → MediaEntry before sending
@@ -136,6 +149,11 @@ type DetailEntry struct {
 	Provider    string       `json:"provider"`
 	Providers   []string     `json:"providers"`
 	ImdbID      string       `json:"imdb_id"`
+	// Western-anchor TMDB id, populated from CatalogEntry.TmdbID at
+	// detail-open time. Used by the EpisodeScreen open path to route
+	// season/episode lookups through TMDB even when the catalog
+	// entry is anilist/kitsu-spined.
+	TmdbID      string       `json:"tmdb_id,omitempty"`
 	Tab         string       `json:"tab"`
 
 	// Metadata-enrichment fields populated by DetailMetadataPartial "enrich"
@@ -199,6 +217,43 @@ type StreamsResolvedMsg struct {
 	Streams []StreamInfo
 }
 
+// EpisodeStreamsLoadedMsg carries find_streams results for the
+// per-episode streams column on the detail card. Indexed by
+// (season, episode) so the screen can route each response to the
+// right cache slot — multiple in-flight requests overlap when the
+// user scrubs through episodes faster than the runtime can reply.
+type EpisodeStreamsLoadedMsg struct {
+	Season  int
+	Episode int
+	Streams []StreamInfo
+	Err     error
+}
+
+// EpisodeStreamsPartialMsg is one provider's contribution to an
+// in-flight find_streams. The runtime now streams these as each
+// plugin returns rather than waiting for the full fan-out — the TUI
+// appends to its per-(season, episode) cache so the user sees fast
+// providers' results immediately while slow ones (Jackett's 25 s
+// Torznab fan-out) keep arriving.
+type EpisodeStreamsPartialMsg struct {
+	EntryID  string
+	Season   int
+	Episode  int
+	Provider string
+	Streams  []StreamInfo
+}
+
+// EpisodeStreamsCompleteMsg signals that the runtime has finished
+// fanning out across every provider for this (season, episode). The
+// TUI clears its in-flight spinner on receipt. `Err` is set only
+// when zero providers returned anything.
+type EpisodeStreamsCompleteMsg struct {
+	EntryID string
+	Season  int
+	Episode int
+	Err     string
+}
+
 // StreamBenchmarkResultMsg is dispatched when a single stream probe finishes.
 type StreamBenchmarkResultMsg struct {
 	EntryID   string
@@ -258,6 +313,38 @@ type EpisodesLoadFailedMsg struct {
 	SeriesID string
 	Season   int
 	Reason   string
+}
+
+// LastFMAlbumTracksMsg carries track data for an album from LastFM.
+type LastFMAlbumTracksMsg struct {
+	Album   string
+	Artist  string
+	Tracks  []AlbumTrack
+}
+
+// AlbumTrack represents a single track from an album.
+type AlbumTrack struct {
+	Number   int    `json:"number"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	Duration string `json:"duration"`
+}
+
+// MetadataPluginsForKindMsg carries the runtime's snapshot of the
+// metadata-source plugins that contribute to a kind's detail-card
+// fan-out. Populated by Client.MetadataPluginsForKind in response to a
+// per-kind query from the Settings → Metadata Sources screen.
+//
+// Lists are mutually disjoint after the runtime's dedupe step:
+//   - Priority — user-configured, in fan-out order
+//   - Discovered — auto-included via plugin manifest tags
+//   - Disabled — user opted out, excluded from the fan-out entirely
+type MetadataPluginsForKindMsg struct {
+	Kind       string
+	Priority   []string
+	Discovered []string
+	Disabled   []string
+	Err        error
 }
 
 // BingeContextMsg is fired by EpisodeScreen when the user plays an episode with

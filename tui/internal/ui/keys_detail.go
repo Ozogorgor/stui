@@ -20,6 +20,122 @@ import (
 	"github.com/stui/stui/pkg/watchhistory"
 )
 
+// defaultFocusForTab picks the default cursor zone when the user
+// switches into a tab. Description starts on the info zone (so j/k
+// scrolls + h/l cycles backdrops); Episodes starts on Seasons (the
+// left column of the season picker, so j/k navigates seasons by
+// default); Streams starts on the provider row.
+func defaultFocusForTab(tab screens.DetailTab) screens.DetailFocus {
+	switch tab {
+	case screens.DetailTabEpisodes:
+		return screens.FocusDetailSeasons
+	case screens.DetailTabStreams:
+		// Movies' Streams tab now hosts the same streams panel as the
+		// per-episode streams column; default focus to the streams
+		// list so j/k/Enter behave the same as in the Episodes tab.
+		return screens.FocusDetailEpisodeStreams
+	default:
+		return screens.FocusDetailInfo
+	}
+}
+
+// maybeLoadEpisodesForTab kicks off a `LoadEpisodes` IPC for the
+// season the user just landed on, if it hasn't already been fetched
+// AND no request for it is currently in flight. Called from the
+// tab-cycle handlers + the `e` keybind so the Episodes tab starts
+// populating immediately on entry.
+func (m Model) maybeLoadEpisodesForTab(ds *screens.DetailState) tea.Cmd {
+	if ds == nil || m.client == nil {
+		return nil
+	}
+	if ds.ActiveTab != screens.DetailTabEpisodes {
+		return nil
+	}
+	season := ds.SeasonCursor + 1
+	if ds.EpisodesLoaded[season] {
+		return nil
+	}
+	if ds.EpisodesInFlight[season] {
+		// Already waiting on this season — duplicating the request
+		// would queue behind the live one in the runtime's
+		// supervisor lock and almost certainly trip the TUI's 60 s
+		// IPC timeout for the queued copy.
+		return nil
+	}
+	if ds.Episodes == nil {
+		ds.Episodes = make(map[int][]ipc.EpisodeEntry)
+	}
+	if ds.EpisodesLoaded == nil {
+		ds.EpisodesLoaded = make(map[int]bool)
+	}
+	if ds.EpisodesInFlight == nil {
+		ds.EpisodesInFlight = make(map[int]bool)
+	}
+	ds.EpisodesInFlight[season] = true
+	seriesID, idSource := episodeLookupTarget(ds)
+	client := m.client
+	client.LoadEpisodes(seriesID, idSource, season)
+	return nil
+}
+
+// dispatchFindStreamsForCursor kicks off a `find_streams` IPC for the
+// currently-focused streams target. Two modes:
+//
+//   - Episodes tab: the focused (season, episode) row.
+//   - Streams tab (movies): the entry itself, no season/episode.
+//
+// Both routes share the same handler pipeline on the runtime side and
+// the same EpisodeStreams cache on the TUI side (movies use the
+// `{0, 0}` sentinel key).
+func (m Model) dispatchFindStreamsForCursor(ds *screens.DetailState) tea.Cmd {
+	if ds == nil || m.client == nil {
+		return nil
+	}
+	year := uint32(0)
+	if ds.Entry.Year != "" {
+		fmt.Sscanf(ds.Entry.Year, "%d", &year)
+	}
+	var yearPtr *uint32
+	if year > 0 {
+		yearPtr = &year
+	}
+	// IMDB / TMDB id: convenience field first, external_ids map as
+	// backup. Enrich mirrors map → convenience as it lands, but if
+	// Enter fires before enrich completed the map is the only source.
+	imdb := ds.Entry.ImdbID
+	if imdb == "" {
+		imdb = ds.Entry.ExternalIDs["imdb"]
+	}
+	tmdb := ds.Entry.TmdbID
+	if tmdb == "" {
+		tmdb = ds.Entry.ExternalIDs["tmdb"]
+	}
+	req := ipc.FindStreamsRequest{
+		Title:       ds.Entry.Title,
+		Year:        yearPtr,
+		ImdbID:      imdb,
+		TmdbID:      tmdb,
+		ExternalIDs: ds.Entry.ExternalIDs,
+	}
+	if ds.ActiveTab == screens.DetailTabStreams {
+		req.Kind = "Movie"
+	} else {
+		eps := ds.Episodes[ds.SeasonCursor+1]
+		if ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(eps) {
+			return nil
+		}
+		ep := eps[ds.EpisodeCursor]
+		seasonPtr := uint32(ds.SeasonCursor + 1)
+		episodePtr := uint32(ep.Episode)
+		req.Kind = "Series"
+		req.Season = &seasonPtr
+		req.Episode = &episodePtr
+	}
+	client := m.client
+	go func() { client.FindStreams(req) }()
+	return nil
+}
+
 // ── Detail key handler ────────────────────────────────────────────────────────
 
 func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
@@ -70,30 +186,71 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	// Cycle focus zones in the order they're rendered: Info → Crew →
-	// Cast → Episodes (series only) → Provider → Related → Info. Empty
-	// zones are skipped via detailFocusOrder so the user never lands on
-	// an unrenderable section.
+	// Tab / shift+tab cycle the top-level detail tabs (Description /
+	// Episodes / Streams). Mirrors the Music sub-tab navigation —
+	// users coming from the Music screen know the pattern. Within a
+	// tab, j/k/h/l drive the cursors that section needs.
 	case "tab":
 		if ds.PersonMode {
 			return m, nil
 		}
-		order := detailFocusOrder(ds)
-		ds.Focus = stepFocus(order, ds.Focus, +1)
-		return m, nil
+		ds.CycleTab(+1)
+		// Reset focus to a sensible per-tab default so empty zones
+		// don't leak into the new tab's behaviour.
+		ds.Focus = defaultFocusForTab(ds.ActiveTab)
+		return m, m.maybeLoadEpisodesForTab(ds)
 
 	case "shift+tab":
 		if ds.PersonMode {
 			return m, nil
 		}
-		order := detailFocusOrder(ds)
-		ds.Focus = stepFocus(order, ds.Focus, -1)
+		ds.CycleTab(-1)
+		ds.Focus = defaultFocusForTab(ds.ActiveTab)
+		return m, m.maybeLoadEpisodesForTab(ds)
+
+	case "1", "2":
+		if ds.PersonMode {
+			return m, nil
+		}
+		// Direct-jump to tab 1 / 2 (matching the music screen's
+		// quick-switch). Out-of-range key (e.g. "2" for an entry
+		// without an Episodes/Streams tab) is a no-op.
+		idx := int(key[0] - '1')
+		tabs := ds.AvailableTabs()
+		if idx >= 0 && idx < len(tabs) {
+			ds.ActiveTab = tabs[idx]
+			ds.Focus = defaultFocusForTab(ds.ActiveTab)
+			return m, m.maybeLoadEpisodesForTab(ds)
+		}
 		return m, nil
 
 	case "j", "down":
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorDown(ds.PersonCursor, len(ds.PersonResults))
+		case ds.Focus == screens.FocusDetailSeasons:
+			count := int(ds.Entry.SeasonCount)
+			if count <= 0 {
+				count = 1
+			}
+			if ds.SeasonCursor < count-1 {
+				ds.SeasonCursor++
+				return m, m.maybeLoadEpisodesForTab(ds)
+			}
+		case ds.Focus == screens.FocusDetailEpisodes:
+			eps := ds.Episodes[ds.SeasonCursor+1]
+			if ds.EpisodeCursor < len(eps)-1 {
+				ds.EpisodeCursor++
+			}
+		case ds.Focus == screens.FocusDetailEpisodeStreams:
+			// Streams column: cursor walks the cached list for the
+			// current key (movie or focused episode). Bound below by
+			// len-1 so we don't index off the end while partials are
+			// still streaming in (the list grows as providers respond).
+			key := ds.CurrentStreamsKey()
+			if ds.EpisodeStreamCursor < len(ds.EpisodeStreams[key])-1 {
+				ds.EpisodeStreamCursor++
+			}
 		case ds.Focus == screens.FocusDetailInfo:
 			ds.InfoScroll++
 		case ds.Focus == screens.FocusDetailCrew:
@@ -105,15 +262,15 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		case ds.Focus == screens.FocusDetailCast:
 			if ds.CastCursor < len(ds.Entry.Cast)-1 {
 				ds.CastCursor++
-			} else if len(ds.Entry.Providers) > 0 {
-				ds.Focus = screens.FocusDetailProvider
-			}
-		case ds.Focus == screens.FocusDetailProvider:
-			if len(ds.Meta.Related.Items) > 0 {
+			} else if len(ds.Meta.Related.Items) > 0 {
 				ds.Focus = screens.FocusDetailRelated
 			}
+		case ds.Focus == screens.FocusDetailProvider:
+			// Provider row is horizontal — j/k is a no-op (use h/l).
 		case ds.Focus == screens.FocusDetailRelated:
-			// already at bottom
+			if ds.Meta.RelatedCursor < len(ds.Meta.Related.Items)-1 {
+				ds.Meta.RelatedCursor++
+			}
 		}
 		return m, nil
 
@@ -121,6 +278,19 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorUp(ds.PersonCursor)
+		case ds.Focus == screens.FocusDetailSeasons:
+			if ds.SeasonCursor > 0 {
+				ds.SeasonCursor--
+				return m, m.maybeLoadEpisodesForTab(ds)
+			}
+		case ds.Focus == screens.FocusDetailEpisodes:
+			if ds.EpisodeCursor > 0 {
+				ds.EpisodeCursor--
+			}
+		case ds.Focus == screens.FocusDetailEpisodeStreams:
+			if ds.EpisodeStreamCursor > 0 {
+				ds.EpisodeStreamCursor--
+			}
 		case ds.Focus == screens.FocusDetailInfo:
 			if ds.InfoScroll > 0 {
 				ds.InfoScroll--
@@ -128,34 +298,18 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		case ds.Focus == screens.FocusDetailCrew:
 			if ds.Meta.CrewCursor > 0 {
 				ds.Meta.CrewCursor--
-			} else {
-				ds.Focus = screens.FocusDetailInfo
 			}
 		case ds.Focus == screens.FocusDetailCast:
 			if ds.CastCursor > 0 {
 				ds.CastCursor--
 			} else if len(ds.Meta.Credits.Crew) > 0 {
 				ds.Focus = screens.FocusDetailCrew
-			} else {
-				ds.Focus = screens.FocusDetailInfo
-			}
-		case ds.Focus == screens.FocusDetailProvider:
-			switch {
-			case len(ds.Entry.Cast) > 0:
-				ds.Focus = screens.FocusDetailCast
-			case len(ds.Meta.Credits.Crew) > 0:
-				ds.Focus = screens.FocusDetailCrew
-			default:
-				ds.Focus = screens.FocusDetailInfo
 			}
 		case ds.Focus == screens.FocusDetailRelated:
-			switch {
-			case len(ds.Entry.Providers) > 0:
-				ds.Focus = screens.FocusDetailProvider
-			case len(ds.Entry.Cast) > 0:
+			if ds.Meta.RelatedCursor > 0 {
+				ds.Meta.RelatedCursor--
+			} else if len(ds.Entry.Cast) > 0 {
 				ds.Focus = screens.FocusDetailCast
-			case len(ds.Meta.Credits.Crew) > 0:
-				ds.Focus = screens.FocusDetailCrew
 			}
 		}
 		return m, nil
@@ -164,17 +318,20 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorLeft(ds.PersonCursor)
+		case ds.Focus == screens.FocusDetailEpisodeStreams:
+			// Episodes tab: h moves focus from the streams column
+			// back to the episode list.
+			ds.Focus = screens.FocusDetailEpisodes
+		case ds.Focus == screens.FocusDetailEpisodes:
+			// Episodes tab: h moves focus from the episode list
+			// back to the season picker.
+			ds.Focus = screens.FocusDetailSeasons
 		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
-			// Cycle backdrop carousel while the info zone has focus.
 			n := len(ds.Meta.Artwork.Backdrops)
 			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor - 1 + n) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor > 0 {
 				ds.ProviderCursor--
-			}
-		case ds.Focus == screens.FocusDetailRelated:
-			if ds.Meta.RelatedCursor > 0 {
-				ds.Meta.RelatedCursor--
 			}
 		}
 		return m, nil
@@ -183,17 +340,33 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		switch {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorRight(ds.PersonCursor, len(ds.PersonResults))
+		case ds.Focus == screens.FocusDetailSeasons:
+			// Episodes tab: l moves focus from the season picker to
+			// the episode list. The streams column stays empty until
+			// the user explicitly presses Enter on a row — that's
+			// the trigger for find_streams. Auto-dispatching on
+			// every focus shift dispatched stale searches when the
+			// user was just navigating, and the responses fought
+			// over the streams column.
+			if len(ds.Episodes[ds.SeasonCursor+1]) > 0 {
+				ds.Focus = screens.FocusDetailEpisodes
+			}
+		case ds.Focus == screens.FocusDetailEpisodes:
+			// Move focus to the streams column. Whatever is cached
+			// for the current (season, episode) shows; if nothing,
+			// the user presses Enter from the episode list to
+			// dispatch a fresh search.
+			eps := ds.Episodes[ds.SeasonCursor+1]
+			if ds.EpisodeCursor >= 0 && ds.EpisodeCursor < len(eps) {
+				ds.Focus = screens.FocusDetailEpisodeStreams
+				ds.EpisodeStreamCursor = 0
+			}
 		case ds.Focus == screens.FocusDetailInfo && len(ds.Meta.Artwork.Backdrops) > 0:
-			// Cycle backdrop carousel while the info zone has focus.
 			n := len(ds.Meta.Artwork.Backdrops)
 			ds.Meta.ArtworkCursor = (ds.Meta.ArtworkCursor + 1) % n
 		case ds.Focus == screens.FocusDetailProvider:
 			if ds.ProviderCursor < len(ds.Entry.Providers)-1 {
 				ds.ProviderCursor++
-			}
-		case ds.Focus == screens.FocusDetailRelated:
-			if ds.Meta.RelatedCursor < len(ds.Meta.Related.Items)-1 {
-				ds.Meta.RelatedCursor++
 			}
 		}
 		return m, nil
@@ -220,33 +393,36 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			ds.PersonCursor = screens.GridCursor{}
 			return m, m.dispatchPersonSearch(member.Name)
 
-		case ds.Focus == screens.FocusDetailEpisodes:
-			// Same path as the `e` keybind below — opens the season /
-			// episode browser.  Repeated here so users who Tab into the
-			// EPISODES badge can launch it without learning a separate key.
-			idSource := ds.Entry.IDSource
-			if idSource == "" {
-				if prefix, _, ok := splitProviderPrefix(ds.Entry.ID); ok {
-					idSource = prefix
-				} else {
-					idSource = firstProvider(ds.Entry.Provider)
+		case ds.Focus == screens.FocusDetailEpisodes,
+			ds.Focus == screens.FocusDetailEpisodeStreams && ds.ActiveTab == screens.DetailTabStreams:
+			// Two paths trigger a stream search:
+			//   - Episodes tab: Enter on the focused episode row.
+			//   - Streams tab (movies): Enter while focused on the
+			//     streams panel — there's no row above it to act as
+			//     the trigger, so the streams panel itself accepts
+			//     the keystroke.
+			// Both clear the cached entry for the current key first so
+			// a stale timeout / empty-result from a prior dispatch
+			// can't shadow the new in-flight request — the renderer
+			// falls through to "Searching torrents…" until the
+			// runtime replies.
+			key := ds.CurrentStreamsKey()
+			// Episodes tab guard: bail if no episode is selected.
+			if ds.ActiveTab == screens.DetailTabEpisodes {
+				eps := ds.Episodes[ds.SeasonCursor+1]
+				if ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(eps) {
+					return m, nil
 				}
 			}
-			backdropURL := ""
-			if len(ds.Meta.Artwork.Backdrops) > 0 {
-				backdropURL = ds.Meta.Artwork.Backdrops[0].URL
+			delete(ds.EpisodeStreams, key)
+			delete(ds.EpisodeStreamsLoaded, key)
+			delete(ds.EpisodeStreamsError, key)
+			if ds.EpisodeStreamsInFlight == nil {
+				ds.EpisodeStreamsInFlight = make(map[screens.EpisodeStreamsKey]bool)
 			}
-			s := screens.NewEpisodeScreen(m.client, ds.Entry.Title, ds.Entry.ID, idSource, m.state.Settings.AutoplayNext, screens.EpisodeScreenOpts{
-				Year:        ds.Entry.Year,
-				Genre:       ds.Entry.Genre,
-				Rating:      ds.Entry.Rating,
-				PosterURL:   ds.Entry.PosterURL,
-				PosterArt:   ds.Entry.PosterArt,
-				BackdropURL: backdropURL,
-				Seasons:     seasonsList(ds.Entry.SeasonCount),
-				SeasonIDs:   ds.Entry.SeasonIDs,
-			})
-			return m, screen.TransitionCmd(s, true)
+			ds.EpisodeStreamsInFlight[key] = true
+			ds.EpisodeStreamCursor = 0
+			return m, m.dispatchFindStreamsForCursor(ds)
 
 		case ds.Focus == screens.FocusDetailProvider:
 			// ▶ Play via selected provider — resume from saved position if available
@@ -294,34 +470,15 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "e", "E":
-		// Open episode browser for series items. Resolve id_source so the
-		// runtime knows which plugin owns this entry — prefer the entry's
-		// own field, then peel a "<provider>-<id>" prefix off the id, then
-		// fall back to the first comma-separated provider.
-		if ds.Entry.Tab == "series" || ds.Entry.Tab == "Series" {
-			idSource := ds.Entry.IDSource
-			if idSource == "" {
-				if prefix, _, ok := splitProviderPrefix(ds.Entry.ID); ok {
-					idSource = prefix
-				} else {
-					idSource = firstProvider(ds.Entry.Provider)
-				}
-			}
-			backdropURL := ""
-			if len(ds.Meta.Artwork.Backdrops) > 0 {
-				backdropURL = ds.Meta.Artwork.Backdrops[0].URL
-			}
-			s := screens.NewEpisodeScreen(m.client, ds.Entry.Title, ds.Entry.ID, idSource, m.state.Settings.AutoplayNext, screens.EpisodeScreenOpts{
-				Year:        ds.Entry.Year,
-				Genre:       ds.Entry.Genre,
-				Rating:      ds.Entry.Rating,
-				PosterURL:   ds.Entry.PosterURL,
-				PosterArt:   ds.Entry.PosterArt,
-				BackdropURL: backdropURL,
-				Seasons:     seasonsList(ds.Entry.SeasonCount),
-				SeasonIDs:   ds.Entry.SeasonIDs,
-			})
-			return m, screen.TransitionCmd(s, true)
+		// Switch to the inline Episodes tab on series cards. The
+		// dedicated EpisodeScreen was retired in favor of the tabbed
+		// detail layout — clicking `e` is now equivalent to pressing
+		// `tab` until you land on Episodes (or just `2`), kept as a
+		// muscle-memory shortcut for users used to the old keybind.
+		if ds.HasEpisodesTab() {
+			ds.ActiveTab = screens.DetailTabEpisodes
+			ds.Focus = defaultFocusForTab(ds.ActiveTab)
+			return m, m.maybeLoadEpisodesForTab(ds)
 		}
 		return m, nil
 

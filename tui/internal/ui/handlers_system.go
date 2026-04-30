@@ -401,8 +401,21 @@ func (m Model) handleOpenStreamRadar(msg screens.OpenStreamRadarMsg) (tea.Model,
 }
 
 // handleOpenRatingWeights handles screens.OpenRatingWeightsMsg.
+// Seeds the editor with the user's current per-source weights so
+// edits start from the live state rather than empty defaults.
 func (m Model) handleOpenRatingWeights(msg screens.OpenRatingWeightsMsg) (tea.Model, tea.Cmd) {
-	return m, screen.TransitionCmd(screens.NewRatingWeightsScreen(), true)
+	weights := m.cfg.Providers.RatingSourceWeights
+	if weights == nil {
+		weights = map[string]float64{}
+	}
+	return m, screen.TransitionCmd(screens.NewRatingWeightsScreen(weights), true)
+}
+
+// handleOpenMetadataSources handles screens.OpenMetadataSourcesMsg.
+// Hands the IPC client to the new screen so it can query the runtime
+// for per-kind plugin lists; the screen owns the IPC round-trips.
+func (m Model) handleOpenMetadataSources(msg screens.OpenMetadataSourcesMsg) (tea.Model, tea.Cmd) {
+	return m, screen.TransitionCmd(screens.NewMetadataSourcesScreen(m.client), true)
 }
 
 // handleOpenOfflineLibrary handles screens.OpenOfflineLibraryMsg.

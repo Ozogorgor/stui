@@ -139,6 +139,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ipc.EpisodesLoadedMsg:
 		return m.handleEpisodesLoaded(msg)
 
+	case ipc.EpisodesLoadFailedMsg:
+		return m.handleEpisodesLoadFailed(msg)
+
+	case ipc.EpisodeStreamsLoadedMsg:
+		return m.handleEpisodeStreamsLoaded(msg)
+
+	case ipc.EpisodeStreamsPartialMsg:
+		return m.handleEpisodeStreamsPartial(msg)
+
+	case ipc.EpisodeStreamsCompleteMsg:
+		return m.handleEpisodeStreamsComplete(msg)
+
 	case ipc.BingeContextMsg:
 		return m.handleBingeContext(msg)
 
@@ -264,6 +276,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case screens.OpenRatingWeightsMsg:
 		return m.handleOpenRatingWeights(msg)
+
+	case screens.OpenMetadataSourcesMsg:
+		return m.handleOpenMetadataSources(msg)
 
 	case screens.OpenOfflineLibraryMsg:
 		return m.handleOpenOfflineLibrary(msg)

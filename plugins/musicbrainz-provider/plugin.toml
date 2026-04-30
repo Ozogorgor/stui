@@ -4,6 +4,7 @@ name         = "musicbrainz"
 version      = "1.0.0"
 abi_version  = 1
 description  = "MusicBrainz — open music encyclopedia (artists, albums, tracks)"
+tags         = ["music"]
 
 [permissions]
 network = ["musicbrainz.org", "coverartarchive.org"]

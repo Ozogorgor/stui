@@ -21,13 +21,50 @@ import (
 type DetailFocus int
 
 const (
-	FocusDetailInfo     DetailFocus = iota // poster + meta + description
-	FocusDetailCrew                        // crew (director/writer/etc.)
-	FocusDetailCast                        // cast
-	FocusDetailEpisodes                    // "▶ Episodes" badge — series only
-	FocusDetailProvider                    // STREAM VIA provider badges
-	FocusDetailRelated                     // related titles row
+	FocusDetailInfo           DetailFocus = iota // poster + meta + description
+	FocusDetailCrew                              // crew (director/writer/etc.)
+	FocusDetailCast                              // cast
+	FocusDetailEpisodes                          // episode list inside the Episodes tab (series)
+	FocusDetailProvider                          // STREAM VIA provider badges (Streams tab, movies)
+	FocusDetailRelated                           // related titles row
+	FocusDetailSeasons                           // season picker inside the Episodes tab
+	FocusDetailEpisodeStreams                    // per-episode streams column inside the Episodes tab (series)
 )
+
+// DetailTab enumerates the tabs shown beneath the detail header.
+//
+// The set is conditional on the entry's tab/media type — Series shows
+// Description + Episodes, Movies shows Description + Streams. Tab body
+// rendering routes through `renderDescriptionTab` / `renderEpisodesTab`
+// / `renderStreamsTab` in detail.go.
+type DetailTab int
+
+const (
+	DetailTabDescription DetailTab = iota // CREW · CAST · RELATED
+	DetailTabEpisodes                     // season picker + episode list (Series only)
+	DetailTabStreams                      // provider badges + play (Movies only)
+)
+
+// EpisodeStreamsKey is the cache key for per-episode stream lists.
+// Numeric (season, episode) — every entry in `Episodes[seasonN]` has
+// a canonical episode number set by the plugin.
+type EpisodeStreamsKey struct {
+	Season  int
+	Episode int
+}
+
+// String renders the tab label as displayed in the tab bar.
+func (t DetailTab) String() string {
+	switch t {
+	case DetailTabDescription:
+		return "Description"
+	case DetailTabEpisodes:
+		return "Episodes"
+	case DetailTabStreams:
+		return "Streams"
+	}
+	return ""
+}
 
 // FetchStatus tracks the lifecycle of one metadata verb's partial.
 // The zero value is FetchPending so DetailState's embedded DetailMetadata
@@ -71,12 +108,59 @@ type DetailState struct {
 	Loading bool
 	Focus   DetailFocus
 
+	// Active tab beneath the header. Default DetailTabDescription
+	// (zero value). Tab navigation is keyboard-driven via tab/shift+tab
+	// or 1/2/3 number keys; mouse on the tab bar also switches.
+	ActiveTab DetailTab
+
 	// Cast
 	CastCursor int
 	InfoScroll int
 
 	// Provider selection (STREAM VIA)
 	ProviderCursor int // index into Entry.Providers
+
+	// Episodes tab state — populated lazily on tab open via the
+	// runtime's `LoadEpisodes` IPC. SeasonsLoaded[i] = true means
+	// Episodes[i] is the cached episode list for season N=i+1.
+	SeasonCursor   int
+	EpisodeCursor  int
+	Episodes       map[int][]ipc.EpisodeEntry // keyed by season number
+	EpisodesLoaded map[int]bool
+	// Per-season error message. Was a single global string until a
+	// timeout on one season started shadowing already-loaded data
+	// for the season the user navigated back to. Same fix shape as
+	// EpisodeStreamsError.
+	EpisodesError map[int]string
+	// True while a LoadEpisodes IPC for that season is in flight.
+	// Prevents the user from piling up duplicate requests by
+	// scrolling between seasons faster than the runtime/TMDB can
+	// respond — each pending call held a supervisor slot and the
+	// queue behind the live request would blow past the TUI's 60 s
+	// IPC timeout, surfacing as "Failed to load episodes: timed
+	// out" even though the upstream eventually succeeded.
+	EpisodesInFlight map[int]bool
+
+	// Per-episode streams column (3rd column in the Episodes tab).
+	// Cursor for the focused stream row when the user navigates into
+	// the streams column. The streams list itself is keyed by
+	// `(seasonNumber, episodeNumber)` so multiple in-flight requests
+	// (user scrubbing through episodes faster than the runtime can
+	// reply) don't trample each other.
+	EpisodeStreamCursor  int
+	EpisodeStreams       map[EpisodeStreamsKey][]ipc.StreamInfo
+	EpisodeStreamsLoaded map[EpisodeStreamsKey]bool
+	// True while a find_streams IPC for this (season, ep) is in flight
+	// — set on Enter dispatch, cleared on response (success or error).
+	// Distinguishes "never searched" (renderer shows the press-Enter
+	// hint) from "search currently running" (renderer shows the
+	// spinner).
+	EpisodeStreamsInFlight map[EpisodeStreamsKey]bool
+	// Per-episode error string. Keyed (rather than a single global
+	// field) so a timeout on episode N doesn't keep showing as the
+	// "current" error while the user navigates to episode M and a
+	// fresh request is in flight.
+	EpisodeStreamsError  map[EpisodeStreamsKey]string
 
 	// Playback — non-empty while mpv is running for this entry
 	NowPlaying *components.NowPlayingState
@@ -99,6 +183,42 @@ type DetailState struct {
 
 	// Watch history — non-nil if this entry has been (partially) watched before
 	WatchHistory *watchhistory.Entry
+}
+
+// HasEpisodesTab reports whether the entry is series-shaped and should
+// expose the Episodes tab (alongside Description). Movies show Streams.
+func (d *DetailState) HasEpisodesTab() bool {
+	t := d.Entry.Tab
+	return t == "series" || t == "Series"
+}
+
+// AvailableTabs returns the ordered tab list for this entry — used by
+// both the tab-bar renderer and the tab-cycle key handler so they
+// agree on the layout.
+func (d *DetailState) AvailableTabs() []DetailTab {
+	if d.HasEpisodesTab() {
+		return []DetailTab{DetailTabDescription, DetailTabEpisodes}
+	}
+	return []DetailTab{DetailTabDescription, DetailTabStreams}
+}
+
+// CycleTab moves the active tab `delta` slots (1 = forward, -1 = back).
+// Wraps. No-op on entries with no tabs (shouldn't happen — every detail
+// page has at least Description).
+func (d *DetailState) CycleTab(delta int) {
+	tabs := d.AvailableTabs()
+	if len(tabs) == 0 {
+		return
+	}
+	idx := 0
+	for i, t := range tabs {
+		if t == d.ActiveTab {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta + len(tabs)) % len(tabs)
+	d.ActiveTab = tabs[idx]
 }
 
 func NewDetailState(entry ipc.DetailEntry) DetailState {
@@ -141,6 +261,20 @@ func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
 		}
 		if len(p.Payload.ExternalIDs) > 0 {
 			d.Entry.ExternalIDs = p.Payload.ExternalIDs
+			// Mirror the canonical IMDB / TMDB ids onto the
+			// convenience fields. The catalog's `search` step
+			// can't afford a per-result `external_ids` lookup
+			// (TMDB quota), so non-anime entries arrive here
+			// with empty `Entry.ImdbID`. The enrich verb is the
+			// first time the IMDB id is known — propagate it so
+			// downstream consumers (the find_streams dispatch
+			// in particular) can pass it to torrentio etc.
+			if id := p.Payload.ExternalIDs["imdb"]; id != "" && d.Entry.ImdbID == "" {
+				d.Entry.ImdbID = id
+			}
+			if id := p.Payload.ExternalIDs["tmdb"]; id != "" && d.Entry.TmdbID == "" {
+				d.Entry.TmdbID = id
+			}
 		}
 		if p.Payload.SeasonCount != nil && *p.Payload.SeasonCount > 0 {
 			d.Entry.SeasonCount = *p.Payload.SeasonCount
@@ -203,6 +337,23 @@ func (d *DetailState) SelectedCastMember() *ipc.CastMember {
 }
 
 // SelectedProvider returns the provider name under the cursor, or "".
+// CurrentStreamsKey returns the EpisodeStreams map key for the streams
+// column the user is currently focused on. Movies (Streams tab) all
+// share the sentinel `{0, 0}` since they're a single addressable item;
+// series episodes are keyed by `(season, episode)`. The streams cache,
+// in-flight set, and error map all key by this value so the same
+// streaming pipeline serves both tabs without per-tab fan-outs.
+func (d *DetailState) CurrentStreamsKey() EpisodeStreamsKey {
+	if d.ActiveTab == DetailTabStreams {
+		return EpisodeStreamsKey{Season: 0, Episode: 0}
+	}
+	eps := d.Episodes[d.SeasonCursor+1]
+	if d.EpisodeCursor < 0 || d.EpisodeCursor >= len(eps) {
+		return EpisodeStreamsKey{}
+	}
+	return EpisodeStreamsKey{Season: d.SeasonCursor + 1, Episode: int(eps[d.EpisodeCursor].Episode)}
+}
+
 func (d *DetailState) SelectedProvider() string {
 	if len(d.Entry.Providers) == 0 {
 		return ""

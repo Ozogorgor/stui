@@ -514,17 +514,24 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
     // The bucket key is the same for every entry (they collapsed here).
     let key = group[0].dedup_key();
 
-    // Two-key sort: provider_priority_for_key primary (lower = better),
-    // field_completeness_score secondary (higher = better, expressed
-    // via Reverse so it sorts descending within a tier).
-    //
-    // NOTE: this intentionally diverges from the prior sort (which used
-    // field-completeness only and then `group.reverse()`-ed). With the
-    // two-key tuple-sort here, ascending is already correct
-    // (priority 0 wins; within the same priority, Reverse(score) wins),
-    // so no `.reverse()` needed.
+    // Three-key sort:
+    //   1. provider_priority_for_key — lower wins; routes Western
+    //      anchors (tmdb/tvdb/omdb) ahead of anime providers for
+    //      tmdb:/imdb:/title: keys, and the reverse for mal: keys.
+    //   2. mal_id ASC when present — within an anilist-only collapse
+    //      (multiple cours of the same show, no Western sibling),
+    //      this tie-breaks to the LOWEST mal_id, which is the
+    //      original / earliest cour. AniList ships per-cour titles
+    //      ("Show", "Show: Season 2", "Show: Final Season Part 1");
+    //      the lowest mal_id is usually the parent / canonical title
+    //      and matches what users expect to see on the card. Without
+    //      this rule, completeness alone picked the latest cour
+    //      (more populated fields → "Show: Season 2" as spine title).
+    //   3. field_completeness_score DESC — fallback when mal_id is
+    //      absent or equal. Reverse so higher completeness wins.
     group.sort_by_key(|e| (
         crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &key),
+        mal_id_sort_key(e),
         std::cmp::Reverse(field_completeness_score(e)),
     ));
     // group[0] is now the spine.
@@ -599,6 +606,20 @@ fn field_completeness_score(e: &CatalogEntry) -> usize {
     score
 }
 
+/// Sort key used by `merge_group` to break ties within a collapse
+/// bucket: parses `mal_id` as a u64 so the LOWEST mal id wins the
+/// spine slot. Entries without a mal id sort last (`u64::MAX`) so they
+/// never win the spine over a mal-tagged sibling. Parsing failures
+/// also fall back to `u64::MAX` — defensive against non-numeric ids
+/// that shouldn't exist for MAL but might leak in from misconfigured
+/// plugins.
+fn mal_id_sort_key(e: &CatalogEntry) -> u64 {
+    e.mal_id
+        .as_deref()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(u64::MAX)
+}
+
 /// If an entry has a plain `rating` string but an empty `ratings` map,
 /// try to parse the string and insert it under the provider's canonical key.
 /// Skipped for unrecognised providers — storing their values under a wrong key
@@ -623,14 +644,18 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 /// values on unknown scales so they are never used as a direct fallback.
 #[allow(dead_code)] // pub API: used by CatalogEngine and engine/mod.rs
 /// Recompute `entry.rating` from `entry.ratings` using the weight
-/// profile selected by media_type + genre. Public so post-search
-/// enrichment passes (e.g. video_enrich's OMDb fan-out) can refresh
-/// the composite headline score after injecting per-source values
-/// into the ratings map.
+/// profile selected by media_type + genre, with the user's
+/// `rating_weights` override applied on top of the static profile.
+///
+/// Public so post-search enrichment passes (music_enrich, video_enrich)
+/// can refresh the composite headline score after injecting
+/// per-source values.
 pub fn apply_weighted_rating(entry: &mut CatalogEntry) {
-    let weights = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
+    let static_profile = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
+    let overrides = USER_RATING_WEIGHTS.read().unwrap_or_else(|e| e.into_inner());
+    let merged = merge_weights(static_profile, &overrides);
 
-    if !has_sufficient_sources(&entry.ratings, weights, 1) {
+    if !has_sufficient_sources(&entry.ratings, &merged, 1) {
         tracing::debug!(
             title = %entry.title,
             "no recognised rating sources; preserving provider rating"
@@ -638,18 +663,81 @@ pub fn apply_weighted_rating(entry: &mut CatalogEntry) {
         return;
     }
 
-    let missing = missing_sources(&entry.ratings, weights);
-    if !missing.is_empty() {
-        tracing::debug!(
-            title = %entry.title,
-            active = count_active_sources(&entry.ratings, weights),
-            missing = ?missing,
-            "partial rating coverage"
-        );
-    }
-
-    if let Some(composite) = weighted_median(&entry.ratings, weights) {
+    if let Some(composite) = weighted_median(&entry.ratings, &merged) {
         entry.rating = Some(format!("{:.1}", composite));
+    }
+}
+
+/// Merge the user's per-source weight overrides onto the static
+/// per-tab profile.
+///
+/// Rules:
+/// - If a key is in both, the user weight wins (overrides static).
+/// - If a key is only in the user map, it's appended with
+///   `normalize: 1.0` (assuming plugins emit 0–10 scale, which is
+///   the convention for pre-normalised plugin output).
+/// - If a key is only in the static profile, it carries through
+///   unchanged.
+///
+/// This is what enables third-party / user-authored plugins to
+/// contribute to the composite without recompiling the runtime —
+/// install the plugin, drop a weight in `runtime.toml`, the
+/// aggregator picks the source up.
+fn merge_weights(
+    static_profile: &[RatingWeight],
+    overrides: &std::collections::HashMap<String, f64>,
+) -> Vec<RatingWeight> {
+    use std::collections::HashSet;
+    let static_keys: HashSet<&'static str> = static_profile.iter().map(|w| w.key).collect();
+    let mut out: Vec<RatingWeight> = static_profile
+        .iter()
+        .map(|w| {
+            let weight = overrides.get(w.key).copied().unwrap_or(w.weight);
+            RatingWeight {
+                key: w.key,
+                weight,
+                normalize: w.normalize,
+            }
+        })
+        .collect();
+    for (key, weight) in overrides.iter() {
+        if static_keys.contains(key.as_str()) {
+            continue;
+        }
+        if *weight == 0.0 {
+            continue;
+        }
+        // Leak the key string to obtain a 'static lifetime — the
+        // RatingWeight struct's `key: &'static str` was designed for
+        // compile-time constants; user-config keys arrive at runtime
+        // so they need to outlive the merged Vec. The leak is
+        // bounded (one-time per unique source name, low cardinality)
+        // and hot-reloading config simply re-leaks the same set.
+        let leaked: &'static str = Box::leak(key.clone().into_boxed_str());
+        out.push(RatingWeight {
+            key: leaked,
+            weight: *weight,
+            normalize: 1.0,
+        });
+    }
+    out
+}
+
+/// Process-wide overlay of user rating-source weights, sourced from
+/// `RuntimeConfig.rating_weights` at startup (and updatable later
+/// from the TUI via IPC config_update — see SCAFFOLD_TODOS §26).
+/// Empty by default — `apply_weighted_rating` falls back to pure
+/// static profile semantics. Wrapped in LazyLock because
+/// `HashMap::new()` isn't const-eligible; the lock initializes once
+/// on first read/write.
+pub static USER_RATING_WEIGHTS: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<String, f64>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+/// Replace the in-process rating-weights overlay. Called once at
+/// runtime startup and again on any future config_update IPC.
+pub fn set_user_rating_weights(weights: std::collections::HashMap<String, f64>) {
+    if let Ok(mut guard) = USER_RATING_WEIGHTS.write() {
+        *guard = weights;
     }
 }
 
@@ -1027,6 +1115,60 @@ mod tests {
     /// Part 1 appears twice (once from AniList, once from Kitsu)" bug. Both
     /// providers expose `mal_id`; the dedup key now collapses them via the
     /// MAL precedence even when titles differ (English vs romaji).
+    #[test]
+    /// Within an anilist-only collapse (multiple cours of the same
+    /// show, no Western sibling), the spine should be the cour with
+    /// the LOWEST mal_id — that's the original / earliest cour and
+    /// usually carries the canonical parent title. Without the mal_id
+    /// tie-break, completeness alone picked the latest cour and the
+    /// merged card said "Frieren: Beyond Journey's End Season 2"
+    /// instead of "Frieren: Beyond Journey's End".
+    #[test]
+    fn test_merge_picks_lowest_mal_id_as_spine_for_anilist_only_collapse() {
+        let mut s1 = make_entry(
+            "Frieren: Beyond Journey's End",
+            "",
+            None,
+            &[],
+            MediaType::Series,
+        );
+        s1.imdb_id = None;
+        // Real MAL ids: 52991 (Frieren — parent) vs 59978 (S2 cour).
+        // Parent was registered first → lower id → wins the spine
+        // slot under the lowest-mal-id tie-break.
+        s1.mal_id = Some("52991".to_string());
+        s1.tmdb_id = Some("209867".to_string());
+        s1.provider = "anilist".to_string();
+        // The S2 cour has more populated fields — without the mal_id
+        // tie-break, completeness alone would pick S2 as spine.
+        let mut s2 = make_entry(
+            "Frieren: Beyond Journey's End Season 2",
+            "",
+            Some("8.7"),
+            &[("anilist", 8.7)],
+            MediaType::Series,
+        );
+        s2.imdb_id = None;
+        s2.mal_id = Some("59978".to_string());
+        s2.tmdb_id = Some("209867".to_string());
+        s2.provider = "anilist".to_string();
+        s2.description = Some("Long cour 2 synopsis…".to_string());
+        s2.poster_url = Some("https://example/s2.jpg".to_string());
+        s2.genre = Some("Fantasy".to_string());
+
+        let merged = CatalogAggregator::new().merge(vec![s2, s1]);
+        assert_eq!(merged.len(), 1, "two anilist cours with same tmdb_id should collapse");
+        assert_eq!(
+            merged[0].title,
+            "Frieren: Beyond Journey's End",
+            "spine title should be the lowest-mal-id cour, not the latest cour with more fields",
+        );
+        // Lowest-mal-id wins as spine, but the bucket still records both
+        // providers in the comma-joined list (with dedup; identical
+        // strings collapse).
+        assert!(merged[0].provider.contains("anilist"));
+    }
+
     #[test]
     fn test_merge_collapses_anilist_kitsu_via_mal() {
         let mut anilist = make_entry("JJK Culling Game", "", None, &[], MediaType::Series);

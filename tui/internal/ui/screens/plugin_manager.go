@@ -657,7 +657,7 @@ func (m *PluginManagerScreen) viewInstalled() string {
 	sb.WriteString("\n")
 	if m.plCursor < len(m.plugins) {
 		p := m.plugins[m.plCursor]
-		sb.WriteString(pluginDetail(p.Description, p.Author))
+		sb.WriteString(pluginDetail(p.Description, p.Author, p.Tags))
 	}
 	sb.WriteString("\n  " + theme.T.KeyHint("↑↓", "navigate") + "  " + theme.T.KeyHint("enter", "actions") + "  " + theme.T.KeyHint("u", "uninstall") + "  " + theme.T.KeyHint("r", "refresh") + "\n")
 	return sb.String()
@@ -742,7 +742,10 @@ func (m *PluginManagerScreen) viewAvailable() string {
 	sb.WriteString("\n")
 	if m.avCursor < len(m.available) {
 		e := m.available[m.avCursor]
-		sb.WriteString(pluginDetail(e.Description, e.Author))
+		// Registry entries (browse-tab) don't carry manifest tags —
+		// the index sources only the manifest fields the registry
+		// repo serialises. Pass nil to suppress the tag chip line.
+		sb.WriteString(pluginDetail(e.Description, e.Author, nil))
 	}
 	// Render the unreachable-repos warning BELOW the table so it
 	// doesn't push the plugin list downward on every open. It's
@@ -822,12 +825,18 @@ func (m *PluginManagerScreen) updateAvailableTable() {
 	m.availableTable.SetData(rows)
 }
 
-// pluginDetail returns a dim one-liner with description and author for the focused row.
-func pluginDetail(desc, author string) string {
-	if desc == "" && author == "" {
+// pluginDetail returns a dim one-liner with description, author, and
+// manifest tags for the focused row. Tags surface here so plugin
+// authors and users can see at a glance which kinds the plugin
+// declared itself for — these tags drive the dynamic-discovery in
+// the metadata sources screen (movies/series/anime/music).
+func pluginDetail(desc, author string, tags []string) string {
+	if desc == "" && author == "" && len(tags) == 0 {
 		return ""
 	}
 	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	chip := lipgloss.NewStyle().Foreground(theme.T.Accent())
+
 	line := desc
 	if author != "" {
 		if line != "" {
@@ -836,7 +845,22 @@ func pluginDetail(desc, author string) string {
 			line = "by " + author
 		}
 	}
-	return "  " + dim.Render(truncate(line, 72)) + "\n"
+
+	// First line: description + author, dim-styled and width-clamped.
+	out := "  " + dim.Render(truncate(line, 72))
+
+	// Second line: tag chips, accent-styled, only when present. Done
+	// as a separate row so the tag list doesn't get truncated by the
+	// 72-char description budget.
+	if len(tags) > 0 {
+		var chips []string
+		for _, t := range tags {
+			chips = append(chips, chip.Render("["+t+"]"))
+		}
+		out += "\n  " + dim.Render("tags: ") + strings.Join(chips, " ")
+	}
+
+	return out + "\n"
 }
 
 func (m *PluginManagerScreen) updateUpdatesTable() {

@@ -724,6 +724,8 @@ struct CoverThumbnails {
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for MusicbrainzPlugin {}
+
 stui_export_catalog_plugin!(MusicbrainzPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

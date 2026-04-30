@@ -26,6 +26,7 @@ pub mod error;
 pub mod events;
 pub mod ipc;
 pub mod ipc_batcher;
+pub mod lastfm;
 pub mod logging;
 pub mod media;
 pub mod mpd_bridge;

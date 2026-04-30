@@ -114,9 +114,9 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
         }
     }
 
-    // Size limit
-    // Note: StreamInfoWire doesn't have size_bytes, so we skip this check
-    // unless we add it to the IPC type
+    // Size limit: not currently scored. `stream.size_bytes` is now
+    // populated when the provider reports it; wire it into the policy
+    // here if/when a max-size preference is added.
 
     // Avoided labels
     let haystack = format!(
@@ -202,6 +202,7 @@ mod tests {
             source: Some("BluRay".to_string()),
             hdr,
             seeders: Some(seeders),
+            size_bytes: None,
             speed_mbps: None,
             latency_ms: None,
         }

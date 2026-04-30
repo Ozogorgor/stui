@@ -601,6 +601,8 @@ impl Anime {
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for KitsuPlugin {}
+
 stui_export_catalog_plugin!(KitsuPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

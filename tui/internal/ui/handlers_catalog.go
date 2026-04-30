@@ -127,8 +127,150 @@ func (m Model) handleSearchResult(msg ipc.SearchResultMsg) (tea.Model, tea.Cmd) 
 }
 
 // handleEpisodesLoaded handles ipc.EpisodesLoadedMsg.
+//
+// The detail screen's inline Episodes tab caches per-season episode
+// lists in `DetailState.Episodes[seasonNumber]` so subsequent visits
+// to the same season don't re-fetch. EpisodesLoadFailedMsg flows
+// through the same handler tree (separate handler) and surfaces the
+// reason on `DetailState.EpisodesError` for the renderer to display.
 func (m Model) handleEpisodesLoaded(msg ipc.EpisodesLoadedMsg) (tea.Model, tea.Cmd) {
-	// Episode data arrived — forwarded automatically to EpisodeScreen via RootModel
+	if m.detail == nil {
+		return m, nil
+	}
+	if m.detail.Episodes == nil {
+		m.detail.Episodes = make(map[int][]ipc.EpisodeEntry)
+	}
+	if m.detail.EpisodesLoaded == nil {
+		m.detail.EpisodesLoaded = make(map[int]bool)
+	}
+	m.detail.Episodes[msg.Season] = msg.Episodes
+	m.detail.EpisodesLoaded[msg.Season] = true
+	delete(m.detail.EpisodesError, msg.Season)
+	delete(m.detail.EpisodesInFlight, msg.Season)
+	// Reset the per-season cursor so each season opens at row 0.
+	m.detail.EpisodeCursor = 0
+	// The streams column stays empty until the user presses Enter
+	// on a specific episode. Eager auto-dispatch was racy: when the
+	// user was just paging seasons / scrolling, the runtime would
+	// fan out searches the user didn't ask for, and stale responses
+	// fought with the user's eventual Enter.
+	return m, nil
+}
+
+// handleEpisodesLoadFailed surfaces a load failure on the inline
+// Episodes tab so the user sees something other than an indefinite
+// "Loading episodes…" spinner. Per-season-keyed so a timeout on
+// season N doesn't shadow already-loaded data for seasons the user
+// navigates back to. Clears the in-flight flag so the next visit
+// to this season retries (`maybeLoadEpisodesForTab` re-checks
+// `EpisodesLoaded[season]`, which stays false on error).
+func (m Model) handleEpisodesLoadFailed(msg ipc.EpisodesLoadFailedMsg) (tea.Model, tea.Cmd) {
+	if m.detail == nil {
+		return m, nil
+	}
+	if m.detail.EpisodesError == nil {
+		m.detail.EpisodesError = make(map[int]string)
+	}
+	m.detail.EpisodesError[msg.Season] = msg.Reason
+	delete(m.detail.EpisodesInFlight, msg.Season)
+	return m, nil
+}
+
+// handleEpisodeStreamsLoaded routes a `find_streams` response into
+// the detail state's per-episode streams cache. Keyed by
+// (season, episode) so multiple in-flight requests don't trample
+// each other when the user scrubs between episodes.
+func (m Model) handleEpisodeStreamsLoaded(msg ipc.EpisodeStreamsLoadedMsg) (tea.Model, tea.Cmd) {
+	if m.detail == nil {
+		return m, nil
+	}
+	if m.detail.EpisodeStreams == nil {
+		m.detail.EpisodeStreams = make(map[screens.EpisodeStreamsKey][]ipc.StreamInfo)
+	}
+	if m.detail.EpisodeStreamsLoaded == nil {
+		m.detail.EpisodeStreamsLoaded = make(map[screens.EpisodeStreamsKey]bool)
+	}
+	if m.detail.EpisodeStreamsError == nil {
+		m.detail.EpisodeStreamsError = make(map[screens.EpisodeStreamsKey]string)
+	}
+	key := screens.EpisodeStreamsKey{Season: msg.Season, Episode: msg.Episode}
+	delete(m.detail.EpisodeStreamsInFlight, key)
+	if msg.Err != nil {
+		// Mark this specific (season, ep) as errored AND as "loaded"
+		// so the renderer takes the error branch instead of staying
+		// on the "Searching torrents…" spinner forever.
+		m.detail.EpisodeStreamsError[key] = msg.Err.Error()
+		m.detail.EpisodeStreamsLoaded[key] = true
+		return m, nil
+	}
+	delete(m.detail.EpisodeStreamsError, key)
+	m.detail.EpisodeStreams[key] = msg.Streams
+	m.detail.EpisodeStreamsLoaded[key] = true
+	m.detail.EpisodeStreamCursor = 0
+	return m, nil
+}
+
+// handleEpisodeStreamsPartial appends one provider's contribution to
+// the per-(season, episode) cache as it arrives. Each fan-out emits
+// multiple of these — one per fast-responding plugin — followed by
+// a single `EpisodeStreamsCompleteMsg`. The user sees the column
+// fill in incrementally instead of staring at a spinner for the
+// slowest provider's wall-time.
+func (m Model) handleEpisodeStreamsPartial(msg ipc.EpisodeStreamsPartialMsg) (tea.Model, tea.Cmd) {
+	if m.detail == nil {
+		return m, nil
+	}
+	if m.detail.EpisodeStreams == nil {
+		m.detail.EpisodeStreams = make(map[screens.EpisodeStreamsKey][]ipc.StreamInfo)
+	}
+	if m.detail.EpisodeStreamsLoaded == nil {
+		m.detail.EpisodeStreamsLoaded = make(map[screens.EpisodeStreamsKey]bool)
+	}
+	key := screens.EpisodeStreamsKey{Season: msg.Season, Episode: msg.Episode}
+	// Append (don't replace) — multiple providers contribute to the
+	// same key.
+	m.detail.EpisodeStreams[key] = append(m.detail.EpisodeStreams[key], msg.Streams...)
+	// Mark as "has data" so the renderer drops the press-Enter hint
+	// even though the in-flight spinner is still up — the user sees
+	// real streams alongside the spinner while late providers
+	// (Jackett, Prowlarr) are still working.
+	m.detail.EpisodeStreamsLoaded[key] = true
+	return m, nil
+}
+
+// handleEpisodeStreamsComplete fires once the runtime has finished
+// fanning out across all providers for an (entry, season, episode).
+// Clears the in-flight flag so the spinner stops, surfaces an error
+// banner if zero providers returned anything, and finally re-orders
+// the accumulated streams by quality tier → seeders so the canonical
+// ranking applies once we know there are no more inbound partials.
+func (m Model) handleEpisodeStreamsComplete(msg ipc.EpisodeStreamsCompleteMsg) (tea.Model, tea.Cmd) {
+	if m.detail == nil {
+		return m, nil
+	}
+	key := screens.EpisodeStreamsKey{Season: msg.Season, Episode: msg.Episode}
+	delete(m.detail.EpisodeStreamsInFlight, key)
+	if msg.Err != "" {
+		if m.detail.EpisodeStreamsError == nil {
+			m.detail.EpisodeStreamsError = make(map[screens.EpisodeStreamsKey]string)
+		}
+		// Only set the error if no streams accumulated — a zero-result
+		// fan-out is the only case the runtime sends a non-empty Err.
+		// Defensive double-check against the local cache so a stray
+		// error message doesn't shadow a populated list.
+		if len(m.detail.EpisodeStreams[key]) == 0 {
+			m.detail.EpisodeStreamsError[key] = msg.Err
+			m.detail.EpisodeStreamsLoaded[key] = true
+		}
+	}
+	// Final canonical ordering: 4K first, then 1080p, then 720p, …
+	// with seeders descending as the tie-breaker inside each tier.
+	// Sort is in-place on the cached slice so the next render picks
+	// it up. Cursor stays at row 0 since the user typically wants the
+	// best stream first; explicit cursor preservation isn't needed.
+	if streams := m.detail.EpisodeStreams[key]; len(streams) > 1 {
+		screens.SortStreamsByQualityThenSeeders(streams)
+	}
 	return m, nil
 }
 
@@ -195,6 +337,7 @@ func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 		Provider:    entry.Provider,
 		Tab:         entry.Tab,
 		ImdbID:      derefStr(entry.ImdbID),
+		TmdbID:      derefStr(entry.TmdbID),
 		Providers:   []string{entry.Provider},
 	}
 	ds := screens.NewDetailState(detail)
@@ -340,6 +483,31 @@ func firstProvider(p string) string {
 		return p[:i]
 	}
 	return p
+}
+
+// episodeLookupTarget picks the best (seriesID, idSource) pair to send
+// to the runtime's `LoadEpisodes` for a detail entry. When the entry
+// carries a TMDB id (typical for spine-merged anime where the bridge
+// pulled the parent series' tmdb_id from Fribb), TMDB is preferred —
+// its episodes() verb knows the full season list, while AniList/Kitsu
+// either don't implement the verb or only know a single cour.
+//
+// Falls back to the entry's existing IDSource (or a peeled
+// "<provider>-<id>" prefix) for entries that don't have a TMDB
+// anchor — preserves the old behaviour for non-anime series.
+func episodeLookupTarget(ds *screens.DetailState) (seriesID, idSource string) {
+	if ds.Entry.TmdbID != "" {
+		return "tmdb-" + ds.Entry.TmdbID, "tmdb"
+	}
+	idSource = ds.Entry.IDSource
+	if idSource == "" {
+		if prefix, _, ok := splitProviderPrefix(ds.Entry.ID); ok {
+			idSource = prefix
+		} else {
+			idSource = firstProvider(ds.Entry.Provider)
+		}
+	}
+	return ds.Entry.ID, idSource
 }
 
 // relatedItemToCatalogEntry reshapes a RelatedItemWire into the

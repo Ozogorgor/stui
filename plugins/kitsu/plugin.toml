@@ -4,6 +4,7 @@ name         = "kitsu"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Kitsu — anime metadata (movies + series)"
+tags         = ["anime"]
 
 [env]
 KITSU_API_KEY = ""

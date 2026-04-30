@@ -36,6 +36,14 @@ fn ttl_for(verb: MetadataVerb) -> Duration {
     }
 }
 
+/// TTL for an empty / failed-fan-out result. Short enough that a
+/// transient upstream outage (TMDB rate-limiting, TVDB blip) recovers
+/// quickly on the user's next detail open, long enough that rapid
+/// re-opens during the outage don't re-hammer the source. Without
+/// this, an empty result wasn't cached at all — every re-open
+/// re-fired the full fan-out and re-hit the throttled provider.
+const NEGATIVE_TTL: Duration = Duration::from_secs(60);
+
 #[derive(Clone)]
 pub struct MetadataCache {
     inner: Arc<RwLock<HashMap<MetadataCacheKey, Ttl<MetadataPayload>>>>,
@@ -74,6 +82,16 @@ impl MetadataCache {
     pub async fn insert(&self, key: MetadataCacheKey, payload: MetadataPayload) {
         let ttl = self.override_ttl.unwrap_or_else(|| ttl_for(key.verb));
         debug!(verb = ?key.verb, id = %key.id, "metadata cache INSERT");
+        self.inner.write().await.insert(key, Ttl::new(payload, ttl));
+    }
+
+    /// Cache a placeholder result (typically `MetadataPayload::Empty`)
+    /// with a short TTL. Used when the fan-out timed out / errored on
+    /// every source, so we don't keep beating on a throttled upstream
+    /// every time the user re-opens the detail.
+    pub async fn insert_negative(&self, key: MetadataCacheKey, payload: MetadataPayload) {
+        let ttl = self.override_ttl.unwrap_or(NEGATIVE_TTL);
+        debug!(verb = ?key.verb, id = %key.id, "metadata cache INSERT (negative)");
         self.inner.write().await.insert(key, Ttl::new(payload, ttl));
     }
 

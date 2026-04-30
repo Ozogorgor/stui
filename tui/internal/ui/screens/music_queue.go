@@ -59,23 +59,31 @@ type MusicQueueScreen struct {
 
 	// Now-playing state from MpdStatusMsg
 	nowState    string  // "play" | "pause" | "stop"
-	nowRepeat   bool
-	nowSingle   bool
-	nowRandom   bool
-	nowElapsed  float64
-	nowDuration float64
+	nowSong     int     // queue index of now-playing track
+	nowDuration float64 // seconds; 0 when unknown
+	nowElapsed  float64 // seconds; 0 when unknown
 	nowVolume   uint32
 	prevVolume  uint32 // saved before local mute toggle
 	nowMuted    bool
+	nowRepeat   bool
+	nowSingle   bool
+	nowRandom   bool
 
-	// Visualizer reference — set by MusicScreen.SetVisualizer
-	visualizer *components.Visualizer
+	visualizer   *components.Visualizer // nil when disabled; non-nil when active
 
 	// IDs we've already asked MPD to delete via auto-dedup but which
 	// still appear in the latest queue refresh (MPD hasn't applied yet).
 	// Prevents a fast-refresh loop from re-firing deleteid for the same
 	// ID, which produces "No such song" warnings in runtime.log.
 	removalsInFlight map[uint32]struct{}
+}
+
+const queueDoubleClickThreshold = 300 * time.Millisecond
+
+// queueLastClick tracks the last click position and time for double-click detection.
+var queueLastClick struct {
+	x, y    int
+	time    time.Time
 }
 
 // NewMusicQueueScreen creates a new queue screen and triggers the initial fetch.
@@ -1196,6 +1204,27 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 	idx := scroll + trackRow
 	if idx >= 0 && idx < len(s.tracks) {
 		s.cursor = idx
+
+		// Check for double-click (same position within threshold)
+		isDoubleClick := (x == queueLastClick.x && trackRow == queueLastClick.y) &&
+			time.Since(queueLastClick.time) < queueDoubleClickThreshold
+		queueLastClick.x = x
+		queueLastClick.y = trackRow
+		queueLastClick.time = time.Now()
+
+		// Double-click plays the track (same as Enter)
+		if isDoubleClick {
+			return s.queuePlayAt(idx)
+		}
+	}
+	return s
+}
+
+// queuePlayAt plays the track at the given index in the queue.
+func (s MusicQueueScreen) queuePlayAt(idx int) MusicQueueScreen {
+	if idx >= 0 && idx < len(s.tracks) && s.client != nil {
+		trackID := s.tracks[idx].ID
+		s.client.MpdCmd("mpd_play_id", map[string]any{"id": trackID})
 	}
 	return s
 }

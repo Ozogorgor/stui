@@ -108,6 +108,12 @@ pub use v1::{
     MpdQueueTrackWire,
     MpdSavedPlaylistWire,
     MpdSongWire,
+    // Lastfm direct-fetch types
+    LastfmAlbumTrackWire,
+    LastfmAlbumTracksRequest,
+    LastfmAlbumTracksResponse,
+    MetadataPluginsForKindRequest,
+    MetadataPluginsForKindResponse,
 
     PlayRequest,
     // New typed command types
@@ -163,6 +169,8 @@ pub use v1::{
     StreamInfoWire,
     StreamPolicyResponse,
     StreamPreferencesWire,
+    StreamsCompleteWire,
+    StreamsPartialWire,
     StreamsResponse,
     SubtitleTrack,
     UnloadPluginRequest,

@@ -7,6 +7,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -17,6 +18,14 @@ import (
 	"github.com/stui/stui/internal/ui/screens"
 	"github.com/stui/stui/pkg/theme"
 )
+
+// lastClick tracks the last click position and time for double-click detection.
+var lastClick struct {
+	x, y    int
+	time    time.Time
+}
+
+const doubleClickThreshold = 300 * time.Millisecond
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mouse := msg.Mouse()
@@ -60,12 +69,12 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.state.ActiveTab == state.TabMusic {
-			// Relay to music screen with Y relative to music content (after top bar).
-			relY := y - topBarY - topBarTotalRows - 1 // -1 for MainCardStyle top border
+			// Music content starts after: overlay rows (topBarY) + topbar (4) + gap (1)
+			// The sub-tab bar is at row 0 of the MusicScreen area.
+			relY := y - topBarY - topBarTotalRows
 			prev := m.musicScreen.ActiveSubTab()
 			var cmd tea.Cmd
-			cardX := x - 3 // subtract MainCardStyle left offset (margin+border+padding)
-			m.musicScreen, cmd = m.musicScreen.HandleMouse(cardX, relY)
+			m.musicScreen, cmd = m.musicScreen.HandleMouse(x, relY)
 			if m.musicScreen.ActiveSubTab() != prev {
 				return m, tea.Batch(cmd, m.sessionSaveCmd())
 			}
@@ -75,6 +84,79 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.collectionsScreen, cmd = m.collectionsScreen.Update(msg)
 			return m, cmd
+		}
+		// Detail screen tab-bar click routing. The tab bar sits at a
+		// known offset below the header (poster + info column) inside
+		// the MainCardStyle frame. The header rows are
+		// `detailPosterHeight + 4` tall; the tab bar's clickable label
+		// row is the second of the three-row tab bar. Account for:
+		//   - overlay rows (toast, mpd hud, etc.) → topBarY
+		//   - top tab bar (5 rows) — topBarTotalRows
+		//   - MainCardStyle border-top (1) + padding (0)
+		//   - header rows (detailPosterHeight + 4 = 18)
+		//   - tab bar border-top (1)
+		//   - label row at offset +1 inside tab bar
+		// Detail screen also uses `MainCardStyle` margin(1)+border(1) =
+		// 2 cols of left chrome, so x is shifted right by 2.
+		if m.screen == screenDetail && m.detail != nil {
+			const detailHeaderH = 18 // detailPosterHeight (14) + 4
+			const cardChromeRows = 1 // MainCardStyle border-top
+			tabLabelRow := topBarY + topBarTotalRows + cardChromeRows + detailHeaderH + 1
+			if y == tabLabelRow {
+				cardX := x - 2 // MainCardStyle margin(1) + border(1)
+				if cardX < 0 {
+					return m, nil
+				}
+				if tab, ok := m.detail.HitTestDetailTabBar(cardX); ok {
+					m.detail.ActiveTab = tab
+					m.detail.Focus = defaultFocusForTab(tab)
+					return m, m.maybeLoadEpisodesForTab(m.detail)
+				}
+			}
+			return m, nil
+		}
+		// Movies/Series mouse handling: calculate relative coordinates
+		// and update grid cursor based on click position.
+		// Only handle grid mouse clicks when NOT in detail view (screenDetail)
+		// When viewing a series/movie detail (Episode screen), mouse should be handled there.
+		if m.screen != screenDetail && (m.state.ActiveTab == state.TabMovies || m.state.ActiveTab == state.TabSeries) {
+			// Calculate relative Y to the grid area.
+			// Main content starts after topbar (topBarY + topBarTotalRows + 1 for border)
+			contentStartY := topBarY + topBarTotalRows + 1
+			relY := y - contentStartY
+			cardX := x - 2 // MainCardStyle: margin(1) + border(1), cards start here
+			
+			// If click is within valid grid area, update cursor.
+			if relY >= 0 && cardX >= 0 {
+				// Get actual card dimensions from components (same as grid rendering)
+				rowH := components.CardTotalRows
+				cols := components.CardColumns
+				cardW := components.CardWidth(m.innerWidth())
+				
+				// Calculate grid position from click coordinates.
+				row := relY / rowH
+				col := cardX / cardW
+				
+				// Calculate cursor index from row/col.
+				idx := row*cols + col
+				entries := m.currentGridEntries()
+				if idx >= 0 && idx < len(entries) {
+					// Check for double-click (same position within threshold)
+					isDoubleClick := (x == lastClick.x && y == lastClick.y) && 
+						time.Since(lastClick.time) < doubleClickThreshold
+					lastClick.x = x
+					lastClick.y = y
+					lastClick.time = time.Now()
+					
+					m.gridCursor = screens.GridCursor{Row: row, Col: col}
+					
+					// Double-click opens detail (same as Enter)
+					if isDoubleClick {
+						return m, m.openDetail(entries[idx])
+					}
+				}
+			}
+			return m, nil
 		}
 		if m.screen == screenList {
 			// Click on a result row in the list view.

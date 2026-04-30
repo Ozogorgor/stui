@@ -25,7 +25,7 @@ use serde::Deserialize;
 
 use stui_plugin_sdk::{
     parse_manifest,
-    cache_get, error_codes, http_get, log_url,
+    cache_get, cache_set, error_codes, http_get, log_url,
     id_sources, normalize_crew_role,
     plugin_error, plugin_info,
     stui_export_catalog_plugin,
@@ -228,7 +228,14 @@ struct TvItem {
     original_language: Option<String>,
 }
 
-/// Direct-lookup payload for `/movie/{id}?append_to_response=external_ids`.
+/// Bundled payload for `/movie/{id}?append_to_response=external_ids,images,credits,recommendations`.
+///
+/// All four verb-specific endpoints (`lookup`, `artwork`, `credits`, `related`)
+/// pull from this single response when the bundle is in the persistent cache,
+/// collapsing the per-detail-card hit on the TMDB metadata API from 4 to 1
+/// (or 0 on a cache hit). The sub-resources are `Option` because callers
+/// fall back to per-endpoint fetches if a bundle-style cached payload
+/// doesn't carry them (e.g. on schema migration or older cache entries).
 #[derive(Debug, Deserialize)]
 struct MovieDetail {
     id: u64,
@@ -249,9 +256,16 @@ struct MovieDetail {
     imdb_id: Option<String>,
     #[serde(default)]
     external_ids: Option<ExternalIds>,
+    #[serde(default)]
+    images: Option<ImagesResponse>,
+    #[serde(default)]
+    credits: Option<CreditsPayload>,
+    #[serde(default)]
+    recommendations: Option<PagedResponse<MovieItem>>,
 }
 
-/// Direct-lookup payload for `/tv/{id}?append_to_response=external_ids`.
+/// Bundled payload for `/tv/{id}?append_to_response=external_ids,images,credits,recommendations`.
+/// See `MovieDetail` for rationale.
 #[derive(Debug, Deserialize)]
 struct TvDetail {
     id: u64,
@@ -273,6 +287,40 @@ struct TvDetail {
     /// falls back to a single-season default.
     #[serde(default)]
     number_of_seasons: Option<u32>,
+    #[serde(default)]
+    images: Option<ImagesResponse>,
+    #[serde(default)]
+    credits: Option<CreditsPayload>,
+    #[serde(default)]
+    recommendations: Option<PagedResponse<TvItem>>,
+}
+
+/// Bundle path & query parameters for the `append_to_response` super-call.
+const BUNDLE_APPEND: &str =
+    "append_to_response=external_ids,images,credits,recommendations";
+
+/// Cache key for the persistent bundle response. Keyed on (kind_path, id) so
+/// movies and series with overlapping numeric ids don't trample each other.
+fn bundle_cache_key(kind_path: &str, id: &str) -> String {
+    format!("tmdb_bundle:{}:{}", kind_path, id)
+}
+
+/// Persistent cache TTL info isn't exposed to plugins — the runtime owns it.
+/// We just `cache_set` the raw JSON; callers `cache_get` first and fall through
+/// to the network on a miss. On the network path the response is re-stashed.
+///
+/// `kind_path` is `"movie"` or `"tv"` — used both as the URL fragment and as
+/// the cache key disambiguator.
+fn fetch_bundle_raw(kind_path: &str, id: &str, api_key: &str) -> Result<String, String> {
+    let cache_key = bundle_cache_key(kind_path, id);
+    if let Some(cached) = cache_get(&cache_key) {
+        return Ok(cached);
+    }
+    let path = format!("/{kind_path}/{id}");
+    let url = build_url(&path, BUNDLE_APPEND, api_key);
+    let body = http_get(&url).map_err(|e| e.to_string())?;
+    cache_set(&cache_key, &body);
+    Ok(body)
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,7 +347,7 @@ struct FindResponse {
     tv_results: Vec<TvItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct ImagesResponse {
     #[serde(default)]
     posters: Vec<ImageInfo>,
@@ -316,7 +364,7 @@ struct ImageInfo {
     height: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct CreditsPayload {
     #[serde(default)]
     cast: Vec<CastEntry>,
@@ -570,9 +618,9 @@ impl CatalogPlugin for TmdbPlugin {
 
         match req.id_source.as_str() {
             id_sources::TMDB => {
-                let path = match req.kind {
-                    EntryKind::Movie => format!("/movie/{}", req.id),
-                    EntryKind::Series | EntryKind::Episode => format!("/tv/{}", req.id),
+                let kind_path = match req.kind {
+                    EntryKind::Movie => "movie",
+                    EntryKind::Series | EntryKind::Episode => "tv",
                     _ => {
                         return PluginResult::err(
                             error_codes::UNSUPPORTED_SCOPE,
@@ -580,8 +628,10 @@ impl CatalogPlugin for TmdbPlugin {
                         );
                     }
                 };
-                let url = build_url(&path, "append_to_response=external_ids", &api_key);
-                let body = match http_get(&url) {
+                // Goes through the persistent bundle cache. First call for
+                // an entry hits the network; subsequent lookup/artwork/
+                // credits/related calls all share the cached payload.
+                let body = match fetch_bundle_raw(kind_path, &req.id, &api_key) {
                     Ok(b) => b,
                     Err(e) => return PluginResult::Err(classify_http_err(&e)),
                 };
@@ -788,9 +838,9 @@ impl CatalogPlugin for TmdbPlugin {
             Ok(k) => k.to_string(),
             Err(e) => return PluginResult::Err(e),
         };
-        let path = match req.kind {
-            EntryKind::Movie => format!("/movie/{}/images", req.id),
-            EntryKind::Series | EntryKind::Episode => format!("/tv/{}/images", req.id),
+        let kind_path = match req.kind {
+            EntryKind::Movie => "movie",
+            EntryKind::Series | EntryKind::Episode => "tv",
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -798,14 +848,25 @@ impl CatalogPlugin for TmdbPlugin {
                 );
             }
         };
-        let url = build_url(&path, "", &api_key);
-        let body = match http_get(&url) {
+        // Pull the bundled response first (cached). The `images` sub-field
+        // carries everything `/movie/{id}/images` would have returned; we
+        // only fall back to a dedicated `/images` request if the bundle
+        // somehow lacks it (older cache entries from before the bundle
+        // schema, deserialise hiccup, …).
+        let body = match fetch_bundle_raw(kind_path, &req.id, &api_key) {
             Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
-        let images: ImagesResponse = match parse_json(&body) {
-            Ok(r) => r,
-            Err(e) => return PluginResult::Err(e),
+        let images: ImagesResponse = if req.kind == EntryKind::Movie {
+            match parse_json::<MovieDetail>(&body) {
+                Ok(d) => d.images.unwrap_or_default(),
+                Err(e) => return PluginResult::Err(e),
+            }
+        } else {
+            match parse_json::<TvDetail>(&body) {
+                Ok(d) => d.images.unwrap_or_default(),
+                Err(e) => return PluginResult::Err(e),
+            }
         };
 
         // Build a variant list. For a specific requested size, emit one URL
@@ -843,9 +904,9 @@ impl CatalogPlugin for TmdbPlugin {
             Ok(k) => k.to_string(),
             Err(e) => return PluginResult::Err(e),
         };
-        let path = match req.kind {
-            EntryKind::Movie => format!("/movie/{}/credits", req.id),
-            EntryKind::Series | EntryKind::Episode => format!("/tv/{}/credits", req.id),
+        let kind_path = match req.kind {
+            EntryKind::Movie => "movie",
+            EntryKind::Series | EntryKind::Episode => "tv",
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -853,14 +914,21 @@ impl CatalogPlugin for TmdbPlugin {
                 );
             }
         };
-        let url = build_url(&path, "", &api_key);
-        let body = match http_get(&url) {
+        // Bundle-cached: see lookup() / get_artwork() for the rationale.
+        let body = match fetch_bundle_raw(kind_path, &req.id, &api_key) {
             Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
-        let payload: CreditsPayload = match parse_json(&body) {
-            Ok(p) => p,
-            Err(e) => return PluginResult::Err(e),
+        let payload: CreditsPayload = if req.kind == EntryKind::Movie {
+            match parse_json::<MovieDetail>(&body) {
+                Ok(d) => d.credits.unwrap_or_default(),
+                Err(e) => return PluginResult::Err(e),
+            }
+        } else {
+            match parse_json::<TvDetail>(&body) {
+                Ok(d) => d.credits.unwrap_or_default(),
+                Err(e) => return PluginResult::Err(e),
+            }
         };
 
         let cast: Vec<CastMember> = payload
@@ -904,12 +972,9 @@ impl CatalogPlugin for TmdbPlugin {
             _ => return PluginResult::ok(RelatedResponse { items: Vec::new() }),
         }
 
-        let (path, entry_kind) = match req.kind {
-            EntryKind::Movie => (format!("/movie/{}/recommendations", req.id), EntryKind::Movie),
-            EntryKind::Series | EntryKind::Episode => (
-                format!("/tv/{}/recommendations", req.id),
-                EntryKind::Series,
-            ),
+        let (kind_path, entry_kind) = match req.kind {
+            EntryKind::Movie => ("movie", EntryKind::Movie),
+            EntryKind::Series | EntryKind::Episode => ("tv", EntryKind::Series),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -917,36 +982,40 @@ impl CatalogPlugin for TmdbPlugin {
                 );
             }
         };
-        let url = build_url(&path, "page=1", &api_key);
-        let body = match http_get(&url) {
+        // Bundle-cached: see lookup() for the rationale. The bundle's
+        // recommendations sub-field carries the same `results` page
+        // /recommendations would have returned (page 1 only — TMDB's
+        // append_to_response gives us the first page, which is all the
+        // detail card needs anyway).
+        let body = match fetch_bundle_raw(kind_path, &req.id, &api_key) {
             Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
         let limit = if req.limit == 0 { 20 } else { req.limit as usize };
-        // Deserialize per endpoint: the path already encodes whether this is a
-        // movie or TV recommendations call, so we know the concrete item type.
         let items: Vec<PluginEntry> = if entry_kind == EntryKind::Movie {
-            let paged: PagedResponse<MovieItem> = match parse_json(&body) {
-                Ok(p) => p,
+            match parse_json::<MovieDetail>(&body) {
+                Ok(d) => d
+                    .recommendations
+                    .map(|p| p.results)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .take(limit)
+                    .map(|m| m.into_entry(entry_kind))
+                    .collect(),
                 Err(e) => return PluginResult::Err(e),
-            };
-            paged
-                .results
-                .into_iter()
-                .take(limit)
-                .map(|m| m.into_entry(entry_kind))
-                .collect()
+            }
         } else {
-            let paged: PagedResponse<TvItem> = match parse_json(&body) {
-                Ok(p) => p,
+            match parse_json::<TvDetail>(&body) {
+                Ok(d) => d
+                    .recommendations
+                    .map(|p| p.results)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .take(limit)
+                    .map(|t| t.into_entry(entry_kind))
+                    .collect(),
                 Err(e) => return PluginResult::Err(e),
-            };
-            paged
-                .results
-                .into_iter()
-                .take(limit)
-                .map(|t| t.into_entry(entry_kind))
-                .collect()
+            }
         };
         PluginResult::ok(RelatedResponse { items })
     }
@@ -1108,6 +1177,8 @@ fn genre_name(id: u32) -> &'static str {
 }
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
+
+impl stui_plugin_sdk::StreamProvider for TmdbPlugin {}
 
 stui_export_catalog_plugin!(TmdbPlugin);
 

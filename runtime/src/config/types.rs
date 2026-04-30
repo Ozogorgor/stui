@@ -187,6 +187,30 @@ pub struct RuntimeConfig {
     /// Off by default — must be explicitly enabled by the user.
     #[serde(default)]
     pub adult_content_enabled: bool,
+
+    /// Per-source rating weights, used by the catalog aggregator to
+    /// compose a weighted-median composite score. Keys are source
+    /// names (`"discogs"`, `"musicbrainz"`, `"lastfm"`, `"imdb"`,
+    /// `"tomatometer"`, `"metacritic"`, `"tmdb"`, …) and
+    /// values are weights (typical range 0.0–2.0; 0.0 disables a
+    /// source entirely). User overrides override the static
+    /// per-tab profile defaults; sources not present in any static
+    /// profile (e.g. an installed third-party plugin) become active
+    /// when given a non-zero weight here. Mirrors the TUI side's
+    /// `Providers.RatingSourceWeights` and is the runtime's source
+    /// of truth for aggregator overrides.
+    ///
+    /// Important: a missing `[rating_weights]` block in runtime.toml
+    /// MUST fall back to the curated defaults — not an empty map —
+    /// otherwise music sources (discogs/MB/lastfm) sit outside
+    /// the static per-tab profile (which only knows imdb/tmdb/etc.)
+    /// and `weighted_median` finds zero recognised sources, leaving
+    /// `entry.rating` empty even when every plugin returned data.
+    /// The function path here ensures defaults survive partial-config
+    /// files; they only get overridden when the user explicitly
+    /// writes a `[rating_weights]` section.
+    #[serde(default = "defaults::rating_weights")]
+    pub rating_weights: std::collections::HashMap<String, f64>,
 }
 
 /// Storage directory configuration for different media types.
@@ -329,6 +353,32 @@ pub struct StreamingConfig {
     /// Enable stream benchmarking (latency + throughput probing before playback).
     #[serde(default)]
     pub benchmark_streams: bool,
+
+    /// Drop torrent candidates below this seeder count before they reach
+    /// the picker. Default 5 — matches the heuristic that a single-digit
+    /// swarm rarely produces a usable download. Set to 0 to disable.
+    #[serde(default = "defaults::min_seeders")]
+    pub min_seeders: u32,
+
+    /// When true, streams whose seeder count is unknown (None — common
+    /// for direct HTTP / debrid CDN URLs and for plugins whose feed
+    /// shape doesn't surface a seeder field) are also filtered out.
+    /// Default false — unknowns pass through, since most non-torrent
+    /// streams legitimately don't have a seeder count. Useful as a
+    /// debug switch when troubleshooting why a plugin's results show
+    /// no `↑N` indicator: flip this on, see which providers' streams
+    /// disappear.
+    #[serde(default)]
+    pub require_seeders: bool,
+
+    /// When true, streams whose resolution couldn't be extracted from
+    /// the release title (StreamQuality::Unknown) are filtered out.
+    /// Default false — unknowns pass through. Most release titles
+    /// include a resolution tag (1080p, 4K, 720p, …) so an unknown
+    /// usually signals a mis-tagged or incomplete release; filtering
+    /// them out keeps the picker focused on the comparable options.
+    #[serde(default)]
+    pub require_resolution: bool,
 }
 
 impl Default for StreamingConfig {
@@ -339,6 +389,9 @@ impl Default for StreamingConfig {
             max_candidates: defaults::max_candidates(),
             auto_fallback: defaults::auto_fallback(),
             benchmark_streams: false,
+            min_seeders: defaults::min_seeders(),
+            require_seeders: false,
+            require_resolution: false,
         }
     }
 }
@@ -517,8 +570,18 @@ pub struct MusicConfig {
 /// Per-kind metadata source priority lists (`[metadata.sources]` section).
 ///
 /// Each kind (movies, series, anime, music) has an ordered list of source
-/// identifiers. The enrichment pipeline consults sources in order, stopping
-/// at the first one that returns a usable result (per verb).
+/// identifiers — these are the user's preferences for which plugin should
+/// be consulted first, second, etc. **The list is no longer exhaustive**:
+/// any plugin in the registry whose manifest tags it for this kind is
+/// also discovered and joins the fan-out at the tail (after the priority
+/// items). This means a third-party plugin only needs the right
+/// `tags = ["movies"]` etc. in its plugin.toml to contribute to the
+/// detail-card metadata pipeline — no runtime config edit required.
+///
+/// To opt a plugin OUT of a specific kind's fan-out (e.g. "I have
+/// AniList installed for anime but I don't want it polluting movies"),
+/// add it to `<kind>_disabled`. The disabled list takes precedence over
+/// both priority and discovery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataSources {
     #[serde(default = "defaults::metadata_sources_movies")]
@@ -529,6 +592,20 @@ pub struct MetadataSources {
     pub anime: Vec<String>,
     #[serde(default = "defaults::metadata_sources_music")]
     pub music: Vec<String>,
+
+    // ── Per-kind opt-out lists ────────────────────────────────────────
+    // Plugins listed here are excluded from the corresponding kind's
+    // detail-card metadata fan-out, regardless of whether they appear
+    // in the priority list or were auto-discovered via manifest tags.
+    // Default empty — most users won't touch these.
+    #[serde(default)]
+    pub movies_disabled: Vec<String>,
+    #[serde(default)]
+    pub series_disabled: Vec<String>,
+    #[serde(default)]
+    pub anime_disabled: Vec<String>,
+    #[serde(default)]
+    pub music_disabled: Vec<String>,
 }
 
 impl Default for MetadataSources {
@@ -538,6 +615,10 @@ impl Default for MetadataSources {
             series: defaults::metadata_sources_series(),
             anime:  defaults::metadata_sources_anime(),
             music:  defaults::metadata_sources_music(),
+            movies_disabled: Vec::new(),
+            series_disabled: Vec::new(),
+            anime_disabled:  Vec::new(),
+            music_disabled:  Vec::new(),
         }
     }
 }
@@ -669,6 +750,7 @@ impl Default for RuntimeConfig {
             debug_mode: false,
             tests_enabled: false,
             adult_content_enabled: false,
+            rating_weights: defaults::rating_weights(),
         }
     }
 }
@@ -700,6 +782,33 @@ mod defaults {
     }
     pub fn theme_mode() -> String {
         "dark".to_string()
+    }
+
+    /// Default rating-source weights — one per "well-known" source
+    /// the catalog aggregator can blend. Equal-weighted for sane
+    /// out-of-the-box behaviour; users tune in runtime.toml's
+    /// `rating_weights` block (or the Settings UI).
+    /// Plugins emitting unknown source keys (e.g. a future
+    /// user-authored rating plugin) become active the moment they
+    /// appear here with a non-zero weight.
+    pub fn rating_weights() -> std::collections::HashMap<String, f64> {
+        [
+            // Music sources
+            ("discogs",      1.0),
+            ("musicbrainz",  0.7),
+            ("lastfm",       0.5), // synthetic from listener count — useful but coarser
+            // Movie/series sources (existing static profile keys)
+            ("imdb",         1.0),
+            ("tomatometer",  1.0),
+            ("metacritic",   1.0),
+            ("audience_score", 0.8),
+            ("tmdb",         0.7),
+            ("anilist",      0.0),
+            ("kitsu",        0.0),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v as f64))
+        .collect()
     }
 
     /// Default fraction of Movies/Series grid dedicated to anime-dominant
@@ -735,6 +844,14 @@ mod defaults {
     }
     pub fn auto_fallback() -> bool {
         true
+    }
+    pub fn min_seeders() -> u32 {
+        // Empirical floor: anything ≤5 seeders rarely produces a usable
+        // download in practice. Surfacing those streams just clutters
+        // the picker — the user has to rifle past dead torrents to
+        // find playable ones. Override to 0 in runtime.toml to disable
+        // the filter entirely.
+        5
     }
 
     // SubtitlesConfig defaults

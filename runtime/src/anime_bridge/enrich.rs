@@ -1,13 +1,14 @@
 //! Pre-dedup enrichment helper. Called from `search_catalog_entries`
 //! (catalog/recommendation grid path) and `run_one_scope` (scoped
 //! music-tab search path) before the merge functions run, so the
-//! existing α `dedup_key` precedence (mal → imdb → title) collapses
-//! cross-tier dupes that were previously stranded on different keys.
+//! `dedup_key` precedence collapses cross-tier dupes that were
+//! previously stranded on different keys.
 //!
-//! Constrained to the three id fields that exist on `MediaEntry`
-//! post-α: `mal_id`, `imdb_id`, `tmdb_id`. `tvdb_id`, `anilist_id`,
-//! `kitsu_id` are not yet typed fields on `MediaEntry`; if a future
-//! task adds them this helper will be extended in the same shape.
+//! Looks up the bridge by any of mal/imdb/tmdb/anilist/kitsu ids and
+//! fills the missing peers on the entry. Western-tier ids (imdb,
+//! tmdb) feeding Series-tab entries enables the spine-merge path —
+//! cours of the same show share a parent series' tmdb_id in Fribb,
+//! so all cours collapse into one bucket once enriched.
 //!
 //! Defensive: never overwrites a value the provider already supplied.
 
@@ -20,15 +21,27 @@ use std::sync::Arc;
 /// Idempotent — running twice is a no-op the second time.
 ///
 /// Lookup order (first-hit-wins):
-///   1. mal_id   → bridge.lookup_by_mal
-///   2. imdb_id  → bridge.lookup_by_imdb
-///   3. tmdb_id  → bridge.lookup_by_tmdb
+///   1. mal_id      → bridge.lookup_by_mal
+///   2. anilist_id  → bridge.lookup_by_anilist
+///   3. kitsu_id    → bridge.lookup_by_kitsu
+///   4. imdb_id     → bridge.lookup_by_imdb
+///   5. tmdb_id     → bridge.lookup_by_tmdb
+///
+/// Anime-tier ids come first because they're more discriminating —
+/// kitsu's catalog search omits MAL mappings for some entries, but
+/// the kitsu_id itself is always present and lets us pull the parent
+/// series' tmdb_id from Fribb. Without anilist/kitsu lookups, the
+/// "Sousou no Frieren" Kitsu entry stayed at title:year dedup and
+/// failed to collapse with the AniList cours that had bridge-set
+/// tmdb_id.
 ///
 /// If no foreign id is present, or none resolves in the bridge,
 /// the entry is left unchanged.
 pub fn enrich_entry(entry: &mut MediaEntry, bridge: &AnimeBridge) {
     let record: Option<Arc<AnimeRecord>> =
         entry.mal_id.as_deref().and_then(|id| bridge.lookup_by_mal(id))
+        .or_else(|| entry.anilist_id.as_deref().and_then(|id| bridge.lookup_by_anilist(id)))
+        .or_else(|| entry.kitsu_id.as_deref().and_then(|id| bridge.lookup_by_kitsu(id)))
         .or_else(|| entry.imdb_id.as_deref().and_then(|id| bridge.lookup_by_imdb(id)))
         .or_else(|| entry.tmdb_id.as_deref().and_then(|id| bridge.lookup_by_tmdb(id)));
 
@@ -37,9 +50,11 @@ pub fn enrich_entry(entry: &mut MediaEntry, bridge: &AnimeBridge) {
     // Fill ONLY missing fields. Provider-supplied values always win
     // (defensive — never trust the bridge's data over a provider's
     // own).
-    if entry.mal_id.is_none()  { entry.mal_id  = r.mal_id.clone(); }
-    if entry.imdb_id.is_none() { entry.imdb_id = r.imdb_id.clone(); }
-    if entry.tmdb_id.is_none() { entry.tmdb_id = r.tmdb_id.clone(); }
+    if entry.mal_id.is_none()     { entry.mal_id     = r.mal_id.clone(); }
+    if entry.anilist_id.is_none() { entry.anilist_id = r.anilist_id.clone(); }
+    if entry.kitsu_id.is_none()   { entry.kitsu_id   = r.kitsu_id.clone(); }
+    if entry.imdb_id.is_none()    { entry.imdb_id    = r.imdb_id.clone(); }
+    if entry.tmdb_id.is_none()    { entry.tmdb_id    = r.tmdb_id.clone(); }
 }
 
 /// Spine selector consulted by both merge functions

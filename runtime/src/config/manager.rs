@@ -104,25 +104,48 @@ impl ConfigManager {
     ///
     /// API key changes (`api_keys.*`) are automatically persisted to disk.
     pub async fn set(&self, key: &str, value: Value) -> Result<()> {
-        {
+        let weights_snapshot = {
             let mut cfg = self.config.write().await;
             apply_key(&mut cfg, key, &value)?;
-        }
+            // Snapshot the rating_weights map only when the change
+            // touched it — so we don't pay a clone on every keystroke.
+            if key == "rating_weights" || key.starts_with("rating_weights.") {
+                Some(cfg.rating_weights.clone())
+            } else {
+                None
+            }
+        };
 
         info!(key, value = %value, "config updated");
+
+        // Push rating-weight changes to the catalog aggregator's
+        // process-wide overlay so subsequent enrichment passes use
+        // the new values immediately. The overlay lives outside the
+        // config bus because it's a hot-path read by every
+        // `apply_weighted_rating` call — going through the event bus
+        // would add a lock + lookup per entry.
+        if let Some(weights) = weights_snapshot {
+            crate::catalog_engine::aggregator::set_user_rating_weights(weights);
+        }
 
         self.bus.emit(RuntimeEvent::ConfigChanged {
             key:   key.to_string(),
             value: value.to_string(),
         });
 
-        // Persist API key, plugin config, and user-preference changes so they survive restarts.
-        if key.starts_with("api_keys.") || key.starts_with("plugins.") || key.starts_with("app.") {
-            self.persist().await.map_err(|e| {
-                warn!(key, error = %e, "failed to persist config after plugin config update");
-                e
-            })?;
-        }
+        // Persist every successful change. The settings UI is the only
+        // caller of `set()`, and it represents user intent — there is
+        // no "this setting is session-only" category. The previous
+        // hand-maintained allowlist (api_keys / plugins / app /
+        // rating_weights / metadata_sources) silently dropped
+        // `streaming.*`, `subtitles.*`, and `playback.*` writes on
+        // restart, so toggles like `streaming.min_seeders` filtered
+        // the current session and then reverted next launch — looking
+        // like the filter wasn't applied.
+        self.persist().await.map_err(|e| {
+            warn!(key, error = %e, "failed to persist config after update");
+            e
+        })?;
 
         Ok(())
     }
@@ -265,6 +288,15 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
         "streaming.max_candidates" => {
             cfg.streaming.max_candidates = as_usize(key, value)?;
         }
+        "streaming.min_seeders" => {
+            cfg.streaming.min_seeders = as_usize(key, value)? as u32;
+        }
+        "streaming.require_seeders" => {
+            cfg.streaming.require_seeders = as_bool(key, value)?;
+        }
+        "streaming.require_resolution" => {
+            cfg.streaming.require_resolution = as_bool(key, value)?;
+        }
         "streaming.auto_fallback" => {
             cfg.streaming.auto_fallback = as_bool(key, value)?;
         }
@@ -390,11 +422,98 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
             apply_mpd_key(cfg, other, value)?;
         }
 
+        // ── [rating_weights] ────────────────────────────────────────────────
+        // Two forms accepted:
+        //   - `"rating_weights"` with a JSON object value → replace the
+        //     entire map atomically. Used by the TUI's Settings UI when
+        //     it ships the full map as one payload.
+        //   - `"rating_weights.<source>"` with a numeric value → adjust a
+        //     single source. Useful for incremental UI tweaks (slider drag
+        //     emits one Set per stop) without round-tripping the whole map.
+        // Caller is responsible for re-applying to the aggregator overlay
+        // via `set_user_rating_weights` after persistence — the manager
+        // handles config state, not the live cache.
+        "rating_weights" => {
+            let map: std::collections::HashMap<String, f64> = match value {
+                Value::Object(obj) => obj
+                    .iter()
+                    .filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f)))
+                    .collect(),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "rating_weights expects a JSON object, got {value}",
+                    )));
+                }
+            };
+            cfg.rating_weights = map;
+        }
+        other if other.starts_with("rating_weights.") => {
+            let source = other.strip_prefix("rating_weights.").unwrap_or("").trim();
+            if source.is_empty() {
+                return Err(StuidError::config(
+                    "rating_weights.<source>: empty source name".to_string(),
+                ));
+            }
+            let weight = as_f64(other, value)?;
+            if weight == 0.0 {
+                cfg.rating_weights.remove(source);
+            } else {
+                cfg.rating_weights.insert(source.to_string(), weight);
+            }
+        }
+
+        // ── [metadata_sources.*] ────────────────────────────────────────────
+        // Per-kind priority + disabled lists for the detail-card metadata
+        // fan-out. Keys: `metadata_sources.<kind>` and
+        // `metadata_sources.<kind>_disabled` where kind is one of
+        // movies / series / anime / music. Value is a JSON array of
+        // plugin-name strings, replacing the corresponding list atomically.
+        // The settings screen pushes the whole list on every toggle since
+        // the lists are short (single-digit entries).
+        other if other.starts_with("metadata_sources.") => {
+            apply_metadata_sources_key(cfg, other, value)?;
+        }
+
         other => {
             return Err(StuidError::config(format!("unknown config key: {other}")));
         }
     }
 
+    Ok(())
+}
+
+fn apply_metadata_sources_key(
+    cfg: &mut RuntimeConfig,
+    key: &str,
+    value: &Value,
+) -> Result<()> {
+    let field = key.strip_prefix("metadata_sources.").unwrap_or("").trim();
+    let arr = match value {
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect::<Vec<_>>(),
+        _ => {
+            return Err(StuidError::config(format!(
+                "{key} expects a JSON array of strings, got {value}",
+            )));
+        }
+    };
+    match field {
+        "movies"          => cfg.metadata.sources.movies = arr,
+        "series"          => cfg.metadata.sources.series = arr,
+        "anime"           => cfg.metadata.sources.anime = arr,
+        "music"           => cfg.metadata.sources.music = arr,
+        "movies_disabled" => cfg.metadata.sources.movies_disabled = arr,
+        "series_disabled" => cfg.metadata.sources.series_disabled = arr,
+        "anime_disabled"  => cfg.metadata.sources.anime_disabled = arr,
+        "music_disabled"  => cfg.metadata.sources.music_disabled = arr,
+        _ => {
+            return Err(StuidError::config(format!(
+                "unknown metadata_sources field: {field} (expected one of: movies, series, anime, music, *_disabled)",
+            )));
+        }
+    }
     Ok(())
 }
 

@@ -4,6 +4,7 @@ name         = "lastfm"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Last.fm — music discovery and charts"
+tags         = ["music"]
 
 # Talks to last.fm's official API at ws.audioscrobbler.com. A free api_key
 # is required (https://www.last.fm/api/account/create). libre.fm's endpoint

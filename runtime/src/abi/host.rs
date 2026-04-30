@@ -21,7 +21,13 @@ use tracing::{debug, info};
 use super::types::*;
 use crate::sandbox::SandboxCtx;
 
-const WASM_HTTP_TIMEOUT_SECS: u64 = 15;
+// Plugin HTTP fetches go through reqwest with this ceiling. Set high
+// enough to cover Jackett/Prowlarr Torznab fan-outs across many
+// indexers — those legitimately take 20-30s end-to-end. Going lower
+// (we used 15) silently failed real searches; going higher than the
+// runtime's overall stream-resolution budget (~20s) would just be
+// theatre because resolve::run_get_streams already gives up earlier.
+const WASM_HTTP_TIMEOUT_SECS: u64 = 45;
 
 /// User-Agent advertised on every plugin HTTP request. Several upstream
 /// APIs (MusicBrainz, Discogs) hard-403 requests with reqwest's default
@@ -171,6 +177,11 @@ impl WasmInstance {
     pub async fn related(&mut self, req: &RelatedRequest) -> Result<RelatedResponse, AbiError> {
         self.call_verb("stui_related", req).await
     }
+
+    /// Call the plugin's `stui_find_streams` export.
+    pub async fn find_streams(&mut self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
+        self.call_verb("stui_find_streams", req).await
+    }
 }
 
 // ── Host loader ───────────────────────────────────────────────────────────────
@@ -315,13 +326,27 @@ mod inner_impl {
             }
             let wasi = wasi_builder.build_p1();
 
-            // Pre-populate KV with env vars from the manifest [env] table.
-            // Priority: secrets.env / process env > plugin.toml default value.
+            // Pre-populate KV with env vars exposed as `__env:<VAR>` keys.
+            // Priority (high → low):
+            //   1. user TUI settings (runtime.toml `[plugins.<name>]`) — passed
+            //      in via `ctx.user_env_overrides`
+            //   2. `secrets.env` / process env (via `secrets::env_lookup`)
+            //   3. manifest `[env]` default
+            // The Settings UI is the canonical source of truth; secrets.env
+            // remains as a fallback for headless / dev workflows.
             let mut kv = std::collections::HashMap::new();
             for (var, default_val) in &ctx.env_defaults {
                 let value = crate::config::secrets::env_lookup(var)
                     .unwrap_or_else(|| default_val.clone());
                 kv.insert(format!("__env:{}", var), value);
+            }
+            // Layer user overrides last so they win over both the manifest
+            // default and secrets.env. Also seed `__env:<VAR>` entries that
+            // weren't in the manifest's [env] table — a plugin that declares
+            // its api key only via `[[config]] env_var = "X"` (no `[env] X = ""`)
+            // still gets the user's value here.
+            for (var, value) in &ctx.user_env_overrides {
+                kv.insert(format!("__env:{}", var), value.clone());
             }
 
             let host_state = HostState {
@@ -400,6 +425,64 @@ mod inner_impl {
                         };
                         let result = client.get(&url).send().await;
                         let (status, body) = match result {
+                            Ok(r)  => (r.status().as_u16(), r.text().await.unwrap_or_default()),
+                            Err(e) => (0, e.to_string()),
+                        };
+                        write_response_to_memory(&mut caller, status, &body).await
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
+            // ── stui_http_get_with_headers(payload_ptr, payload_len) -> i64 ─
+            // Payload JSON: {"url":"…","__stui_headers":{"Cookie":"…","X-Api-Key":"…"}}
+            // Same shape as `stui_http_post` minus the body. Needed by
+            // cookie-authenticated trackers (RuTracker, Zamunda, BT.etree)
+            // where the bare `stui_http_get(url)` can't carry the
+            // `Cookie:` / `User-Agent:` overrides those backends expect.
+            linker.func_wrap_async("stui", "stui_http_get_with_headers",
+                |mut caller: Caller<HostState>, (ptr, len): (i32, i32)| {
+                    Box::new(async move {
+                        let raw = read_str_from_memory(&mut caller, ptr, len)?;
+                        let mut val: serde_json::Value = serde_json::from_str(&raw)
+                            .map_err(|e| wasmtime::Error::msg(e.to_string()))?;
+
+                        let url = val["url"].as_str().unwrap_or("").to_string();
+
+                        let net_check = caller.data().ctx.check(&crate::sandbox::Capability::Network);
+                        if let Err(e) = net_check {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked GET+headers: {e}");
+                            return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
+                        }
+                        let allowed = {
+                            let p = &caller.data().ctx.permissions;
+                            let host = extract_host(&url);
+                            p.allows_host(&host)
+                        };
+                        if !allowed {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked GET+headers: host not in network_hosts");
+                            return write_response_to_memory(&mut caller, 503, "blocked by sandbox").await;
+                        }
+
+                        let headers_val = val.as_object_mut()
+                            .and_then(|m| m.remove("__stui_headers"))
+                            .unwrap_or_default();
+
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .user_agent(PLUGIN_USER_AGENT)
+                            .build()
+                            .unwrap_or_else(|_| reqwest::Client::new());
+                        let mut req = client.get(&url);
+
+                        if let Some(h_map) = headers_val.as_object() {
+                            for (k, v) in h_map {
+                                if let Some(v_str) = v.as_str() {
+                                    req = req.header(k.as_str(), v_str);
+                                }
+                            }
+                        }
+
+                        let (status, body) = match req.send().await {
                             Ok(r)  => (r.status().as_u16(), r.text().await.unwrap_or_default()),
                             Err(e) => (0, e.to_string()),
                         };
@@ -785,6 +868,7 @@ mod inner_impl {
                 cache_dir: std::path::PathBuf::from("/tmp"),
                 data_dir: std::path::PathBuf::from("/tmp"),
                 env_defaults: std::collections::HashMap::new(),
+                user_env_overrides: std::collections::HashMap::new(),
             }
         }
 

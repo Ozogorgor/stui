@@ -132,6 +132,10 @@ impl Secrets {
     pub fn torrentio_api_key(&self) -> Option<String> {
         self.get("TORRENTIO_API_KEY").filter(|k| !k.is_empty())
     }
+
+    pub fn lastfm_api_key(&self) -> Option<String> {
+        self.get("LASTFM_API_KEY").filter(|k| !k.is_empty())
+    }
 }
 
 const KNOWN_SECRET_VARS: &[&str] = &[
@@ -139,8 +143,11 @@ const KNOWN_SECRET_VARS: &[&str] = &[
     "OMDB_API_KEY",
     "MPD_PASSWORD",
     "PROWLARR_API_KEY",
+    "JACKETT_API_KEY",
     "OPENSUBTITLES_API_KEY",
     "TORRENTIO_API_KEY",
+    "LASTFM_API_KEY",
+    "DISCOGS_API_KEY",
 ];
 
 fn secrets_file_path() -> Option<PathBuf> {

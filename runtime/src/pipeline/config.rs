@@ -16,9 +16,25 @@ use crate::plugin::PluginMetaExt;
 ///
 /// Validates the key/value via `ConfigManager`, persists API key changes, and
 /// broadcasts `ConfigChanged` on the event bus.
-pub async fn run_set_config(config: &Arc<ConfigManager>, r: SetConfigRequest) -> Response {
+///
+/// Plugin config writes (`plugins.<name>.<field>`) additionally push the fresh
+/// `cfg.plugins` snapshot into the engine so subsequent plugin loads pick up
+/// the user's TUI-entered secrets without restart. (Live re-init of an already
+/// running plugin is a follow-up.)
+pub async fn run_set_config(
+    config: &Arc<ConfigManager>,
+    engine: &Arc<Engine>,
+    r: SetConfigRequest,
+) -> Response {
+    let key = r.key.clone();
     match config.set(&r.key, r.value).await {
-        Ok(()) => Response::ConfigUpdated { key: r.key },
+        Ok(()) => {
+            if key.starts_with("plugins.") {
+                let snapshot = config.snapshot().await;
+                engine.update_user_plugin_config(snapshot.plugins).await;
+            }
+            Response::ConfigUpdated { key }
+        }
         Err(e) => Response::error(None, ErrorCode::InvalidRequest, e.to_string()),
     }
 }

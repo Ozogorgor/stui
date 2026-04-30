@@ -35,9 +35,70 @@ pub fn load_from(path: Option<&Path>) -> RuntimeConfig {
         }
     }
 
+    // Order matters: normalize stale toml literals BEFORE env
+    // overrides, so an explicit `STUI_PLUGIN_DIR=…` always wins.
+    normalize_legacy_paths(&mut cfg);
     apply_secrets(&mut cfg);
     apply_env_overrides(&mut cfg);
     cfg
+}
+
+/// Normalise stale legacy `~/.stui/...` path strings that older stui
+/// versions auto-wrote into runtime.toml. Earlier defaults pointed
+/// `plugin_dir`, `cache_dir`, and `data_dir` under `~/.stui/`; the
+/// XDG migration moved those defaults to `~/.config/stui/...` and
+/// `~/.cache/stui/`, but a user upgrading in place still has the
+/// legacy literals frozen into their runtime.toml — and the runtime
+/// faithfully respects whatever's in the file. Result: any
+/// freshly-installed plugin drops into the XDG plugin dir but
+/// the runtime keeps scanning the legacy one and never sees it.
+///
+/// Detect that exact stale-default state and silently re-point to
+/// the XDG equivalent. We only override values that look like the
+/// stale defaults (literal `~/.stui/...` or absolute `$HOME/.stui/...`)
+/// — a user who has intentionally pointed `plugin_dir` at
+/// `/opt/stui/plugins` for a system install gets left alone.
+fn normalize_legacy_paths(cfg: &mut RuntimeConfig) {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let legacy_root = home.join(".stui");
+    let xdg_config = dirs::config_dir()
+        .or_else(|| Some(home.join(".config")))
+        .map(|c| c.join("stui"));
+    let xdg_cache = dirs::cache_dir()
+        .or_else(|| Some(home.join(".cache")))
+        .map(|c| c.join("stui"));
+
+    if let Some(xdg) = &xdg_config {
+        if cfg.plugin_dir == legacy_root.join("plugins") {
+            warn!(
+                "config: rewriting stale plugin_dir {} → {}",
+                cfg.plugin_dir.display(),
+                xdg.join("plugins").display(),
+            );
+            cfg.plugin_dir = xdg.join("plugins");
+        }
+        if cfg.data_dir == legacy_root.join("data") {
+            warn!(
+                "config: rewriting stale data_dir {} → {}",
+                cfg.data_dir.display(),
+                xdg.join("data").display(),
+            );
+            cfg.data_dir = xdg.join("data");
+        }
+    }
+    if let Some(xdg) = &xdg_cache {
+        if cfg.cache_dir == legacy_root.join("cache") {
+            warn!(
+                "config: rewriting stale cache_dir {} → {}",
+                cfg.cache_dir.display(),
+                xdg.display(),
+            );
+            cfg.cache_dir = xdg.clone();
+        }
+    }
 }
 
 fn load_toml(path: &Path) -> anyhow::Result<RuntimeConfig> {

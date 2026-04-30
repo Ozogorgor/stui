@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -435,7 +436,22 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 			case "streaming.auto_fallback":
 				item.boolVal = cfg.Streaming.AutoFallback
 			case "streaming.max_candidates":
-				item.intVal = cfg.Streaming.MaxCandidates
+				if cfg.Streaming.MaxCandidates > 0 {
+					item.intVal = cfg.Streaming.MaxCandidates
+				}
+			case "streaming.min_seeders":
+				// Only overwrite the registered default (5) when the
+				// runtime.toml has the key set explicitly. Go's TOML
+				// loader yields 0 for missing keys, which would
+				// otherwise mask the real default. To set the filter
+				// to 0 (disable), edit runtime.toml directly.
+				if cfg.Streaming.MinSeeders > 0 {
+					item.intVal = cfg.Streaming.MinSeeders
+				}
+			case "streaming.require_seeders":
+				item.boolVal = cfg.Streaming.RequireSeeders
+			case "streaming.require_resolution":
+				item.boolVal = cfg.Streaming.RequireResolution
 			case "streaming.benchmark_streams":
 				item.boolVal = cfg.Streaming.BenchmarkStreams
 			case "streaming.auto_delete_video":
@@ -561,12 +577,36 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			case "enter":
 				// Confirm: write the typed value back to the item.
 				item := m.categories[m.catCursor].items[m.itemCursor]
-				newPath := m.editInput.Value()
-				if item.kind == settingPath && !isValidPath(newPath) {
+				typed := strings.TrimSpace(m.editInput.Value())
+				switch item.kind {
+				case settingPath:
+					if !isValidPath(typed) {
+						m.editing = false
+						return m, nil
+					}
+					item.strVal = typed
+				case settingInt:
+					n, err := strconv.Atoi(typed)
+					if err != nil {
+						// Bad input → discard edit, keep prior value.
+						m.editing = false
+						return m, nil
+					}
+					if item.maxVal > 0 && n > item.maxVal {
+						n = item.maxVal
+					}
+					if item.minVal > 0 && n < item.minVal {
+						n = item.minVal
+					}
+					if n < 0 {
+						n = 0
+					}
+					item.intVal = n
+				default:
+					// Other kinds shouldn't enter edit mode; bail safely.
 					m.editing = false
 					return m, nil
 				}
-				item.strVal = newPath
 				m.editing = false
 				return m, settingChangedCmd(item)
 			case "esc":
@@ -735,10 +775,20 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				cat := m.categories[m.catCursor]
 				if m.itemCursor < len(cat.items) {
 					item := cat.items[m.itemCursor]
-					// settingPath — start inline editing instead of toggle
-					if item.kind == settingPath {
+					// settingPath / settingInt — start inline editing.
+					// `+`/`-` keys still adjust ints by 1 each press, but
+					// Enter is the natural "type a value" key for users
+					// who'd rather skip ten +/- presses to set 15.
+					if item.kind == settingPath || item.kind == settingInt {
 						ti := textinput.New()
-						ti.SetValue(item.strVal)
+						switch item.kind {
+						case settingPath:
+							ti.SetValue(item.strVal)
+							ti.CharLimit = 512
+						case settingInt:
+							ti.SetValue(strconv.Itoa(item.intVal))
+							ti.CharLimit = 8
+						}
 						ti.CursorEnd()
 						leftW := 18  // match View() left panel width
 						margin := 6  // match View() rightW margin
@@ -748,7 +798,6 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							inputW = 20
 						}
 						ti.SetWidth(inputW)
-						ti.CharLimit = 512
 						cmd := ti.Focus() // Focus() returns blink cmd — must not be dropped
 						m.editInput = ti
 						m.editing = true
@@ -771,6 +820,8 @@ func (m SettingsModel) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 							return m, func() tea.Msg { return OpenStreamRadarMsg{} }
 						case "stats.rating_weights":
 							return m, func() tea.Msg { return OpenRatingWeightsMsg{} }
+						case "stats.metadata_sources":
+							return m, func() tea.Msg { return OpenMetadataSourcesMsg{} }
 						case "stats.offline_library":
 							return m, func() tea.Msg { return OpenOfflineLibraryMsg{} }
 						case "stats.clear_cache":
@@ -1029,7 +1080,7 @@ func (m SettingsModel) View() tea.View {
 				valW = 3
 			}
 			var val string
-			if m.editing && selected && item.kind == settingPath {
+			if m.editing && selected && (item.kind == settingPath || item.kind == settingInt) {
 				// Textinput already sizes itself to its configured width.
 				val = m.editInput.View()
 			} else {
@@ -1339,11 +1390,32 @@ func defaultCategories() []settingCategory {
 					description: "Auto-switch to next stream if current fails",
 				},
 				{
-					label:       "Max candidates",
+					label:       "Max candidates per provider",
 					key:         "streaming.max_candidates",
 					kind:        settingInt,
 					intVal:      10,
-					description: "Max stream candidates resolved per item",
+					description: "Cap on streams kept from each provider after ranking; total list grows with more plugins",
+				},
+				{
+					label:       "Min seeders",
+					key:         "streaming.min_seeders",
+					kind:        settingInt,
+					intVal:      5,
+					description: "Drop torrents at or below this seeder count (0 = no filter)",
+				},
+				{
+					label:       "Require seeders",
+					key:         "streaming.require_seeders",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Also drop streams with unknown seeders — useful to see which plugins lack the field",
+				},
+				{
+					label:       "Require resolution",
+					key:         "streaming.require_resolution",
+					kind:        settingBool,
+					boolVal:     false,
+					description: "Drop streams whose release title doesn't carry a resolution tag (4K/1080p/720p/...)",
 				},
 				{
 					label:       "Benchmark",
@@ -1757,6 +1829,12 @@ func defaultCategories() []settingCategory {
 					key:         "stats.rating_weights",
 					kind:        settingAction,
 					description: "Source weight ratios used by the weighted-median rating aggregator",
+				},
+				{
+					label:       "Metadata Sources",
+					key:         "stats.metadata_sources",
+					kind:        settingAction,
+					description: "Per-kind plugin fan-out for the detail card — toggle plugins on/off for movies/series/anime/music",
 				},
 				{
 					label:       "Offline Library",

@@ -160,27 +160,60 @@ pub struct CatalogEntry {
 impl CatalogEntry {
     /// Group key for collapsing the same entity across providers.
     ///
-    /// **Precedence:**
-    /// 1. `mal_id` — anime tier (AniList exposes `idMal`; Kitsu exposes via
-    ///    `?include=mappings`). Catches AniList↔Kitsu duplicates of the same
-    ///    cour even when titles differ (English vs romaji).
-    /// 2. `imdb_id` — western tier (TVDB and OMDb both surface it at search
-    ///    time; TMDB doesn't, so TMDB falls through to fallback).
-    /// 3. `normalize_title:year` — fallback for entries without a foreign id.
+    /// Precedence depends on `media_type`:
     ///
-    /// Empty-string foreign ids are treated as missing — defensive, prevents
-    /// `"mal:"` from collapsing all empty entries into one bucket. Keys are
-    /// prefixed with their tier (`mal:`, `imdb:`, `title:`) so a numeric
-    /// fallback title can't accidentally collide with a foreign id.
+    /// **Series / Episode** — Western-spine first:
+    /// 1. `tmdb_id`  — TMDB models multi-cour anime as ONE series,
+    ///    so all AniList cours of the same show (e.g. AoT S1, S2,
+    ///    Final Season Part 1/2) collapse under the same TMDB id
+    ///    after the bridge enriches them. This is the spine-merge
+    ///    semantics: one card per Western-style series, regardless
+    ///    of how many seasons / cours the anime providers split it
+    ///    into.
+    /// 2. `imdb_id`  — same logic when TMDB id is missing.
+    /// 3. `mal_id`   — falls through to per-cour granularity for
+    ///    series that don't have a Western spine (rare).
+    /// 4. `normalize_title:year` — final fallback.
     ///
-    /// Cross-tier merges (anime↔western) don't happen here — different keys
-    /// stay separate. The cross-mapping bridge is milestone β.
+    /// **Movie / Music / Other** — anime-tier first (current behaviour):
+    /// 1. `mal_id`   — collapses AniList↔Kitsu via shared MAL id;
+    ///    also catches anime films across western providers since
+    ///    the bridge enriches their MAL id from imdb/tmdb.
+    /// 2. `imdb_id`  — western-tier dedup (TVDB / OMDb).
+    /// 3. `normalize_title:year` — final fallback.
+    ///
+    /// Empty-string foreign ids are treated as missing — defensive,
+    /// prevents `"mal:"` from collapsing all empty entries into one
+    /// bucket. Keys are prefixed with their tier (`mal:`, `imdb:`,
+    /// `tmdb:`, `title:`) so a numeric fallback title can't
+    /// accidentally collide with a foreign id.
     pub fn dedup_key(&self) -> String {
-        if let Some(mal) = self.mal_id.as_deref().filter(|s| !s.is_empty()) {
-            return format!("mal:{mal}");
-        }
-        if let Some(imdb) = self.imdb_id.as_deref().filter(|s| !s.is_empty()) {
-            return format!("imdb:{imdb}");
+        // Series-style merge: collapse anime cours under the Western
+        // series anchor. The bridge enrichment populates tmdb_id /
+        // imdb_id on AniList cour entries from the Fribb dataset, so
+        // every cour of a multi-season show ends up keyed to the
+        // same tmdb id and merges into one card.
+        let series_spine = matches!(
+            self.media_type,
+            MediaType::Series | MediaType::Episode,
+        );
+        if series_spine {
+            if let Some(tmdb) = self.tmdb_id.as_deref().filter(|s| !s.is_empty()) {
+                return format!("tmdb:{tmdb}");
+            }
+            if let Some(imdb) = self.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+                return format!("imdb:{imdb}");
+            }
+            if let Some(mal) = self.mal_id.as_deref().filter(|s| !s.is_empty()) {
+                return format!("mal:{mal}");
+            }
+        } else {
+            if let Some(mal) = self.mal_id.as_deref().filter(|s| !s.is_empty()) {
+                return format!("mal:{mal}");
+            }
+            if let Some(imdb) = self.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+                return format!("imdb:{imdb}");
+            }
         }
         format!(
             "title:{}:{}",
@@ -644,5 +677,67 @@ mod tests {
         };
 
         assert_eq!(entry.dedup_key(), "title:movie:2024");
+    }
+
+    /// Series spine merge: each AniList cour of a multi-season anime
+    /// has its own MAL id but shares the parent series' TMDB id (after
+    /// the bridge enriches them). With Series media_type, the new
+    /// dedup_key picks tmdb first so all cours collapse into one
+    /// bucket — single Western-style series card, regardless of how
+    /// many cours AniList split the show into.
+    #[test]
+    fn test_dedup_key_series_collapses_cours_via_tmdb() {
+        // Three cours of Attack on Titan, each with its own MAL id but
+        // all bridge-enriched to tmdb=1429 (the parent series).
+        let cour = |mal: &str| CatalogEntry {
+            id: format!("anilist-{mal}"),
+            title: "Attack on Titan".to_string(),
+            year: Some("2013".to_string()),
+            genre: None, rating: None, description: None,
+            poster_url: None, poster_art: None,
+            provider: "anilist".to_string(),
+            tab: "series".to_string(),
+            artist: None,
+            imdb_id: Some("tt2560140".to_string()),
+            tmdb_id: Some("1429".to_string()),
+            mal_id: Some(mal.to_string()),
+            media_type: MediaType::Series,
+            ratings: HashMap::new(),
+            original_language: Some("ja".to_string()),
+        };
+
+        let s1   = cour("16498");
+        let s4p1 = cour("38524");
+        let s4p2 = cour("48583");
+
+        // Same key for all three → they bucket together in the merge.
+        let k = s1.dedup_key();
+        assert_eq!(k, "tmdb:1429");
+        assert_eq!(s4p1.dedup_key(), k);
+        assert_eq!(s4p2.dedup_key(), k);
+    }
+
+    /// Movie media_type keeps the existing mal-first precedence so
+    /// anime films (e.g. Spirited Away) still collapse via shared MAL
+    /// id even when imdb is also present.
+    #[test]
+    fn test_dedup_key_movie_keeps_mal_first() {
+        let entry = CatalogEntry {
+            id: "anilist-199".to_string(),
+            title: "Spirited Away".to_string(),
+            year: Some("2001".to_string()),
+            genre: None, rating: None, description: None,
+            poster_url: None, poster_art: None,
+            provider: "anilist".to_string(),
+            tab: "movies".to_string(),
+            artist: None,
+            imdb_id: Some("tt0245429".to_string()),
+            tmdb_id: Some("129".to_string()),
+            mal_id: Some("199".to_string()),
+            media_type: MediaType::Movie,
+            ratings: HashMap::new(),
+            original_language: Some("ja".to_string()),
+        };
+        assert_eq!(entry.dedup_key(), "mal:199");
     }
 }

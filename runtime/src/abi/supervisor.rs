@@ -40,6 +40,7 @@ use super::types::{
     CreditsRequest, CreditsResponse,
     EnrichRequest, EnrichResponse,
     EpisodesRequest, EpisodesResponse,
+    FindStreamsRequest, FindStreamsResponse,
     LookupRequest, LookupResponse,
     PluginResult,
     RelatedRequest, RelatedResponse,
@@ -345,6 +346,11 @@ impl WasmSupervisor {
     /// Call `stui_episodes` with timeout and crash tracking.
     pub async fn episodes(&self, req: &EpisodesRequest) -> Result<EpisodesResponse, AbiError> {
         self.call_verb("stui_episodes", "episodes", req).await
+    }
+
+    /// Call `stui_find_streams` with timeout and crash tracking.
+    pub async fn find_streams(&self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
+        self.call_verb("stui_find_streams", "find_streams", req).await
     }
 
     // ── Internals ─────────────────────────────────────────────────────────

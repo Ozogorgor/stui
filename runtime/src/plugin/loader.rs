@@ -30,9 +30,54 @@ pub struct LoadedPlugin {
 impl LoadedPlugin {
     /// Check whether this plugin advertises a specific capability.
     ///
-    /// Use this for all capability-based dispatch instead of matching
-    /// on `PluginType` directly — it handles legacy type aliases correctly.
+    /// Two information sources, in precedence order:
+    ///   1. The structured `[capabilities]` table in the manifest — the
+    ///      authoritative declaration in modern plugins (e.g.
+    ///      `streams = true`, `catalog.search = true`).
+    ///   2. The legacy `[plugin] type = "..."` field, for older manifests
+    ///      that predate the structured table.
+    ///
+    /// New plugins (jackett, prowlarr, …) omit `[plugin] type` entirely
+    /// and rely solely on `[capabilities]`. Without (1) those plugins look
+    /// like default `MetadataProvider`s and never appear in
+    /// `find_stream_providers`, breaking the streams column.
     pub fn has_capability(&self, cap: super::manifest::PluginCapability) -> bool {
+        use super::manifest::PluginCapability;
+        use stui_plugin_sdk::CatalogCapability;
+        let caps = &self.manifest.capabilities;
+        let catalog_declared = match &caps.catalog {
+            CatalogCapability::Enabled(b) => *b,
+            CatalogCapability::Typed { search, kinds, .. } => {
+                search.unwrap_or(false) || !kinds.is_empty()
+            }
+        };
+        match cap {
+            // Streams: governed entirely by the [capabilities] table.
+            // (Resolver-typed plugins without `streams = true` still
+            // need Streams routing — handled below by the type fallback.)
+            PluginCapability::Streams if caps.streams => return true,
+
+            // Catalog: explicit declaration wins.
+            PluginCapability::Catalog if catalog_declared => return true,
+
+            // Stream-providers (`streams = true`) must NOT auto-inherit
+            // Catalog from the plugin-type default. New manifests omit
+            // `[plugin] type`, defaulting it to MetadataProvider, whose
+            // capability set includes Catalog. That silently re-granted
+            // Catalog to every stream-only provider regardless of
+            // `[capabilities.catalog]`, so Jackett/Prowlarr dumped raw
+            // torrent file names into the trending fan-out even with
+            // `kinds = []` `search = false`.
+            PluginCapability::Catalog if caps.streams => return false,
+
+            _ => {}
+        }
+        // Legacy fallback: pure-metadata plugins that don't declare
+        // `[capabilities.catalog]` rely on `[plugin] type = "metadata-
+        // provider"` (or the MetadataProvider default) to expose
+        // Catalog. Subtitles / Auth / Index / Resolver-style Streams
+        // also derive from the plugin type since the [capabilities]
+        // table doesn't model them.
         self.manifest
             .plugin
             .plugin_type_or_default()
@@ -41,9 +86,27 @@ impl LoadedPlugin {
     }
 
     #[allow(dead_code)] // pub API: used by engine and registry
-    /// All capabilities this plugin advertises.
+    /// All capabilities this plugin advertises. Union of the structured
+    /// `[capabilities]` table and the legacy `[plugin] type` mapping so
+    /// list_plugins exposes a complete view regardless of manifest style.
     pub fn capabilities(&self) -> Vec<super::manifest::PluginCapability> {
-        self.manifest.plugin.plugin_type_or_default().capabilities()
+        use super::manifest::PluginCapability;
+        use stui_plugin_sdk::CatalogCapability;
+        let mut out = self.manifest.plugin.plugin_type_or_default().capabilities();
+        let caps = &self.manifest.capabilities;
+        if caps.streams && !out.contains(&PluginCapability::Streams) {
+            out.push(PluginCapability::Streams);
+        }
+        let catalog_declared = match &caps.catalog {
+            CatalogCapability::Enabled(b) => *b,
+            CatalogCapability::Typed { search, kinds, .. } => {
+                search.unwrap_or(false) || !kinds.is_empty()
+            }
+        };
+        if catalog_declared && !out.contains(&PluginCapability::Catalog) {
+            out.push(PluginCapability::Catalog);
+        }
+        out
     }
 }
 

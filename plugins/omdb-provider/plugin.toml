@@ -4,6 +4,7 @@ name         = "omdb"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Open Movie Database — movie/TV info, ratings, posters"
+tags         = ["movies", "series"]
 
 [env]
 OMDB_API_KEY = ""
@@ -34,8 +35,10 @@ lookup  = { id_sources = ["imdb"] }
 # PluginEntry.ratings for the catalog aggregator's weighted composite.
 # Falls back to title+year search when the partial entry has no IMDb id.
 enrich  = { id_sources = ["imdb"] }
-# Artwork / credits / related verbs aren't implemented; they fall
-# through to the trait's NOT_IMPLEMENTED default.
+# Artwork / credits / related verbs aren't implemented by OMDB.
+artwork = { stub = true, reason = "no API endpoint" }
+credits = { stub = true, reason = "no API endpoint" }
+related = { stub = true, reason = "no API endpoint" }
 
 [meta]
 author   = "stui"

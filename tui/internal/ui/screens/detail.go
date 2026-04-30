@@ -95,62 +95,124 @@ func RenderDetailOverlay(
 
 // ── Main detail view ─────────────────────────────────────────────────────────
 
+// Layout: poster + header (title/meta/desc/resume) on top, tab bar
+// below, tab body fills the remainder. The previous "single big info
+// block with everything stacked" layout was replaced because it had
+// cast/crew/related/streams competing for the same scroll buffer; tabs
+// give each section its own scroll scope and let series and movies
+// expose their per-tab affordance (Episodes vs Streams) on equal
+// footing.
 func renderDetailMain(ds *DetailState, w, h int, tab state.Tab) string {
-	// No separate header — breadcrumb + back-affordance live elsewhere
-	// (the global status bar carries the hotkey hints via
-	// DetailState.FooterText), and the top row reserved for the header
-	// was worth reclaiming once RELATED needed the space.
+	_ = tab
+	// Header: poster column + info column. Poster sets a fixed height
+	// (mediaheader.PosterHeight + breathing room); the info column
+	// takes the same vertical slot and renders title/meta/desc/resume
+	// inside it.
+	headerH := detailPosterHeight + 4
+	if headerH > h-6 {
+		headerH = h - 6
+		if headerH < 6 {
+			headerH = 6
+		}
+	}
 
-	// Related row: reserve height only if it has content. When the
-	// verb resolves empty the row is hidden entirely so the main body
-	// reclaims the vertical space.
+	leftW := detailPosterWidth
+	rightW := w - leftW - 4
+	if rightW < 20 {
+		rightW = 20
+	}
+
+	left := renderPosterBlock(ds, leftW, headerH)
+	right := renderHeaderInfo(ds, rightW, headerH)
+	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		left,
+		lipgloss.NewStyle().
+			Width(rightW).
+			Height(headerH).
+			Render(right),
+	)
+
+	tabBar := renderDetailTabBar(ds, w)
+	tabBarH := lipgloss.Height(tabBar)
+
+	// Related carousel: a fixed-height row at the bottom of the
+	// detail card showing poster mini-cards for related titles.
+	// Lives outside the tab bodies so it's always visible regardless
+	// of which tab is active — it's discovery, not credits/streams.
+	// Hidden entirely when the related verb resolves empty.
 	relatedH := 0
 	if ds.Meta.RelatedStatus == FetchPending ||
 		(ds.Meta.RelatedStatus == FetchLoaded && len(ds.Meta.Related.Items) > 0) {
 		relatedH = similarRowHeight + 2
 	}
 
-	// Artwork-status strip: only rendered while the artwork verb is
-	// pending (loading). Empty state returns "" so it doesn't consume
-	// a row between the main body and the related row.
-	artworkStatus := renderBackdropStatusStrip(ds, w)
-	statusH := 0
-	if artworkStatus != "" {
-		statusH = lipgloss.Height(artworkStatus)
+	bodyH := h - headerH - tabBarH - relatedH
+	if bodyH < 1 {
+		bodyH = 1
 	}
+	body := renderDetailTabBody(ds, w, bodyH)
 
-	// Split: poster|info section, then related row at bottom.
-	mainH := h - relatedH - statusH
-
-	left := renderPosterBlock(ds, detailPosterWidth, mainH)
-	right := renderInfoBlock(ds, w-detailPosterWidth-4, mainH)
-
-	main := lipgloss.JoinHorizontal(lipgloss.Top,
-		left,
-		lipgloss.NewStyle().
-			Width(w-detailPosterWidth-4).
-			Height(mainH).
-			Render(right),
-	)
-
-	parts := []string{main}
-	if artworkStatus != "" {
-		parts = append(parts, artworkStatus)
-	}
+	parts := []string{header, tabBar, body}
 	if relatedH > 0 {
 		parts = append(parts, renderRelatedRow(ds, w, relatedH))
 	}
-	full := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	// No outer Style.Background.Width.Height.Render wrap — the music
+	// screen returns its `JoinVertical(tabBar, body)` directly and
+	// the tab-bar's bottom underline sticks cleanly to the body. The
+	// extra wrap was inserting Background-styled padding cells that
+	// rendered as artifacts at the tab/body boundary on detail. The
+	// parent View() wraps this in MainCardStyle anyway, which
+	// applies its own Background + sizing.
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
 
-	// No border here — the parent View wraps this in MainCardStyle
-	// (same style the grid/list screens use) so the detail overlay
-	// matches the rest of STUI's chrome (rounded border, accent
-	// color when focused, consistent side margins).
-	return lipgloss.NewStyle().
-		Background(theme.T.Bg()).
-		Width(w).
-		Height(h).
-		Render(full)
+// renderDetailTabBar emits the tab bar between the header and the tab
+// body, using the same `components.RenderTabs` widget the Music screen
+// uses so Movies / Series / Music share visual identity.
+func renderDetailTabBar(ds *DetailState, w int) string {
+	tabs := ds.AvailableTabs()
+	options := make([]components.TabOption, 0, len(tabs))
+	for _, t := range tabs {
+		options = append(options, components.TabOption{
+			Label:    t.String(),
+			IsActive: t == ds.ActiveTab,
+		})
+	}
+	return components.RenderTabs(options, theme.T.Border(), theme.T.Accent(), w)
+}
+
+// HitTestDetailTabBar maps a horizontal click x-coord to the tab the
+// user landed on. Returns false when the click is outside the tab
+// rectangles (e.g. in the underline that fills the rest of the row).
+//
+// Tab box widths track `RenderTabs`: each tab is `Padding(0, 1)` (so
+// 2 cols of side padding) plus a 2-col border (left+right), totalling
+// 4 cols of chrome around the label. Cumulative left edges are
+// computed in lockstep so this stays correct for arbitrary numbers of
+// tabs.
+func (d *DetailState) HitTestDetailTabBar(x int) (DetailTab, bool) {
+	tabs := d.AvailableTabs()
+	cursor := 0
+	for _, t := range tabs {
+		w := lipgloss.Width(t.String()) + 4
+		if x >= cursor && x < cursor+w {
+			return t, true
+		}
+		cursor += w
+	}
+	return DetailTabDescription, false
+}
+
+// renderDetailTabBody dispatches to the right tab renderer.
+func renderDetailTabBody(ds *DetailState, w, h int) string {
+	switch ds.ActiveTab {
+	case DetailTabEpisodes:
+		return renderEpisodesTab(ds, w, h)
+	case DetailTabStreams:
+		return renderStreamsTab(ds, w, h)
+	default:
+		return renderDescriptionTab(ds, w, h)
+	}
 }
 
 // ── Header bar ───────────────────────────────────────────────────────────────
@@ -180,27 +242,40 @@ func renderDetailHeader(ds *DetailState, w int, tab state.Tab) string {
 // FooterText returns the focus-specific hotkey hint for the detail
 // overlay — read by `viewStatusBar` so the global footer carries the
 // hint the same way every other screen does.
+//
+// The hint reflects both the active tab AND the focus zone within
+// it. Tab key always cycles tabs first; per-tab keys (j/k navigate,
+// h/l for season ↔ episode column or provider row) come after.
 func (d *DetailState) FooterText() string {
-	// Series-specific hint: advertise `e` so users can discover the
-	// episode browser. Movies don't have episodes so the hotkey is
-	// silently ignored there — keep their footer cleaner.
-	episodesHint := ""
-	if d.Entry.Tab == "series" || d.Entry.Tab == "Series" {
-		episodesHint = "e episodes · "
-	}
-	switch d.Focus {
-	case FocusDetailCrew:
-		return "↑↓ crew · tab → cast · esc back"
-	case FocusDetailCast:
-		return "↑↓ navigate · enter search · tab next · esc back"
-	case FocusDetailEpisodes:
-		return "enter open episodes · tab → providers · esc back"
-	case FocusDetailProvider:
-		return "←→ select · enter ▶ play · tab → related · esc back"
-	case FocusDetailRelated:
-		return "←→ scroll · enter open · tab → info · esc back"
+	switch d.ActiveTab {
+	case DetailTabEpisodes:
+		switch d.Focus {
+		case FocusDetailSeasons:
+			return "↑↓ seasons · → episodes · tab next tab · esc back"
+		case FocusDetailEpisodes:
+			return "↑↓ episodes · ← seasons · → streams · tab next tab · esc back"
+		case FocusDetailEpisodeStreams:
+			return "↑↓ stream · ← episodes · enter ▶ play · tab next tab · esc back"
+		default:
+			return "tab next tab · ↑↓ navigate · esc back"
+		}
+	case DetailTabStreams:
+		if d.Focus == FocusDetailProvider {
+			return "←→ provider · enter ▶ play · 1-4 quality · tab next tab · esc back"
+		}
+		return "tab next tab · 1-4 quality · esc back"
 	default:
-		return episodesHint + "tab → crew · j/↓ cast · 1-4 quality · esc back"
+		// Description tab.
+		switch d.Focus {
+		case FocusDetailCrew:
+			return "↑↓ crew · tab next tab · esc back"
+		case FocusDetailCast:
+			return "↑↓ navigate · enter search · tab next tab · esc back"
+		case FocusDetailRelated:
+			return "↑↓ scroll · enter open · tab next tab · esc back"
+		default:
+			return "tab next tab · j/↓ scroll · esc back"
+		}
 	}
 }
 
@@ -235,16 +310,20 @@ func renderPosterBlock(ds *DetailState, w, h int) string {
 
 // ── Info block (right side) ───────────────────────────────────────────────────
 
-func renderInfoBlock(ds *DetailState, w, h int) string {
+// renderHeaderInfo renders the right-of-poster column for the header
+// row: title + ★ rating, meta line (year · genre · runtime · studio),
+// description (word-wrapped, clamped), and the Continue Watching
+// resume hint. Fixed-height — no scrollbar; everything heavier
+// (CREW/CAST/RELATED/STREAM VIA/Episodes) lives in tab bodies below.
+func renderHeaderInfo(ds *DetailState, w, h int) string {
 	var sections []string
 
-	// Title + rating on same line
+	// Title + ★ rating on the same line.
 	titleW := w - 10
 	titleStr := bidi.AlignedStyle(theme.T.DetailTitleStyle().Width(titleW), ds.Entry.Title).
 		Render(bidi.Apply(components.Truncate(ds.Entry.Title, titleW)))
 	ratingStr := theme.T.DetailRatingStyle().Render("★ " + ds.Entry.Rating)
-	titleLine := lipgloss.JoinHorizontal(lipgloss.Top, titleStr, ratingStr)
-	sections = append(sections, titleLine)
+	sections = append(sections, lipgloss.JoinHorizontal(lipgloss.Top, titleStr, ratingStr))
 
 	// Meta: year · genre · runtime · studio
 	metaParts := []string{}
@@ -257,163 +336,71 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 	if ds.Entry.Runtime != "" {
 		metaParts = append(metaParts, ds.Entry.Runtime)
 	}
-	// Studio lands here after the "enrich" verb resolves. It's also
-	// re-surfaced in the CREW section so users see it in both reading
-	// positions.
 	if ds.Entry.Studio != "" {
 		metaParts = append(metaParts, ds.Entry.Studio)
 	}
-	meta := theme.T.DetailMetaStyle().Render(strings.Join(metaParts, "  ·  "))
-	sections = append(sections, meta, "")
+	sections = append(sections,
+		theme.T.DetailMetaStyle().Render(strings.Join(metaParts, "  ·  ")),
+		"",
+	)
 
-	// Description — word-wrapped to panel width with BiDi support.
-	// Clamped to `descMaxLines` so a long synopsis doesn't crowd out
-	// CREW / STREAM VIA / RELATED below it. Over-limit lines are
-	// truncated with a trailing "…" so it's clear there's more.
+	// Description — word-wrapped + clamped. AniList et al inject HTML
+	// in synopses; cleanDescription normalizes before WordWrap.
 	const descMaxLines = 4
-	if ds.Entry.Description != "" {
-		lines := bidi.WordWrap(ds.Entry.Description, w-2)
+	desc := cleanDescription(ds.Entry.Description)
+	if desc != "" {
+		lines := bidi.WordWrap(desc, w-2)
 		if len(lines) > descMaxLines {
 			lines = lines[:descMaxLines]
-			// Append ellipsis to the last visible line, truncating
-			// one character if needed to keep within panel width.
 			last := lines[len(lines)-1]
 			if lipgloss.Width(last)+1 > w-2 && len(last) > 0 {
-				// Drop the last rune to make room for the ellipsis.
 				rr := []rune(last)
 				last = string(rr[:len(rr)-1])
 			}
 			lines[len(lines)-1] = last + "…"
 		}
-		descStyle := bidi.AlignedStyle(theme.T.DetailDescStyle().Width(w-2), ds.Entry.Description)
-		desc := strings.Join(lines, "\n")
-		sections = append(sections, descStyle.Render(desc), "")
+		descStyle := bidi.AlignedStyle(theme.T.DetailDescStyle().Width(w-2), desc)
+		sections = append(sections, descStyle.Render(strings.Join(lines, "\n")))
 	} else if ds.Loading {
 		sections = append(sections,
 			lipgloss.NewStyle().Foreground(theme.T.TextDim()).Render("Loading details…"),
-			"",
 		)
 	}
 
-	// CREW — directors, DoP, composer, studio. Rendered above CAST so
-	// headline creatives appear first in the reading order. Hidden
-	// entirely when the credits verb resolves empty.
-	if crew := renderCrewSection(ds, w); crew != "" {
-		sections = append(sections, crew, "")
-	}
-
-	// CAST
-	if len(ds.Entry.Cast) > 0 {
-		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST"))
-
-		for i, member := range ds.Entry.Cast {
-			row := renderCastRow(member, i, ds.CastCursor, ds.Focus, w)
-			sections = append(sections, row)
-		}
-		sections = append(sections, "")
-	}
-
-	// Continue Watching — resume position hint
+	// Continue Watching — kept in the always-visible header (per user
+	// preference) so the resume affordance is one glance away
+	// regardless of which tab is active.
 	if ds.WatchHistory != nil && ds.WatchHistory.Position > 0 && !ds.WatchHistory.Completed {
+		sections = append(sections, "")
 		sections = append(sections, renderResumeHint(ds.WatchHistory, w))
-		sections = append(sections, "")
 	}
 
-	// EPISODES — series-only navigable badge that opens the season /
-	// episode browser (the same screen the `e` keypress launches).
-	// Rendered alongside STREAM VIA so the user discovers it through
-	// Tab navigation rather than needing to know the hidden keybind.
-	if ds.Entry.Tab == "series" || ds.Entry.Tab == "Series" {
-		sections = append(sections, theme.T.DetailSectionStyle().Render("EPISODES"))
-		focused := ds.Focus == FocusDetailEpisodes
-		var badge string
-		if focused {
-			badge = lipgloss.NewStyle().
-				Background(theme.T.Accent()).
-				Foreground(lipgloss.Color("#ffffff")).
-				PaddingLeft(1).PaddingRight(1).MarginRight(1).
-				Bold(true).
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(theme.T.Neon()).
-				BorderBackground(theme.T.Accent()).
-				Render("▶ Browse episodes")
-		} else {
-			badge = theme.T.DetailProviderStyle().Render("◆ Browse episodes")
-		}
-		sections = append(sections, badge)
-		if focused {
-			sections = append(sections, lipgloss.NewStyle().
-				Foreground(theme.T.TextMuted()).PaddingLeft(2).
-				Render("enter to open"))
-		}
-		sections = append(sections, "")
-	}
+	body := strings.Join(sections, "\n")
+	return lipgloss.NewStyle().
+		Background(theme.T.Bg()).
+		Padding(1, 0, 0, 2).
+		Width(w).
+		Height(h).
+		Render(body)
+}
 
-	// STREAM VIA — selectable provider badges
-	if len(ds.Entry.Providers) > 0 {
-		sections = append(sections, theme.T.DetailSectionStyle().Render("STREAM VIA"))
-		var badges []string
-		for i, p := range ds.Entry.Providers {
-			focused := ds.Focus == FocusDetailProvider && i == ds.ProviderCursor
-			if focused {
-				badge := lipgloss.NewStyle().
-					Background(theme.T.Accent()).
-					Foreground(lipgloss.Color("#ffffff")).
-					PaddingLeft(1).PaddingRight(1).MarginRight(1).
-					Bold(true).
-					BorderStyle(lipgloss.RoundedBorder()).
-					BorderForeground(theme.T.Neon()).
-					BorderBackground(theme.T.Accent()).
-					Render("▶ " + p)
-				badges = append(badges, badge)
-			} else {
-				badges = append(badges, theme.T.DetailProviderStyle().Render("◆ "+p))
-			}
-		}
-		sections = append(sections, lipgloss.JoinHorizontal(lipgloss.Top, badges...))
-		if ds.Focus == FocusDetailProvider {
-			sections = append(sections, lipgloss.NewStyle().
-				Foreground(theme.T.TextMuted()).PaddingLeft(2).
-				Render("enter to play"))
-		}
-	}
-
-	// NowPlaying inline bar (shown inside the info block when playing)
-	if ds.NowPlaying != nil {
-		sections = append(sections, "")
-		sections = append(sections, components.RenderNowPlaying(ds.NowPlaying, w-4))
-	}
-
-	// Collection picker — shown when 'c' is pressed
-	if ds.CollectionPickerOpen {
-		sections = append(sections, "")
-		sections = append(sections, renderCollectionPicker(ds, w))
-	}
-
-	content := strings.Join(sections, "\n")
+// scrolledTabBody renders `content` clipped to `h` rows starting at
+// `scroll`, with a vertical scrollbar in the rightmost column.
+// Layout per row: 2-col left pad · (w-4)-col content · 1-col bar · 1-col
+// right pad. The right pad keeps the bar one column shy of the terminal
+// edge so writing it doesn't trip DECAWM auto-wrap (see scrollbar memo
+// in the components/scrollbar.go fix).
+func scrolledTabBody(content string, scroll, w, h int) string {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
-		return lipgloss.NewStyle().
-			Background(theme.T.Bg()).
-			Padding(1, 2).
-			Width(w).
-			Height(h).
-			Render("")
+	innerH := h
+	if innerH < 1 {
+		innerH = 1
 	}
-
-	// h-2 accounts for the outer Padding(1, 2) top/bottom rows; visibleH
-	// is the rows of actual content the panel can show. The scrollbar
-	// track is exactly visibleH cells so thumb position maps 1:1 to the
-	// visible window. Reserve 1 col of width for the scrollbar character;
-	// the content column shrinks accordingly so each row is
-	//   <content padded to (w-4)> <space> <bar char>
-	// which keeps the bar at a stable rightmost column under any focus.
-	visibleH := h - 2
-	if visibleH < 1 {
-		visibleH = 1
+	contentW := w - 4
+	if contentW < 1 {
+		contentW = 1
 	}
-	scroll := ds.InfoScroll
-	maxScroll := len(lines) - visibleH
+	maxScroll := len(lines) - innerH
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -424,32 +411,422 @@ func renderInfoBlock(ds *DetailState, w, h int) string {
 		scroll = 0
 	}
 
-	// Build each visible row as: content-line (padded to contentW) + " " + bar.
-	contentW := w - 4 // 2 col left pad, 1 col gap, 1 col scrollbar
-	if contentW < 1 {
-		contentW = 1
-	}
-	contentLineStyle := lipgloss.NewStyle().Width(contentW).MaxWidth(contentW)
-	rows := make([]string, 0, visibleH)
-	for r := 0; r < visibleH; r++ {
+	rows := make([]string, 0, innerH)
+	for r := 0; r < innerH; r++ {
 		idx := scroll + r
 		var lineText string
 		if idx < len(lines) {
 			lineText = lines[idx]
 		}
-		row := contentLineStyle.Render(lineText)
-		rows = append(rows, row)
+		rows = append(rows, "  "+padRightANSI(lineText, contentW))
+	}
+	contentBlock := strings.Join(rows, "\n")
+	bar := components.Scrollbar(scroll, innerH, len(lines))
+	return lipgloss.JoinHorizontal(lipgloss.Top, contentBlock, bar)
+}
+
+// renderDescriptionTab — CREW · CAST. Single scrolling pane
+// (InfoScroll). RELATED moved out of the tab body and back to the
+// bottom-of-detail poster carousel (`renderRelatedRow`) so it stays
+// visible regardless of which tab is active. STREAM VIA + EPISODES
+// have their own tabs.
+func renderDescriptionTab(ds *DetailState, w, h int) string {
+	var sections []string
+
+	if crew := renderCrewSection(ds, w); crew != "" {
+		sections = append(sections, crew, "")
 	}
 
+	if len(ds.Entry.Cast) > 0 {
+		sections = append(sections, theme.T.DetailSectionStyle().Render("CAST"))
+		for i, member := range ds.Entry.Cast {
+			sections = append(sections, renderCastRow(member, i, ds.CastCursor, ds.Focus, w))
+		}
+		sections = append(sections, "")
+	}
+
+	if ds.NowPlaying != nil {
+		sections = append(sections, "")
+		sections = append(sections, components.RenderNowPlaying(ds.NowPlaying, w-4))
+	}
+
+	if ds.CollectionPickerOpen {
+		sections = append(sections, "")
+		sections = append(sections, renderCollectionPicker(ds, w))
+	}
+
+	if len(sections) == 0 {
+		dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+		sections = append(sections, dim.Render("  No additional details available yet."))
+	}
+
+	return scrolledTabBody(strings.Join(sections, "\n"), ds.InfoScroll, w, h)
+}
+
+// renderStreamsTab — Movies' "Streams" tab. Renders the same torrent
+// search panel that lives in the per-episode streams column of the
+// Episodes tab: press Enter to fan out across stream-providers,
+// partials populate as they arrive, sorted on completion. Reuses the
+// `EpisodeStreams` cache with the `{0,0}` sentinel key (see
+// `DetailState.CurrentStreamsKey`) so the streaming pipeline serves
+// both flows.
+func renderStreamsTab(ds *DetailState, w, h int) string {
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
+
+	key := ds.CurrentStreamsKey()
+	streams, isLoaded := ds.EpisodeStreams[key], ds.EpisodeStreamsLoaded[key]
+	errMsg := ds.EpisodeStreamsError[key]
+	inFlight := ds.EpisodeStreamsInFlight[key]
+
+	var lines []string
+	switch {
+	case errMsg != "":
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(theme.T.Red()).
+			Render("  "+errMsg))
+	case inFlight:
+		lines = append(lines, dim.Render("  Searching torrents…"))
+	case !isLoaded:
+		lines = append(lines, dim.Render("  Press Enter to search streams"))
+	case len(streams) == 0:
+		lines = append(lines, dim.Render("  No streams found."))
+	default:
+		for i, s := range streams {
+			cursor := "  "
+			lineStyle := normal
+			if ds.Focus == FocusDetailEpisodeStreams && i == ds.EpisodeStreamCursor {
+				cursor = "▶ "
+				lineStyle = acc
+			}
+			parts := []string{}
+			if s.Quality != "" {
+				parts = append(parts, s.Quality)
+			}
+			if s.SizeBytes > 0 {
+				parts = append(parts, humanizeSize(s.SizeBytes))
+			}
+			if s.Seeders > 0 {
+				parts = append(parts, fmt.Sprintf("↑%d", s.Seeders))
+			}
+			meta := strings.Join(parts, " · ")
+			if meta == "" {
+				meta = s.Provider
+			}
+			row := cursor + lineStyle.Render(meta)
+			if s.Provider != "" && len(parts) > 0 {
+				row += "  " + dim.Render(s.Provider)
+			}
+			lines = append(lines, row)
+		}
+	}
+	// Cursor-driven scroll: drive the scrollTabBody offset from
+	// EpisodeStreamCursor (which j/k mutate) instead of ds.InfoScroll
+	// (description-tab scrolling). Without this the panel stays pinned
+	// to top while the cursor walks off the visible window — the user
+	// presses j and the highlight visibly moves until row N where it
+	// vanishes below the fold.
+	_, top := windowedView(lines, ds.EpisodeStreamCursor, h)
+	return scrolledTabBody(strings.Join(lines, "\n"), top, w, h)
+}
+
+// windowedView slides a `height`-tall view over `lines` so `cursor`
+// stays in the visible slice, with a half-height lead-in so the
+// selection isn't pinned to the top edge. Returns the visible slice
+// and the top index for scrollbar rendering.
+//
+// When `lines` already fits, the input is returned unchanged with
+// `top = 0`. Cursor is clamped into [0, len-1] to defend against
+// stale indices (e.g. while partials are still streaming in and the
+// list is growing).
+func windowedView(lines []string, cursor, height int) (visible []string, top int) {
+	if height <= 0 || len(lines) == 0 {
+		return nil, 0
+	}
+	if len(lines) <= height {
+		return lines, 0
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= len(lines) {
+		cursor = len(lines) - 1
+	}
+	half := height / 2
+	top = cursor - half
+	if top < 0 {
+		top = 0
+	}
+	if top+height > len(lines) {
+		top = len(lines) - height
+	}
+	return lines[top : top+height], top
+}
+
+// renderEpisodesTab — Series-only "Episodes" tab. Three columns:
+//   1. Seasons (left, ~22 cols matching the poster width above)
+//   2. Episodes for the selected season (middle, flexes)
+//   3. Streams for the selected episode (right, ~36 cols)
+//
+// The streams column is the placeholder slot for the future
+// streaming pipeline — when the user lands on an episode, it'll
+// populate with ranked streams (provider · quality · size · seeds)
+// from a `GetStreams` / `RankStreams` IPC verb. Today it shows a
+// "select an episode" / "(streams pending pipeline wire-up)" hint
+// so the layout is right when the data arrives.
+//
+// Replaces the standalone `EpisodeScreen` for the in-detail flow —
+// the keybind `e` now switches to this tab instead of pushing a new
+// screen onto the stack.
+func renderEpisodesTab(ds *DetailState, w, h int) string {
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	acc := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
+
+	count := int(ds.Entry.SeasonCount)
+	if count <= 0 {
+		count = 1
+	}
+	if ds.SeasonCursor < 0 {
+		ds.SeasonCursor = 0
+	}
+	if ds.SeasonCursor >= count {
+		ds.SeasonCursor = count - 1
+	}
+
+	// Column widths. Seasons is fixed at PosterWidth so it lines up
+	// under the header poster. Streams claims the right ~36 cols
+	// (enough for "[provider] 1080p · WEB-DL · 6.4 GB"). Episodes
+	// flexes between them.
+	seasonW := mediaheader.PosterWidth
+	streamsW := 52
+	// Body row composition is seasonW + 2 (sep) + epW + 2 (sep) + streamsW.
+	// Outer wrapper uses Padding(1, 1, 1, 2), so the inner content area
+	// is w - 3 cells. Reserving `- 7` (= 4 separator cols + 3 wrapper
+	// pad cols) keeps the rightmost scrollbar glyph one cell shy of the
+	// terminal edge, sidestepping the DECAWM auto-wrap that produced the
+	// "double-line" rendering when bars landed in column w.
+	epW := w - seasonW - streamsW - 7
+	if epW < 20 {
+		epW = 20
+		if streamsW > w-seasonW-epW-7 {
+			streamsW = max(20, w-seasonW-epW-7)
+		}
+	}
+
+	// ── Column 1: seasons ──────────────────────────────────────────
+	var seasonLines []string
+	for i := 0; i < count; i++ {
+		num := i + 1
+		var line string
+		if i == ds.SeasonCursor && ds.Focus == FocusDetailSeasons {
+			line = acc.Render(fmt.Sprintf("▶ Season %d", num))
+		} else if i == ds.SeasonCursor {
+			line = normal.Render(fmt.Sprintf("▶ Season %d", num))
+		} else {
+			line = dim.Render(fmt.Sprintf("  Season %d", num))
+		}
+		seasonLines = append(seasonLines, line)
+	}
+	// Vertical content budget for all three columns. The wrapping
+	// style on the body uses Padding(1, 0, 1, 2), so 2 rows are
+	// already claimed for vertical breathing room — the remaining h-2
+	// is what each column gets to fill (or scroll within).
+	contentH := h - 2
+	if contentH < 3 {
+		contentH = 3
+	}
+
+	// Each column reserves 1 col on the right edge for the
+	// scrollbar glyph (matches the grid.go pattern). The bar's
+	// distinct foreground colour gives enough visual separation
+	// from the column content without an extra gutter column.
+	seasonContentW := seasonW - 1
+	if seasonContentW < 1 {
+		seasonContentW = 1
+	}
+
+	// ── Column 2: episodes ─────────────────────────────────────────
+	episodes, loaded := ds.Episodes[ds.SeasonCursor+1], ds.EpisodesLoaded[ds.SeasonCursor+1]
+	var epLines []string
+	epCursor := 0
+	currentSeasonErr := ds.EpisodesError[ds.SeasonCursor+1]
+	switch {
+	case currentSeasonErr != "":
+		epLines = []string{lipgloss.NewStyle().Foreground(theme.T.Red()).
+			Render("  Failed to load episodes: " + currentSeasonErr)}
+	case !loaded:
+		epLines = []string{dim.Render("  Loading episodes…")}
+	case len(episodes) == 0:
+		epLines = []string{dim.Render("  No episodes for this season.")}
+	default:
+		for i, ep := range episodes {
+			cursor := "  "
+			style := normal
+			if i == ds.EpisodeCursor && ds.Focus == FocusDetailEpisodes {
+				cursor = "▶ "
+				style = acc
+			} else if i == ds.EpisodeCursor {
+				cursor = "▶ "
+			}
+			epNum := dim.Render(fmt.Sprintf("E%02d", ep.Episode))
+			title := ep.Title
+			// −1 from epW for the scrollbar.
+			maxTitle := epW - 13
+			if maxTitle > 0 && len(title) > maxTitle {
+				title = title[:maxTitle-1] + "…"
+			}
+			line := cursor + epNum + "  " + style.Render(title)
+			if ep.AirDate != "" && len(ep.AirDate) >= 10 {
+				line += "  " + dim.Render(ep.AirDate[:10])
+			}
+			epLines = append(epLines, line)
+		}
+		epCursor = ds.EpisodeCursor
+	}
+
+	// ── Column 3: streams ──────────────────────────────────────────
+	// −1 from streamsW for the scrollbar glyph.
+	streamsContentW := streamsW - 1
+	if streamsContentW < 1 {
+		streamsContentW = 1
+	}
+	// No "STREAMS" header / "S01EXX" line — the column position +
+	// the prompts ("Press Enter to search streams" / "Pick an
+	// episode first") read clearly enough on their own. Removing
+	// the header also sidesteps the MarginTop(1) embedded-newline
+	// trap that DetailSectionStyle introduced.
+	var streamsLines []string
+	streamCursorAbs := 0
+	switch {
+	case !loaded || len(episodes) == 0:
+		streamsLines = append(streamsLines, dim.Render("  Pick an episode first."))
+	case ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(episodes):
+		streamsLines = append(streamsLines, dim.Render("  Pick an episode first."))
+	default:
+		ep := episodes[ds.EpisodeCursor]
+		key := EpisodeStreamsKey{Season: ds.SeasonCursor + 1, Episode: int(ep.Episode)}
+		streams, isLoaded := ds.EpisodeStreams[key], ds.EpisodeStreamsLoaded[key]
+		errMsg := ds.EpisodeStreamsError[key]
+		inFlight := ds.EpisodeStreamsInFlight[key]
+		switch {
+		case errMsg != "":
+			streamsLines = append(streamsLines,
+				lipgloss.NewStyle().Foreground(theme.T.Red()).
+					Render("  "+errMsg))
+		case inFlight:
+			streamsLines = append(streamsLines, dim.Render("  Searching torrents…"))
+		case !isLoaded:
+			streamsLines = append(streamsLines, dim.Render("  Press Enter to search streams"))
+		case len(streams) == 0:
+			streamsLines = append(streamsLines, dim.Render("  No streams found."))
+		default:
+			// First stream row sits at len(streamsLines) right now
+			// (= 0 in the no-header case). Capture the offset so we
+			// can translate ds.EpisodeStreamCursor into an absolute
+			// slice index for windowing + scrollbar.
+			firstStreamRowAbs := len(streamsLines)
+			for i, s := range streams {
+				cursor := "  "
+				lineStyle := normal
+				if ds.Focus == FocusDetailEpisodeStreams && i == ds.EpisodeStreamCursor {
+					cursor = "▶ "
+					lineStyle = acc
+				}
+				// Compact summary: quality · size · seeders. Keep
+				// to one line — the streams column is narrow.
+				parts := []string{}
+				if s.Quality != "" {
+					parts = append(parts, s.Quality)
+				}
+				if s.SizeBytes > 0 {
+					parts = append(parts, humanizeSize(s.SizeBytes))
+				}
+				if s.Seeders > 0 {
+					parts = append(parts, fmt.Sprintf("↑%d", s.Seeders))
+				}
+				meta := strings.Join(parts, " · ")
+				if meta == "" {
+					meta = s.Provider
+				}
+				row := cursor + lineStyle.Render(meta)
+				if s.Provider != "" && len(parts) > 0 {
+					row += "  " + dim.Render(s.Provider)
+				}
+				// Hard-truncate to streams column content width
+				// (less the scrollbar gutter).
+				if lipgloss.Width(row) > streamsContentW-2 {
+					rr := []rune(row)
+					if len(rr) > streamsContentW-3 {
+						row = string(rr[:streamsContentW-3]) + "…"
+					}
+				}
+				streamsLines = append(streamsLines, row)
+			}
+			if ds.EpisodeStreamCursor >= 0 && ds.EpisodeStreamCursor < len(streams) {
+				streamCursorAbs = firstStreamRowAbs + ds.EpisodeStreamCursor
+			}
+		}
+	}
+
+	// Compose each column row-by-row using padRightANSI + the
+	// matching scrollbar glyph. Going through `lipgloss.Width(N).
+	// Render(multilineString)` was the source of the row-
+	// fragmentation bug: lipgloss's block renderer interleaved
+	// blank rows when fed a \n-separated string. The same manual
+	// composition pattern is what `scrolledTabBody` and the
+	// music_queue use, both of which render cleanly.
+	epContentW := epW - 1
+	if epContentW < 1 {
+		epContentW = 1
+	}
+	// Build each column as a plain multi-line content block (no
+	// embedded scrollbar glyphs), then pass content + scrollbar as
+	// SEPARATE blocks to JoinHorizontal. This matches the
+	// `music_queue` pattern (which renders cleanly) — the previous
+	// per-row interleaving via composeColumnWithBar appeared to
+	// cause visual fragmentation of the scrollbar in this screen
+	// even though byte-level output looked correct.
+	seasonVisible, seasonTop := windowedView(seasonLines, ds.SeasonCursor, contentH)
+	seasonBar := components.Scrollbar(seasonTop, len(seasonVisible), len(seasonLines))
+	seasonContentLines := make([]string, len(seasonVisible))
+	for i, l := range seasonVisible {
+		seasonContentLines[i] = padRightANSI(l, seasonContentW)
+	}
+	seasonContent := strings.Join(seasonContentLines, "\n")
+
+	epVisible, epTop := windowedView(epLines, epCursor, contentH)
+	epBar := components.Scrollbar(epTop, len(epVisible), len(epLines))
+	epContentLines := make([]string, len(epVisible))
+	for i, l := range epVisible {
+		epContentLines[i] = padRightANSI(l, epContentW)
+	}
+	epContent := strings.Join(epContentLines, "\n")
+
+	streamsVisible, streamsTop := windowedView(streamsLines, streamCursorAbs, contentH)
+	streamsBar := components.Scrollbar(streamsTop, len(streamsVisible), len(streamsLines))
+	streamsContentLines := make([]string, len(streamsVisible))
+	for i, l := range streamsVisible {
+		streamsContentLines[i] = padRightANSI(l, streamsContentW)
+	}
+	streamsContent := strings.Join(streamsContentLines, "\n")
+
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		strings.Join(rows, "\n"), " ", components.Scrollbar(scroll, visibleH, len(lines)),
+		seasonContent, seasonBar,
+		"  ",
+		epContent, epBar,
+		"  ",
+		streamsContent, streamsBar,
 	)
-	// Padding(1, 0, 1, 2) — top:1, right:0, bottom:1, left:2.  Inner
-	// horizontal area is w-2; each row is (w-4) content + 1 gap + 1 bar
-	// = w-2, exactly filling the inner width with no overflow.
+	// 1-col right padding keeps the rightmost scrollbar cell one
+	// column shy of the terminal edge. Writing into column w trips
+	// DECAWM auto-wrap (cursor advances to the next row), and the
+	// trailing `\n` between body rows then advances it again — every
+	// row would consume two visual lines.
 	return lipgloss.NewStyle().
 		Background(theme.T.Bg()).
-		Padding(1, 0, 1, 2).
+		Padding(1, 1, 1, 2).
 		Width(w).
 		Height(h).
 		Render(body)
@@ -625,6 +1002,27 @@ func formatDetailDuration(secs float64) string {
 		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
 	}
 	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// humanizeSize formats a byte count as `"1.2 GB"` / `"640 MB"` /
+// `"42 KB"` for the streams column. Decimal units (1000-based) since
+// torrent sites display sizes in those.
+func humanizeSize(b int64) string {
+	const (
+		gb = 1_000_000_000
+		mb = 1_000_000
+		kb = 1_000
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.0f MB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.0f KB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

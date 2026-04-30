@@ -223,6 +223,142 @@ pub struct SubtitleTrack {
     pub format: String,
 }
 
+// ── StreamProvider verb types ────────────────────────────────────────────────
+//
+// New in this revision: the StreamProvider capability lets plugins return
+// MANY streams per query (vs. the legacy `resolve` verb which returns one
+// stream). Torrent indexers (Jackett, Prowlarr) and HTTP-search providers
+// (Stremio addons, Torrentio, etc.) need this shape — one search returns
+// dozens of release candidates differing in quality / source / seeders.
+//
+// The trait + ABI are additive — legacy `StuiPlugin::resolve` stays
+// supported for plugins that produce a single stream. New stream plugins
+// implement `StreamProvider::find_streams` and the runtime prefers it
+// when both are advertised.
+
+/// Request asking the plugin to return all stream candidates matching the
+/// supplied media reference. Plugins use whatever combination of fields
+/// makes sense for their backend — torrent indexers tend to query by
+/// `title + year + season + episode`, Stremio addons key off `imdb_id`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FindStreamsRequest {
+    /// Title for free-text search backends (jackett/prowlarr/torznab).
+    pub title: String,
+    /// Year disambiguator. Optional — torrent indexers use it to filter
+    /// out reissues / different titles with the same name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    /// What kind of media is being requested. Lets a plugin reject
+    /// unsupported kinds (e.g. an audiobook indexer rejecting Movie).
+    #[serde(default)]
+    pub kind: EntryKind,
+    /// Series-only: 1-based season number when querying for an episode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    /// Series-only: 1-based episode number within the season.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    /// External ids carried over from the catalog entry — IMDb is the
+    /// most-supported anchor for torrent indexers; some plugins also
+    /// recognise tmdb / tvdb / mal.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub external_ids: HashMap<String, String>,
+    /// Pre-extracted IMDb id (`tt0xxxxxxx`). Convenience mirror of
+    /// `external_ids["imdb"]` so common consumers don't have to look up
+    /// the map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imdb_id: Option<String>,
+    /// Pre-extracted TMDB id (numeric, stringified).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmdb_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindStreamsResponse {
+    pub streams: Vec<Stream>,
+}
+
+/// One stream candidate returned by a StreamProvider plugin. Designed to
+/// carry enough metadata for the runtime's quality/health/policy ranker
+/// to score and re-order without going back to the plugin.
+///
+/// `url` is the playable / fetchable URL — `magnet:?xt=urn:btih:…` for
+/// torrents, `https://…` for direct streams. The runtime decides what
+/// to do with it based on the URL scheme (`magnet:` → aria2, `https:` →
+/// mpv direct, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Stream {
+    /// Playable URL. Magnet URI for torrents, HTTPS URL for direct streams.
+    pub url: String,
+    /// Human-readable label for the stream. Convention: release name for
+    /// torrents (`The Show S01E02 1080p WEB-DL DDP5.1 H.264-GROUP`),
+    /// quality label for direct streams (`1080p`).
+    pub title: String,
+    /// Provider name for grouping/dedup in the UI. Echo the plugin's
+    /// `name` from manifest (e.g. `"jackett"`, `"prowlarr"`).
+    pub provider: String,
+
+    // ── Quality metadata (all optional — plugins fill what they can) ──
+
+    /// Resolution / quality bucket as a label. `"4K"`, `"2160p"`,
+    /// `"1080p"`, `"720p"`, etc. Drives the ranker's quality score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// Encoding codec. `"h264"`, `"h265"`, `"av1"`. Used by the
+    /// container-compat checks downstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    /// Source class. `"WEB-DL"`, `"BluRay"`, `"HDTV"`, `"CAM"`. Used by
+    /// the ranker's source-quality weighting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// HDR-format presence flag. Plugins that detect Dolby Vision /
+    /// HDR10 / HDR10+ in release names set this true.
+    #[serde(default)]
+    pub hdr: bool,
+
+    // ── Torrent-specific (None for direct streams) ────────────────────
+
+    /// Seeder count from the torrent indexer. The ranker treats high
+    /// seeders as a quality signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeders: Option<u32>,
+    /// Total payload size in bytes. Used by user policy rules
+    /// (`prefer_smaller`, `max_size_gb`, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+
+    // ── Audio / subtitle metadata ────────────────────────────────────
+
+    /// ISO-639-1 audio language code. Used for "match my preferred
+    /// audio language" filtering in the ranker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Embedded subtitle tracks the plugin knows about. External
+    /// subtitle providers (opensubtitles, kitsunekko) return their
+    /// candidates separately via the SubtitleProvider capability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtitles: Vec<SubtitleTrack>,
+}
+
+/// StreamProvider capability. Plugins opt into this trait when their
+/// manifest declares `[capabilities] streams = true`. The single
+/// `find_streams` verb returns every stream candidate the plugin
+/// knows about for the given media reference; the runtime aggregates
+/// across providers, ranks via the user's policy, and returns to the
+/// TUI.
+///
+/// `find_streams` has a default impl returning NotImplemented so a
+/// plugin can opt in via `impl StreamProvider for MyPlugin {}` (no
+/// body) and inherit the stub. That keeps the export macros simple —
+/// they always emit `stui_find_streams` and never have to detect
+/// per-plugin trait impls.
+pub trait StreamProvider: Plugin {
+    fn find_streams(&self, _req: FindStreamsRequest) -> PluginResult<FindStreamsResponse> {
+        err_not_implemented()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginError {
     pub code: String,
@@ -771,6 +907,65 @@ mod mockhost_tests {
 struct HttpResponse {
     pub status: u16,
     pub body: String,
+}
+
+/// Make an HTTP GET request with custom headers through the sandboxed host.
+///
+/// Mirrors `http_get` but lets the plugin attach arbitrary headers — most
+/// commonly `Cookie:` for session-authenticated trackers (RuTracker,
+/// Zamunda, BT.etree) and `User-Agent:` overrides for backends that
+/// reject the default agent.
+///
+/// Headers are passed as `&[(name, value)]`. The host applies them
+/// verbatim; no validation beyond what reqwest does.
+///
+/// Returns the response body as a String on 2xx, or an Err with the status+body.
+pub fn http_get_with_headers(url: &str, headers: &[(&str, &str)]) -> Result<String, String> {
+    // Encode {"url": "...", "__stui_headers": {"k": "v", ...}} for the
+    // host. The host strips __stui_headers and applies them as real
+    // request headers.
+    let mut headers_json = String::from("{");
+    for (i, (k, v)) in headers.iter().enumerate() {
+        if i > 0 { headers_json.push(','); }
+        headers_json.push_str(&serde_json::to_string(k).unwrap_or_default());
+        headers_json.push(':');
+        headers_json.push_str(&serde_json::to_string(v).unwrap_or_default());
+    }
+    headers_json.push('}');
+
+    let payload = format!(
+        "{{\"url\":{},\"__stui_headers\":{}}}",
+        serde_json::to_string(url).unwrap_or_default(),
+        headers_json,
+    );
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[link(wasm_import_module = "stui")]
+        extern "C" {
+            fn stui_http_get_with_headers(ptr: *const u8, len: i32) -> i64;
+        }
+        let packed = unsafe { stui_http_get_with_headers(payload.as_ptr(), payload.len() as i32) };
+        if packed == 0 {
+            return Err("http_get_with_headers returned null".into());
+        }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| e.to_string())?;
+        let resp: HttpResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        if resp.status >= 200 && resp.status < 300 {
+            Ok(resp.body)
+        } else {
+            Err(format!("HTTP {}: {}", resp.status, resp.body))
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = payload;
+        Err(format!(
+            "http_get_with_headers only available in WASM context (url: {url})"
+        ))
+    }
 }
 
 /// Make an HTTP POST request with a JSON body through the sandboxed host.
@@ -1490,6 +1685,33 @@ macro_rules! stui_export_catalog_plugin {
             resp_ty  = $crate::EpisodesResponse,
         }
 
+        // ── StreamProvider verb export ────────────────────────────────
+        //
+        // Always emitted: the StreamProvider trait has a default
+        // `find_streams` returning NotImplemented, so plugins that
+        // don't actually serve streams just inherit the stub via an
+        // empty `impl StreamProvider for MyPlugin {}` declaration.
+        // Stream-capable plugins (jackett, prowlarr, etc.) override
+        // with a real body.
+        #[no_mangle]
+        pub extern "C" fn stui_find_streams(ptr: i32, len: i32) -> i64 {
+            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+            let req: $crate::FindStreamsRequest = match serde_json::from_slice(input) {
+                Ok(r) => r,
+                Err(e) => {
+                    return $crate::__write_result(
+                        &$crate::PluginResult::<$crate::FindStreamsResponse>::err(
+                            $crate::error_codes::PARSE_ERROR,
+                            e.to_string(),
+                        ),
+                    );
+                }
+            };
+            let borrow = get_plugin();
+            let result = <$plugin_ty as $crate::StreamProvider>::find_streams(&*borrow, req);
+            $crate::__write_result(&result)
+        }
+
         // Note: stui_resolve is intentionally absent — catalog-only plugins do not
         // implement the deprecated StuiPlugin trait and have no resolve endpoint.
     };
@@ -1527,6 +1749,7 @@ pub mod prelude {
     pub use crate::cache_set;
     pub use crate::exec;
     pub use crate::http_get;
+    pub use crate::http_get_with_headers;
     pub use crate::http_post_json;
     pub use crate::stui_export_catalog_plugin;
     pub use crate::stui_export_plugin;
@@ -1536,6 +1759,9 @@ pub mod prelude {
     pub use crate::{
         PluginEntry, PluginResult, PluginType, ResolveRequest, ResolveResponse, SearchRequest,
         SearchResponse, StuiPlugin, SubtitleTrack,
+    };
+    pub use crate::{
+        FindStreamsRequest, FindStreamsResponse, Stream, StreamProvider,
     };
 }
 

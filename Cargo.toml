@@ -9,6 +9,10 @@ members = [
 ]
 exclude = [
     "plugins/target",
+    # Stale duplicate of the canonical `sdk/` at workspace root —
+    # excluded so cargo doesn't see two `stui-plugin-sdk` crates.
+    # Plugins reference the canonical one via `path = "../../sdk"`.
+    "plugins/sdk",
 ]
 
 # ── Shared dependency versions ────────────────────────────────────────────────

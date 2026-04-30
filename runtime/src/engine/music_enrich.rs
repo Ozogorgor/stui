@@ -1,41 +1,31 @@
 //! music_enrich — second-pass enrichment of music-tab catalog entries.
 //!
-//! When the music tab is hydrated from lastfm via tag.gettopalbums, each
-//! entry arrives with title + artist + poster but typically no year and
-//! no rating. This module fans out per-entry enrich calls to the
-//! musicbrainz and discogs plugins to fill those fields in.
+//! Lastfm-sourced albums arrive in the catalog with title + artist +
+//! poster but typically no year, no rating, no genre. This module
+//! fans out per-entry `enrich` calls to **every loaded plugin that
+//! declares the enrich capability for `EntryKind::Album`** — so
+//! adding a new ratings/metadata provider is purely a plugin-install
+//! operation, no runtime code change.
+//!
+//! Each plugin contributes whatever fields it has:
+//! - `entry.rating` (single headline f32) → recorded under the
+//!   plugin's `source` name in `entry.ratings`.
+//! - `entry.ratings` (per-source map for plugins that aggregate, e.g.
+//!   OMDb's IMDb+RT+Metacritic block) → merged in directly.
+//! - `entry.year` / `entry.genre` / `entry.description` → first
+//!   non-empty value wins, since the catalog entry might already
+//!   have these from a prior provider.
+//!
+//! The composite headline rating (`entry.rating` as a string) is
+//! recomputed by `apply_weighted_rating` after all plugins have
+//! responded — it picks the right weight profile (with user
+//! overrides via `RatingSourceWeights`) and computes a weighted
+//! median across whatever sources actually populated.
 //!
 //! Designed for the **progressive** flow: the catalog emits the
-//! unenriched grid_update first (fast first-paint), then a background
-//! task calls [`enrich_grid_progressive`] which streams updated
-//! snapshots via a callback as each batch of entries finishes
-//! enriching. The TUI's GridUpdateMsg handler is idempotent, so cards
-//! repaint with year + rating filling in over time.
-//!
-//! ## Why title+artist (not external_ids)
-//!
-//! The PluginEntry → MediaEntry → CatalogEntry conversion drops
-//! `external_ids` (only specific named ids — imdb/tmdb/mal — are
-//! preserved). Rather than thread musicbrainz_id through three layers
-//! of types, we exercise each plugin's title+artist fallback path:
-//! both musicbrainz and discogs support enriching from a partial
-//! PluginEntry that only carries `title` and `artist_name`, and both
-//! cache the resulting HTTP responses via the runtime's sqlite cache —
-//! so the second enrichment for a known album is effectively free.
-//!
-//! ## Performance
-//!
-//! Per-entry, MB and Discogs are called in **parallel** (different
-//! providers, separate rate-limit pools) so the per-entry latency is
-//! `max(MB, Discogs)` rather than `MB + Discogs`. Across entries we
-//! fan out at concurrency=4 — the per-plugin token bucket (declared
-//! in each plugin.toml's `[rate_limit]`) paces out the actual upstream
-//! request rate, so concurrency above the rate limit just queues at
-//! the supervisor instead of overrunning the API.
-//!
-//! Snapshots are flushed every [`PROGRESS_BATCH_SIZE`] entries so the
-//! user sees year/rating land in waves rather than waiting for the
-//! whole pass to complete.
+//! unenriched grid_update first (fast first-paint), then this task
+//! streams snapshots back via `on_progress` every
+//! [`PROGRESS_BATCH_SIZE`] entries — cards repaint in waves.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -46,35 +36,19 @@ use tracing::{debug, info, warn};
 
 use crate::abi::types::{EnrichRequest, PluginEntry};
 use crate::catalog::CatalogEntry;
+use crate::catalog_engine::aggregator::apply_weighted_rating;
 use crate::engine::Engine;
-
-/// Plugin ids — must match the `[plugin] name` in each provider's
-/// plugin.toml. If a plugin isn't loaded, supervisor_enrich returns
-/// PluginNotFound and the per-entry enrich call is silently skipped.
-const PLUGIN_MUSICBRAINZ: &str = "musicbrainz";
-const PLUGIN_DISCOGS: &str = "discogs";
-const PLUGIN_LASTFM: &str = "lastfm";
 
 /// Concurrent enrich tasks. Higher values fan out more work, but each
 /// per-plugin token bucket throttles upstream requests independently —
-/// excess concurrency just queues at the supervisor. 4 is a balance:
-/// enough to keep both providers busy in parallel, low enough that
-/// task scheduling overhead and rate-limit queueing don't stall.
+/// excess concurrency just queues at the supervisor.
 const ENRICH_CONCURRENCY: usize = 4;
 
-/// Flush a progress snapshot every N entries finished. Each flush ships
-/// a fresh grid_update over IPC; cards in the TUI repaint with the
-/// current state. Smaller = smoother UX, larger = less IPC overhead.
+/// Flush a snapshot every N entries finished.
 const PROGRESS_BATCH_SIZE: usize = 8;
 
-/// Run the music-grid enrichment in the background, calling
-/// `on_progress(snapshot)` after every [`PROGRESS_BATCH_SIZE`]
-/// entries finish. The final call to `on_progress` carries the fully
-/// enriched grid.
-///
-/// `on_progress` is invoked from inside this future — keep it cheap
-/// (it should typically just emit a grid_update and write the disk
-/// cache).
+/// Run music-grid enrichment, calling `on_progress(snapshot)` after
+/// every batch. Final call carries the fully-enriched grid.
 pub async fn enrich_grid_progressive<F, Fut>(
     engine: Arc<Engine>,
     entries: Vec<CatalogEntry>,
@@ -88,10 +62,18 @@ where
         return;
     }
 
+    // Snapshot the plugin set ONCE at task start. Hot-reload races
+    // (a plugin appearing or disappearing mid-pass) are rare and
+    // the next refresh picks up the new set anyway.
+    let plugins = engine.enrich_plugins_for_kind(EntryKind::Album).await;
+    if plugins.is_empty() {
+        info!("music_enrich: no plugins declare enrich for Album — skipping pass");
+        return;
+    }
+    info!(plugins = ?plugins, count = entries.len(), "music_enrich: starting pass");
+
+    let plugins = Arc::new(plugins);
     let total = entries.len();
-    // Shared state: the in-progress snapshot. Each task writes its
-    // enriched entry into its slot. After every N completions a
-    // snapshot is cloned and shipped to the callback.
     let snapshot = Arc::new(Mutex::new(entries));
     let completed = Arc::new(AtomicUsize::new(0));
     let sem = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
@@ -100,6 +82,7 @@ where
     let mut tasks = Vec::with_capacity(total);
     for idx in 0..total {
         let engine = engine.clone();
+        let plugins = plugins.clone();
         let snapshot = snapshot.clone();
         let completed = completed.clone();
         let sem = sem.clone();
@@ -109,26 +92,22 @@ where
                 Ok(p) => p,
                 Err(_) => return,
             };
-            // Take the entry out of the snapshot under the mutex so
-            // we can run enrich without holding the lock.
             let entry = {
                 let snap = snapshot.lock().await;
                 snap[idx].clone()
             };
-            let enriched = enrich_one(&engine, entry).await;
-            // Write back, count, maybe flush.
-            let should_flush_snapshot = {
+            let enriched = enrich_one(&engine, &plugins, entry).await;
+            let should_flush = {
                 let mut snap = snapshot.lock().await;
                 snap[idx] = enriched;
                 let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
-                // Flush every batch boundary AND on the last entry.
                 if done % PROGRESS_BATCH_SIZE == 0 || done == total {
                     Some(snap.clone())
                 } else {
                     None
                 }
             };
-            if let Some(snap) = should_flush_snapshot {
+            if let Some(snap) = should_flush {
                 on_progress(snap).await;
             }
         }));
@@ -142,123 +121,117 @@ where
     info!(total, "music_enrich: pass complete");
 }
 
-async fn enrich_one(engine: &Engine, mut entry: CatalogEntry) -> CatalogEntry {
+async fn enrich_one(
+    engine: &Engine,
+    plugins: &[String],
+    mut entry: CatalogEntry,
+) -> CatalogEntry {
     let title = entry.title.trim().to_string();
     if title.is_empty() {
         return entry;
     }
     let artist = entry.artist.clone();
 
-    // Run all three enrich providers in parallel — different rate-
-    // limit pools, no contention. Per-entry latency is
-    // max(MB, Discogs, lastfm) instead of the sum.
-    let need_year = entry.year.is_none();
-    let need_rating = entry.rating.is_none();
-    let need_genre = entry.genre.is_none();
-    let need_description = entry.description.is_none();
-    // lastfm enrich is worth running whenever we'd benefit from any
-    // of its outputs: synthetic rating (only if Discogs ends up
-    // empty), genre tag, or wiki description.
-    let want_lastfm = need_rating || need_genre || need_description;
+    // Build the partial PluginEntry once and clone for each request —
+    // every plugin gets the same title+artist+kind shape and decides
+    // whether to use it.
+    let partial = PluginEntry {
+        kind: EntryKind::Album,
+        title: title.clone(),
+        artist_name: artist.clone(),
+        ..Default::default()
+    };
 
-    let (mb_res, dg_res, lf_res) = tokio::join!(
-        async {
-            if need_year {
-                call_enrich(engine, PLUGIN_MUSICBRAINZ, &title, artist.as_deref()).await
-            } else {
-                None
+    // Fan out to every loaded enrich-capable Album plugin in parallel.
+    // Different providers, different rate-limit buckets — no contention.
+    let futs: Vec<_> = plugins
+        .iter()
+        .map(|name| {
+            let req = EnrichRequest {
+                partial: partial.clone(),
+                prefer_id_source: None,
+            };
+            let name = name.clone();
+            async move {
+                let res = engine.supervisor_enrich(&name, req).await;
+                (name, res)
             }
-        },
-        async {
-            if need_rating {
-                call_enrich(engine, PLUGIN_DISCOGS, &title, artist.as_deref()).await
-            } else {
-                None
-            }
-        },
-        async {
-            if want_lastfm {
-                call_enrich(engine, PLUGIN_LASTFM, &title, artist.as_deref()).await
-            } else {
-                None
-            }
-        },
-    );
+        })
+        .collect();
+    let results = futures::future::join_all(futs).await;
 
-    if let Some(p) = mb_res {
-        if let Some(y) = p.year {
-            entry.year = Some(y.to_string());
-            debug!(album = %title, year = y, "music_enrich: MB year");
-        }
-    }
-    // Rating preference: Discogs (real community 5-star) wins over
-    // lastfm (synthetic from listener count). Discogs only returns
-    // ratings for releases with actual community votes — most niche
-    // albums have none — so the lastfm fallback gets us coverage on
-    // the long tail.
-    if let Some(p) = dg_res {
-        if let Some(r) = p.rating {
-            entry.rating = Some(format!("{r:.2}"));
-            entry.ratings.insert("discogs".to_string(), r as f64);
-            debug!(album = %title, rating = r, "music_enrich: Discogs rating");
-        }
-    }
-    if let Some(p) = lf_res {
-        // Genre / description always taken from lastfm if we don't
-        // already have them — lastfm's tag-based genre is the
-        // best-coverage source for music.
-        if entry.genre.is_none() {
-            if let Some(g) = p.genre.clone() {
-                entry.genre = Some(g);
+    let mut got_any_rating = false;
+    for (plugin, res) in results {
+        let p = match res {
+            Ok(p) => p,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("PluginNotFound") {
+                    debug!(plugin = %plugin, "music_enrich: plugin not loaded");
+                } else {
+                    warn!(plugin = %plugin, album = %title, error = %msg, "music_enrich: enrich failed");
+                }
+                continue;
             }
-        }
-        if entry.description.is_none() {
-            if let Some(d) = p.description.clone() {
-                entry.description = Some(d);
-            }
-        }
-        // Synthetic rating fills in only when Discogs left rating
-        // empty — see synth_rating_from_listeners in
-        // lastfm-provider for the formula.
-        if entry.rating.is_none() {
-            if let Some(r) = p.rating {
-                entry.rating = Some(format!("{r:.2}"));
-                entry.ratings.insert("lastfm".to_string(), r as f64);
-                debug!(album = %title, rating = r, "music_enrich: lastfm synthetic rating");
-            }
-        }
+        };
+        merge_plugin_response(&mut entry, &plugin, p, &mut got_any_rating);
     }
 
+    if got_any_rating {
+        // Recompute headline rating from the per-source map. This
+        // lets the user's rating-source weights drive priority
+        // (e.g. weight musicbrainz higher than discogs, or vice versa).
+        apply_weighted_rating(&mut entry);
+    }
     entry
 }
 
-async fn call_enrich(
-    engine: &Engine,
+fn merge_plugin_response(
+    entry: &mut CatalogEntry,
     plugin: &str,
-    title: &str,
-    artist: Option<&str>,
-) -> Option<PluginEntry> {
-    let mut partial = PluginEntry {
-        kind: EntryKind::Album,
-        title: title.to_string(),
-        ..Default::default()
-    };
-    partial.artist_name = artist.map(|s| s.to_string());
-
-    let req = EnrichRequest {
-        partial,
-        prefer_id_source: None,
-    };
-    match engine.supervisor_enrich(plugin, req).await {
-        Ok(entry) => Some(entry),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("PluginNotFound") {
-                debug!(plugin, "music_enrich: plugin not loaded, skipping");
-            } else {
-                warn!(plugin, album = %title, error = %msg, "music_enrich: enrich failed");
-            }
-            None
+    p: PluginEntry,
+    got_any_rating: &mut bool,
+) {
+    // Year — first non-empty wins. Plugins are best-effort; not all
+    // know release year (lastfm doesn't, MB does).
+    if entry.year.is_none() {
+        if let Some(y) = p.year {
+            entry.year = Some(y.to_string());
+            debug!(album = %entry.title, plugin = %plugin, year = y, "music_enrich: year");
         }
+    }
+    // Genre — first non-empty wins. lastfm's tag-derived genre has
+    // the highest coverage; MB's primary_type is more authoritative
+    // when present.
+    if entry.genre.is_none() {
+        if let Some(g) = p.genre.clone() {
+            entry.genre = Some(g);
+        }
+    }
+    // Description — first non-empty wins.
+    if entry.description.is_none() {
+        if let Some(d) = p.description.clone() {
+            entry.description = Some(d);
+        }
+    }
+
+    // Single headline rating from the plugin → record under the
+    // plugin's `source` field name. Fall back to the plugin name
+    // itself if `source` is empty (shouldn't be, but defensive).
+    let source_key = if !p.source.is_empty() {
+        p.source.clone()
+    } else {
+        plugin.to_string()
+    };
+    if let Some(r) = p.rating {
+        entry.ratings.insert(source_key.clone(), r as f64);
+        *got_any_rating = true;
+        debug!(album = %entry.title, source = %source_key, rating = r, "music_enrich: rating");
+    }
+
+    // Per-source ratings map (OMDb-style) — merge in as-is.
+    for (k, v) in p.ratings {
+        entry.ratings.insert(k, v as f64);
+        *got_any_rating = true;
     }
 }

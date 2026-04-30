@@ -1174,6 +1174,8 @@ impl MediaStub {
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for AnilistPlugin {}
+
 stui_export_catalog_plugin!(AnilistPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

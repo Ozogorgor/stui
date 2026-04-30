@@ -1,28 +1,23 @@
 //! video_enrich — second-pass enrichment for movie / series catalog
-//! entries via OMDb's multi-source rating block.
+//! entries.
 //!
-//! Movies and series arrive in the catalog from TMDB / TVDB / kitsu /
-//! anilist / etc., each contributing a single headline `rating` (and
-//! sometimes one entry in `ratings` keyed by provider). OMDb's
-//! `?i=<imdb_id>` endpoint returns IMDb + Rotten Tomatoes (tomatometer)
-//! + Metacritic in a single Ratings[] payload — getting that into
-//! the per-source `ratings` map is what unlocks the catalog
-//! aggregator's weighted composite for movies/series. Without this
-//! pass the composite is whatever single-source rating TMDB or TVDB
-//! provided, which is exactly the issue the user flagged.
+//! TMDB / TVDB / kitsu / anilist / etc. each contribute a single
+//! headline rating (and sometimes one entry in `ratings` keyed by
+//! provider). This pass fans out to **every loaded plugin that
+//! declares enrich for `EntryKind::Movie` (or Series)** to pull in
+//! additional sources — most notably OMDb's `Ratings[]` block which
+//! carries IMDb + Rotten Tomatoes + Metacritic in a single payload.
 //!
-//! Mirrors music_enrich's progressive-snapshot design: spawn a
-//! background task, fan out OMDb enrich calls per entry, flush a
-//! grid_update every PROGRESS_BATCH_SIZE completions so cards
-//! repaint in waves rather than all at once.
+//! Mirrors music_enrich's design: dynamic plugin discovery, parallel
+//! per-entry fan-out, progressive grid_update snapshots every
+//! [`PROGRESS_BATCH_SIZE`] entries.
 //!
 //! ## Fast path
 //!
-//! Entries with `imdb_id` set hit OMDb's id endpoint directly (one
-//! round-trip). Entries without imdb_id are skipped — OMDb's title
-//! search is unreliable for non-canonical titles and not worth the
-//! quota burn for the marginal coverage. TMDB-sourced movies usually
-//! carry an imdb_id; TVDB-sourced series do too.
+//! Entries with `imdb_id` set go straight to id-based enrich
+//! (one HTTP round-trip per plugin). Entries without imdb_id are
+//! skipped — title-search fallback for movies/series is unreliable
+//! and not worth the quota burn.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,18 +31,9 @@ use crate::catalog::CatalogEntry;
 use crate::catalog_engine::aggregator::apply_weighted_rating;
 use crate::engine::Engine;
 
-const PLUGIN_OMDB: &str = "omdb";
-
-/// OMDb's per-IP rate limit on the free tier is 1000 requests/day with
-/// no per-second ceiling. Concurrency=4 lets us fan out without
-/// hitting any practical limit on typical grid sizes (~50 entries).
 const ENRICH_CONCURRENCY: usize = 4;
-
-/// Flush a snapshot every N entries so cards repaint progressively.
 const PROGRESS_BATCH_SIZE: usize = 8;
 
-/// Run movies/series enrichment, calling `on_progress(snapshot)`
-/// after every batch. Final call carries the fully-enriched grid.
 pub async fn enrich_grid_progressive<F, Fut>(
     engine: Arc<Engine>,
     entries: Vec<CatalogEntry>,
@@ -61,6 +47,25 @@ where
         return;
     }
 
+    // Discover plugins for both Movie and Series — the catalog tab
+    // dictates which kind matters per-entry, but a single plugin
+    // commonly supports both (OMDb does), so we collect the union
+    // and let per-entry filtering pick the right kind below.
+    let movie_plugins = engine.enrich_plugins_for_kind(EntryKind::Movie).await;
+    let series_plugins = engine.enrich_plugins_for_kind(EntryKind::Series).await;
+    if movie_plugins.is_empty() && series_plugins.is_empty() {
+        info!("video_enrich: no plugins declare enrich for Movie/Series — skipping pass");
+        return;
+    }
+    info!(
+        movie_plugins = ?movie_plugins,
+        series_plugins = ?series_plugins,
+        count = entries.len(),
+        "video_enrich: starting pass",
+    );
+
+    let movie_plugins = Arc::new(movie_plugins);
+    let series_plugins = Arc::new(series_plugins);
     let total = entries.len();
     let snapshot = Arc::new(Mutex::new(entries));
     let completed = Arc::new(AtomicUsize::new(0));
@@ -70,6 +75,8 @@ where
     let mut tasks = Vec::with_capacity(total);
     for idx in 0..total {
         let engine = engine.clone();
+        let movie_plugins = movie_plugins.clone();
+        let series_plugins = series_plugins.clone();
         let snapshot = snapshot.clone();
         let completed = completed.clone();
         let sem = sem.clone();
@@ -83,7 +90,12 @@ where
                 let snap = snapshot.lock().await;
                 snap[idx].clone()
             };
-            let enriched = enrich_one(&engine, entry).await;
+            let plugins: &[String] = if entry.tab == "series" {
+                &series_plugins
+            } else {
+                &movie_plugins
+            };
+            let enriched = enrich_one(&engine, plugins, entry).await;
             let should_flush = {
                 let mut snap = snapshot.lock().await;
                 snap[idx] = enriched;
@@ -108,15 +120,15 @@ where
     info!(total, "video_enrich: pass complete");
 }
 
-async fn enrich_one(engine: &Engine, mut entry: CatalogEntry) -> CatalogEntry {
+async fn enrich_one(
+    engine: &Engine,
+    plugins: &[String],
+    mut entry: CatalogEntry,
+) -> CatalogEntry {
     let imdb_id = match entry.imdb_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
         None => return entry, // skip — no imdb id, no fast path
     };
-    // Pick an EntryKind matching the entry's tab so the OMDb plugin
-    // routes the request correctly. The exact kind doesn't change
-    // the API call (?i=<id> is identical for movies and series) but
-    // gates the kind-check the plugin runs internally.
     let kind = if entry.tab == "series" {
         EntryKind::Series
     } else {
@@ -131,42 +143,61 @@ async fn enrich_one(engine: &Engine, mut entry: CatalogEntry) -> CatalogEntry {
     };
     partial
         .external_ids
-        .insert("imdb".to_string(), imdb_id);
+        .insert("imdb".to_string(), imdb_id.clone());
 
-    let req = EnrichRequest { partial, prefer_id_source: None };
-    let resp = match engine.supervisor_enrich(PLUGIN_OMDB, req).await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("PluginNotFound") {
-                debug!("video_enrich: omdb plugin not loaded, skipping");
-            } else {
-                warn!(title = %entry.title, error = %msg, "video_enrich: omdb enrich failed");
+    // Fan out to every enrich-capable plugin for this kind.
+    let futs: Vec<_> = plugins
+        .iter()
+        .map(|name| {
+            let req = EnrichRequest {
+                partial: partial.clone(),
+                prefer_id_source: None,
+            };
+            let name = name.clone();
+            async move {
+                let res = engine.supervisor_enrich(&name, req).await;
+                (name, res)
             }
-            return entry;
+        })
+        .collect();
+    let results = futures::future::join_all(futs).await;
+
+    let mut got_any = false;
+    for (plugin, res) in results {
+        let p = match res {
+            Ok(p) => p,
+            Err(e) => {
+                let msg = e.to_string();
+                if !msg.contains("PluginNotFound") {
+                    warn!(plugin = %plugin, title = %entry.title, error = %msg, "video_enrich: enrich failed");
+                }
+                continue;
+            }
+        };
+
+        // Each plugin's per-source ratings map (OMDb populates
+        // imdb / tomatometer / metacritic in one response) merges
+        // directly into the entry's per-source map.
+        for (k, v) in p.ratings.iter() {
+            entry.ratings.insert(k.clone(), *v as f64);
+            got_any = true;
         }
-    };
-
-    // Merge OMDb's per-source ratings into the entry. Each key is
-    // already keyed to match the aggregator's weight profile names
-    // (`imdb`, `tomatometer`, `metacritic`).
-    let mut updated_any = false;
-    for (key, score) in &resp.ratings {
-        entry.ratings.insert(key.clone(), *score as f64);
-        updated_any = true;
+        // Single-headline rating goes under the plugin's source name
+        // for plugins that don't break out per-source data.
+        if let Some(r) = p.rating {
+            let source_key = if !p.source.is_empty() {
+                p.source.clone()
+            } else {
+                plugin.clone()
+            };
+            entry.ratings.insert(source_key, r as f64);
+            got_any = true;
+        }
     }
-    if !updated_any {
-        return entry;
-    }
-    debug!(
-        title = %entry.title,
-        ratings = ?entry.ratings,
-        "video_enrich: ratings merged",
-    );
 
-    // Recompute the composite headline rating now that the ratings
-    // map is fuller. Without this the entry's `rating` field stays
-    // at whatever single-source value the original provider set.
-    apply_weighted_rating(&mut entry);
+    if got_any {
+        debug!(title = %entry.title, ratings = ?entry.ratings, "video_enrich: ratings merged");
+        apply_weighted_rating(&mut entry);
+    }
     entry
 }

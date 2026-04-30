@@ -4,6 +4,7 @@ name         = "discogs"
 version      = "1.0.0"
 abi_version  = 1
 description  = "Discogs — music / vinyl metadata (artists + albums)"
+tags         = ["music"]
 
 [env]
 DISCOGS_API_KEY = ""

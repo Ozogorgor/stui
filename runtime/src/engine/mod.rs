@@ -355,7 +355,11 @@ fn catalog_entries_to_media(
         ratings:     e.ratings,
         imdb_id:     e.imdb_id,
         tmdb_id:     e.tmdb_id,
-        mal_id:      None,
+        mal_id:      e.mal_id,
+        // CatalogEntry doesn't carry anilist/kitsu ids; they're a
+        // pre-merge enrichment input, not part of the merged shape.
+        anilist_id:  None,
+        kitsu_id:    None,
         original_language: e.original_language,
         kind:        Default::default(),
         source:      String::new(),
@@ -436,6 +440,12 @@ pub struct Engine {
     /// `new`; the optional async refresh task is started by
     /// `start_anime_bridge_refresh` after the tokio runtime is up.
     anime_bridge: Arc<crate::anime_bridge::AnimeBridge>,
+    /// User-supplied plugin config from `runtime.toml [plugins.<name>]`.
+    /// Source of truth for plugin secrets entered via the TUI Settings screen.
+    /// Read at every `load_plugin` to compute env overrides for the WASM host;
+    /// kept in sync with on-disk config via `update_user_plugin_config`, which
+    /// the IPC `SetConfig` handler calls after every `plugins.*` write.
+    user_plugin_config: Arc<RwLock<crate::config::types::PluginConfig>>,
 }
 
 impl Engine {
@@ -443,6 +453,7 @@ impl Engine {
         cache_dir: std::path::PathBuf,
         data_dir: std::path::PathBuf,
         anime_ratio: f32,
+        plugins: crate::config::types::PluginConfig,
     ) -> Self {
         // Load TVDB using the project-embedded (XOR-obfuscated) key, with a
         // TVDB_API_KEY env var override for dev testing. Failure is non-fatal:
@@ -478,7 +489,22 @@ impl Engine {
             anime_ratio: anime_ratio.clamp(0.0, 1.0),
             tvdb,
             anime_bridge,
+            user_plugin_config: Arc::new(RwLock::new(plugins)),
         }
+    }
+
+    /// Replace the in-memory snapshot of `runtime.toml [plugins.*]`.
+    ///
+    /// Called by the IPC `SetConfig` handler after persisting any
+    /// `plugins.<name>.<field>` change so subsequent plugin loads see the
+    /// current values. Existing in-memory plugin instances are NOT
+    /// re-initialised — that requires an explicit reload (TODO: hot-reload
+    /// on settings change rather than next restart).
+    pub async fn update_user_plugin_config(
+        &self,
+        plugins: crate::config::types::PluginConfig,
+    ) {
+        *self.user_plugin_config.write().await = plugins;
     }
 
     /// Return the TVDB client if configured. Exposed so the pipeline
@@ -706,6 +732,39 @@ impl Engine {
         .await
     }
 
+    /// Enumerate names of currently loaded plugins that declare an
+    /// `enrich` capability for `kind`. Used by post-search enrichment
+    /// passes (music_enrich, video_enrich) to fan out across every
+    /// installed metadata provider — no hardcoded list, so adding a
+    /// new ratings/metadata plugin is zero-code on the runtime
+    /// side. Filters: enabled-only, typed catalog capability,
+    /// kind in `kinds`, enrich verb is enabled and not stubbed.
+    pub async fn enrich_plugins_for_kind(
+        &self,
+        kind: stui_plugin_sdk::EntryKind,
+    ) -> Vec<String> {
+        use stui_plugin_sdk::CatalogCapability;
+        let reg = self.registry.read().await;
+        reg.all()
+            .filter(|p| p.enabled)
+            .filter_map(|p| {
+                let CatalogCapability::Typed { kinds, enrich, .. } =
+                    &p.manifest.capabilities.catalog
+                else {
+                    return None;
+                };
+                if !kinds.contains(&kind) {
+                    return None;
+                }
+                let vc = enrich.as_ref()?;
+                if !vc.is_enabled() || vc.is_stub() {
+                    return None;
+                }
+                Some(p.manifest.plugin.name.clone())
+            })
+            .collect()
+    }
+
     /// Call a single WASM plugin's `get_artwork` verb via its supervisor.
     ///
     /// Returns the full [`crate::abi::types::ArtworkResponse`]; callers decide
@@ -765,6 +824,22 @@ impl Engine {
         .await
     }
 
+    /// Call `stui_find_streams` on the named plugin. Returns the
+    /// plugin's stream candidates in raw form — caller is responsible
+    /// for ranking + dedup across providers. Routes through the same
+    /// `call_plugin_verb` semaphore as every other verb so concurrent
+    /// fan-out is bounded.
+    pub async fn supervisor_find_streams(
+        &self,
+        plugin_id: &str,
+        req: crate::abi::types::FindStreamsRequest,
+    ) -> Result<Vec<crate::abi::types::Stream>, PluginCallError> {
+        self.call_plugin_verb(plugin_id, |sup| async move {
+            sup.find_streams(&req).await.map(|resp| resp.streams)
+        })
+        .await
+    }
+
     /// Rebuild the dispatch map from the current registry contents.
     ///
     /// Called after every `load_plugin` / `unload_plugin` so that
@@ -793,11 +868,39 @@ impl Engine {
             enabled: true,
         };
 
+        // Resolve user-supplied plugin config (from runtime.toml `[plugins.<name>]`)
+        // into env-var overrides keyed by manifest `[[config]] env_var`. Plugins
+        // read their secrets via `cache_get("__env:<VAR>")`, so populating the
+        // override map by env-var name lets the Settings UI override secrets.env
+        // without each plugin needing a custom resolution path.
+        let user_config: HashMap<String, String> = self
+            .user_plugin_config
+            .read()
+            .await
+            .get(&name)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut user_env_overrides: HashMap<String, String> = HashMap::new();
+        for field in loaded.manifest.config_fields() {
+            let Some(env_var) = field.env_var.clone() else { continue };
+            // Accept either the bare field key (e.g. "api_key") or the fully
+            // qualified key (e.g. "plugins.jackett.api_key") — the Settings UI
+            // writes via the qualified form, but file edits often use bare keys.
+            let full = field.full_key(&loaded.manifest.plugin.name);
+            if let Some(v) = user_config.get(&full).or_else(|| user_config.get(&field.key)) {
+                if !v.is_empty() {
+                    user_env_overrides.insert(env_var, v.clone());
+                }
+            }
+        }
+
         let ctx = SandboxCtx::new(
             &loaded,
             self.cache_dir.clone(),
             self.data_dir.clone(),
-        );
+        )
+        .with_user_env_overrides(user_env_overrides);
         ctx.ensure_dirs()?;
 
         info!(plugin_id = %id, plugin = %name, "plugin loaded");
@@ -827,7 +930,7 @@ impl Engine {
                         // either without pulling the `toml` crate.
                         let resolved = crate::plugin::state::resolve_config(
                             &loaded.manifest,
-                            &HashMap::new(),
+                            &user_config,
                             crate::config::secrets::env_lookup,
                         );
                         let init_req = crate::abi::InitRequest {
@@ -1092,6 +1195,8 @@ impl Engine {
                                 imdb_id: e.imdb_id,
                                 tmdb_id: e.tmdb_id,
                                 mal_id: None,
+                                anilist_id: None,
+                                kitsu_id: None,
                                 original_language: e.original_language,
                                 kind: stui_plugin_sdk::EntryKind::default(),
                                 source: "tvdb".to_string(),
@@ -1166,7 +1271,24 @@ impl Engine {
                                     locale: None,
                                 };
                                 sup.search(&req).await
-                                    .map(|r| r.items.into_iter().map(|e| MediaEntry {
+                                    .map(|r| r.items.into_iter().map(|e| {
+                                        // tmdb_id precedence:
+                                        //   1. external_ids["tmdb"] — explicit cross-id
+                                        //      (any provider that knows the tmdb id is
+                                        //      expected to set this).
+                                        //   2. fall back to e.id when provider is tmdb,
+                                        //      since TMDB's primary id IS the tmdb id
+                                        //      and the plugin doesn't echo it via
+                                        //      external_ids.
+                                        // Without this, TMDB-sourced Series entries had
+                                        // tmdb_id=None and the new Western-spine
+                                        // dedup_key fell through to title:year — so
+                                        // anime cours from anilist (with bridge-set
+                                        // tmdb_id) couldn't collapse against the TMDB
+                                        // sibling.
+                                        let tmdb_id = e.external_ids.get("tmdb").cloned()
+                                            .or_else(|| if provider == "tmdb" { Some(e.id.clone()) } else { None });
+                                        MediaEntry {
                                         id:          e.id,
                                         title:       e.title,
                                         year:        e.year.map(|y| y.to_string()),
@@ -1179,8 +1301,15 @@ impl Engine {
                                         media_type:  crate::ipc::MediaType::default(),
                                         ratings:     std::collections::HashMap::new(),
                                         imdb_id:     e.imdb_id,
-                                        tmdb_id:     None,
+                                        tmdb_id,
                                         mal_id:      e.external_ids.get("myanimelist").cloned(),
+                                        // anilist/kitsu ids feed the bridge enrichment
+                                        // so kitsu-only entries (no MAL mapping
+                                        // surfaced by the plugin) can still resolve to
+                                        // a Fribb record via their kitsu id and pick
+                                        // up tmdb_id for the Series-tab spine merge.
+                                        anilist_id:  e.external_ids.get("anilist").cloned(),
+                                        kitsu_id:    e.external_ids.get("kitsu").cloned(),
                                         original_language: e.original_language,
                                         kind:        e.kind,
                                         source:      e.source,
@@ -1190,6 +1319,7 @@ impl Engine {
                                         season:      e.season,
                                         episode:     e.episode,
                                         season_count: e.season_count,
+                                    }
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })
@@ -1262,6 +1392,18 @@ impl Engine {
         for entry in &mut all_items {
             crate::anime_bridge::enrich::enrich_entry(entry, &bridge);
         }
+        // Override the per-MediaEntry `media_type` (which the in-process
+        // catalog grid path hardcodes to `MediaType::default()` =
+        // Movie at every plugin result conversion) with the one
+        // implied by the active tab. This is the surface the merge's
+        // `dedup_key` reads to pick its precedence — Series-tab
+        // entries need `MediaType::Series` so the Western-spine
+        // (tmdb→imdb→mal) precedence kicks in and anime cours
+        // collapse via shared TMDB id. Without this override every
+        // entry stayed at Movie semantics and stayed mal-keyed →
+        // cours never collapsed even with the bridge enrichment in
+        // place.
+        let tab_media_type = crate::ipc::MediaType::from_tab(&tab);
         let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
             let (genre, original_language) =
                 stamp_anime_fields(&e.provider, e.genre, e.original_language);
@@ -1280,7 +1422,7 @@ impl Engine {
                 imdb_id:     e.imdb_id,
                 tmdb_id:     e.tmdb_id,
                 mal_id:      e.mal_id,
-                media_type:  e.media_type,
+                media_type:  tab_media_type,
                 ratings:     e.ratings,
                 original_language,
             }
@@ -1702,6 +1844,23 @@ fn abi_entry_to_media_entry(
         .iter()
         .map(|(k, v): (&String, &f32)| (k.clone(), *v as f64))
         .collect();
+    // Map tab → media_type so the catalog aggregator's per-tab
+    // weight profile selection (`weights_for(media_type, …)`) picks
+    // the right source set. Defaulting to MediaType::Movie here was
+    // making music albums get the WEIGHTS_MOVIE profile (which only
+    // knows imdb/tmdb/etc.) so weighted_median found zero
+    // recognised sources for discogs/MB/lastfm and the headline
+    // rating stayed empty even though enrichment was succeeding.
+    let media_type = crate::ipc::MediaType::from_tab(&tab);
+    // tmdb_id precedence: external_ids["tmdb"] when set, else fall back
+    // to e.id for the TMDB plugin (its primary id IS the tmdb id).
+    // Computed before the struct literal so e.id can still be moved
+    // into the `id` field below.
+    let tmdb_id = e.external_ids.get("tmdb").cloned()
+        .or_else(|| if provider_name == "tmdb" { Some(e.id.clone()) } else { None });
+    let mal_id     = e.external_ids.get("myanimelist").cloned();
+    let anilist_id = e.external_ids.get("anilist").cloned();
+    let kitsu_id   = e.external_ids.get("kitsu").cloned();
     crate::ipc::MediaEntry {
         id:           e.id,
         title:        e.title,
@@ -1712,11 +1871,13 @@ fn abi_entry_to_media_entry(
         poster_url:   e.poster_url,
         provider:     provider_name.to_string(),
         tab,
-        media_type:   crate::ipc::MediaType::default(),
+        media_type,
         ratings,
         imdb_id:      e.imdb_id,
-        tmdb_id:      None,
-        mal_id:       e.external_ids.get("myanimelist").cloned(),
+        tmdb_id,
+        mal_id,
+        anilist_id,
+        kitsu_id,
         original_language,
         kind:         e.kind,
         source:       e.source,
@@ -1919,6 +2080,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let ids = engine.plugins_for_scope(SearchScope::Artist).await;
         assert!(ids.is_empty());
@@ -1930,6 +2092,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         assert!(!engine.scope_has_any_plugins(SearchScope::Movie).await);
     }
@@ -1942,6 +2105,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let clone = engine.clone();
         // Both point to the same semaphore (Arc identity).
@@ -1954,6 +2118,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         assert_eq!(
             engine.plugin_semaphore().available_permits(),
@@ -1969,6 +2134,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -1985,6 +2151,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let req = crate::abi::types::LookupRequest {
             id:        "tt1234".into(),
@@ -2005,6 +2172,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let req = crate::abi::types::EnrichRequest {
             partial:          crate::abi::types::PluginEntry::default(),
@@ -2020,6 +2188,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let req = crate::abi::types::ArtworkRequest {
             id:        "e1".into(),
@@ -2037,6 +2206,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let req = crate::abi::types::CreditsRequest {
             id:        "e1".into(),
@@ -2053,6 +2223,7 @@ mod supervisor_search_tests {
             std::path::PathBuf::from("/tmp"),
             std::path::PathBuf::from("/tmp"),
             0.4,
+            std::collections::HashMap::new(),
         );
         let req = crate::abi::types::RelatedRequest {
             id:        "e1".into(),

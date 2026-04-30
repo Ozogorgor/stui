@@ -101,7 +101,7 @@ func TestDetail_InfoLineShowsStudioFromEnrich(t *testing.T) {
 	entry := ipc.DetailEntry{ID: "tt1", Title: "X", Year: "2025", Runtime: "120", Genre: "Drama"}
 	entry.Studio = "Syncopy"
 	ds := NewDetailState(entry)
-	out := renderInfoBlock(&ds, 100, 40)
+	out := renderHeaderInfo(&ds, 100, 12)
 	if !strings.Contains(out, "Syncopy") {
 		t.Errorf("studio missing: %q", out)
 	}

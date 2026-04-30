@@ -28,8 +28,16 @@ func Scrollbar(scroll, viewH, totalItems int) string {
 	if viewH <= 0 {
 		return ""
 	}
-	thumb := lipgloss.NewStyle().Foreground(theme.T.Accent())
-	track := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	// Use Background-only styles with a space character. Terminals
+	// fill the entire cell (including inter-row leading from font
+	// line-spacing) with the cell's bg colour, whereas a foreground
+	// `█` glyph only paints the glyph's pixel extent — which leaves
+	// hairline gaps between rows in many fonts and reads as ticks
+	// instead of a continuous bar. This is the same idiom used by
+	// terminal progress bars / scrollbars in tools like btop, htop,
+	// and lazygit.
+	thumb := lipgloss.NewStyle().Background(theme.T.Accent())
+	track := lipgloss.NewStyle().Background(theme.T.TextDim())
 
 	// All items visible (or empty list) — thumb fills the whole track.
 	if totalItems <= viewH {
@@ -39,7 +47,7 @@ func Scrollbar(scroll, viewH, totalItems int) string {
 			if i > 0 {
 				out.WriteString("\n")
 			}
-			out.WriteString(thumb.Render("█"))
+			out.WriteString(thumb.Render(" "))
 		}
 		return out.String()
 	}
@@ -68,9 +76,9 @@ func Scrollbar(scroll, viewH, totalItems int) string {
 			out.WriteString("\n")
 		}
 		if i >= thumbPos && i < thumbPos+thumbH {
-			out.WriteString(thumb.Render("█"))
+			out.WriteString(thumb.Render(" "))
 		} else {
-			out.WriteString(track.Render("░"))
+			out.WriteString(track.Render(" "))
 		}
 	}
 	return out.String()

@@ -17,6 +17,7 @@ mod engine;
 mod error;
 mod events;
 mod ipc;
+mod lastfm;
 mod logging;
 mod media;
 mod mpd_bridge;
@@ -126,6 +127,14 @@ async fn main() -> Result<()> {
     // Load config from ~/.config/stui/runtime.toml + STUI_* env overrides
     let mut cfg = config::load();
 
+    // Push the user's rating-source weights into the catalog
+    // aggregator's process-wide overlay. apply_weighted_rating reads
+    // this overlay on every invocation so all subsequent enrichment
+    // passes see the current weights. A future IPC config_update
+    // path will call set_user_rating_weights again to apply changes
+    // live without restart (see SCAFFOLD_TODOS §26).
+    catalog_engine::aggregator::set_user_rating_weights(cfg.rating_weights.clone());
+
     // Auto-detect MPD paths from mpd.conf if not set in stui.toml.
     {
         let mpd_paths = mpd_bridge::mpd_conf::detect();
@@ -160,6 +169,7 @@ async fn main() -> Result<()> {
         cfg.cache_dir.clone(),
         cfg.data_dir.clone(),
         cfg.catalog.anime_ratio,
+        cfg.plugins.clone(),
     ));
 
     // Spawn the anime-bridge background refresh task. Must run AFTER the
@@ -985,10 +995,15 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         rating: e.rating.clone(), ratings: e.ratings.clone(),
         description: e.description.clone(),
         poster_url: e.poster_url.clone(), provider: e.provider.clone(),
-        tab, media_type: e.media_type.clone(),
+        tab, media_type: e.media_type,
         imdb_id: e.imdb_id.clone(),
         tmdb_id: e.tmdb_id.clone(),
-        mal_id: None,
+        mal_id: e.mal_id.clone(),
+        // CatalogEntry doesn't carry anilist/kitsu ids — those are
+        // pre-merge enrichment fodder, dropped before the wire shape.
+        // The TUI only needs imdb/tmdb/mal for display routing.
+        anilist_id: None,
+        kitsu_id: None,
         original_language: e.original_language.clone(),
         kind: Default::default(),
         source: String::new(),
@@ -1301,7 +1316,7 @@ async fn handle_line(
 
         Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 
-        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, trace, r).await,
+        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, trace, event_tx.clone(), r).await,
 
         Request::Metadata(r) => {
             if r.kind == "episodes" {
@@ -1363,7 +1378,7 @@ async fn handle_line(
 
         Request::Cmd(cmd) => pipeline::playback::run_player_cmd(player, mpd, cmd).await,
 
-        Request::SetConfig(r)         => pipeline::config::run_set_config(config, r).await,
+        Request::SetConfig(r)         => pipeline::config::run_set_config(config, engine, r).await,
         Request::GetProviderSettings  => pipeline::config::run_get_provider_settings(engine, config).await,
         Request::GetPluginRepos       => pipeline::config::run_get_plugin_repos(config).await,
         Request::SetPluginRepos(r)    => pipeline::config::run_set_plugin_repos(config, r).await,
@@ -1575,6 +1590,79 @@ async fn handle_line(
                 Response::MpdSearch(result)
             }
         },
+
+        // ── lastfm direct fetchers ───────────────────────────────────────────────
+        // Used by the Music Browse → AlbumDetail flow. Hit lastfm
+        // directly because the WASM plugin can't surface tracks
+        // through the current SDK shape (PluginEntry has no
+        // tracks-on-album field). When the SDK gains that, this
+        // can move into a plugin verb call.
+        Request::LastfmAlbumTracks(r) => {
+            match crate::lastfm::album_tracks::fetch(&r.artist, &r.album).await {
+                Ok(tracks) => Response::LastfmAlbumTracks(ipc::LastfmAlbumTracksResponse {
+                    id: r.id,
+                    artist: r.artist,
+                    album: r.album,
+                    tracks,
+                }),
+                Err(e) => Response::error(
+                    Some(r.id),
+                    ErrorCode::Internal,
+                    format!("lastfm album.getInfo: {e}"),
+                ),
+            }
+        }
+
+        // ── Metadata sources discovery ──────────────────────────────────────────
+        // The Settings → Metadata Sources screen calls this to populate
+        // its per-kind row list. Returns priority + discovered + disabled
+        // separately so the UI can render status chips and decide what
+        // toggling means (move to/from disabled list, push via set_config).
+        Request::MetadataPluginsForKind(r) => {
+            // Snapshot the user's current priority/disabled lists from
+            // the live config (not the on-disk one — set_config edits
+            // happen in-memory and flush async).
+            let cfg = config.snapshot().await;
+            let (priority, disabled) = match r.kind.as_str() {
+                "movies" => (cfg.metadata.sources.movies.clone(), cfg.metadata.sources.movies_disabled.clone()),
+                "series" => (cfg.metadata.sources.series.clone(), cfg.metadata.sources.series_disabled.clone()),
+                "anime"  => (cfg.metadata.sources.anime.clone(),  cfg.metadata.sources.anime_disabled.clone()),
+                "music"  => (cfg.metadata.sources.music.clone(),  cfg.metadata.sources.music_disabled.clone()),
+                other => {
+                    return Response::error(
+                        Some(r.id),
+                        ErrorCode::InvalidRequest,
+                        format!("metadata_plugins_for_kind: unknown kind '{other}' (expected movies/series/anime/music)"),
+                    );
+                }
+            };
+
+            // Use a freshly-built probe to enumerate discovered plugins.
+            // This walks the live registry so the result reflects any
+            // plugins that just hot-loaded from the watcher.
+            let probe = crate::engine::metadata::ManifestCapabilityProbe::from_engine(engine).await;
+            // Discover for the Enrich verb — it's the most commonly
+            // declared metadata verb, and the settings screen treats
+            // "supports any of the four detail verbs" as the inclusion
+            // signal. A future refinement could OR across all four verbs.
+            use crate::cache::metadata_key::MetadataVerb;
+            use crate::engine::metadata::sources::SourceCapabilityProbe;
+            let mut discovered: Vec<String> =
+                probe.discover(MetadataVerb::Enrich, &r.kind);
+            // Drop anything already in the priority list — discovered is
+            // the "auto-included tail", not a duplicate of priority.
+            let priority_set: std::collections::HashSet<&str> =
+                priority.iter().map(|s| s.as_str()).collect();
+            discovered.retain(|d| !priority_set.contains(d.as_str()));
+
+            Response::MetadataPluginsForKind(ipc::MetadataPluginsForKindResponse {
+                id: r.id,
+                kind: r.kind,
+                priority,
+                discovered,
+                disabled,
+            })
+        }
 
         // ── DSP requests ─────────────────────────────────────────────────────────
         Request::GetDspStatus => {

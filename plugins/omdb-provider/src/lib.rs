@@ -688,6 +688,8 @@ fn de_opt_u32_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u3
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
 
+impl stui_plugin_sdk::StreamProvider for OmdbPlugin {}
+
 stui_export_catalog_plugin!(OmdbPlugin);
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

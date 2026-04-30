@@ -130,6 +130,20 @@ pub enum Request {
     /// Search the MPD library by artist, album, or track.
     MpdSearch(MpdSearchRequest),
 
+    /// Fetch a lastfm album's tracklist (album.getInfo). Used by
+    /// the AlbumDetail screen in Music Browse — lastfm-sourced
+    /// albums have no MPD library backing, so the runtime hits
+    /// last.fm directly to enumerate tracks.
+    LastfmAlbumTracks(LastfmAlbumTracksRequest),
+
+    /// List the metadata-source plugins that the runtime would
+    /// consult for `(verb, kind)` — both the user-curated priority
+    /// list and the auto-discovered plugins (manifest-tagged for
+    /// the kind). Drives the Settings → Metadata Sources screen so
+    /// the user can see who's contributing and toggle entries on /
+    /// off via the disabled list. See `MetadataPluginsForKindRequest`.
+    MetadataPluginsForKind(MetadataPluginsForKindRequest),
+
     /// Fetch the current plugin repository list.
     GetPluginRepos,
     /// Replace the plugin repository list (built-in repo is always prepended by the runtime).
@@ -415,6 +429,28 @@ pub struct ResolveRequest {
 pub struct GetStreamsRequest {
     pub id: String,
     pub entry_id: String,
+    // ── New fields used by the StreamProvider find_streams flow. All
+    //    optional with `#[serde(default)]` so old callers (the legacy
+    //    stream picker) keep working — they pass entry_id only and
+    //    the runtime falls back to the resolve_raw fan-out. New
+    //    callers (Episodes tab streams column) populate these so
+    //    stream providers can run torznab queries.
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub external_ids: std::collections::HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imdb_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmdb_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -534,6 +570,14 @@ pub enum Response {
     SearchResult(SearchResponse),
     ResolveResult(ResolveResponse),
     StreamsResult(StreamsResponse),
+    /// Per-provider streaming partial — emitted as each plugin returns
+    /// during a `find_streams` fan-out. Unsolicited (no `id`
+    /// correlation); the TUI matches on `(entry_id, season, episode)`.
+    StreamsPartial(StreamsPartialWire),
+    /// Final marker for a `find_streams` fan-out — emitted once after
+    /// every provider has either returned a partial or hit the
+    /// deadline. The TUI clears the in-flight spinner on receipt.
+    StreamsComplete(StreamsCompleteWire),
     MetadataResult(MetadataResponse),
     PluginList(PluginListResponse),
     PluginLoaded(PluginLoadedResponse),
@@ -593,6 +637,13 @@ pub enum Response {
     MpdGetPlaylist(MpdGetPlaylistResponse),
     /// Response to `MpdSearch` — search results (artists, albums, tracks) + optional error.
     MpdSearch(MpdSearchResult),
+
+    /// Response to `LastfmAlbumTracks` — tracklist for a lastfm album.
+    LastfmAlbumTracks(LastfmAlbumTracksResponse),
+
+    /// Response to `MetadataPluginsForKind` — priority + disabled +
+    /// discovered plugins for the kind, used by the settings UI.
+    MetadataPluginsForKind(MetadataPluginsForKindResponse),
 
     /// Response to `GetPluginRepos`.
     PluginRepos(PluginReposResponse),
@@ -725,6 +776,44 @@ pub struct StreamsResponse {
     pub id: String,
     pub entry_id: String,
     pub streams: Vec<StreamInfoWire>,
+}
+
+/// One provider's contribution to an in-flight `get_streams` request.
+///
+/// Streamed unsolicited (no `id` correlation) per provider as soon as
+/// it returns. The TUI matches by `(season, episode)` and appends to
+/// its per-episode streams cache. Each partial carries the provider
+/// label so the TUI can show "from Torrentio" / "from Jackett" when
+/// rendering. Late-arriving providers (e.g. Jackett's 25 s Torznab
+/// fan-out) keep contributing even after fast providers have
+/// already populated the list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamsPartialWire {
+    pub entry_id: String,
+    /// 1-based season number, 0 if N/A (movies).
+    pub season:   u32,
+    /// 1-based episode number, 0 if N/A (movies).
+    pub episode:  u32,
+    /// Plugin id of the provider this batch came from
+    /// (`torrentio-provider`, `jackett-provider`, …). Mostly for
+    /// diagnostics — the user-visible per-stream provider label is
+    /// inside each `StreamInfoWire.provider`.
+    pub provider: String,
+    pub streams:  Vec<StreamInfoWire>,
+}
+
+/// Sent once after all providers have either returned partials or hit
+/// the deadline. Marks the end of the streaming phase so the TUI can
+/// clear the in-flight spinner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamsCompleteWire {
+    pub entry_id: String,
+    pub season:   u32,
+    pub episode:  u32,
+    /// Optional last-resort error string when no provider returned
+    /// any results. The TUI shows this in the streams column instead
+    /// of the "no streams found" placeholder.
+    pub error:    Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -963,6 +1052,75 @@ pub struct MpdSavedPlaylistWire {
 pub struct MpdGetQueueResponse {
     pub id: String,
     pub tracks: Vec<MpdQueueTrackWire>,
+}
+
+/// Request for a lastfm album's tracklist via album.getInfo.
+/// (artist, album) is sufficient — lastfm's API resolves to a unique
+/// release. `id` is the request correlation id used to route the
+/// response back to the right pending caller in the TUI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastfmAlbumTracksRequest {
+    pub id: String,
+    pub artist: String,
+    pub album: String,
+}
+
+/// Response carrying the tracklist for a lastfm album. `tracks`
+/// preserves the order returned by last.fm (which is the album's
+/// canonical ordering). Empty when the album wasn't found or the
+/// API returned no `tracks.track[]` block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastfmAlbumTracksResponse {
+    pub id: String,
+    pub artist: String,
+    pub album: String,
+    pub tracks: Vec<LastfmAlbumTrackWire>,
+}
+
+/// One track in a lastfm album response. `number` is 1-based.
+/// `duration_secs` is None when last.fm doesn't have a duration
+/// (some sparse releases). `mbid` is the recording's MusicBrainz id
+/// when available — useful for downstream lookups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastfmAlbumTrackWire {
+    pub number: u32,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbid: Option<String>,
+}
+
+/// Request for the metadata-source plugins that contribute to a kind's
+/// detail-card fan-out. Drives the Settings → Metadata Sources screen.
+/// `kind` is the lowercase TUI tab label: "movies" / "series" /
+/// "anime" / "music". `id` correlates the response back to the caller.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataPluginsForKindRequest {
+    pub id: String,
+    pub kind: String,
+}
+
+/// Response describing every plugin that the runtime would route a
+/// detail-metadata request to for `kind`. Three lists, mutually
+/// disjoint after the dedupe step the runtime applies:
+///
+///   - `priority`: plugin names from the user's configured priority
+///     list, in the order they'll be consulted.
+///   - `discovered`: plugin names auto-discovered via manifest tags
+///     (`tags = ["<kind>"]`) that aren't already in the priority list.
+///   - `disabled`: plugin names the user has explicitly excluded.
+///
+/// The TUI renders these as a single editable list with status chips
+/// per row (priority N / discovered / disabled) and a toggle key that
+/// edits the disabled list via `set_config`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataPluginsForKindResponse {
+    pub id: String,
+    pub kind: String,
+    pub priority: Vec<String>,
+    pub discovered: Vec<String>,
+    pub disabled: Vec<String>,
 }
 
 /// Exactly one of `artists`, `albums`, `songs` is non-empty per response —
@@ -1407,7 +1565,7 @@ pub struct PlayerEndedEvent {
 // ── Domain types ──────────────────────────────────────────────────────────────
 
 /// Fine-grained media classification.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaType {
     #[default]
@@ -1517,6 +1675,18 @@ pub struct MediaEntry {
     pub tmdb_id: Option<String>,
     #[serde(default)]
     pub mal_id: Option<String>,
+    /// AniList catalog id (the integer behind the `anilist-N` provider
+    /// prefix). Populated from `external_ids["anilist"]` at the
+    /// MediaEntry conversion sites and consumed by the anime-bridge
+    /// enrichment as a lookup key — without it, kitsu-only catalog
+    /// entries (no MAL mapping) couldn't resolve to a Fribb record
+    /// and stayed at title:year dedup, missing the spine-merge bucket.
+    #[serde(default)]
+    pub anilist_id: Option<String>,
+    /// Kitsu catalog id; same role as `anilist_id` for the Kitsu side
+    /// of the bridge.
+    #[serde(default)]
+    pub kitsu_id: Option<String>,
     /// ISO 639-1 code of the entry's original language (e.g. "ja", "en").
     /// Populated by plugins that know it (tmdb, kitsu, anilist). The runtime's
     /// anime-mix classifier uses this together with genre to identify
@@ -1577,6 +1747,11 @@ pub struct StreamInfoWire {
     pub hdr: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seeders: Option<u32>,
+    /// Total file size in bytes (populated when the provider reports it).
+    /// Two streams at the same `quality` label can differ wildly in
+    /// encoding/bitrate — surfacing size lets the TUI distinguish them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     /// Measured download speed in Mbps (populated when benchmarking is enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed_mbps: Option<f64>,

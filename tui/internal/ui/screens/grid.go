@@ -36,17 +36,17 @@ const (
 
 // GridCursor tracks position in the 2D grid.
 type GridCursor struct {
-	row int
-	col int
+	Row int  // Exported for mouse handling
+	Col int  // Exported for mouse handling
 }
 
 func (g GridCursor) Index(cols int) int {
-	return g.row*cols + g.col
+	return g.Row*cols + g.Col
 }
 
 // IsAtTopRow returns true when the cursor is on the first row of the grid.
 func (c GridCursor) IsAtTopRow() bool {
-	return c.row == 0
+	return c.Row == 0
 }
 
 // RenderGrid renders the full poster grid for the given entries.
@@ -125,8 +125,8 @@ func RenderGrid(
 	cw := components.CardWidth(gridWidth)
 
 	startRow := 0
-	if cursor.row >= visibleRows {
-		startRow = cursor.row - visibleRows + 1
+	if cursor.Row >= visibleRows {
+		startRow = cursor.Row - visibleRows + 1
 	}
 	endRow := min(startRow+visibleRows, totalRows)
 
@@ -144,7 +144,7 @@ func RenderGrid(
 				cardStrings = append(cardStrings, filler)
 				continue
 			}
-			selected := (rowIdx == cursor.row && colIdx == cursor.col)
+			selected := (rowIdx == cursor.Row && colIdx == cursor.Col)
 			cardStrings = append(cardStrings, components.RenderCard(entries[idx], cw, selected))
 		}
 		row := lipgloss.JoinHorizontal(lipgloss.Top, cardStrings...)
@@ -199,40 +199,40 @@ func CenteredMsg(w, h int, msg string) string {
 // ── Cursor movement helpers ───────────────────────────────────────────────────
 
 func MoveCursorRight(c GridCursor, total int) GridCursor {
-	next := c.col + 1
+	next := c.Col + 1
 	if next >= components.CardColumns {
 		return c
 	}
-	if c.row*components.CardColumns+next >= total {
+	if c.Row*components.CardColumns+next >= total {
 		return c
 	}
-	c.col = next
+	c.Col = next
 	return c
 }
 
 func MoveCursorLeft(c GridCursor) GridCursor {
-	if c.col > 0 {
-		c.col--
+	if c.Col > 0 {
+		c.Col--
 	}
 	return c
 }
 
 func MoveCursorDown(c GridCursor, total int) GridCursor {
-	nextRow := c.row + 1
-	if nextRow*components.CardColumns+c.col >= total {
+	nextRow := c.Row + 1
+	if nextRow*components.CardColumns+c.Col >= total {
 		// clamp to last item in last row
 		lastIdx := total - 1
-		c.row = lastIdx / components.CardColumns
-		c.col = lastIdx % components.CardColumns
+		c.Row = lastIdx / components.CardColumns
+		c.Col = lastIdx % components.CardColumns
 		return c
 	}
-	c.row = nextRow
+	c.Row = nextRow
 	return c
 }
 
 func MoveCursorUp(c GridCursor) GridCursor {
-	if c.row > 0 {
-		c.row--
+	if c.Row > 0 {
+		c.Row--
 	}
 	return c
 }

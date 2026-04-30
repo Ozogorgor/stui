@@ -284,11 +284,11 @@ async fn run_verb<E: MetadataDispatch>(
             (payload, had_results)
         }
         MetadataVerb::Credits => {
-            let fan = fan_out_credits(engine, &sources, req);
-            let results =
-                tokio::time::timeout(req.per_verb_timeout, fan)
-                    .await
-                    .unwrap_or_default();
+            // fan_out_credits is now deadline-aware internally — it
+            // returns whatever results landed before per_verb_timeout
+            // elapsed instead of a wholesale empty Vec. No outer
+            // timeout wrapper needed.
+            let results = fan_out_credits(engine, &sources, req).await;
             let had_results = !results.is_empty();
             let payload = if had_results {
                 wire::credits_to_payload(merge::merge_credits(None, results))
@@ -298,11 +298,7 @@ async fn run_verb<E: MetadataDispatch>(
             (payload, had_results)
         }
         MetadataVerb::Artwork => {
-            let fan = fan_out_artwork(engine, &sources, req);
-            let results =
-                tokio::time::timeout(req.per_verb_timeout, fan)
-                    .await
-                    .unwrap_or_default();
+            let results = fan_out_artwork(engine, &sources, req).await;
             let had_results = !results.is_empty();
             let payload = if had_results {
                 wire::artwork_to_payload(merge::merge_artwork(results))
@@ -312,11 +308,7 @@ async fn run_verb<E: MetadataDispatch>(
             (payload, had_results)
         }
         MetadataVerb::Related => {
-            let fan = fan_out_related(engine, &sources, req);
-            let results =
-                tokio::time::timeout(req.per_verb_timeout, fan)
-                    .await
-                    .unwrap_or_default();
+            let results = fan_out_related(engine, &sources, req).await;
             let had_results = !results.is_empty();
             let payload = if had_results {
                 wire::related_to_payload(merge::merge_related(results))
@@ -330,11 +322,16 @@ async fn run_verb<E: MetadataDispatch>(
     if had_results {
         engine.cache().insert(key, payload.clone()).await;
     } else {
+        // Cache the empty result with a short TTL so a flaky / throttled
+        // upstream (TMDB quota error, TVDB transient 5xx) doesn't get
+        // re-hammered on every detail re-open. The user sees no credits
+        // for 60s, then the next open retries the fan-out.
         debug!(
             ?verb,
             id = %req.entry_id,
-            "skipping cache write: fan-out produced no results (timeout or all errored)"
+            "fan-out empty (timeout or all errored) — caching negative result"
         );
+        engine.cache().insert_negative(key, payload.clone()).await;
     }
     debug!(
         ?verb,
@@ -409,7 +406,7 @@ async fn fan_out_credits<E: MetadataDispatch>(
         let cr = CreditsRequest { id, id_source, kind };
         engine.call_credits(plugin, cr)
     });
-    join_all(calls).await.into_iter().filter_map(Result::ok).collect()
+    drain_with_deadline(calls.collect(), req.per_verb_timeout).await
 }
 
 async fn fan_out_artwork<E: MetadataDispatch>(
@@ -428,7 +425,7 @@ async fn fan_out_artwork<E: MetadataDispatch>(
         };
         engine.call_artwork(plugin, ar)
     });
-    join_all(calls).await.into_iter().filter_map(Result::ok).collect()
+    drain_with_deadline(calls.collect(), req.per_verb_timeout).await
 }
 
 async fn fan_out_related<E: MetadataDispatch>(
@@ -448,7 +445,38 @@ async fn fan_out_related<E: MetadataDispatch>(
         };
         engine.call_related(plugin, rr)
     });
-    join_all(calls).await.into_iter().filter_map(Result::ok).collect()
+    drain_with_deadline(calls.collect(), req.per_verb_timeout).await
+}
+
+/// Stream-collect results from a parallel fan-out, returning any
+/// `Ok` outputs received before `budget` elapses. Errored sources are
+/// dropped silently. Crucially, this is NOT `join_all` — that would
+/// block until every future completed, so a single hung source (TMDB
+/// rate-limited at 8 s) would shadow a fast one (TVDB at 1 s) when
+/// the outer deadline fired and dropped everything wholesale. Using
+/// `FuturesUnordered` lets fast responses land in `results` even if
+/// later ones miss the deadline.
+async fn drain_with_deadline<F, T, E>(
+    mut futures: futures::stream::FuturesUnordered<F>,
+    budget: std::time::Duration,
+) -> Vec<T>
+where
+    F: futures::Future<Output = Result<T, E>>,
+{
+    use futures::stream::StreamExt;
+    let mut results = Vec::new();
+    let deadline = std::time::Instant::now() + budget;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() { break; }
+        match tokio::time::timeout(remaining, futures.next()).await {
+            Ok(Some(Ok(r))) => results.push(r),
+            Ok(Some(Err(_))) => continue, // one source errored — skip, others may yet succeed
+            Ok(None) => break,            // all sources resolved
+            Err(_) => break,              // deadline reached; return what we have
+        }
+    }
+    results
 }
 
 fn id_source_as_str(s: &IdSource) -> String {
@@ -554,6 +582,11 @@ pub mod test_engine {
     impl SourceCapabilityProbe for FakeProbe {
         fn supports(&self, plugin: &str, _verb: MetadataVerb, _kind_hint: &str) -> bool {
             self.ids.iter().any(|p| p == plugin)
+        }
+        fn discover(&self, _verb: MetadataVerb, _kind_hint: &str) -> Vec<String> {
+            // Test fake doesn't model auto-discovery — the resolver
+            // tests cover that explicitly with their own probe.
+            Vec::new()
         }
     }
 
@@ -768,10 +801,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_does_not_cache_empty() {
-        // A transient timeout (e.g. network blip) must NOT poison the
-        // cache — otherwise a single hiccup short-circuits all future
-        // opens for the 30-day TTL.
+    async fn timeout_caches_empty_with_short_ttl() {
+        // A transient timeout (TMDB throttling, network blip) is now
+        // cached as Empty under a short TTL (`NEGATIVE_TTL`, see
+        // cache::metadata). That stops the runtime from re-hammering
+        // the throttled provider on every detail re-open while keeping
+        // the cache from being poisoned for the full 30-day positive
+        // TTL — the negative entry expires in ~60 s and the next open
+        // retries the fan-out.
         let engine = test_engine::stuck(MetadataVerb::Credits);
         let (tx, mut rx) = mpsc::channel(16);
         fetch_detail_metadata(
@@ -787,8 +824,11 @@ mod tests {
             id: "tt1".into(),
         };
         assert!(
-            engine.cache().get(&key).await.is_none(),
-            "timeout must not cache Empty"
+            matches!(
+                engine.cache().get(&key).await,
+                Some(MetadataPayload::Empty)
+            ),
+            "timeout should cache Empty under the negative-TTL window"
         );
     }
 

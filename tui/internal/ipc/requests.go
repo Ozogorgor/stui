@@ -170,6 +170,116 @@ func (c *Client) LoadPlugin(path string) {
 	}()
 }
 
+// LastfmAlbumGetTracks requests the tracklist for a lastfm album
+// via the runtime's `lastfm_album_tracks` IPC verb. Result is
+// dispatched as a `LastFMAlbumTracksMsg` on the message channel.
+// Used by the AlbumDetailScreen to populate its track list when the
+// user opens an album in Music Browse.
+func (c *Client) LastfmAlbumGetTracks(artist, album string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type":   "lastfm_album_tracks",
+			"id":     id,
+			"artist": artist,
+			"album":  album,
+		})
+		raw := receiveWithTimeout(ch)
+		msg := LastFMAlbumTracksMsg{Artist: artist, Album: album}
+		if raw.Err != nil {
+			c.send(msg)
+			return
+		}
+		if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			c.send(msg)
+			return
+		}
+		// Wire shape from runtime/src/ipc/v1/mod.rs: tracks[]
+		// entries carry `number` (1-based), `title`, optional
+		// `duration_secs` (u32), optional `mbid`. We project into
+		// the TUI's `AlbumTrack` shape, formatting duration as
+		// "m:ss" so the renderer can show it inline without
+		// re-parsing.
+		var payload struct {
+			Tracks []struct {
+				Number       uint32 `json:"number"`
+				Title        string `json:"title"`
+				DurationSecs *uint32 `json:"duration_secs,omitempty"`
+				Mbid         string `json:"mbid,omitempty"`
+			} `json:"tracks"`
+		}
+		if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+			c.send(msg)
+			return
+		}
+		out := make([]AlbumTrack, 0, len(payload.Tracks))
+		for _, t := range payload.Tracks {
+			dur := ""
+			if t.DurationSecs != nil && *t.DurationSecs > 0 {
+				secs := *t.DurationSecs
+				dur = fmt.Sprintf("%d:%02d", secs/60, secs%60)
+			}
+			out = append(out, AlbumTrack{
+				Number:   int(t.Number),
+				Title:    t.Title,
+				Duration: dur,
+			})
+		}
+		msg.Tracks = out
+		c.send(msg)
+	}()
+}
+
+// MetadataPluginsForKind queries the runtime for the metadata-source
+// plugins that contribute to `kind`'s detail-card fan-out. Used by the
+// Settings → Metadata Sources screen to render the editable list.
+//
+// `kind` is the lowercase TUI tab label: "movies"/"series"/"anime"/
+// "music". Result is dispatched as a `MetadataPluginsForKindMsg` on
+// the message channel, with priority/discovered/disabled lists
+// snapshotted from the runtime config + live plugin registry.
+func (c *Client) MetadataPluginsForKind(kind string) {
+	go func() {
+		id := c.nextID()
+		ch := c.sendWithID(id, map[string]any{
+			"type": "metadata_plugins_for_kind",
+			"id":   id,
+			"kind": kind,
+		})
+		raw := receiveWithTimeout(ch)
+		msg := MetadataPluginsForKindMsg{Kind: kind}
+		if raw.Err != nil {
+			msg.Err = raw.Err
+			c.send(msg)
+			return
+		}
+		if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+			c.send(msg)
+			return
+		}
+		var payload struct {
+			Kind       string   `json:"kind"`
+			Priority   []string `json:"priority"`
+			Discovered []string `json:"discovered"`
+			Disabled   []string `json:"disabled"`
+		}
+		if err := json.Unmarshal(raw.Raw, &payload); err != nil {
+			msg.Err = err
+			c.send(msg)
+			return
+		}
+		msg.Priority = payload.Priority
+		msg.Discovered = payload.Discovered
+		msg.Disabled = payload.Disabled
+		c.send(msg)
+	}()
+}
+
 // ListPlugins requests the current plugin list.
 func (c *Client) ListPlugins() {
 	go func() {
@@ -275,6 +385,93 @@ func (c *Client) Resolve(entryID, provider string) {
 			return
 		}
 		c.send(StreamsResolvedMsg{EntryID: entryID, Streams: resp.Streams})
+	}()
+}
+
+// FindStreamsRequest carries the rich media-reference fields the new
+// `StreamProvider::find_streams` flow expects. Used by the detail
+// card's Episodes tab streams column to ask jackett/prowlarr (and
+// any future stream provider) for torrents matching a specific
+// episode.
+type FindStreamsRequest struct {
+	Title       string
+	Year        *uint32
+	Kind        string
+	Season      *uint32
+	Episode     *uint32
+	ExternalIDs map[string]string
+	ImdbID      string
+	TmdbID      string
+}
+
+// FindStreams dispatches a find_streams query (rich shape) to every
+// loaded stream provider. Result is delivered as
+// `EpisodeStreamsLoadedMsg{Season, Episode, Streams}`. Same `get_streams`
+// IPC verb under the hood — runtime branches on whether `title` is
+// populated to pick the new path vs the legacy `entry_id`-only one.
+func (c *Client) FindStreams(req FindStreamsRequest) {
+	season := 0
+	if req.Season != nil {
+		season = int(*req.Season)
+	}
+	episode := 0
+	if req.Episode != nil {
+		episode = int(*req.Episode)
+	}
+	go func() {
+		id := c.nextID()
+		payload := map[string]any{
+			"type":     "get_streams",
+			"id":       id,
+			"entry_id": "", // not used in the find_streams path
+			"title":    req.Title,
+		}
+		if req.Year != nil {
+			payload["year"] = *req.Year
+		}
+		if req.Kind != "" {
+			payload["kind"] = req.Kind
+		}
+		if req.Season != nil {
+			payload["season"] = *req.Season
+		}
+		if req.Episode != nil {
+			payload["episode"] = *req.Episode
+		}
+		if len(req.ExternalIDs) > 0 {
+			payload["external_ids"] = req.ExternalIDs
+		}
+		if req.ImdbID != "" {
+			payload["imdb_id"] = req.ImdbID
+		}
+		if req.TmdbID != "" {
+			payload["tmdb_id"] = req.TmdbID
+		}
+		ch := c.sendWithID(id, payload)
+		raw := receiveWithTimeout(ch)
+		msg := EpisodeStreamsLoadedMsg{Season: season, Episode: episode}
+		if raw.Err != nil {
+			msg.Err = raw.Err
+			c.send(msg)
+			return
+		}
+		if raw.Type == "error" {
+			var ep ErrorPayload
+			_ = json.Unmarshal(raw.Raw, &ep)
+			msg.Err = fmt.Errorf("%s: %s", ep.Code, ep.Message)
+			c.send(msg)
+			return
+		}
+		var resp struct {
+			Streams []StreamInfo `json:"streams"`
+		}
+		if err := raw.decodeData(&resp); err != nil {
+			msg.Err = err
+			c.send(msg)
+			return
+		}
+		msg.Streams = resp.Streams
+		c.send(msg)
 	}()
 }
 

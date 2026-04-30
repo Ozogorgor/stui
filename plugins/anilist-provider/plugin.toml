@@ -4,6 +4,7 @@ name         = "anilist"
 version      = "1.0.0"
 abi_version  = 1
 description  = "AniList — anime metadata (movies + series)"
+tags         = ["anime"]
 
 [permissions]
 network = ["graphql.anilist.co", "s4.anilist.co"]
