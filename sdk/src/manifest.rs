@@ -206,6 +206,13 @@ pub struct PluginManifest {
     /// Optional rate-limit declaration; see `PluginSupervisor`.
     #[serde(default)]
     pub rate_limit: Option<RateLimit>,
+    /// Optional supervisor tuning — per-call timeout, slow-upstream
+    /// handling, post-timeout cooldown. Defaults are sensible for
+    /// pure-compute plugins (TMDB, AniList, etc.); HTTP-fan-out plugins
+    /// (Jackett, prowlarr) use this to declare that timeouts are a
+    /// slow-upstream signal, not a wedged WASM call.
+    #[serde(default)]
+    pub supervisor: Option<SupervisorTuning>,
     /// Tolerate unknown top-level sections.
     #[serde(flatten)]
     pub _extra: HashMap<String, toml::Value>,
@@ -439,6 +446,36 @@ pub struct RateLimit {
 /// override only gets the steady-state N calls/sec — no "catch-up" bursting.
 /// Plugins that want burst capacity must declare `burst = N` explicitly.
 fn default_burst() -> u32 { 1 }
+
+// ── SupervisorTuning ──────────────────────────────────────────────────────────
+
+/// Per-plugin tuning for the runtime's WASM supervisor. Each field is
+/// optional and falls back to the runtime default when absent. Plugins
+/// that talk to slow / unreliable HTTP backends (Jackett, prowlarr,
+/// future scrapers) opt into `slow_upstream = true` so timeouts don't
+/// trigger the reload-on-crash machinery — reloading the WASM does
+/// nothing to make a slow upstream faster — and pair it with
+/// `cooldown_after_timeout_secs` so successive user actions don't
+/// re-hammer the same dead provider.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SupervisorTuning {
+    /// Override the supervisor's per-call timeout in seconds. When
+    /// absent, the runtime default (30s) applies. Lower this for
+    /// plugins where 30s is wasted wall time (Jackett: ~20s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_timeout_secs: Option<u64>,
+    /// When true, a call timeout returns the error to the caller
+    /// without scheduling a WASM reload or counting toward the
+    /// crash-loop threshold. Use for plugins whose latency floor is
+    /// a slow external HTTP request, not WASM execution.
+    #[serde(default)]
+    pub slow_upstream: bool,
+    /// After a timeout, return the cooldown error immediately for
+    /// any call dispatched within this window. `0` (or absent) keeps
+    /// the runtime default (no cooldown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown_after_timeout_secs: Option<u64>,
+}
 
 // ── Manifest validation ───────────────────────────────────────────────────────
 

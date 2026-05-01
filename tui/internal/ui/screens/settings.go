@@ -452,6 +452,14 @@ func (m *SettingsModel) populateFromConfig(cfg config.Config) {
 				item.boolVal = cfg.Streaming.RequireSeeders
 			case "streaming.require_resolution":
 				item.boolVal = cfg.Streaming.RequireResolution
+			case "streaming.allow_4k":
+				item.boolVal = cfg.Streaming.Allow4K
+			case "streaming.allow_1080p":
+				item.boolVal = cfg.Streaming.Allow1080p
+			case "streaming.allow_720p":
+				item.boolVal = cfg.Streaming.Allow720p
+			case "streaming.allow_sd":
+				item.boolVal = cfg.Streaming.AllowSD
 			case "streaming.benchmark_streams":
 				item.boolVal = cfg.Streaming.BenchmarkStreams
 			case "streaming.auto_delete_video":
@@ -1416,6 +1424,34 @@ func defaultCategories() []settingCategory {
 					kind:        settingBool,
 					boolVal:     false,
 					description: "Drop streams whose release title doesn't carry a resolution tag (4K/1080p/720p/...)",
+				},
+				{
+					label:       "Allow 4K",
+					key:         "streaming.allow_4k",
+					kind:        settingBool,
+					boolVal:     true,
+					description: "Show 2160p / 4K streams in the picker",
+				},
+				{
+					label:       "Allow 1080p",
+					key:         "streaming.allow_1080p",
+					kind:        settingBool,
+					boolVal:     true,
+					description: "Show 1080p streams in the picker",
+				},
+				{
+					label:       "Allow 720p",
+					key:         "streaming.allow_720p",
+					kind:        settingBool,
+					boolVal:     true,
+					description: "Show 720p streams in the picker",
+				},
+				{
+					label:       "Allow SD",
+					key:         "streaming.allow_sd",
+					kind:        settingBool,
+					boolVal:     true,
+					description: "Show 480p / SD streams in the picker",
 				},
 				{
 					label:       "Benchmark",

@@ -10,7 +10,7 @@
 pub use stui_plugin_sdk::manifest::{
     validate, ArtworkConfig, AuthorMeta, Capabilities, CatalogCapability, LookupConfig,
     ManifestValidationError, NetworkPermission, Permissions, PluginConfigField, PluginManifest,
-    PluginMeta, RateLimit, VerbConfig,
+    PluginMeta, RateLimit, SupervisorTuning, VerbConfig,
 };
 
 use serde::{Deserialize, Serialize};
@@ -279,7 +279,10 @@ version = "0.1.0"
         .unwrap();
         assert!(m.plugin_type_enum().is_none());
         assert_eq!(m.plugin_type_or_default(), PluginType::MetadataProvider);
-        assert_eq!(m.plugin_type_str(), "");
+        // `plugin_type_str` falls back to the default-typed enum's string
+        // form when the manifest omits `[plugin] type`, so the TUI's
+        // Installed table has a non-blank Type cell for modern plugins.
+        assert_eq!(m.plugin_type_str(), "metadata-provider");
         assert!(m.is_metadata_provider());
         assert!(!m.is_stream_provider());
         assert!(!m.is_subtitle_provider());

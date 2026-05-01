@@ -376,14 +376,35 @@ fn catalog_entries_to_media(
 
 use crate::cache::RuntimeCache;
 
-/// Maximum number of concurrent WASM plugin calls allowed process-wide.
-///
-/// This semaphore is shared across all Engine clones (all clones hold an
-/// `Arc` to the same `Semaphore` instance), so the bound is truly global.
-///
-/// All engine call-sites (search_catalog_entries, search_scoped, supervisor_search)
-/// acquire from this shared semaphore before calling into a plugin.
+/// Maximum concurrent **foreground** plugin calls (user-initiated work:
+/// find_streams, search, lookup, episodes). Foreground permits are never
+/// taken by background work, so a click during a heavy enrichment pass
+/// jumps the queue immediately.
 pub const MAX_CONCURRENT_PLUGIN_CALLS: usize = 8;
+
+/// Maximum concurrent **background** plugin calls (catalog enrichment
+/// passes, warmup). Background work has its own pool half the size of
+/// foreground so a long enrich pass can't pin every executor slot, which
+/// is what produced the 55-second-config-error symptom: an instant
+/// orionoid call queued behind 24 in-flight enrich calls before the
+/// split.
+pub const MAX_CONCURRENT_BG_PLUGIN_CALLS: usize = 4;
+
+/// Priority lane for a plugin call. Foreground calls acquire from a
+/// dedicated semaphore that background work never touches; background
+/// calls acquire from a smaller pool. The split is the cheap fix for the
+/// "user click waits 55 s behind enrichment" pathology — one global
+/// semaphore conflated user latency with throughput, and throughput was
+/// winning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallPriority {
+    /// User-initiated work that must feel responsive. Sole user of
+    /// `plugin_semaphore_fg`.
+    Foreground,
+    /// Sweeps that run regardless of what the user is doing
+    /// (enrichment, warmup). Acquires from `plugin_semaphore_bg` only.
+    Background,
+}
 
 // ── PluginCallError ───────────────────────────────────────────────────────────
 
@@ -420,12 +441,18 @@ pub struct Engine {
     pub cache:    RuntimeCache,
     /// Per-scope plugin dispatch map, rebuilt after every load/unload.
     dispatch_map: Arc<RwLock<DispatchMap>>,
-    /// Process-wide semaphore limiting concurrent WASM plugin calls.
+    /// Foreground plugin-call semaphore (user-initiated work).
     ///
-    /// All `Engine` clones share the same `Arc<Semaphore>` so the bound is
-    /// global regardless of how many clones exist.  Initialised with
-    /// `MAX_CONCURRENT_PLUGIN_CALLS` permits.
-    plugin_semaphore: Arc<tokio::sync::Semaphore>,
+    /// All `Engine` clones share the same `Arc<Semaphore>` so the bound
+    /// is global regardless of how many clones exist. Initialised with
+    /// `MAX_CONCURRENT_PLUGIN_CALLS` permits. Background work never
+    /// touches this pool — see `plugin_semaphore_bg`.
+    plugin_semaphore_fg: Arc<tokio::sync::Semaphore>,
+    /// Background plugin-call semaphore (enrichment sweeps, catalog
+    /// warmup). Sized smaller than the foreground pool so a long
+    /// enrichment pass can't queue every executor slot ahead of a
+    /// user-initiated `find_streams` or search.
+    plugin_semaphore_bg: Arc<tokio::sync::Semaphore>,
     /// Fraction of Movies/Series grid reserved for anime-dominant entries.
     /// Sourced from `RuntimeConfig.catalog.anime_ratio`, clamped to [0.0, 1.0].
     /// See `balance_anime_mix`.
@@ -434,6 +461,28 @@ pub struct Engine {
     /// a key — all plugin search still works; TVDB simply doesn't contribute
     /// to the fan-out. See `crate::tvdb` for storage and auth details.
     tvdb: Option<Arc<crate::tvdb::TvdbClient>>,
+    /// Runtime-integrated mdblist client. Same on/off semantics as TVDB —
+    /// `None` when `MDBLIST_API_KEY` is missing from `secrets.env`. When
+    /// present, contributes a curated list-backed catalog source for
+    /// movies / series tabs (see `crate::mdblist`). Each item carries
+    /// `imdb_id` / `tmdb_id` / `tvdb_id` so downstream enrich fans out
+    /// efficiently with native ids.
+    mdblist: Option<Arc<crate::mdblist::MdblistClient>>,
+    /// User-configurable list slugs for the mdblist source. Persisted in
+    /// `runtime.toml [mdblist]`; defaults to popular curated public lists
+    /// (see `defaults::mdblist_*_list`).
+    mdblist_lists: crate::config::types::MdblistConfig,
+    /// Runtime-integrated fanart.tv client. `None` when the project key
+    /// (`FANART_PROJECT_KEY`) is missing from `secrets.env`. Contributes
+    /// poster / background / logo URLs to the artwork merge alongside
+    /// TMDB and TVDB. Two-key auth (project + optional user) per
+    /// fanart.tv ToS — see `crate::fanart` module docs.
+    fanart: Option<Arc<crate::fanart::FanartClient>>,
+    /// Elfhosted Stremio rating-aggregator client. Free, no key — soft-fails
+    /// only on tokio Client::build() (essentially never). Used by the
+    /// detail metadata orchestrator to fetch a pre-formatted ratings
+    /// block for movies / series.
+    rating_aggregator: Option<Arc<crate::rating_aggregator::RatingAggregatorClient>>,
     /// Cross-tier anime ID bridge (Fribb's anime-lists snapshot). Maps between
     /// MAL/AniList/Kitsu/IMDB/TMDB/TVDB ids so the pipeline can deduplicate
     /// anime fan-out across tiers. Bundled snapshot loads synchronously in
@@ -465,6 +514,22 @@ impl Engine {
                 None
             }
         };
+        // Load mdblist client from MDBLIST_API_KEY in secrets.env. Same
+        // soft-fail semantics as TVDB — missing key just means mdblist
+        // doesn't contribute to the catalog tier, plugins still flow.
+        let mdblist = crate::mdblist::from_secrets();
+        if mdblist.is_none() {
+            tracing::debug!("mdblist: no MDBLIST_API_KEY in secrets — source disabled");
+        }
+        // Load fanart.tv client. Project key required; user key optional
+        // (per fanart's ToS clause asking apps to support user keys).
+        // Soft-fail when project key is missing — same pattern as the
+        // other runtime-native sources.
+        let fanart = crate::fanart::from_secrets();
+        if fanart.is_none() {
+            tracing::debug!("fanart: no FANART_PROJECT_KEY in secrets — source disabled");
+        }
+        let rating_aggregator = crate::rating_aggregator::RatingAggregatorClient::new().map(Arc::new);
         // On-disk response cache (Phase 2). Survives daemon restart so the
         // catalog grid doesn't re-fetch providers for fresh-TTL keys. If the
         // DB can't be opened, fall back to mem-only — the runtime still works.
@@ -485,11 +550,56 @@ impl Engine {
             data_dir,
             cache,
             dispatch_map: Arc::new(RwLock::new(DispatchMap::default())),
-            plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
+            plugin_semaphore_fg: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
+            plugin_semaphore_bg: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BG_PLUGIN_CALLS)),
             anime_ratio: anime_ratio.clamp(0.0, 1.0),
             tvdb,
+            mdblist,
+            mdblist_lists: crate::config::types::MdblistConfig::default(),
+            fanart,
+            rating_aggregator,
             anime_bridge,
             user_plugin_config: Arc::new(RwLock::new(plugins)),
+        }
+    }
+
+    /// Replace the mdblist list-slug config. Called from `main.rs` after
+    /// `Engine::new` so the engine picks up user-customised slugs from
+    /// `runtime.toml [mdblist]` instead of falling back to defaults.
+    pub fn set_mdblist_lists(&mut self, cfg: crate::config::types::MdblistConfig) {
+        self.mdblist_lists = cfg;
+    }
+
+    /// Return the mdblist client if configured. `None` when the API key
+    /// is missing from `secrets.env`. Mirror of `tvdb()`.
+    pub fn mdblist(&self) -> Option<Arc<crate::mdblist::MdblistClient>> {
+        self.mdblist.clone()
+    }
+
+    /// Return the fanart.tv client if configured. `None` when
+    /// `FANART_PROJECT_KEY` is missing from `secrets.env`. Mirror of
+    /// `tvdb()` / `mdblist()`.
+    pub fn fanart(&self) -> Option<Arc<crate::fanart::FanartClient>> {
+        self.fanart.clone()
+    }
+
+    /// Return the rating-aggregator client. `None` only when reqwest's
+    /// builder somehow fails (TLS init, etc.) — effectively always Some.
+    pub fn rating_aggregator(
+        &self,
+    ) -> Option<Arc<crate::rating_aggregator::RatingAggregatorClient>> {
+        self.rating_aggregator.clone()
+    }
+
+    /// Return the active list slug for the given media tab. Used by the
+    /// catalog source to pick which list to fetch. Tabs other than
+    /// movies/series get an empty string (the caller is expected to
+    /// short-circuit before reaching here).
+    pub fn mdblist_slug_for_tab(&self, tab: &crate::ipc::MediaTab) -> &str {
+        match tab {
+            crate::ipc::MediaTab::Movies => &self.mdblist_lists.movies_list,
+            crate::ipc::MediaTab::Series => &self.mdblist_lists.series_list,
+            _ => "",
         }
     }
 
@@ -558,13 +668,35 @@ impl Engine {
         &self.dispatch_map
     }
 
-    /// Access the process-wide plugin call semaphore.
-    ///
-    /// `search_scoped` (Task 2.7) calls this to acquire a permit before each
-    /// WASM plugin call.  Advanced callers that spawn their own tasks may also
-    /// use it directly.
-    pub fn plugin_semaphore(&self) -> &Arc<tokio::sync::Semaphore> {
-        &self.plugin_semaphore
+    /// Access the foreground plugin-call semaphore. Exposed for code
+    /// (e.g. `search_scoped`) that needs to spawn its own permit-bounded
+    /// tasks rather than route through `call_plugin_verb`. Foreground
+    /// permits are the right default for caller-driven dispatch — use
+    /// `plugin_semaphore_bg` only for sweeps.
+    pub fn plugin_semaphore_fg(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.plugin_semaphore_fg
+    }
+
+    /// Access the background plugin-call semaphore. Used by enrichment
+    /// passes and other sweeps that should never starve foreground work.
+    pub fn plugin_semaphore_bg(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.plugin_semaphore_bg
+    }
+
+    /// Acquire a permit on the lane matching `prio`. Returns the
+    /// `OwnedSemaphorePermit` so the caller can hold it across the await
+    /// of the actual plugin call without borrowing `self`.
+    async fn acquire_permit(
+        &self,
+        prio: CallPriority,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, PluginCallError> {
+        let sem = match prio {
+            CallPriority::Foreground => Arc::clone(&self.plugin_semaphore_fg),
+            CallPriority::Background => Arc::clone(&self.plugin_semaphore_bg),
+        };
+        sem.acquire_owned()
+            .await
+            .map_err(|_| PluginCallError::Other("semaphore closed".into()))
     }
 
     // ── Ergonomic dispatch_map wrappers ───────────────────────────────────
@@ -586,8 +718,8 @@ impl Engine {
 
     /// Call a single WASM plugin's search via its supervisor.
     ///
-    /// 1. Acquires a permit from the shared `plugin_semaphore` so at most
-    ///    `MAX_CONCURRENT_PLUGIN_CALLS` calls run concurrently process-wide.
+    /// 1. Acquires a permit from the priority lane matching `prio`
+    ///    (Foreground → `plugin_semaphore_fg`, Background → `_bg`).
     /// 2. Looks the plugin up by id in the registry.
     /// 3. Builds `abi::types::SearchRequest` with `scope` directly — the ABI
     ///    now mirrors `sdk::SearchRequest` exactly (Task 7.0), so no tab-string
@@ -596,19 +728,16 @@ impl Engine {
     ///    `PluginCallError`.
     /// 5. Converts each `abi::types::PluginEntry` to `ipc::v1::MediaEntry`.
     ///
-    /// Used by `search_scoped` (Task 2.7).
+    /// Used by `search_scoped` and the catalog grid refresh.
     pub async fn supervisor_search(
         &self,
         plugin_id: &str,
         query: &str,
         scope: stui_plugin_sdk::SearchScope,
+        prio: CallPriority,
     ) -> Result<Vec<crate::ipc::MediaEntry>, PluginCallError> {
-        // Acquire a process-wide permit before touching the plugin.
-        let _permit = self.plugin_semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| PluginCallError::Other("semaphore closed".into()))?;
+        // Acquire a priority-matched permit before touching the plugin.
+        let _permit = self.acquire_permit(prio).await?;
 
         // Look up the supervisor under a short read-lock.  We clone the Arc
         // so we can drop the lock before the potentially-long supervisor call.
@@ -659,7 +788,7 @@ impl Engine {
 
     /// Internal helper shared by all per-verb supervisor helpers.
     ///
-    /// Acquires the process-wide semaphore permit, looks up the WASM
+    /// Acquires a permit on the lane matching `prio`, looks up the WASM
     /// supervisor for `plugin_id`, invokes the async `call` closure with
     /// the `Arc<WasmSupervisor>`, and maps any `AbiError` to
     /// `PluginCallError`.
@@ -669,18 +798,15 @@ impl Engine {
     async fn call_plugin_verb<F, Fut, R>(
         &self,
         plugin_id: &str,
+        prio: CallPriority,
         call: F,
     ) -> Result<R, PluginCallError>
     where
         F:   FnOnce(Arc<WasmSupervisor>) -> Fut,
         Fut: std::future::Future<Output = Result<R, crate::abi::types::AbiError>>,
     {
-        // Acquire a process-wide permit before touching any plugin.
-        let _permit = self.plugin_semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| PluginCallError::Other("semaphore closed".into()))?;
+        // Acquire a priority-matched permit before touching any plugin.
+        let _permit = self.acquire_permit(prio).await?;
 
         // Look up the supervisor under a short read-lock.  Clone the Arc so
         // the lock is released before the potentially-long supervisor call.
@@ -710,8 +836,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::LookupRequest,
+        prio: CallPriority,
     ) -> Result<crate::abi::types::PluginEntry, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.lookup(&req).await.map(|resp| resp.entry)
         })
         .await
@@ -725,8 +852,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::EnrichRequest,
+        prio: CallPriority,
     ) -> Result<crate::abi::types::PluginEntry, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.enrich(&req).await.map(|resp| resp.entry)
         })
         .await
@@ -773,8 +901,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::ArtworkRequest,
+        prio: CallPriority,
     ) -> Result<crate::abi::types::ArtworkResponse, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.get_artwork(&req).await
         })
         .await
@@ -787,8 +916,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::CreditsRequest,
+        prio: CallPriority,
     ) -> Result<crate::abi::types::CreditsResponse, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.get_credits(&req).await
         })
         .await
@@ -802,8 +932,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::RelatedRequest,
+        prio: CallPriority,
     ) -> Result<Vec<crate::abi::types::PluginEntry>, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.related(&req).await.map(|resp| resp.items)
         })
         .await
@@ -817,8 +948,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::EpisodesRequest,
+        prio: CallPriority,
     ) -> Result<Vec<crate::abi::types::EpisodeWire>, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.episodes(&req).await.map(|resp| resp.episodes)
         })
         .await
@@ -833,8 +965,9 @@ impl Engine {
         &self,
         plugin_id: &str,
         req: crate::abi::types::FindStreamsRequest,
+        prio: CallPriority,
     ) -> Result<Vec<crate::abi::types::Stream>, PluginCallError> {
-        self.call_plugin_verb(plugin_id, |sup| async move {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.find_streams(&req).await.map(|resp| resp.streams)
         })
         .await
@@ -914,7 +1047,26 @@ impl Engine {
         //    the write lock just long enough to splice the result in. ──
         let supervisor: Option<Arc<WasmSupervisor>> =
             if matches!(loaded.mode, ExecutionMode::Wasm) {
-                let sup_cfg = WasmSupervisorConfig::default();
+                let mut sup_cfg = WasmSupervisorConfig::default();
+                // Apply per-plugin supervisor tuning from the manifest's
+                // optional `[supervisor]` block. Each field falls through
+                // to the runtime default when absent. The runtime now
+                // treats every timeout as a soft cooldown (no wasm
+                // reload), so the manifest's `slow_upstream` flag is a
+                // no-op — it is still parsed for backward compatibility
+                // with manifests in the wild but no longer load-bearing.
+                if let Some(tune) = loaded.manifest.supervisor.as_ref() {
+                    if let Some(t) = tune.call_timeout_secs {
+                        sup_cfg.call_timeout_secs = t;
+                    }
+                    #[allow(deprecated)]
+                    {
+                        sup_cfg.slow_upstream = tune.slow_upstream;
+                    }
+                    if let Some(c) = tune.cooldown_after_timeout_secs {
+                        sup_cfg.cooldown_after_timeout_secs = c;
+                    }
+                }
                 let wasm_path = loaded.entrypoint.clone();
                 let pname = name.clone();
                 let sup_ctx = ctx.clone();
@@ -1114,6 +1266,7 @@ impl Engine {
         query: &str,
         tab: &MediaTab,
         options: SearchOptions,
+        prio: CallPriority,
     ) -> Vec<crate::catalog::CatalogEntry> {
         // Scope used uniformly for cache keying (plugin + TVDB share one tab→
         // scope mapping). Plugins derive the same scope inside their task;
@@ -1131,7 +1284,13 @@ impl Engine {
         let providers = reg.find_providers_for_tab(tab);
 
         let mut set = tokio::task::JoinSet::new();
-        let sem = Arc::clone(&self.plugin_semaphore);
+        // The semaphore choice mirrors the `prio` the caller asked for.
+        // Foreground search bar / detail-view searches don't queue
+        // behind background catalog warmup, and vice versa.
+        let sem = match prio {
+            CallPriority::Foreground => Arc::clone(&self.plugin_semaphore_fg),
+            CallPriority::Background => Arc::clone(&self.plugin_semaphore_bg),
+        };
         // Entries served straight from the in-memory SearchCache. Merged
         // with JoinSet results before the aggregator runs, so a source
         // that hit the cache is indistinguishable downstream from a fresh
@@ -1211,6 +1370,110 @@ impl Engine {
                         cache.insert(cache_key_for_task, entries.clone()).await;
                         ("tvdb".to_string(), Ok::<_, anyhow::Error>(entries))
                     });
+                }
+            }
+        }
+
+        // mdblist always-on catalog source. Inverse trigger of TVDB —
+        // mdblist's contribution is *curated lists*, not search results,
+        // so it fires only on EMPTY query (the catalog tier's initial
+        // refresh) and stays out of typed-query searches. Movies tab
+        // uses the configured movies_list slug; Series uses series_list.
+        // Each item ships with imdb_id / tmdb_id / tvdb_id pre-populated
+        // so downstream per-card enrich hits each provider with a
+        // native id (no OMDB-by-title backfill, no wasted TMDB-id-only
+        // OMDB calls).
+        if query.trim().is_empty() {
+            if let Some(mdblist) = self.mdblist.clone() {
+                let (kind, slug_opt) = match tab {
+                    crate::ipc::MediaTab::Movies => (
+                        Some(crate::mdblist::ListKind::Movies),
+                        Some(self.mdblist_lists.movies_list.clone()),
+                    ),
+                    crate::ipc::MediaTab::Series => (
+                        Some(crate::mdblist::ListKind::Shows),
+                        Some(self.mdblist_lists.series_list.clone()),
+                    ),
+                    _ => (None, None),
+                };
+                if let (Some(kind), Some(slug)) = (kind, slug_opt) {
+                    if !slug.is_empty() {
+                        // Cache key uses the slug as the "query" so different
+                        // lists cache independently. Same SearchKey shape as
+                        // tvdb / plugin entries — downstream cache eviction
+                        // and TTL handling apply uniformly.
+                        let cache_key =
+                            crate::cache::search::SearchKey::new("mdblist", &slug, scope, 0);
+                        if let Some(cached) = self.cache.search.get(&cache_key).await {
+                            cached_entries.extend(cached);
+                        } else {
+                            let tab_out = tab.clone();
+                            let cache = self.cache.search.clone();
+                            let cache_key_for_task = cache_key.clone();
+                            let slug_for_task = slug.clone();
+                            set.spawn(async move {
+                                let items = match mdblist
+                                    .fetch_list(&slug_for_task, kind)
+                                    .await
+                                {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        return (
+                                            "mdblist".to_string(),
+                                            Err::<Vec<MediaEntry>, anyhow::Error>(e),
+                                        );
+                                    }
+                                };
+                                let entries: Vec<MediaEntry> = items
+                                    .into_iter()
+                                    .map(|item| MediaEntry {
+                                        // mdblist's TMDB id is the canonical
+                                        // anchor downstream — use it for the
+                                        // entry id so dedupe vs TMDB-trending
+                                        // (when both fire later) collapses.
+                                        id: item
+                                            .ids
+                                            .tmdb
+                                            .clone()
+                                            .map(|t| format!("tmdb-{t}"))
+                                            .or_else(|| {
+                                                item.ids
+                                                    .imdb
+                                                    .clone()
+                                                    .map(|i| format!("imdb-{i}"))
+                                            })
+                                            .unwrap_or_else(|| format!("mdblist-{}", item.title)),
+                                        title: item.title,
+                                        year: item.release_year.map(|y| y.to_string()),
+                                        genre: None,
+                                        rating: None,
+                                        description: None,
+                                        poster_url: None,
+                                        provider: "mdblist".to_string(),
+                                        tab: tab_out.clone(),
+                                        media_type: crate::ipc::MediaType::default(),
+                                        ratings: std::collections::HashMap::new(),
+                                        imdb_id: item.ids.imdb,
+                                        tmdb_id: item.ids.tmdb,
+                                        mal_id: None,
+                                        anilist_id: None,
+                                        kitsu_id: None,
+                                        original_language: item.language,
+                                        kind: stui_plugin_sdk::EntryKind::default(),
+                                        source: "mdblist".to_string(),
+                                        artist_name: None,
+                                        album_name: None,
+                                        track_number: None,
+                                        season: None,
+                                        episode: None,
+                                        season_count: None,
+                                    })
+                                    .collect();
+                                cache.insert(cache_key_for_task, entries.clone()).await;
+                                ("mdblist".to_string(), Ok::<_, anyhow::Error>(entries))
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -1424,6 +1687,7 @@ impl Engine {
                 mal_id:      e.mal_id,
                 media_type:  tab_media_type,
                 ratings:     e.ratings,
+                rating_votes: std::collections::HashMap::new(),
                 original_language,
             }
         }).collect();
@@ -2028,6 +2292,7 @@ mod supervisor_search_tests {
                 config: Vec::new(),
                 capabilities: Capabilities::default(),
                 rate_limit: None,
+                supervisor: None,
                 _extra: Default::default(),
             },
             dir: std::path::PathBuf::from("/tmp"),
@@ -2097,7 +2362,7 @@ mod supervisor_search_tests {
         assert!(!engine.scope_has_any_plugins(SearchScope::Movie).await);
     }
 
-    // ── Engine::plugin_semaphore ──────────────────────────────────────────────
+    // ── Engine::plugin_semaphore_{fg,bg} ──────────────────────────────────────
 
     #[test]
     fn plugin_semaphore_clones_share_same_arc() {
@@ -2108,8 +2373,10 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let clone = engine.clone();
-        // Both point to the same semaphore (Arc identity).
-        assert!(Arc::ptr_eq(engine.plugin_semaphore(), clone.plugin_semaphore()));
+        // Both lanes are shared by Arc identity across clones, so a
+        // permit acquired by one clone counts against the other.
+        assert!(Arc::ptr_eq(engine.plugin_semaphore_fg(), clone.plugin_semaphore_fg()));
+        assert!(Arc::ptr_eq(engine.plugin_semaphore_bg(), clone.plugin_semaphore_bg()));
     }
 
     #[test]
@@ -2121,9 +2388,29 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         assert_eq!(
-            engine.plugin_semaphore().available_permits(),
+            engine.plugin_semaphore_fg().available_permits(),
             MAX_CONCURRENT_PLUGIN_CALLS,
         );
+        assert_eq!(
+            engine.plugin_semaphore_bg().available_permits(),
+            MAX_CONCURRENT_BG_PLUGIN_CALLS,
+        );
+    }
+
+    #[test]
+    fn plugin_semaphore_fg_and_bg_are_distinct() {
+        let engine = Engine::new(
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            0.4,
+            std::collections::HashMap::new(),
+        );
+        // The whole point of the split is that the two lanes are
+        // independent — exhausting one must not affect the other.
+        assert!(!Arc::ptr_eq(
+            engine.plugin_semaphore_fg(),
+            engine.plugin_semaphore_bg(),
+        ));
     }
 
     // ── supervisor_search: unknown plugin id ──────────────────────────────────
@@ -2136,7 +2423,7 @@ mod supervisor_search_tests {
             0.4,
             std::collections::HashMap::new(),
         );
-        let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track).await;
+        let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
         if let Err(PluginCallError::PluginNotFound(id)) = result {
             assert_eq!(id, "nonexistent-id");
@@ -2159,7 +2446,7 @@ mod supervisor_search_tests {
             kind:      stui_plugin_sdk::EntryKind::Track,
             locale:    None,
         };
-        let result = engine.supervisor_lookup("no-such-plugin", req).await;
+        let result = engine.supervisor_lookup("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
         if let Err(PluginCallError::PluginNotFound(id)) = result {
             assert_eq!(id, "no-such-plugin");
@@ -2178,7 +2465,7 @@ mod supervisor_search_tests {
             partial:          crate::abi::types::PluginEntry::default(),
             prefer_id_source: None,
         };
-        let result = engine.supervisor_enrich("no-such-plugin", req).await;
+        let result = engine.supervisor_enrich("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2196,7 +2483,7 @@ mod supervisor_search_tests {
             kind:      stui_plugin_sdk::EntryKind::Album,
             size:      crate::abi::types::ArtworkSize::Any,
         };
-        let result = engine.supervisor_get_artwork("no-such-plugin", req).await;
+        let result = engine.supervisor_get_artwork("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2213,7 +2500,7 @@ mod supervisor_search_tests {
             id_source: "tmdb".into(),
             kind:      stui_plugin_sdk::EntryKind::Movie,
         };
-        let result = engine.supervisor_get_credits("no-such-plugin", req).await;
+        let result = engine.supervisor_get_credits("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2232,7 +2519,7 @@ mod supervisor_search_tests {
             relation:  crate::abi::types::RelationKind::Any,
             limit:     10,
         };
-        let result = engine.supervisor_related("no-such-plugin", req).await;
+        let result = engine.supervisor_related("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2254,26 +2541,26 @@ mod supervisor_search_tests {
             e.supervisor_lookup("p", LookupRequest {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track, locale: None,
-            })
+            }, CallPriority::Foreground)
         }
         fn _enrich(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
             e.supervisor_enrich("p", EnrichRequest {
                 partial: PluginEntry::default(),
                 prefer_id_source: None,
-            })
+            }, CallPriority::Foreground)
         }
         fn _artwork(e: &Engine) -> impl Future<Output = Result<ArtworkResponse, PluginCallError>> + '_ {
             e.supervisor_get_artwork("p", ArtworkRequest {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track,
                 size: ArtworkSize::Any,
-            })
+            }, CallPriority::Foreground)
         }
         fn _credits(e: &Engine) -> impl Future<Output = Result<CreditsResponse, PluginCallError>> + '_ {
             e.supervisor_get_credits("p", CreditsRequest {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track,
-            })
+            }, CallPriority::Foreground)
         }
         fn _related(e: &Engine) -> impl Future<Output = Result<Vec<PluginEntry>, PluginCallError>> + '_ {
             e.supervisor_related("p", RelatedRequest {
@@ -2281,7 +2568,7 @@ mod supervisor_search_tests {
                 kind: stui_plugin_sdk::EntryKind::Track,
                 relation: RelationKind::Any,
                 limit: 10,
-            })
+            }, CallPriority::Foreground)
         }
     }
 }

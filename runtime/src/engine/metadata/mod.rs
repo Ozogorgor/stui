@@ -113,6 +113,18 @@ pub trait MetadataDispatch: Send + Sync {
         plugin: &str,
         req: RelatedRequest,
     ) -> Result<Vec<PluginEntry>, String>;
+
+    /// Single-source fetch of the elfhosted rating-aggregator addon.
+    /// Returns the addon's pre-formatted description block + external URL.
+    /// `None` means the addon has no entry for this id; `Err` means
+    /// network / decode failure (caller logs and falls through to Empty).
+    /// Implementations that don't have a client wired (e.g. tests) return
+    /// `Ok(None)`.
+    async fn fetch_ratings_aggregator(
+        &self,
+        imdb_id: &str,
+        kind: &str,
+    ) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String>;
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -160,7 +172,7 @@ pub async fn fetch_detail_metadata<E>(
         MetadataVerb::Artwork,
         MetadataVerb::Related,
     ];
-    let mut handles = Vec::with_capacity(verbs.len());
+    let mut handles = Vec::with_capacity(verbs.len() + 1);
     for verb in verbs {
         let eng = engine.clone();
         let req_c = req.clone();
@@ -177,9 +189,92 @@ pub async fn fetch_detail_metadata<E>(
             let _ = tx_c.send(partial).await;
         }));
     }
+
+    // Rating-aggregator runs in phase 2 too — independent single-source
+    // HTTP, no plugin fan-out. Skip when we don't have an IMDb id (the
+    // addon only accepts `tt…` lookups) or when the kind isn't movie /
+    // series (the manifest declares only those two types).
+    if let Some(imdb) = imdb_id_from_request(&req) {
+        let kind_wire = match req.kind.as_str() {
+            "movies" => Some("movie"),
+            "series" | "anime" => Some("series"),
+            _ => None,
+        };
+        if let Some(kind) = kind_wire {
+            let eng = engine.clone();
+            let req_c = req.clone();
+            let tx_c = tx.clone();
+            let imdb = imdb.clone();
+            let kind = kind.to_string();
+            handles.push(tokio::spawn(async move {
+                let payload = run_ratings_aggregator(&eng, &req_c, &imdb, &kind).await;
+                let partial = DetailMetadataPartial {
+                    entry_id: req_c.entry_id.clone(),
+                    verb: MetadataVerb::RatingsAggregator,
+                    payload,
+                };
+                let _ = tx_c.send(partial).await;
+            }));
+        }
+    }
+
     for h in handles {
         let _ = h.await;
     }
+}
+
+/// Resolve the IMDb id to use for the rating-aggregator call. The
+/// orchestrator may have arrived with an IMDb id either as the primary
+/// `entry_id` (id_source = imdb) or as a cross-provider id picked up
+/// from the catalog merge / enrich phase (`external_ids["imdb"]`).
+fn imdb_id_from_request(req: &DetailMetadataRequest) -> Option<String> {
+    if let IdSource::Imdb = req.id_source {
+        if !req.entry_id.is_empty() {
+            return Some(req.entry_id.clone());
+        }
+    }
+    req.external_ids
+        .get("imdb")
+        .filter(|s| !s.is_empty())
+        .cloned()
+}
+
+/// Cache-aware fetch of the rating-aggregator block. Mirrors `run_verb`
+/// for the four plugin-driven verbs but bypasses the source resolver
+/// since this is a single fixed source.
+async fn run_ratings_aggregator<E: MetadataDispatch>(
+    engine: &E,
+    req: &DetailMetadataRequest,
+    imdb_id: &str,
+    kind: &str,
+) -> MetadataPayload {
+    let cache_key = MetadataCacheKey {
+        verb: MetadataVerb::RatingsAggregator,
+        id_source: IdSource::Imdb,
+        id: imdb_id.to_string(),
+    };
+    if let Some(p) = engine.cache().get(&cache_key).await {
+        return p;
+    }
+    let payload = match engine.fetch_ratings_aggregator(imdb_id, kind).await {
+        Ok(Some(data)) => MetadataPayload::RatingsAggregator(data),
+        Ok(None) => MetadataPayload::Empty,
+        Err(e) => {
+            tracing::debug!(
+                err = %e,
+                title = %req.title,
+                imdb = %imdb_id,
+                "rating_aggregator: fetch failed"
+            );
+            MetadataPayload::Empty
+        }
+    };
+    if matches!(payload, MetadataPayload::Empty) {
+        engine.cache().insert_negative(cache_key, payload.clone()).await;
+    } else {
+        engine.cache().insert(cache_key, payload.clone()).await;
+    }
+    payload
 }
 
 /// Resolve which `(id, id_source)` to send to a specific plugin given a
@@ -195,6 +290,14 @@ fn id_for_plugin(req: &DetailMetadataRequest, plugin: &str) -> (String, String) 
     // foreign id namespace get added here.
     let preferred = match plugin {
         "omdb" => "imdb",
+        // fanart's movie endpoint accepts TMDB id; the TV endpoint
+        // requires TVDB id. Pick per `req.kind` so the same plugin name
+        // routes to the right id type.
+        "fanart" => match req.kind.as_str() {
+            "movies" => "tmdb",
+            "series" | "anime" | "episode" => "tvdb",
+            _ => "tmdb",
+        },
         other => other,
     };
     if let Some(id) = req.external_ids.get(preferred) {
@@ -316,6 +419,13 @@ async fn run_verb<E: MetadataDispatch>(
                 MetadataPayload::Empty
             };
             (payload, had_results)
+        }
+        // RatingsAggregator runs via the dedicated `run_ratings_aggregator`
+        // path (single fixed source, no plugin fan-out), so this verb
+        // never reaches the plugin-driven `run_verb` dispatch.
+        MetadataVerb::RatingsAggregator => {
+            debug_assert!(false, "run_verb called with RatingsAggregator");
+            (MetadataPayload::Empty, false)
         }
     };
 
@@ -544,6 +654,7 @@ impl DetailMetadataPartial {
             MetadataVerb::Credits => "credits",
             MetadataVerb::Artwork => "artwork",
             MetadataVerb::Related => "related",
+            MetadataVerb::RatingsAggregator => "ratings_aggregator",
         }
         .to_string();
         crate::ipc::v1::DetailMetadataPartial {
@@ -688,6 +799,15 @@ pub mod test_engine {
             self.apply_behavior(MetadataVerb::Related).await?;
             Ok(vec![])
         }
+
+        async fn fetch_ratings_aggregator(
+            &self,
+            _imdb_id: &str,
+            _kind: &str,
+        ) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String> {
+            self.apply_behavior(MetadataVerb::RatingsAggregator).await?;
+            Ok(None)
+        }
     }
 
     // ── Factories ──────────────────────────────────────────────────────
@@ -737,11 +857,19 @@ pub mod test_engine {
     pub async fn collect_all(
         rx: &mut mpsc::Receiver<DetailMetadataPartial>,
     ) -> Vec<DetailMetadataPartial> {
+        // Drain until the orchestrator drops `tx` (channel closes) or a
+        // 5 s lull goes by — whichever happens first. The fixed `0..4`
+        // loop that lived here before silently dropped the slowest
+        // partial once the orchestrator started emitting 5 messages
+        // (Enrich + Credits + Artwork + Related + RatingsAggregator
+        // for IMDb-keyed movie/series requests). Iterate until close
+        // so the count stays self-correcting.
         let mut out = Vec::new();
-        for _ in 0..4 {
+        loop {
             match tokio::time::timeout(Duration::from_secs(5), rx.recv()).await {
                 Ok(Some(p)) => out.push(p),
-                _ => break,
+                Ok(None) => break, // channel closed — orchestrator finished
+                Err(_) => break,   // 5 s without a partial — give up
             }
         }
         out

@@ -176,6 +176,18 @@ func (m Model) handleConfigReload(msg config.ConfigReloadMsg) (tea.Model, tea.Cm
 	return m, nil
 }
 
+// handleRainbowTick advances the package-level RainbowOffset the focused
+// grid card's border reads each frame. Re-arms unconditionally so the
+// animation keeps flowing — View() picks it up on the next render
+// regardless of which screen is active, and off-screen the cost is just
+// one Update + one scheduled callback per tick.
+func (m Model) handleRainbowTick(_ rainbowTickMsg) (tea.Model, tea.Cmd) {
+	// 6 deg / tick at 100ms = 60 ticks per full rotation = 6 sec cycle.
+	// Slow enough to read as a calm flow, fast enough to feel alive.
+	components.RainbowOffset = (components.RainbowOffset + 6) % 360
+	return m, rainbowTickCmd()
+}
+
 // handleConfigSaveTick handles configSaveTickMsg.
 func (m Model) handleConfigSaveTick(msg configSaveTickMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.cfgSaveSeq {

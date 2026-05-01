@@ -132,6 +132,7 @@ impl From<MediaItem> for CatalogEntry {
             genre: m.genres,
             rating: m.rating,
             ratings: m.ratings,
+            rating_votes: std::collections::HashMap::new(),
             description: m.description,
             poster_url: m.poster_url,
             poster_art: m.poster_art,

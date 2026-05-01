@@ -54,8 +54,18 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+/// Path the manager writes config snapshots to. MUST match the path
+/// `loader::default_config_path()` reads from on startup, otherwise
+/// every `set()` persists to a phantom file and reverts on restart.
+///
+/// Legacy bug: this used to point at `~/.stui/config/stui.toml` while
+/// the loader read from `~/.config/stui/runtime.toml`. Toggles in the
+/// settings UI would log "config persisted" but the value never made
+/// it back to the file the runtime would read on its next launch.
 fn default_config_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".stui").join("config").join("stui.toml"))
+    dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|c| c.join("stui").join("runtime.toml"))
 }
 
 use crate::config::types::RuntimeConfig;
@@ -150,7 +160,7 @@ impl ConfigManager {
         Ok(())
     }
 
-    /// Write the current config snapshot to `~/.stui/config/stui.toml`.
+    /// Write the current config snapshot to `~/.config/stui/runtime.toml`.
     pub async fn persist(&self) -> Result<()> {
         let cfg = self.config.read().await.clone();
 
@@ -296,6 +306,18 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
         }
         "streaming.require_resolution" => {
             cfg.streaming.require_resolution = as_bool(key, value)?;
+        }
+        "streaming.allow_4k" => {
+            cfg.streaming.allow_4k = as_bool(key, value)?;
+        }
+        "streaming.allow_1080p" => {
+            cfg.streaming.allow_1080p = as_bool(key, value)?;
+        }
+        "streaming.allow_720p" => {
+            cfg.streaming.allow_720p = as_bool(key, value)?;
+        }
+        "streaming.allow_sd" => {
+            cfg.streaming.allow_sd = as_bool(key, value)?;
         }
         "streaming.auto_fallback" => {
             cfg.streaming.auto_fallback = as_bool(key, value)?;

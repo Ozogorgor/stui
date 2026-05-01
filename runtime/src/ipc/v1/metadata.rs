@@ -68,6 +68,20 @@ pub enum MetadataPayload {
     Credits(CreditsData),
     Artwork(ArtworkData),
     Related(RelatedData),
+    RatingsAggregator(RatingsAggregatorData),
+}
+
+/// Pre-formatted, human-readable ratings block sourced from the elfhosted
+/// Stremio rating-aggregator addon. The `description` field is the addon's
+/// own emoji-formatted multi-line string (IMDb / TMDb / Metacritic /
+/// Rotten Tomatoes / parent-safe flag) — the TUI renders it verbatim
+/// rather than parsing per-source values, since this view is presentation,
+/// not data the composite rating consumes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RatingsAggregatorData {
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

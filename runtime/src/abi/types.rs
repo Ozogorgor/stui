@@ -120,6 +120,14 @@ pub struct PluginEntry {
     /// provenance. The keys must match the aggregator's RatingWeight
     /// names (e.g. `imdb`, `tomatometer`, `metacritic`).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub ratings: HashMap<String, f32>,
+
+    /// Per-source vote count — mirror of
+    /// `stui_plugin_sdk::PluginEntry::rating_votes`. When present the
+    /// aggregator applies Bayesian shrinkage to the matching source's
+    /// rating before composing the weighted median, suppressing tiny-
+    /// sample 10.0s. Absent for sources that don't expose vote
+    /// counts (e.g. RT critic / Metacritic critic).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub rating_votes: HashMap<String, u32>,
 }
 
 /// Returned by `stui_resolve`.

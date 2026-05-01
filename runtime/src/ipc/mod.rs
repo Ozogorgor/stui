@@ -45,6 +45,8 @@ pub const CURRENT_VERSION: u32 = 1;
 
 // Re-export everything from v1 so existing `use crate::ipc::Foo` imports
 // continue to compile with zero changes throughout the codebase.
+pub use v1::sanitize_secrets;
+
 #[allow(unused_imports)]
 pub use v1::{
     ClearMediaCacheRequest,

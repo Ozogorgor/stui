@@ -136,6 +136,10 @@ impl Secrets {
     pub fn lastfm_api_key(&self) -> Option<String> {
         self.get("LASTFM_API_KEY").filter(|k| !k.is_empty())
     }
+
+    pub fn mdblist_api_key(&self) -> Option<String> {
+        self.get("MDBLIST_API_KEY").filter(|k| !k.is_empty())
+    }
 }
 
 const KNOWN_SECRET_VARS: &[&str] = &[
@@ -148,6 +152,9 @@ const KNOWN_SECRET_VARS: &[&str] = &[
     "TORRENTIO_API_KEY",
     "LASTFM_API_KEY",
     "DISCOGS_API_KEY",
+    "MDBLIST_API_KEY",
+    "FANART_PROJECT_KEY",
+    "FANART_USER_KEY",
 ];
 
 fn secrets_file_path() -> Option<PathBuf> {

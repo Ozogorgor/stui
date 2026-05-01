@@ -154,6 +154,12 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub metadata: MetadataConfig,
 
+    /// mdblist list-slug configuration. The API key lives in `secrets.env`,
+    /// not here — only the user-tweakable list pointers are persisted in
+    /// `runtime.toml`. Defaults are popular curated lists.
+    #[serde(default)]
+    pub mdblist: MdblistConfig,
+
     /// Plugin repository URLs.
     /// The first entry is always the built-in official repo.
     /// Users can append community repos; they are merged at plugin-discovery time.
@@ -379,6 +385,25 @@ pub struct StreamingConfig {
     /// them out keeps the picker focused on the comparable options.
     #[serde(default)]
     pub require_resolution: bool,
+
+    /// Per-tier resolution allowlist. All four default to `true` — the
+    /// picker shows every quality tier out of the box. Users with
+    /// limited bandwidth (or a strong "no SD ever" preference) flip the
+    /// matching tier off to remove those candidates from the picker
+    /// before they're ranked. `StreamQuality::Unknown` is governed by
+    /// `require_resolution` instead, so unknown-tier streams pass
+    /// through here regardless.
+    #[serde(default = "defaults::allow_tier_true")]
+    pub allow_4k: bool,
+
+    #[serde(default = "defaults::allow_tier_true")]
+    pub allow_1080p: bool,
+
+    #[serde(default = "defaults::allow_tier_true")]
+    pub allow_720p: bool,
+
+    #[serde(default = "defaults::allow_tier_true")]
+    pub allow_sd: bool,
 }
 
 impl Default for StreamingConfig {
@@ -392,6 +417,10 @@ impl Default for StreamingConfig {
             min_seeders: defaults::min_seeders(),
             require_seeders: false,
             require_resolution: false,
+            allow_4k: true,
+            allow_1080p: true,
+            allow_720p: true,
+            allow_sd: true,
         }
     }
 }
@@ -623,6 +652,29 @@ impl Default for MetadataSources {
     }
 }
 
+/// mdblist list-slug configuration (`[mdblist]` section).
+///
+/// Slugs are `username/list-slug` strings as they appear in mdblist URLs.
+/// Defaults are popular curated public lists. The API key is loaded
+/// separately via `secrets.env` (key `MDBLIST_API_KEY`) — keeping it out
+/// of `runtime.toml` matches stui's wider secrets-vs-config split.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdblistConfig {
+    #[serde(default = "defaults::mdblist_movies_list")]
+    pub movies_list: String,
+    #[serde(default = "defaults::mdblist_series_list")]
+    pub series_list: String,
+}
+
+impl Default for MdblistConfig {
+    fn default() -> Self {
+        MdblistConfig {
+            movies_list: defaults::mdblist_movies_list(),
+            series_list: defaults::mdblist_series_list(),
+        }
+    }
+}
+
 /// Metadata enrichment configuration (`[metadata]` section).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataConfig {
@@ -743,6 +795,7 @@ impl Default for RuntimeConfig {
             catalog: CatalogConfig::default(),
             skipper: SkipperConfig::default(),
             metadata: MetadataConfig::default(),
+            mdblist: MdblistConfig::default(),
             plugin_repos: defaults::plugin_repos(),
             plugins: std::collections::HashMap::new(),
             storage: StorageConfig::default(),
@@ -853,6 +906,12 @@ mod defaults {
         // the filter entirely.
         5
     }
+    /// Default for the per-tier `allow_*` fields. Lifted into a named
+    /// helper so the four `#[serde(default = "...")]` attributes don't
+    /// each need their own `fn allow_4k_default`-style trampoline.
+    pub fn allow_tier_true() -> bool {
+        true
+    }
 
     // SubtitlesConfig defaults
     pub fn sub_language() -> String {
@@ -919,19 +978,25 @@ mod defaults {
 
     // MetadataConfig defaults
     pub(super) fn metadata_sources_movies() -> Vec<String> {
-        vec!["tmdb".into(), "omdb".into(), "tvdb".into()]
+        vec!["tmdb".into(), "omdb".into(), "tvdb".into(), "fanart".into()]
     }
     pub(super) fn metadata_sources_series() -> Vec<String> {
-        vec!["tvdb".into(), "tmdb".into(), "omdb".into()]
+        vec!["tvdb".into(), "tmdb".into(), "omdb".into(), "fanart".into()]
     }
     pub(super) fn metadata_sources_anime() -> Vec<String> {
-        vec!["anilist".into(), "kitsu".into(), "tvdb".into()]
+        vec!["anilist".into(), "kitsu".into(), "tvdb".into(), "fanart".into()]
     }
     pub(super) fn metadata_sources_music() -> Vec<String> {
         vec!["musicbrainz".into(), "discogs".into(), "lastfm".into()]
     }
     pub(super) fn metadata_per_verb_timeout_ms() -> u64 {
         8000
+    }
+    pub(super) fn mdblist_movies_list() -> String {
+        "snoak/latest-movies-digital-release".into()
+    }
+    pub(super) fn mdblist_series_list() -> String {
+        "garycrawfordgc/latest-tv-shows".into()
     }
 
     /// Legacy single-root used before the XDG split. Retained only
@@ -1027,9 +1092,9 @@ mod metadata_config_tests {
     #[test]
     fn metadata_sources_defaults_include_tvdb() {
         let mc = MetadataConfig::default();
-        assert_eq!(mc.sources.movies, vec!["tmdb", "omdb", "tvdb"]);
-        assert_eq!(mc.sources.series, vec!["tvdb", "tmdb", "omdb"]);
-        assert_eq!(mc.sources.anime,  vec!["anilist", "kitsu", "tvdb"]);
+        assert_eq!(mc.sources.movies, vec!["tmdb", "omdb", "tvdb", "fanart"]);
+        assert_eq!(mc.sources.series, vec!["tvdb", "tmdb", "omdb", "fanart"]);
+        assert_eq!(mc.sources.anime,  vec!["anilist", "kitsu", "tvdb", "fanart"]);
         assert_eq!(mc.sources.music,  vec!["musicbrainz", "discogs", "lastfm"]);
     }
 

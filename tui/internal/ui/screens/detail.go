@@ -433,6 +433,10 @@ func scrolledTabBody(content string, scroll, w, h int) string {
 func renderDescriptionTab(ds *DetailState, w, h int) string {
 	var sections []string
 
+	if rb := renderRatingsAggregatorSection(ds, w); rb != "" {
+		sections = append(sections, rb, "")
+	}
+
 	if crew := renderCrewSection(ds, w); crew != "" {
 		sections = append(sections, crew, "")
 	}
@@ -654,8 +658,22 @@ func renderEpisodesTab(ds *DetailState, w, h int) string {
 	currentSeasonErr := ds.EpisodesError[ds.SeasonCursor+1]
 	switch {
 	case currentSeasonErr != "":
-		epLines = []string{lipgloss.NewStyle().Foreground(theme.T.Red()).
-			Render("  Failed to load episodes: " + currentSeasonErr)}
+		// Strip SDK error-code prefix (METADATA_FAILED:, etc.) so the
+		// user sees the human-readable tail; word-wrap to the column
+		// width so a long message doesn't overflow into the streams
+		// column or the next row.
+		clean := stripErrorPrefix(currentSeasonErr)
+		red := lipgloss.NewStyle().Foreground(theme.T.Red())
+		// epContentW is computed further down (epW - 1, for the bar
+		// gutter); replicate inline. Subtract another 2 for the leading
+		// "  " indent each emitted line gets.
+		wrapAt := epW - 3
+		if wrapAt < 20 {
+			wrapAt = 20
+		}
+		for _, line := range wrapWords("Failed to load episodes: "+clean, wrapAt) {
+			epLines = append(epLines, red.Render("  "+line))
+		}
 	case !loaded:
 		epLines = []string{dim.Render("  Loading episodes…")}
 	case len(episodes) == 0:
@@ -712,9 +730,23 @@ func renderEpisodesTab(ds *DetailState, w, h int) string {
 		inFlight := ds.EpisodeStreamsInFlight[key]
 		switch {
 		case errMsg != "":
-			streamsLines = append(streamsLines,
-				lipgloss.NewStyle().Foreground(theme.T.Red()).
-					Render("  "+errMsg))
+			// Streams pipeline joins per-provider failures with `"; "`.
+			// Split, compact each one (stripping ERROR_CODE prefixes
+			// and re-paste hints), then hard-truncate to the column
+			// width so long URLs / stack traces can't bleed into the
+			// layout.
+			redStyle := lipgloss.NewStyle().Foreground(theme.T.Red())
+			for _, part := range strings.Split(errMsg, "; ") {
+				row := "  " + compactProviderError(part)
+				if lipgloss.Width(row) > streamsContentW-2 {
+					rr := []rune(row)
+					for lipgloss.Width(string(rr)) > streamsContentW-3 && len(rr) > 0 {
+						rr = rr[:len(rr)-1]
+					}
+					row = string(rr) + "…"
+				}
+				streamsLines = append(streamsLines, redStyle.Render(row))
+			}
 		case inFlight:
 			streamsLines = append(streamsLines, dim.Render("  Searching torrents…"))
 		case !isLoaded:
@@ -861,6 +893,104 @@ func renderCastRow(
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, nameStr, roleStr, linkStr)
+}
+
+// stripErrorPrefix removes the well-known SDK error-code prefix
+// (`METADATA_FAILED: `, `AUTH_ERROR: `, `HTTP_ERROR: `, …) from the
+// front of a runtime error string so what reaches the user is just
+// the human-readable tail. Unrecognised messages pass through.
+func stripErrorPrefix(s string) string {
+	for _, p := range []string{
+		"METADATA_FAILED: ", "AUTH_ERROR: ", "HTTP_ERROR: ",
+		"PLUGIN_ERROR: ", "INVALID_REQUEST: ",
+		"PARSE_ERROR: ", "parse_error: ",
+	} {
+		if strings.HasPrefix(s, p) {
+			return strings.TrimPrefix(s, p)
+		}
+	}
+	return s
+}
+
+// wrapWords word-wraps `s` to lines of at most `width` visible cells.
+// Splits on whitespace; words longer than `width` are placed on their
+// own line and may exceed it (the caller is responsible for any final
+// hard-truncate). Empty input returns a single empty line.
+func wrapWords(s string, width int) []string {
+	if width < 1 {
+		return []string{s}
+	}
+	var lines []string
+	var cur strings.Builder
+	for _, w := range strings.Fields(s) {
+		if cur.Len() == 0 {
+			cur.WriteString(w)
+			continue
+		}
+		if lipgloss.Width(cur.String())+1+lipgloss.Width(w) <= width {
+			cur.WriteByte(' ')
+			cur.WriteString(w)
+		} else {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			cur.WriteString(w)
+		}
+	}
+	if cur.Len() > 0 {
+		lines = append(lines, cur.String())
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
+}
+
+// compactProviderError takes one entry from the streams-pipeline error
+// list (e.g. `"jackett-provider: HTTP_ERROR: HTTP 0: error sending
+// request for url (...)"`) and returns a short, human-readable form
+// (e.g. `"jackett: network error"`).
+//
+// The runtime joins per-provider failures with `"; "`; the renderer
+// splits on that and pipes each segment through this helper before
+// truncating to the streams column width. Strips the `-provider`
+// suffix on plugin names (cosmetic; redundant in this UI), then
+// pattern-matches on the well-known SDK error-code prefixes
+// (`AUTH_ERROR`, `HTTP_ERROR`, `METADATA_FAILED`) and the supervisor
+// timeout string.
+func compactProviderError(part string) string {
+	idx := strings.Index(part, ": ")
+	if idx == -1 {
+		return part
+	}
+	name := strings.TrimSuffix(part[:idx], "-provider")
+	rest := part[idx+2:]
+	switch {
+	case rest == "timed out" || strings.HasPrefix(rest, "plugin call timed out"):
+		return name + ": timed out"
+	case strings.HasPrefix(rest, "HTTP_ERROR: HTTP 0"):
+		// HTTP 0 = client-side failure (DNS / connection refused / TLS).
+		return name + ": network error"
+	case strings.HasPrefix(rest, "HTTP_ERROR: HTTP "):
+		after := strings.TrimPrefix(rest, "HTTP_ERROR: HTTP ")
+		if i := strings.IndexAny(after, ":"); i > 0 {
+			return name + ": HTTP " + after[:i]
+		}
+		return name + ": HTTP error"
+	case strings.HasPrefix(rest, "PARSE_ERROR:") || strings.HasPrefix(rest, "parse_error:"):
+		// Plugin received JSON in an unexpected shape — usually means
+		// the upstream API changed format or returned an error object.
+		// Don't try to render the serde-ese ("invalid type: map,
+		// expected ...") in a tiny column.
+		return name + ": bad response"
+	}
+	// Generic path for AUTH_ERROR / METADATA_FAILED / unknown formats:
+	// drop the SDK code prefix (if any) and trim verbose remediation
+	// hints after `" - "`.
+	msg := stripErrorPrefix(rest)
+	if i := strings.Index(msg, " - "); i > 0 {
+		msg = msg[:i]
+	}
+	return name + ": " + msg
 }
 
 // ── Person mode ───────────────────────────────────────────────────────────────

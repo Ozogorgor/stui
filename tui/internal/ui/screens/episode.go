@@ -108,7 +108,7 @@ func (s EpisodeScreen) Init() tea.Cmd {
 	s.spinner.Start()
 	if s.client != nil && s.seriesID != "" && len(s.seasons) > 0 {
 		id, season := s.episodeRequestFor(0)
-		s.client.LoadEpisodes(id, s.idSource, season)
+		s.client.LoadEpisodes(id, s.idSource, season, nil)
 	}
 	// Return the spinner's tick cmd so the dancer keeps animating —
 	// previous nil return left the spinner frozen on its first frame.
@@ -238,7 +238,7 @@ func (s *EpisodeScreen) loadSeason(idx int) {
 	s.episodes = nil
 	if s.client != nil {
 		id, season := s.episodeRequestFor(s.seasonCursor)
-	s.client.LoadEpisodes(id, s.idSource, season)
+	s.client.LoadEpisodes(id, s.idSource, season, nil)
 	}
 }
 

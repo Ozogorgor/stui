@@ -37,7 +37,7 @@ use tracing::{debug, info, warn};
 use crate::abi::types::{EnrichRequest, PluginEntry};
 use crate::catalog::CatalogEntry;
 use crate::catalog_engine::aggregator::apply_weighted_rating;
-use crate::engine::Engine;
+use crate::engine::{CallPriority, Engine};
 
 /// Concurrent enrich tasks. Higher values fan out more work, but each
 /// per-plugin token bucket throttles upstream requests independently —
@@ -153,7 +153,7 @@ async fn enrich_one(
             };
             let name = name.clone();
             async move {
-                let res = engine.supervisor_enrich(&name, req).await;
+                let res = engine.supervisor_enrich(&name, req, CallPriority::Background).await;
                 (name, res)
             }
         })

@@ -25,7 +25,7 @@ use tracing::Instrument as _;
 
 use stui_plugin_sdk::SearchScope;
 
-use crate::engine::{Engine, PluginCallError};
+use crate::engine::{CallPriority, Engine, PluginCallError};
 use crate::ipc::v1::{MediaEntry, ScopeError, ScopeResultsMsg};
 use crate::ipc::v1::stream::{emit, Event, EventSender};
 
@@ -125,7 +125,7 @@ async fn run_one_scope(
                 );
                 tokio::spawn(
                     async move {
-                        engine.supervisor_search(&pid, &q, scope).await
+                        engine.supervisor_search(&pid, &q, scope, CallPriority::Foreground).await
                     }
                     .instrument(plugin_span),
                 )

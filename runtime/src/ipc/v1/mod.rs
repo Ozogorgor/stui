@@ -20,7 +20,8 @@ pub mod stream;
 
 pub use metadata::{
     ArtworkData, ArtworkVariantWire, CastWire, CreditsData, CrewWire, DetailMetadataPartial,
-    EnrichData, GetDetailMetadataRequest, MetadataPayload, RelatedData, RelatedItemWire,
+    EnrichData, GetDetailMetadataRequest, MetadataPayload, RatingsAggregatorData, RelatedData,
+    RelatedItemWire,
 };
 
 use serde::{Deserialize, Serialize};
@@ -475,6 +476,13 @@ pub struct MetadataRequest {
     /// Season number for the episodes verb. Ignored otherwise.
     #[serde(default)]
     pub season: u32,
+    /// Cross-provider id map from the catalog entry, e.g.
+    /// `{"imdb": "tt12345", "tvdb": "67890"}`. Used by the episodes
+    /// fallback chain — when TMDB fails, the runtime reuses
+    /// `external_ids["tvdb"]` to retry against the TVDB-native client
+    /// without needing a roundtrip back to TMDB to discover the id.
+    #[serde(default)]
+    pub external_ids: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -2114,8 +2122,97 @@ impl Response {
         Response::Error(ErrorResponse {
             id,
             code,
-            message: msg.into(),
+            message: sanitize_secrets(&msg.into()),
         })
+    }
+}
+
+/// Replaces secret-bearing query/form params with `<key>=***` so error
+/// messages can flow to logs and the TUI without leaking credentials.
+/// Triggered by every `Response::error()` call so all error wires get
+/// scrubbed at a single chokepoint.
+///
+/// Recognised keys are scanned case-insensitively. The value runs from
+/// the `=` to the next delimiter (`&` / whitespace / quote / `)` / `\n`)
+/// or end of string.
+pub fn sanitize_secrets(msg: &str) -> String {
+    const KEYS: &[&str] = &["api_key", "apikey", "access_token", "token"];
+    let mut out = String::with_capacity(msg.len());
+    let bytes = msg.as_bytes();
+    let lower = msg.to_ascii_lowercase();
+    let lower_bytes = lower.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Try to match each key prefix at position i. We require a
+        // word-boundary char before the key (or start-of-string) so
+        // `apikey=` doesn't false-match inside `notapikey=...`.
+        let boundary_ok = i == 0
+            || !matches!(bytes[i - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_');
+        let mut matched_key: Option<&str> = None;
+        if boundary_ok {
+            for k in KEYS {
+                let kb = k.as_bytes();
+                let end = i + kb.len();
+                if end < bytes.len() && bytes[end] == b'=' && lower_bytes[i..end] == *kb {
+                    matched_key = Some(k);
+                    break;
+                }
+            }
+        }
+        if let Some(k) = matched_key {
+            out.push_str(&msg[i..i + k.len() + 1]); // include `key=`
+            i += k.len() + 1;
+            out.push_str("***");
+            while i < bytes.len()
+                && !matches!(bytes[i], b'&' | b' ' | b'"' | b'\'' | b')' | b'\n' | b'\r')
+            {
+                i += 1;
+            }
+        } else {
+            // Walk one UTF-8 char so we don't slice mid-codepoint.
+            let ch_len = msg[i..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&msg[i..i + ch_len]);
+            i += ch_len;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize_secrets;
+
+    #[test]
+    fn scrubs_api_key() {
+        let s = "https://api.example.com/x?api_key=abc123&y=1";
+        assert_eq!(
+            sanitize_secrets(s),
+            "https://api.example.com/x?api_key=***&y=1"
+        );
+    }
+
+    #[test]
+    fn scrubs_token_at_end() {
+        assert_eq!(sanitize_secrets("?token=deadbeef"), "?token=***");
+    }
+
+    #[test]
+    fn case_insensitive_key_match() {
+        assert_eq!(sanitize_secrets("?API_KEY=abc"), "?API_KEY=***");
+    }
+
+    #[test]
+    fn does_not_match_within_word() {
+        assert_eq!(
+            sanitize_secrets("notapikey=visible"),
+            "notapikey=visible"
+        );
+    }
+
+    #[test]
+    fn passthrough_when_no_secret() {
+        let s = "plain error: connection refused";
+        assert_eq!(sanitize_secrets(s), s);
     }
 }
 

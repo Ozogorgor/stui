@@ -139,6 +139,7 @@ mod tests {
                     mal_id: None,
                     media_type: MediaType::default(),
                     ratings: Default::default(),
+                    rating_votes: Default::default(),
                     original_language: None,
                 })
                 .collect(),

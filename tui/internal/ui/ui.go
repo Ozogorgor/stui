@@ -74,6 +74,14 @@ const (
 // mpdElapsedTickMsg fires every second to keep the footer seekbar in sync.
 type mpdElapsedTickMsg struct{}
 
+// rainbowTickMsg fires periodically to advance the focused-card's animated
+// rainbow border. Read by handlers/init.go via `rainbowTickCmd`; advances
+// `components.RainbowOffset` by a small step each tick. Re-arms itself
+// unconditionally so the animation runs for the lifetime of the session
+// (View() only consumes it on the focused card, so the cost off-screen is
+// just an int increment + scheduled callback).
+type rainbowTickMsg struct{}
+
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type Model struct {

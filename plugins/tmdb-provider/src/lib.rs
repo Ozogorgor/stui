@@ -198,6 +198,12 @@ struct MovieItem {
     genre_ids: Vec<u32>,
     #[serde(default)]
     vote_average: f32,
+    /// TMDB's vote count for this title. The runtime aggregator uses
+    /// this for Bayesian shrinkage so a `vote_average=10.0` from 5 raters
+    /// shrinks toward the global prior instead of dominating the
+    /// composite score.
+    #[serde(default)]
+    vote_count: u32,
     #[serde(default)]
     overview: Option<String>,
     #[serde(default)]
@@ -220,6 +226,12 @@ struct TvItem {
     genre_ids: Vec<u32>,
     #[serde(default)]
     vote_average: f32,
+    /// TMDB's vote count for this title. The runtime aggregator uses
+    /// this for Bayesian shrinkage so a `vote_average=10.0` from 5 raters
+    /// shrinks toward the global prior instead of dominating the
+    /// composite score.
+    #[serde(default)]
+    vote_count: u32,
     #[serde(default)]
     overview: Option<String>,
     #[serde(default)]
@@ -246,6 +258,12 @@ struct MovieDetail {
     genres: Vec<Genre>,
     #[serde(default)]
     vote_average: f32,
+    /// TMDB's vote count for this title. The runtime aggregator uses
+    /// this for Bayesian shrinkage so a `vote_average=10.0` from 5 raters
+    /// shrinks toward the global prior instead of dominating the
+    /// composite score.
+    #[serde(default)]
+    vote_count: u32,
     #[serde(default)]
     overview: Option<String>,
     #[serde(default)]
@@ -276,6 +294,12 @@ struct TvDetail {
     genres: Vec<Genre>,
     #[serde(default)]
     vote_average: f32,
+    /// TMDB's vote count for this title. The runtime aggregator uses
+    /// this for Bayesian shrinkage so a `vote_average=10.0` from 5 raters
+    /// shrinks toward the global prior instead of dominating the
+    /// composite score.
+    #[serde(default)]
+    vote_count: u32,
     #[serde(default)]
     overview: Option<String>,
     #[serde(default)]
@@ -409,6 +433,18 @@ fn nonzero_rating(v: f32) -> Option<f32> {
     }
 }
 
+/// Wrap TMDB's `vote_count` in the per-source `rating_votes` map so the
+/// runtime aggregator can apply Bayesian shrinkage to the matching
+/// `tmdb` rating. Empty when zero votes — no point sending a meaningless
+/// signal that'd shrink to the prior anyway.
+fn tmdb_votes(count: u32) -> HashMap<String, u32> {
+    let mut m = HashMap::new();
+    if count > 0 {
+        m.insert("tmdb".to_string(), count);
+    }
+    m
+}
+
 impl MovieItem {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         PluginEntry {
@@ -425,6 +461,7 @@ impl MovieItem {
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
             original_language: self.original_language,
+            rating_votes: tmdb_votes(self.vote_count),
             ..Default::default()
         }
     }
@@ -446,6 +483,7 @@ impl TvItem {
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
             original_language: self.original_language,
+            rating_votes: tmdb_votes(self.vote_count),
             ..Default::default()
         }
     }
@@ -475,6 +513,7 @@ impl MovieDetail {
             imdb_id: ext_imdb,
             duration: self.runtime,
             external_ids: external,
+            rating_votes: tmdb_votes(self.vote_count),
             ..Default::default()
         }
     }
@@ -506,6 +545,7 @@ impl TvDetail {
             imdb_id: ext_imdb,
             external_ids: external,
             season_count: self.number_of_seasons,
+            rating_votes: tmdb_votes(self.vote_count),
             ..Default::default()
         }
     }

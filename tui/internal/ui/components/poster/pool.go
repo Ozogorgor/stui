@@ -11,7 +11,12 @@ import (
 )
 
 const (
-	poolWorkers     = 4
+	// Bumped 4 → 8 (2026-05-01) for cold mdblist-driven catalog opens —
+	// 200 items each needing a separate CDN fetch was bottlenecking on
+	// the worker count, not bandwidth. CDN pulls aren't rate-limited so
+	// the only ceiling here is local socket / chafa-render concurrency,
+	// neither of which 8 strains.
+	poolWorkers     = 8
 	refreshDebounce = 150 * time.Millisecond
 	httpTimeout     = 15 * time.Second
 )

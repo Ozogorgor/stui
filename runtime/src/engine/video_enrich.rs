@@ -29,9 +29,15 @@ use tracing::{debug, info, warn};
 use crate::abi::types::{EnrichRequest, PluginEntry};
 use crate::catalog::CatalogEntry;
 use crate::catalog_engine::aggregator::apply_weighted_rating;
-use crate::engine::Engine;
+use crate::engine::{CallPriority, Engine};
 
-const ENRICH_CONCURRENCY: usize = 4;
+// Bumped 4 → 8 (2026-05-01) after the TMDB bundle-cache (2026-04-30)
+// collapsed per-item TMDB calls from 4 to 1 — the old conservative
+// concurrency was sized for the pre-bundle worst case. 8 sustained
+// requests/sec sits well under TMDB's ~50/sec soft ceiling and OMDB's
+// 1k/day budget, while roughly halving wall-clock on a 200-item
+// mdblist-driven catalog refresh.
+const ENRICH_CONCURRENCY: usize = 8;
 const PROGRESS_BATCH_SIZE: usize = 8;
 
 pub async fn enrich_grid_progressive<F, Fut>(
@@ -155,7 +161,7 @@ async fn enrich_one(
             };
             let name = name.clone();
             async move {
-                let res = engine.supervisor_enrich(&name, req).await;
+                let res = engine.supervisor_enrich(&name, req, CallPriority::Background).await;
                 (name, res)
             }
         })
@@ -182,6 +188,12 @@ async fn enrich_one(
             entry.ratings.insert(k.clone(), *v as f64);
             got_any = true;
         }
+        // Vote counts ride alongside ratings under the same source key
+        // so the aggregator can apply Bayesian shrinkage to single-source
+        // ratings with thin samples (e.g. one TMDB user voting 10/10).
+        for (k, v) in p.rating_votes.iter() {
+            entry.rating_votes.insert(k.clone(), *v);
+        }
         // Single-headline rating goes under the plugin's source name
         // for plugins that don't break out per-source data.
         if let Some(r) = p.rating {
@@ -193,10 +205,64 @@ async fn enrich_one(
             entry.ratings.insert(source_key, r as f64);
             got_any = true;
         }
+
+        // Backfill visual / textual fields the catalog source didn't
+        // provide. Never overwrite a value the source already set —
+        // that would let later (lower-priority) plugins clobber
+        // higher-priority data. Critical for mdblist-driven catalogs:
+        // mdblist returns sparse rows (title + IDs only) and relies on
+        // this enrichment pass to populate posters, overviews, etc.
+        // Pre-mdblist this path was a no-op because TMDB-trending
+        // already shipped rich rows.
+        if entry.poster_url.is_none()
+            && p.poster_url.as_deref().is_some_and(|s| !s.is_empty())
+        {
+            entry.poster_url = p.poster_url.clone();
+            got_any = true;
+        }
+        if entry.description.is_none()
+            && p.description.as_deref().is_some_and(|s| !s.is_empty())
+        {
+            entry.description = p.description.clone();
+            got_any = true;
+        }
+        if entry.genre.is_none()
+            && p.genre.as_deref().is_some_and(|s| !s.is_empty())
+        {
+            entry.genre = p.genre.clone();
+            got_any = true;
+        }
+        if entry.year.is_none()
+            && p.year.is_some_and(|y| y > 0)
+        {
+            entry.year = p.year.map(|y| y.to_string());
+            got_any = true;
+        }
+        if entry.original_language.is_none()
+            && p.original_language.as_deref().is_some_and(|s| !s.is_empty())
+        {
+            entry.original_language = p.original_language.clone();
+            got_any = true;
+        }
+        // Cross-provider id backfill — every external_id we don't
+        // already have helps downstream calls (other providers can
+        // dispatch with a native id instead of title-searching).
+        if entry.tmdb_id.is_none() {
+            if let Some(id) = p.external_ids.get("tmdb").filter(|s| !s.is_empty()) {
+                entry.tmdb_id = Some(id.clone());
+                got_any = true;
+            }
+        }
+        if entry.imdb_id.is_none() {
+            if let Some(id) = p.external_ids.get("imdb").filter(|s| !s.is_empty()) {
+                entry.imdb_id = Some(id.clone());
+                got_any = true;
+            }
+        }
     }
 
     if got_any {
-        debug!(title = %entry.title, ratings = ?entry.ratings, "video_enrich: ratings merged");
+        debug!(title = %entry.title, ratings = ?entry.ratings, "video_enrich: enrichment merged");
         apply_weighted_rating(&mut entry);
     }
     entry

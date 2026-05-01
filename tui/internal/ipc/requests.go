@@ -555,7 +555,11 @@ func (c *Client) GetDetailMetadata(entryID, idSource, kind, title string, year *
 // "tmdb" returns real data; other id_sources resolve to NOT_IMPLEMENTED
 // at the plugin layer). When empty the runtime falls back to peeling a
 // "<provider>-<id>" prefix off the id, with a final default of "tmdb".
-func (c *Client) LoadEpisodes(seriesID, idSource string, season int) {
+//
+// `externalIDs` carries the catalog entry's cross-provider id map (e.g.
+// `{"imdb": "tt12345", "tvdb": "67890"}`) so the runtime can fall back
+// to TVDB when the primary plugin (TMDB) errors out.
+func (c *Client) LoadEpisodes(seriesID, idSource string, season int, externalIDs map[string]string) {
 	go func() {
 		id := c.nextID()
 		payload := map[string]any{
@@ -567,6 +571,9 @@ func (c *Client) LoadEpisodes(seriesID, idSource string, season int) {
 		}
 		if idSource != "" {
 			payload["id_source"] = idSource
+		}
+		if len(externalIDs) > 0 {
+			payload["external_ids"] = externalIDs
 		}
 		ch := c.sendWithID(id, payload)
 		raw := receiveWithTimeout(ch)

@@ -553,6 +553,122 @@ mod inner_impl {
                 }
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
+            // ── stui_http_request(payload_ptr, payload_len) -> i64 ────────
+            // General-purpose HTTP primitive — the only one that surfaces
+            // response headers back to the WASM plugin. Required for
+            // anything that needs Set-Cookie (session auth: RuTracker,
+            // Zamunda), Location (redirect chains), Etag (cached APIs).
+            //
+            // Payload JSON: {
+            //   "method":  "GET" | "POST" | "PUT" | "DELETE" | …,
+            //   "url":     "https://…",
+            //   "body":    "…" (optional; ignored for GET/HEAD),
+            //   "headers": { "Content-Type": "…", "Cookie": "…" }
+            // }
+            // Response JSON: {
+            //   "status":  200,
+            //   "headers": [["set-cookie", "bb_session=abc"], …],
+            //   "body":    "…"
+            // }
+            //
+            // The convenience wrappers (http_get / http_post_json /
+            // http_get_with_headers) stay as-is — they're the right shape
+            // for plugins that don't care about response headers and want
+            // a thinner SDK surface.
+            linker.func_wrap_async("stui", "stui_http_request",
+                |mut caller: Caller<HostState>, (ptr, len): (i32, i32)| {
+                    Box::new(async move {
+                        let raw = read_str_from_memory(&mut caller, ptr, len)?;
+                        let mut val: serde_json::Value = serde_json::from_str(&raw)
+                            .map_err(|e| wasmtime::Error::msg(e.to_string()))?;
+
+                        let method = val["method"].as_str().unwrap_or("GET").to_uppercase();
+                        let url    = val["url"].as_str().unwrap_or("").to_string();
+                        let body   = val["body"].as_str().map(|s| s.to_string());
+
+                        // Sandbox checks — same shape as stui_http_post.
+                        let net_check = caller.data().ctx.check(&crate::sandbox::Capability::Network);
+                        if let Err(e) = net_check {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked {method}: {e}");
+                            return write_full_response_to_memory(&mut caller, 503, &[], "blocked by sandbox").await;
+                        }
+                        let allowed = {
+                            let p = &caller.data().ctx.permissions;
+                            let host = extract_host(&url);
+                            p.allows_host(&host)
+                        };
+                        if !allowed {
+                            warn!(plugin=%caller.data().ctx.plugin_name, url=%url, "blocked {method}: host not in network_hosts");
+                            return write_full_response_to_memory(&mut caller, 503, &[], "blocked by sandbox").await;
+                        }
+
+                        // Headers map — applied verbatim. No default
+                        // Content-Type unlike stui_http_post; callers that
+                        // send form bodies set their own.
+                        let headers_val = val.as_object_mut()
+                            .and_then(|m| m.remove("headers"))
+                            .unwrap_or_default();
+
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
+                            .user_agent(PLUGIN_USER_AGENT)
+                            // Don't auto-follow redirects: a session-auth
+                            // plugin needs to see the 302 → /login redirect
+                            // to detect expiry, and a login-flow plugin
+                            // needs to capture Set-Cookie from the redirect
+                            // response itself.
+                            .redirect(reqwest::redirect::Policy::none())
+                            .build()
+                            .unwrap_or_else(|_| reqwest::Client::new());
+
+                        let mut req = match method.as_str() {
+                            "GET"     => client.get(&url),
+                            "POST"    => client.post(&url),
+                            "PUT"     => client.put(&url),
+                            "DELETE"  => client.delete(&url),
+                            "PATCH"   => client.patch(&url),
+                            "HEAD"    => client.head(&url),
+                            _         => {
+                                return write_full_response_to_memory(
+                                    &mut caller, 0, &[],
+                                    &format!("unsupported HTTP method: {method}"),
+                                ).await;
+                            }
+                        };
+                        if let Some(b) = body {
+                            req = req.body(b);
+                        }
+                        if let Some(h_map) = headers_val.as_object() {
+                            for (k, v) in h_map {
+                                if let Some(v_str) = v.as_str() {
+                                    req = req.header(k.as_str(), v_str);
+                                }
+                            }
+                        }
+
+                        match req.send().await {
+                            Ok(r) => {
+                                let status = r.status().as_u16();
+                                let headers: Vec<(String, String)> = r.headers()
+                                    .iter()
+                                    .map(|(k, v)| {
+                                        (
+                                            k.as_str().to_string(),
+                                            v.to_str().unwrap_or("").to_string(),
+                                        )
+                                    })
+                                    .collect();
+                                let body = r.text().await.unwrap_or_default();
+                                write_full_response_to_memory(&mut caller, status, &headers, &body).await
+                            }
+                            Err(e) => {
+                                write_full_response_to_memory(&mut caller, 0, &[], &e.to_string()).await
+                            }
+                        }
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
             // ── stui_cache_get(key_ptr, key_len) -> i64 ───────────────────
             linker.func_wrap_async("stui", "stui_cache_get",
                 |mut caller: Caller<HostState>, (key_ptr, key_len): (i32, i32)| {
@@ -839,6 +955,25 @@ mod inner_impl {
             status,
             body: body.to_string(),
         })
+        .unwrap_or_default();
+        write_bytes_to_memory(caller, json.as_bytes()).await
+    }
+
+    /// Serialise an HTTP response with response headers and write it into
+    /// plugin memory. Pair to `stui_http_request` — the only host import
+    /// that surfaces headers back to WASM. JSON shape matches
+    /// `stui_plugin_sdk::HttpFullResponse`.
+    async fn write_full_response_to_memory(
+        caller: &mut Caller<'_, HostState>,
+        status: u16,
+        headers: &[(String, String)],
+        body: &str,
+    ) -> wasmtime::Result<i64> {
+        let json = serde_json::to_string(&serde_json::json!({
+            "status":  status,
+            "headers": headers,
+            "body":    body,
+        }))
         .unwrap_or_default();
         write_bytes_to_memory(caller, json.as_bytes()).await
     }

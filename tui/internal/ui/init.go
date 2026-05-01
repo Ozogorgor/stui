@@ -28,6 +28,16 @@ func mpdElapsedTickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return mpdElapsedTickMsg{} })
 }
 
+// rainbowTickInterval is the period between rainbow-border hue advances.
+// Lower = smoother animation, higher = less Update churn. 100ms gives 10 fps,
+// indistinguishable from continuous and cheap on idle laptops.
+const rainbowTickInterval = 100 * time.Millisecond
+
+// rainbowTickCmd schedules the next rainbow hue advance.
+func rainbowTickCmd() tea.Cmd {
+	return tea.Tick(rainbowTickInterval, func(time.Time) tea.Msg { return rainbowTickMsg{} })
+}
+
 func (m Model) Init() tea.Cmd {
 	if m.opts.NoRuntime {
 		return tea.Batch(
@@ -49,6 +59,7 @@ func (m Model) Init() tea.Cmd {
 		},
 		pollPosterRefresh(),
 		components.ChafaPollCmd(),
+		rainbowTickCmd(),
 	)
 }
 

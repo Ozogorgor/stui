@@ -214,6 +214,7 @@ mod tests {
             config: vec![field],
             capabilities: Capabilities { catalog: CatalogCapability::default(), streams: false, _extra: Default::default() },
             rate_limit: None,
+            supervisor: None,
             _extra: Default::default(),
         }
     }

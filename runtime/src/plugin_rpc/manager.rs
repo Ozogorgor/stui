@@ -296,6 +296,7 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
         mal_id:      None,
         media_type:  MediaType::Movie,
         ratings:     std::collections::HashMap::new(),
+        rating_votes: std::collections::HashMap::new(),
         original_language: None,
     }
 }

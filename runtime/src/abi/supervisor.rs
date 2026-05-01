@@ -14,8 +14,20 @@
 //!   - Count crashes in a sliding window; permanently fail after
 //!     `max_reloads` crashes within `crash_window_secs`.
 //!
+//! # Timeouts vs crashes
+//!
 //! A per-call timeout (default 30 s) is enforced via `tokio::time::timeout`.
-//! If a call times out the instance is treated as crashed and reloaded.
+//! Timeouts are treated as **soft failures**: the in-flight host future is
+//! dropped, the call returns a timeout error, and the plugin enters a
+//! short cooldown (`cooldown_after_timeout_secs`, default 30 s) so
+//! subsequent calls fail fast instead of all spending another 30 s on the
+//! same dead upstream. The wasm instance is *not* torn down — wasm itself
+//! didn't fault, the host-implemented HTTP call just took too long. Tearing
+//! down on every network blip causes thundering-herd reloads when several
+//! plugins time out simultaneously and doesn't fix the underlying problem.
+//!
+//! Genuine wasm traps (`Ok(Err(AbiError))` from `call_export_envelope`) are
+//! still treated as crashes and trigger the reload path.
 //!
 //! # Memory limits
 //!
@@ -69,9 +81,21 @@ pub struct WasmSupervisorConfig {
     /// Maximum RSS the WASM linear memory may occupy, in megabytes.
     /// Enforced by the wasmtime `ResourceLimiter` on the Store.
     pub max_memory_mb: u64,
+    /// Deprecated. Timeouts are now always soft (no reload, just cooldown);
+    /// the field is retained so manifests that still set
+    /// `slow_upstream = true` deserialize cleanly. Kept as a no-op rather
+    /// than removed because it lives in the public SDK manifest schema.
+    #[deprecated(note = "timeouts are always soft now; this flag is a no-op")]
+    pub slow_upstream: bool,
+    /// After a timeout, return the cooldown error immediately for any
+    /// call dispatched within this many seconds. Default 30 s: prevents
+    /// the streams panel from spending another 30 s on the same dead
+    /// provider after the first timeout. Set to 0 to disable.
+    pub cooldown_after_timeout_secs: u64,
 }
 
 impl Default for WasmSupervisorConfig {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             max_reloads:       5,
@@ -80,6 +104,8 @@ impl Default for WasmSupervisorConfig {
             backoff_max_ms:    60_000,
             call_timeout_secs: 30,
             max_memory_mb:     512,
+            slow_upstream:     false,
+            cooldown_after_timeout_secs: 30,
         }
     }
 }
@@ -112,6 +138,10 @@ pub struct WasmSupervisor {
     instance:    Arc<Mutex<Option<WasmInstance>>>,
     /// Timestamps of recent crashes — used for the sliding-window check.
     crash_times: Arc<Mutex<Vec<Instant>>>,
+    /// When the most recent call timed out. Read by `call_verb` to
+    /// short-circuit subsequent calls during the cooldown window when
+    /// `cooldown_after_timeout_secs > 0`.
+    last_timeout_at: Arc<Mutex<Option<Instant>>>,
     stats:       Arc<Mutex<WasmSupervisorStats>>,
     failed:      Arc<AtomicBool>,
     /// Optional rate-limiter from the manifest's `[rate_limit]` block.
@@ -151,6 +181,7 @@ impl WasmSupervisor {
             config,
             instance:    Arc::new(Mutex::new(Some(instance))),
             crash_times: Arc::new(Mutex::new(Vec::new())),
+            last_timeout_at: Arc::new(Mutex::new(None)),
             stats:       Arc::new(Mutex::new(WasmSupervisorStats { is_alive: true, ..Default::default() })),
             failed:      Arc::new(AtomicBool::new(false)),
             rate_limit:  bucket,
@@ -247,6 +278,26 @@ impl WasmSupervisor {
             )));
         }
 
+        // Slow-upstream cooldown — when a previous call timed out and we
+        // are within the cooldown window, return immediately without
+        // dispatching. Lets a slow Jackett / prowlarr "rest" so the
+        // streams flow doesn't waste 30s per click on a dead upstream.
+        if self.config.cooldown_after_timeout_secs > 0 {
+            let last = *self.last_timeout_at.lock().await;
+            if let Some(t) = last {
+                let cooldown = Duration::from_secs(self.config.cooldown_after_timeout_secs);
+                let elapsed = Instant::now().duration_since(t);
+                if elapsed < cooldown {
+                    let remaining = cooldown.saturating_sub(elapsed);
+                    return Err(AbiError::Execution(format!(
+                        "plugin '{}' is in timeout cooldown ({}s remaining)",
+                        self.plugin_name,
+                        remaining.as_secs(),
+                    )));
+                }
+            }
+        }
+
         // Honour the manifest's `[rate_limit]` declaration BEFORE starting
         // the call-timeout clock: the wait for a token is a queue delay, not
         // a plugin-execution delay, so it shouldn't count toward
@@ -302,7 +353,17 @@ impl WasmSupervisor {
                     self.plugin_name, verb_name, self.config.call_timeout_secs,
                 );
                 warn!("{msg}");
-                self.on_crash("call timeout").await;
+                // Timeouts are soft. Dropping the host future cancels the
+                // in-flight HTTP call; the wasm instance state is not
+                // corrupted because verbs are stateless. Record the time so
+                // the cooldown short-circuit at the top of `call_verb`
+                // kicks in for subsequent calls — that's what stops a
+                // single bad upstream from costing every following click
+                // another full timeout. Crash bookkeeping is intentionally
+                // skipped: a network blip that times out four providers
+                // simultaneously should NOT trigger four parallel wasm
+                // reloads.
+                *self.last_timeout_at.lock().await = Some(Instant::now());
                 Err(AbiError::Execution(msg))
             }
         }

@@ -215,7 +215,10 @@ movies = ["tmdb"]
         "#;
         let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
         merge_metadata_source_defaults(&mut cfg);
-        assert_eq!(cfg.metadata.sources.movies, vec!["tmdb", "omdb", "tvdb"]);
+        assert_eq!(
+            cfg.metadata.sources.movies,
+            vec!["tmdb", "omdb", "tvdb", "fanart"]
+        );
     }
 
     #[test]
@@ -226,16 +229,25 @@ movies = ["omdb", "tmdb"]
         "#;
         let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
         merge_metadata_source_defaults(&mut cfg);
-        assert_eq!(cfg.metadata.sources.movies, vec!["omdb", "tmdb", "tvdb"]);
+        assert_eq!(
+            cfg.metadata.sources.movies,
+            vec!["omdb", "tmdb", "tvdb", "fanart"]
+        );
     }
 
     #[test]
     fn idempotent_when_already_complete() {
-        let toml = r#"
-[metadata.sources]
-movies = ["tmdb", "omdb", "tvdb"]
-        "#;
-        let mut cfg: RuntimeConfig = toml::from_str(toml).unwrap();
+        // "Complete" tracks the canonical default set — if a new source is
+        // added (fanart was the last one), the fixture has to grow with it
+        // or the merge will append the missing entry and the assertion
+        // will fail. Lock the fixture to whatever `MetadataSources::default()`
+        // currently returns rather than maintaining a hand-coded mirror.
+        let canonical = MetadataSources::default().movies;
+        let toml = format!(
+            "[metadata.sources]\nmovies = {}\n",
+            serde_json::to_string(&canonical).unwrap(),
+        );
+        let mut cfg: RuntimeConfig = toml::from_str(&toml).unwrap();
         let before = cfg.metadata.sources.movies.clone();
         merge_metadata_source_defaults(&mut cfg);
         assert_eq!(cfg.metadata.sources.movies, before);

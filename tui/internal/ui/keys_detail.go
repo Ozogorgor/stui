@@ -74,7 +74,7 @@ func (m Model) maybeLoadEpisodesForTab(ds *screens.DetailState) tea.Cmd {
 	ds.EpisodesInFlight[season] = true
 	seriesID, idSource := episodeLookupTarget(ds)
 	client := m.client
-	client.LoadEpisodes(seriesID, idSource, season)
+	client.LoadEpisodes(seriesID, idSource, season, ds.Entry.ExternalIDs)
 	return nil
 }
 

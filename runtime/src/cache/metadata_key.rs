@@ -11,6 +11,7 @@ pub enum MetadataVerb {
     Credits,
     Artwork,
     Related,
+    RatingsAggregator,
 }
 
 /// Which external catalog namespace the `id` field belongs to.

@@ -572,7 +572,7 @@ type DetailMetadataPartial struct {
 // zero values. Keeping this as a flat struct (instead of one struct per
 // variant) makes the Bubbletea side's switch-on-verb straightforward.
 type MetadataPayload struct {
-	// "empty" | "enrich" | "credits" | "artwork" | "related"
+	// "empty" | "enrich" | "credits" | "artwork" | "related" | "ratings_aggregator"
 	Type string `json:"type"`
 
 	// Enrich fields
@@ -592,6 +592,12 @@ type MetadataPayload struct {
 
 	// Related fields
 	Items []RelatedItemWire `json:"items,omitempty"`
+
+	// RatingsAggregator fields — pre-formatted multi-line description
+	// block from the elfhosted rating-aggregator addon. Renders verbatim
+	// in the detail screen.
+	Description string `json:"description,omitempty"`
+	ExternalURL string `json:"external_url,omitempty"`
 }
 
 // CastWire mirrors runtime ipc::v1::metadata::CastWire.

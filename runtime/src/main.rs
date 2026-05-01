@@ -16,15 +16,18 @@ mod discovery;
 mod engine;
 mod error;
 mod events;
+mod fanart;
 mod ipc;
 mod lastfm;
 mod logging;
+mod mdblist;
 mod media;
 mod mpd_bridge;
 mod player;
 mod plugin;
 mod providers;
 mod quality;
+mod rating_aggregator;
 mod resolver;
 mod sandbox;
 mod scraper;
@@ -165,12 +168,14 @@ async fn main() -> Result<()> {
     );
 
     // ── Engine ────────────────────────────────────────────────────────────
-    let engine = Arc::new(Engine::new(
+    let mut engine = Engine::new(
         cfg.cache_dir.clone(),
         cfg.data_dir.clone(),
         cfg.catalog.anime_ratio,
         cfg.plugins.clone(),
-    ));
+    );
+    engine.set_mdblist_lists(cfg.mdblist.clone());
+    let engine = Arc::new(engine);
 
     // Spawn the anime-bridge background refresh task. Must run AFTER the
     // tokio runtime is up (we're inside `#[tokio::main]` here) — the bundled
@@ -1147,7 +1152,7 @@ async fn run_load_episodes(engine: &Arc<Engine>, r: ipc::MetadataRequest) -> Res
 
     info!(plugin = %id_source, season = r.season, "load_episodes: dispatching to plugin");
 
-    match engine.supervisor_episodes(&id_source, req).await {
+    match engine.supervisor_episodes(&id_source, req, crate::engine::CallPriority::Foreground).await {
         Ok(episodes) => {
             info!(plugin = %id_source, episodes = episodes.len(), "load_episodes: plugin returned");
             let wire: Vec<ipc::EpisodeEntryWire> = episodes.into_iter().map(Into::into).collect();
@@ -1162,11 +1167,33 @@ async fn run_load_episodes(engine: &Arc<Engine>, r: ipc::MetadataRequest) -> Res
             })
         }
         Err(err) => {
-            warn!(plugin = %id_source, err = %err, "load_episodes: plugin call failed");
+            warn!(plugin = %id_source, err = %err, "load_episodes: primary failed, trying fallback");
+            // Fallback chain: when the primary plugin (typically TMDB)
+            // fails, retry against TVDB if the catalog entry carried a
+            // TVDB id. Skipped when TMDB is itself the primary source
+            // we just failed against — that path was already taken at
+            // the top of this function.
+            if id_source != "tvdb" {
+                if let Some(tvdb_id) = r.external_ids.get("tvdb").filter(|s| !s.is_empty()) {
+                    info!(tvdb_id = %tvdb_id, "load_episodes: falling back to TVDB");
+                    let resp = run_load_episodes_tvdb(engine, r.id.clone(), tvdb_id, r.season).await;
+                    if matches!(resp, Response::EpisodesLoaded(_)) {
+                        return resp;
+                    }
+                    warn!("load_episodes: TVDB fallback also failed");
+                }
+            }
+            // All providers exhausted — surface a friendly message.
+            // Raw `err.to_string()` includes the upstream HTTP URL with
+            // query string; `Response::error` runs sanitize_secrets so
+            // any api_key=... is redacted before reaching the wire.
             Response::error(
                 Some(r.id),
                 ipc::ErrorCode::MetadataFailed,
-                err.to_string(),
+                format!(
+                    "Could not load episodes from {} (and TVDB fallback unavailable). Check network or API keys.",
+                    id_source
+                ),
             )
         }
     }
@@ -1950,7 +1977,7 @@ async fn handle_line(
 
         Request::Lookup(req) => {
             let ipc::LookupIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_lookup(&plugin, inner).await {
+            match engine.supervisor_lookup(&plugin, inner, crate::engine::CallPriority::Foreground).await {
                 Ok(entry) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "lookup", "plugin verb dispatch ok");
                     Response::Lookup(ipc::LookupIpcResponse { query_id, entry })
@@ -1961,7 +1988,7 @@ async fn handle_line(
 
         Request::Enrich(req) => {
             let ipc::EnrichIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_enrich(&plugin, inner).await {
+            match engine.supervisor_enrich(&plugin, inner, crate::engine::CallPriority::Foreground).await {
                 Ok(entry) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "enrich", "plugin verb dispatch ok");
                     Response::Enrich(ipc::EnrichIpcResponse { query_id, entry })
@@ -1972,7 +1999,7 @@ async fn handle_line(
 
         Request::GetArtwork(req) => {
             let ipc::ArtworkIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_get_artwork(&plugin, inner).await {
+            match engine.supervisor_get_artwork(&plugin, inner, crate::engine::CallPriority::Foreground).await {
                 Ok(inner) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "get_artwork", "plugin verb dispatch ok");
                     Response::GetArtwork(ipc::ArtworkIpcResponse { query_id, inner })
@@ -1983,7 +2010,7 @@ async fn handle_line(
 
         Request::GetCredits(req) => {
             let ipc::CreditsIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_get_credits(&plugin, inner).await {
+            match engine.supervisor_get_credits(&plugin, inner, crate::engine::CallPriority::Foreground).await {
                 Ok(inner) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "get_credits", "plugin verb dispatch ok");
                     Response::GetCredits(ipc::CreditsIpcResponse { query_id, inner })
@@ -1994,7 +2021,7 @@ async fn handle_line(
 
         Request::Related(req) => {
             let ipc::RelatedIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_related(&plugin, inner).await {
+            match engine.supervisor_related(&plugin, inner, crate::engine::CallPriority::Foreground).await {
                 Ok(items) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "related", "plugin verb dispatch ok");
                     Response::Related(ipc::RelatedIpcResponse { query_id, items })

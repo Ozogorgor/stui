@@ -169,6 +169,7 @@ fn meta_to_entry(m: super::manifest::StremioMeta, tab: &MediaTab, provider: &str
         mal_id:      None,
         media_type,
         ratings:     std::collections::HashMap::new(),
+        rating_votes: std::collections::HashMap::new(),
         original_language: None,
     }
 }

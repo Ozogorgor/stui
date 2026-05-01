@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::engine::Engine;
+use crate::engine::{CallPriority, Engine};
 use crate::ipc::{MediaTab, MediaType};
 
 fn now_secs() -> u64 {
@@ -151,6 +151,16 @@ pub struct CatalogEntry {
     pub media_type: MediaType,
     #[serde(default)]
     pub ratings: HashMap<String, f64>,
+    /// Per-source vote count, parallel to `ratings`. Populated by the
+    /// catalog enricher from `PluginEntry.rating_votes`. The aggregator
+    /// uses these for Bayesian shrinkage in `weighted_median`: small-
+    /// sample ratings (a "10.0 with 5 votes" early-release case) shrink
+    /// toward a global prior so they don't dominate the composite.
+    /// Absent keys (sources that don't surface a vote count, e.g. RT
+    /// critic) are treated as "no shrinkage" — that source's score is
+    /// used as-is.
+    #[serde(default)]
+    pub rating_votes: HashMap<String, u32>,
     /// ISO 639-1 code of the entry's original language (e.g. "ja" for anime
     /// shipped from TMDB). Used by the runtime's anime-mix classifier.
     #[serde(default)]
@@ -436,6 +446,9 @@ impl Catalog {
             "",    // empty query = trending
             &tab,
             crate::engine::SearchOptions::default(),
+            // Catalog grid refresh is background work — must never block
+            // a user clicking into Streams or the search bar.
+            CallPriority::Background,
         ).await;
 
         if merged.is_empty() {
@@ -602,6 +615,7 @@ mod tests {
                 mal_id: None,
                 media_type: MediaType::default(),
                 ratings: HashMap::new(),
+                rating_votes: HashMap::new(),
                 original_language: None,
             },
             CatalogEntry {
@@ -621,6 +635,7 @@ mod tests {
                 mal_id: None,
                 media_type: MediaType::default(),
                 ratings: HashMap::new(),
+                rating_votes: HashMap::new(),
                 original_language: None,
             },
         ];
@@ -648,6 +663,7 @@ mod tests {
             mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
             original_language: None,
         };
 
@@ -673,6 +689,7 @@ mod tests {
             mal_id: None,
             media_type: MediaType::default(),
             ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
             original_language: None,
         };
 
@@ -703,6 +720,7 @@ mod tests {
             mal_id: Some(mal.to_string()),
             media_type: MediaType::Series,
             ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
             original_language: Some("ja".to_string()),
         };
 
@@ -736,6 +754,7 @@ mod tests {
             mal_id: Some("199".to_string()),
             media_type: MediaType::Movie,
             ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
             original_language: Some("ja".to_string()),
         };
         assert_eq!(entry.dedup_key(), "mal:199");

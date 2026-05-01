@@ -21,7 +21,7 @@ use crate::abi::types::{
 use crate::cache::metadata::MetadataCache;
 use crate::cache::metadata_key::MetadataVerb;
 use crate::config::types::MetadataSources;
-use crate::engine::Engine;
+use crate::engine::{CallPriority, Engine};
 use crate::plugin::manifest::PluginMetaExt;
 
 use super::sources::{SourceCapabilityProbe, SourceResolver};
@@ -31,6 +31,11 @@ use super::MetadataDispatch;
 /// plugin; routed inside [`EngineMetadataDispatch`] through the
 /// [`TvdbClient`] held on `Engine`.
 const TVDB_SOURCE: &str = "tvdb";
+
+/// Source name reserved for the runtime-native fanart.tv client. Same
+/// pattern as TVDB — not a WASM plugin, routed through `Engine.fanart()`.
+/// Currently contributes Artwork only (no enrich / credits / related).
+const FANART_SOURCE: &str = "fanart";
 
 /// Capability probe that consults the live plugin registry.
 ///
@@ -47,6 +52,8 @@ pub struct ManifestCapabilityProbe {
     plugin_caps: std::collections::HashMap<String, PluginCaps>,
     /// Whether the runtime-native TVDB client is available.
     tvdb_available: bool,
+    /// Whether the runtime-native fanart.tv client is available.
+    fanart_available: bool,
 }
 
 /// Set of metadata verbs a plugin supports.
@@ -70,6 +77,9 @@ impl VerbSet {
             MetadataVerb::Credits => self.credits,
             MetadataVerb::Artwork => self.artwork,
             MetadataVerb::Related => self.related,
+            // Rating-aggregator is a runtime-native single source, not a
+            // plugin-driven verb — no plugin can claim to support it.
+            MetadataVerb::RatingsAggregator => false,
         }
     }
 }
@@ -145,6 +155,7 @@ impl ManifestCapabilityProbe {
         ManifestCapabilityProbe {
             plugin_caps,
             tvdb_available: engine.tvdb().is_some(),
+            fanart_available: engine.fanart().is_some(),
         }
     }
 }
@@ -160,6 +171,12 @@ impl SourceCapabilityProbe for ManifestCapabilityProbe {
                     verb,
                     MetadataVerb::Enrich | MetadataVerb::Credits | MetadataVerb::Artwork,
                 );
+        }
+        if plugin == FANART_SOURCE {
+            // fanart only does artwork (posters / backgrounds / logos).
+            // No enrich / credits / related — that's TMDB / OMDB / TVDB
+            // territory, fanart's data is image URLs only.
+            return self.fanart_available && matches!(verb, MetadataVerb::Artwork);
         }
         // Check per-verb capabilities: only return true if the plugin
         // actually advertises support for this specific verb.
@@ -250,7 +267,10 @@ impl MetadataDispatch for EngineMetadataDispatch {
         // confidence is discarded by supervisor_enrich; a future ABI rev
         // can surface it here).
         self.engine
-            .supervisor_enrich(plugin, req)
+            // Detail-view metadata fetches are user-driven (the user just
+            // opened an entry) — never starve them behind background
+            // enrichment sweeps.
+            .supervisor_enrich(plugin, req, CallPriority::Foreground)
             .await
             .map(|entry| EnrichResponse {
                 entry,
@@ -272,7 +292,7 @@ impl MetadataDispatch for EngineMetadataDispatch {
             return crate::tvdb::source::credits(&client, req).await;
         }
         self.engine
-            .supervisor_get_credits(plugin, req)
+            .supervisor_get_credits(plugin, req, CallPriority::Foreground)
             .await
             .map_err(|e| e.to_string())
     }
@@ -282,6 +302,8 @@ impl MetadataDispatch for EngineMetadataDispatch {
         plugin: &str,
         req: ArtworkRequest,
     ) -> Result<ArtworkResponse, String> {
+        // (fanart adapter helper defined at the bottom of this module —
+        // keeps the dispatch logic readable.)
         if plugin == TVDB_SOURCE {
             let client = self
                 .engine
@@ -289,8 +311,15 @@ impl MetadataDispatch for EngineMetadataDispatch {
                 .ok_or_else(|| "tvdb: client not available".to_string())?;
             return crate::tvdb::source::artwork(&client, req).await;
         }
+        if plugin == FANART_SOURCE {
+            let client = self
+                .engine
+                .fanart()
+                .ok_or_else(|| "fanart: client not available".to_string())?;
+            return fanart_artwork_adapter(&client, req).await;
+        }
         self.engine
-            .supervisor_get_artwork(plugin, req)
+            .supervisor_get_artwork(plugin, req, CallPriority::Foreground)
             .await
             .map_err(|e| e.to_string())
     }
@@ -304,10 +333,68 @@ impl MetadataDispatch for EngineMetadataDispatch {
             return Err("tvdb: related not implemented".into());
         }
         self.engine
-            .supervisor_related(plugin, req)
+            .supervisor_related(plugin, req, CallPriority::Foreground)
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn fetch_ratings_aggregator(
+        &self,
+        imdb_id: &str,
+        kind: &str,
+    ) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String> {
+        let client = match self.engine.rating_aggregator() {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let block = client
+            .fetch(imdb_id, kind)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(block.map(|b| crate::ipc::v1::RatingsAggregatorData {
+            description: b.description,
+            external_url: b.external_url,
+        }))
+    }
+}
+
+/// Convert an `ArtworkRequest` into a fanart.tv fetch and wrap the
+/// returned URLs into `ArtworkVariant`s. Routes by `req.kind`:
+/// movies use the `/movies/{tmdb_id}` endpoint, series use
+/// `/tv/{tvdb_id}`. `id_for_plugin` upstream picks the right id type so
+/// the request's `id_source` will already match the kind.
+///
+/// All fanart variants are tagged `ArtworkSize::HiRes` — fanart serves
+/// full-resolution PNG/JPEG with no per-size endpoints. Width/height
+/// are not in fanart's response, so they stay None. Mime defaults to
+/// JPEG; fanart's CDN serves either depending on the source upload.
+async fn fanart_artwork_adapter(
+    client: &crate::fanart::FanartClient,
+    req: ArtworkRequest,
+) -> Result<ArtworkResponse, String> {
+    use stui_plugin_sdk::EntryKind;
+    let urls = match req.kind {
+        EntryKind::Movie => client
+            .movie_artwork(&req.id, crate::fanart::ArtworkSlot::Poster)
+            .await
+            .map_err(|e| format!("fanart: movie artwork: {e}"))?,
+        EntryKind::Series | EntryKind::Episode => client
+            .tv_artwork(&req.id, crate::fanart::ArtworkSlot::Poster)
+            .await
+            .map_err(|e| format!("fanart: tv artwork: {e}"))?,
+        _ => return Err(format!("fanart: unsupported kind {:?}", req.kind)),
+    };
+    let variants = urls
+        .into_iter()
+        .map(|url| crate::abi::types::ArtworkVariant {
+            size: crate::abi::types::ArtworkSize::HiRes,
+            url,
+            mime: "image/jpeg".to_string(),
+            width: None,
+            height: None,
+        })
+        .collect();
+    Ok(ArtworkResponse { variants })
 }
 
 #[cfg(test)]
@@ -343,6 +430,9 @@ mod capability_tests {
         ManifestCapabilityProbe {
             plugin_caps,
             tvdb_available,
+            // Tests don't exercise the fanart path; default to off so
+            // existing assertions about "tvdb-only special source" hold.
+            fanart_available: false,
         }
     }
 

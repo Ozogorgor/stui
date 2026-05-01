@@ -248,6 +248,17 @@ func (m Model) handleEpisodeStreamsComplete(msg ipc.EpisodeStreamsCompleteMsg) (
 	if m.detail == nil {
 		return m, nil
 	}
+	// Defensive: when a fan-out completes without any partials firing
+	// first (every provider errored or the request was movies-streams
+	// with zero matches), Complete is the first message that touches
+	// these maps. Previous behaviour panicked with "assignment to
+	// entry in nil map" on EpisodeStreamsLoaded[key] = true.
+	if m.detail.EpisodeStreams == nil {
+		m.detail.EpisodeStreams = make(map[screens.EpisodeStreamsKey][]ipc.StreamInfo)
+	}
+	if m.detail.EpisodeStreamsLoaded == nil {
+		m.detail.EpisodeStreamsLoaded = make(map[screens.EpisodeStreamsKey]bool)
+	}
 	key := screens.EpisodeStreamsKey{Season: msg.Season, Episode: msg.Episode}
 	delete(m.detail.EpisodeStreamsInFlight, key)
 	if msg.Err != "" {

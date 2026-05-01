@@ -17,8 +17,10 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/stui/stui/internal/ipc"
 	posterpkg "github.com/stui/stui/internal/ui/components/poster"
@@ -150,16 +152,20 @@ func RenderCard(entry ipc.CatalogEntry, w int, selected bool) string {
 	// but possible with some symbol maps), trim/pad to CardContentRows.
 	content = clampLines(content, CardContentRows)
 
-	borderColor := theme.T.Border()
+	// Selected card: per-cell rainbow border driven by the package-level
+	// `RainbowOffset` (advanced by the model's rainbow-tick handler).
+	// Lipgloss has no gradient API — RainbowBorder hand-rolls the box and
+	// colors each character from an HSL hue indexed by perimeter position.
 	if selected {
-		borderColor = theme.T.Accent()
+		return RainbowBorder(content, w, CardTotalRows, RainbowOffset)
 	}
-	// Width/Height are TOTAL frame dimensions in lipgloss v2 — border+padding
-	// are included in these counts. Pinning both locks every card to the
-	// same footprint regardless of poster content.
+	// Non-selected: flat theme border. Width/Height are TOTAL frame
+	// dimensions in lipgloss v2 — border+padding are included in these
+	// counts. Pinning both locks every card to the same footprint
+	// regardless of poster content.
 	cardStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
+		BorderForeground(theme.T.Border()).
 		Padding(0, 1).
 		Width(w).
 		Height(CardTotalRows)
@@ -246,21 +252,84 @@ func overlayRatingBadge(posterLines []string, entry ipc.CatalogEntry, innerW int
 	if r, err := strconv.ParseFloat(rating, 64); err == nil {
 		rating = fmt.Sprintf("%.1f", r)
 	}
+	// Leading bg-coloured space pads the badge so chafa's last cell
+	// can't leak under the star. The badge sets bg explicitly; that
+	// guard cell paints over whatever ANSI state survives the
+	// truncation step below.
 	badge := lipgloss.NewStyle().
 		Foreground(theme.T.Accent()).
 		Background(theme.T.Bg()).
 		Bold(true).
-		Render("★" + rating)
+		Render(" ★" + rating)
 	badgeW := lipgloss.Width(badge)
 	if badgeW >= innerW {
 		// Pathological narrow card — bail rather than blow out the layout.
 		return posterLines
 	}
-	// Truncate the first poster row to (innerW - badgeW) cells so the
-	// badge fits on the right. lipgloss's MaxWidth is ANSI-aware.
-	leftStyle := lipgloss.NewStyle().Width(innerW - badgeW).MaxWidth(innerW - badgeW)
-	posterLines[0] = leftStyle.Render(posterLines[0]) + badge
+	// Hand-rolled chafa-aware truncate. lipgloss's Width()/MaxWidth()
+	// don't reliably emit `\x1b[0m` at the cut point on chafa output —
+	// chafa packs many escape sequences per row and lipgloss's
+	// truncation can leave dangling fg/bg state that bleeds the
+	// next-emitted character (i.e. the badge). truncateAnsiCells walks
+	// the stream rune-by-rune, copies escape sequences through verbatim
+	// (zero-width), counts only printable runes against the cell budget,
+	// and ALWAYS terminates with an explicit reset.
+	posterLines[0] = truncateAnsiCells(posterLines[0], innerW-badgeW) + badge
 	return posterLines
+}
+
+// truncateAnsiCells returns a prefix of `s` whose printable content
+// occupies at most `cells` terminal columns, with all CSI escape
+// sequences (`\x1b[...m` and friends) copied through verbatim. The
+// result always ends with an explicit ANSI reset so any colour /
+// attribute state from the input doesn't leak into whatever's
+// concatenated next. Built for trimming chafa-rendered poster rows
+// before overlaying a styled badge — see overlayRatingBadge.
+func truncateAnsiCells(s string, cells int) string {
+	const ansiReset = "\x1b[0m"
+	if cells <= 0 {
+		return ansiReset
+	}
+	var out strings.Builder
+	out.Grow(len(s) + len(ansiReset))
+	used := 0
+	i := 0
+	for i < len(s) {
+		// CSI / ANSI escape: copy through to the final byte (0x40–0x7E).
+		// Sized for the chafa fast-path; OSC and other escape forms
+		// aren't in chafa's output so they're not handled.
+		if s[i] == 0x1b {
+			j := i + 1
+			if j < len(s) && s[j] == '[' {
+				j++
+				for j < len(s) {
+					c := s[j]
+					j++
+					if c >= 0x40 && c <= 0x7E {
+						break
+					}
+				}
+			} else if j < len(s) {
+				j++
+			}
+			out.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		// Printable rune. RuneWidth returns 0 for combining marks,
+		// 1 for typical, 2 for wide East Asian — chafa output is
+		// dominated by `▀` (U+2580, narrow) so the common path is 1.
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w := runewidth.RuneWidth(r)
+		if used+w > cells {
+			break
+		}
+		out.WriteString(s[i : i+size])
+		used += w
+		i += size
+	}
+	out.WriteString(ansiReset)
+	return out.String()
 }
 
 // overlayMetaBar paints a 2-row dark bar onto the last two elements of

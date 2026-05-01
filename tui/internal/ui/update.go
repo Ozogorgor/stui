@@ -228,6 +228,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bingeTickMsg:
 		return m.handleBingeTick(msg)
 
+	case rainbowTickMsg:
+		return m.handleRainbowTick(msg)
+
 	case configSaveTickMsg:
 		return m.handleConfigSaveTick(msg)
 

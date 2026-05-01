@@ -26,6 +26,7 @@ pub const CREDITS_TTL: Duration = Duration::from_secs(30 * 86_400);
 pub const ARTWORK_TTL: Duration = Duration::from_secs(30 * 86_400);
 pub const ENRICH_TTL:  Duration = Duration::from_secs( 7 * 86_400);
 pub const RELATED_TTL: Duration = Duration::from_secs( 3 * 86_400);
+pub const RATINGS_AGGREGATOR_TTL: Duration = Duration::from_secs(86_400);
 
 fn ttl_for(verb: MetadataVerb) -> Duration {
     match verb {
@@ -33,6 +34,7 @@ fn ttl_for(verb: MetadataVerb) -> Duration {
         MetadataVerb::Artwork => ARTWORK_TTL,
         MetadataVerb::Enrich  => ENRICH_TTL,
         MetadataVerb::Related => RELATED_TTL,
+        MetadataVerb::RatingsAggregator => RATINGS_AGGREGATOR_TTL,
     }
 }
 

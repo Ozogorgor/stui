@@ -82,14 +82,16 @@ const (
 // Each verb has its own FetchStatus so the renderer can distinguish
 // "still loading" from "we tried, nothing available".
 type DetailMetadata struct {
-	EnrichStatus  FetchStatus
-	CreditsStatus FetchStatus
-	ArtworkStatus FetchStatus
-	RelatedStatus FetchStatus
+	EnrichStatus            FetchStatus
+	CreditsStatus           FetchStatus
+	ArtworkStatus           FetchStatus
+	RelatedStatus           FetchStatus
+	RatingsAggregatorStatus FetchStatus
 
-	Credits ipc.MetadataPayload
-	Artwork ipc.MetadataPayload
-	Related ipc.MetadataPayload
+	Credits           ipc.MetadataPayload
+	Artwork           ipc.MetadataPayload
+	Related           ipc.MetadataPayload
+	RatingsAggregator ipc.MetadataPayload
 
 	ArtworkCursor int
 	CrewCursor    int
@@ -311,6 +313,9 @@ func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
 	case "related":
 		d.Meta.Related = p.Payload
 		d.Meta.RelatedStatus = status
+	case "ratings_aggregator":
+		d.Meta.RatingsAggregator = p.Payload
+		d.Meta.RatingsAggregatorStatus = status
 	}
 }
 
@@ -322,7 +327,8 @@ func isPayloadEmpty(p ipc.MetadataPayload) bool {
 		len(p.Backdrops) == 0 && len(p.Posters) == 0 &&
 		len(p.Items) == 0 && p.Studio == nil &&
 		len(p.Networks) == 0 && len(p.ExternalIDs) == 0 &&
-		p.SeasonCount == nil && len(p.SeasonIDs) == 0
+		p.SeasonCount == nil && len(p.SeasonIDs) == 0 &&
+		p.Description == ""
 }
 
 func (d *DetailState) SelectedCastMember() *ipc.CastMember {

@@ -349,6 +349,33 @@ fn weights_for(
 
 // ── Core rating functions ─────────────────────────────────────────────────────
 
+/// Bayesian global prior on the 0–10 scale. Single-vote outliers (e.g.
+/// "A Poet" with one TMDB user rating it 10/10) shrink toward this when
+/// the vote count is far below `BAYES_CONFIDENCE_CAP`.
+const BAYES_PRIOR: f64 = 6.5;
+
+/// Vote-count threshold past which raw ratings dominate. With v ≫ m the
+/// shrunk score approaches the raw rating; with v ≪ m it approaches the
+/// prior. Calibrated so that ~1k votes still pulls noticeably toward the
+/// prior, while ~100k votes are essentially unmoved.
+const BAYES_CONFIDENCE_CAP: f64 = 1000.0;
+
+/// Bayesian shrinkage: pull a raw rating toward the global prior in
+/// proportion to how few votes underpin it.
+///
+///     shrunk = (v / (v + m)) * raw + (m / (v + m)) * prior
+///
+/// Used to defang single-vote 10.0s without penalising well-supported
+/// scores (10k+ votes are essentially unchanged).
+fn bayesian_shrink(raw: f64, votes: u32, prior: f64, cap: f64) -> f64 {
+    let v = votes as f64;
+    if v <= 0.0 {
+        return raw;
+    }
+    let denom = v + cap;
+    (v / denom) * raw + (cap / denom) * prior
+}
+
 /// Compute the weighted median on a 0–10 scale.
 ///
 /// The weighted median is the value where the cumulative weight of all
@@ -663,9 +690,40 @@ pub fn apply_weighted_rating(entry: &mut CatalogEntry) {
         return;
     }
 
-    if let Some(composite) = weighted_median(&entry.ratings, &merged) {
+    // Apply per-source Bayesian shrinkage where vote counts are
+    // available so a single-vote 10.0 can't dominate the composite.
+    // Sources without vote data (RT/Metacritic critic scores) pass
+    // through unchanged — those represent expert reviews, not
+    // user-poll samples.
+    let shrunk = shrink_ratings(&entry.ratings, &entry.rating_votes, &merged);
+
+    if let Some(composite) = weighted_median(&shrunk, &merged) {
         entry.rating = Some(format!("{:.1}", composite));
     }
+}
+
+/// Returns a copy of the ratings map with Bayesian shrinkage applied to
+/// every source that has an associated vote count in `votes`. Sources
+/// without vote data carry through unchanged.
+fn shrink_ratings(
+    ratings: &HashMap<String, f64>,
+    votes: &HashMap<String, u32>,
+    weights: &[RatingWeight],
+) -> HashMap<String, f64> {
+    let mut out = ratings.clone();
+    for w in weights {
+        let Some(&raw) = ratings.get(w.key) else { continue };
+        let Some(&v) = votes.get(w.key) else { continue };
+        if w.normalize <= 0.0 {
+            continue;
+        }
+        let normalised = (raw / w.normalize).clamp(0.0, 10.0);
+        let shrunk = bayesian_shrink(normalised, v, BAYES_PRIOR, BAYES_CONFIDENCE_CAP);
+        // Re-scale back into the source's native range so weighted_median's
+        // own normalization step lands on the shrunk value.
+        out.insert(w.key.to_string(), shrunk * w.normalize);
+    }
+    out
 }
 
 /// Merge the user's per-source weight overrides onto the static
@@ -823,6 +881,7 @@ mod tests {
             mal_id: None,
             media_type,
             ratings: ratings_map,
+            rating_votes: std::collections::HashMap::new(),
             original_language: None,
         }
     }
@@ -1240,6 +1299,7 @@ mod tests {
             mal_id: e.mal_id,
             media_type: MediaType::default(),
             ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
             original_language: None,
         };
 
@@ -1296,7 +1356,7 @@ mod tests {
             provider: e.provider, tab: "series".into(), artist: None,
             imdb_id: e.imdb_id, tmdb_id: e.tmdb_id, mal_id: e.mal_id,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), original_language: None,
+            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
         };
 
         let merged = CatalogAggregator::new().merge(vec![
@@ -1326,7 +1386,7 @@ mod tests {
             provider: "tvdb".into(), tab: "series".into(), artist: None,
             imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), original_language: None,
+            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
         };
         let anilist = CatalogEntry {
             id: "anilist-X".into(),
@@ -1337,7 +1397,7 @@ mod tests {
             provider: "anilist".into(), tab: "series".into(), artist: None,
             imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), original_language: None,
+            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
         };
 
         let merged = CatalogAggregator::new().merge(vec![tvdb, anilist]);

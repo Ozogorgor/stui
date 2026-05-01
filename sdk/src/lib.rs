@@ -48,7 +48,7 @@ pub use manifest::{
     Capabilities, CatalogCapability,
     VerbConfig, LookupConfig, ArtworkConfig,
     NetworkPermission, Permissions,
-    RateLimit, PluginConfigField,
+    RateLimit, SupervisorTuning, PluginConfigField,
     ManifestValidationError,
 };
 
@@ -207,6 +207,16 @@ pub struct PluginEntry {
     /// the card when no per-source breakdown is needed.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub ratings: HashMap<String, f32>,
+
+    /// Per-source vote count, parallel to `ratings`. When present the
+    /// runtime applies Bayesian shrinkage to that source's rating
+    /// before composing the weighted-median composite — small-sample
+    /// 10.0s shrink toward a global prior, large-sample scores stay
+    /// near their reported value. Sources that don't expose vote
+    /// counts (RT critic score, Metacritic critic score) leave their
+    /// key absent here; the aggregator skips shrinkage for them.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rating_votes: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1142,6 +1152,128 @@ pub fn auth_open_and_wait(url: &str, timeout_ms: u32) -> Result<OAuthCallback, S
     {
         let _ = (url, timeout_ms);
         Err("auth_open_and_wait only available in WASM context".into())
+    }
+}
+
+// ── http_request: full-headers HTTP primitive ────────────────────────────────
+
+/// Request payload for [`http_request`]. Use any HTTP method, attach
+/// arbitrary headers, optionally send a body. Method is matched
+/// case-insensitively (`"POST"`, `"post"`, etc.).
+#[derive(Debug, Clone, Default)]
+pub struct HttpRequest {
+    pub method: String,
+    pub url: String,
+    /// `(name, value)` pairs. Names are sent verbatim.
+    pub headers: Vec<(String, String)>,
+    /// Body payload — sent as-is. The host does NOT set a default
+    /// `Content-Type`; callers that send form bodies / JSON bodies should
+    /// add their own header.
+    pub body: Option<String>,
+}
+
+/// Response from [`http_request`]. Unlike the convenience wrappers
+/// (`http_get` / `http_post_json`), this surfaces response headers back
+/// to the plugin — required for session cookies (`Set-Cookie`), redirect
+/// chains (`Location`), ETag-driven caches.
+///
+/// Header names arrive lowercased (HTTP/2 convention preserved by
+/// reqwest); values are forwarded verbatim. Each header arrives as a
+/// separate entry — use [`HttpFullResponse::header`] / [`headers_all`]
+/// to look up a name (case-insensitive). Multi-value headers
+/// (e.g. multiple `Set-Cookie` lines) appear as multiple entries with
+/// the same name.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct HttpFullResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub body: String,
+}
+
+impl HttpFullResponse {
+    /// First header value matching `name` (case-insensitive), or `None`.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// All header values matching `name` (case-insensitive). Useful for
+    /// `Set-Cookie`, which legitimately appears multiple times.
+    pub fn headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.headers
+            .iter()
+            .filter(move |(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.status >= 200 && self.status < 300
+    }
+}
+
+/// General-purpose HTTP primitive: arbitrary method, request headers,
+/// response headers, status, body. Use this when one of the convenience
+/// wrappers doesn't fit — most commonly:
+///
+/// * Capturing `Set-Cookie` from a login POST (session-auth scrapers)
+/// * Reading `Location` from a 302 to detect login-page redirects
+///   (session-expiry detection)
+/// * Conditional GET via `If-None-Match` / `Etag`
+/// * Form-encoded POSTs that don't fit `http_post_form`'s shape
+///
+/// Redirects are NOT followed automatically — you see the 3xx response
+/// and decide what to do. This is intentional: a `302 → /login` is the
+/// signal a session-auth plugin uses to detect cookie expiry, and
+/// auto-following swallows it.
+///
+/// Sandbox rules apply: the URL host must be in the plugin manifest's
+/// `permissions.network` allowlist.
+pub fn http_request(req: HttpRequest) -> Result<HttpFullResponse, String> {
+    // Build a serde_json::Value so headers serialise as a flat
+    // {"k":"v"} map (matching the host's expected payload), not as
+    // a Vec<(String, String)>.
+    let headers_obj: serde_json::Map<String, serde_json::Value> = req
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+    let payload_val = serde_json::json!({
+        "method":  req.method,
+        "url":     req.url,
+        "headers": headers_obj,
+        "body":    req.body,
+    });
+    let payload = payload_val.to_string();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[link(wasm_import_module = "stui")]
+        extern "C" {
+            fn stui_http_request(ptr: *const u8, len: i32) -> i64;
+        }
+        let packed = unsafe { stui_http_request(payload.as_ptr(), payload.len() as i32) };
+        if packed == 0 {
+            return Err("http_request returned null".into());
+        }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| e.to_string())?;
+        let resp: HttpFullResponse =
+            serde_json::from_str(json).map_err(|e| e.to_string())?;
+        Ok(resp)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = payload;
+        Err(format!(
+            "http_request only available in WASM context (url: {})",
+            req.url,
+        ))
     }
 }
 

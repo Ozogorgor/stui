@@ -30,7 +30,7 @@ use tracing::info;
 use crate::cache::RuntimeCache;
 use crate::catalog::Catalog;
 use crate::config::RuntimeConfig;
-use super::Engine;
+use super::{CallPriority, Engine};
 use crate::ipc::MediaTab;
 use crate::player::PlayerBridge;
 use crate::events::{EventBus, RuntimeEvent};
@@ -144,7 +144,7 @@ impl Pipeline {
             adult_content_enabled: opts.adult_content_enabled,
             ..Default::default()
         };
-        let all_entries = self.engine.search_catalog_entries(query, tab, search_opts).await;
+        let all_entries = self.engine.search_catalog_entries(query, tab, search_opts, CallPriority::Foreground).await;
         let count = all_entries.len();
         self.health.record_success("engine", 0);
         self.bus.emit(RuntimeEvent::SearchResultsReady {

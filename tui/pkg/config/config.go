@@ -60,6 +60,15 @@ type StreamingConfig struct {
 	// RequireResolution drops streams whose resolution couldn't be
 	// extracted from the release title (Unknown). Off by default.
 	RequireResolution bool `toml:"require_resolution"`
+	// Allow* are per-tier resolution toggles (Settings → Streaming).
+	// All four default to true; a user with limited bandwidth flips
+	// the matching tier off to remove those candidates from the
+	// picker before ranking. `StreamQuality::Unknown` is governed by
+	// `RequireResolution` instead, so it ignores these.
+	Allow4K    bool `toml:"allow_4k"`
+	Allow1080p bool `toml:"allow_1080p"`
+	Allow720p  bool `toml:"allow_720p"`
+	AllowSD    bool `toml:"allow_sd"`
 }
 
 type DownloadsConfig struct {
@@ -189,6 +198,10 @@ func Default() Config {
 			AutoFallback:    true,
 			MaxCandidates:   10,
 			AutoDeleteVideo: true,
+			Allow4K:         true,
+			Allow1080p:      true,
+			Allow720p:       true,
+			AllowSD:         true,
 		},
 		Downloads: DownloadsConfig{
 			VideoDir: filepath.Join(home, "Videos"),
@@ -403,6 +416,22 @@ func ApplyChange(cfg Config, key string, value interface{}) Config {
 	case "streaming.require_resolution":
 		if v, ok := value.(bool); ok {
 			cfg.Streaming.RequireResolution = v
+		}
+	case "streaming.allow_4k":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.Allow4K = v
+		}
+	case "streaming.allow_1080p":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.Allow1080p = v
+		}
+	case "streaming.allow_720p":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.Allow720p = v
+		}
+	case "streaming.allow_sd":
+		if v, ok := value.(bool); ok {
+			cfg.Streaming.AllowSD = v
 		}
 	case "streaming.benchmark_streams":
 		if v, ok := value.(bool); ok {

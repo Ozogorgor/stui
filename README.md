@@ -280,6 +280,12 @@ cp my-plugin.py plugin.json ~/.stui/plugins/my-plugin/
 **WASM plugins**
 Compiled to WebAssembly for sandboxed execution.
 
+### Plugin sources
+
+- **Bundled plugins** — TMDB, AniList, Kitsu, OMDb, Last.fm, Discogs, MusicBrainz, etc., shipped in this repo under `plugins/` and installed automatically.
+- **[stui-plugins](https://github.com/Ozogorgor/stui_plugins)** — official add-on collection: stream providers (Torrentio, Jackett, Prowlarr, AnimeTosho, Nyaa, RuTracker, …), music providers (Spotify, Tidal, Qobuz, SoundCloud), subtitle sources (OpenSubtitles, Kitsunekko, Subscene, …). Build with `cargo build --release --target wasm32-wasip1` and drop the `.wasm` + `plugin.toml` into `~/.config/stui/plugins/<name>/`. Plugin authoring docs live in that repo's [README](https://github.com/Ozogorgor/stui_plugins/blob/main/README.md).
+- **Third-party plugins** — anything that links against `stui-plugin-sdk` and ships a valid `plugin.toml` will load.
+
 ---
 
 ## Visualizer

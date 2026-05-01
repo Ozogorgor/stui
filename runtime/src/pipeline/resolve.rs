@@ -7,7 +7,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::catalog::Catalog;
 use crate::config::ConfigManager;
-use crate::engine::{Engine, TraceEmitter};
+use crate::engine::{CallPriority, Engine, TraceEmitter};
 use crate::ipc::{
     GetStreamsRequest, Response, StreamInfoWire, StreamsCompleteWire,
     StreamsPartialWire, StreamsResponse,
@@ -149,14 +149,39 @@ async fn run_find_streams_streaming(
         Some("Episode") => stui_plugin_sdk::EntryKind::Episode,
         _               => stui_plugin_sdk::EntryKind::Movie,
     };
+
+    // ── imdb_id late resolution ────────────────────────────────────────
+    // Without an IMDb id, torrentio (the fastest stream provider, ~300ms)
+    // skips the entry entirely and we fall back to slow scrapers / Torznab
+    // fan-outs. The id is missing here when the user pressed Enter on the
+    // Streams tab before catalog enrichment / detail-open enrichment had
+    // landed for this entry. We have at least a TMDB id or title+year, so
+    // ask the tmdb plugin to resolve. Cap at 4s — tmdb's enrich is sub-
+    // second hot, ~1s cold; well below the overall 45s find_streams budget.
+    let mut external_ids = r.external_ids.clone();
+    let mut imdb_id = r.imdb_id.clone().filter(|s| !s.is_empty());
+    if imdb_id.is_none() {
+        if let Some(id) = external_ids.get("imdb").filter(|s| !s.is_empty()).cloned() {
+            imdb_id = Some(id);
+        } else if let Some(resolved) = resolve_imdb_id(engine, r, kind).await {
+            tracing::info!(
+                title = %r.title,
+                imdb_id = %resolved,
+                "find_streams: resolved missing imdb_id via tmdb enrich"
+            );
+            external_ids.insert("imdb".to_string(), resolved.clone());
+            imdb_id = Some(resolved);
+        }
+    }
+
     let req = crate::abi::types::FindStreamsRequest {
         title: r.title.clone(),
         year: r.year,
         kind,
         season: r.season,
         episode: r.episode,
-        external_ids: r.external_ids.clone(),
-        imdb_id: r.imdb_id.clone(),
+        external_ids,
+        imdb_id,
         tmdb_id: r.tmdb_id.clone(),
     };
 
@@ -181,7 +206,7 @@ async fn run_find_streams_streaming(
         let req = req.clone();
         let engine = engine.clone();
         futures.push(async move {
-            let result = engine.supervisor_find_streams(&plugin_name, req).await;
+            let result = engine.supervisor_find_streams(&plugin_name, req, CallPriority::Foreground).await;
             (plugin_name, result)
         });
     }
@@ -228,6 +253,17 @@ async fn run_find_streams_streaming(
                 let min_seeders        = cfg.streaming.min_seeders;
                 let require_seeders    = cfg.streaming.require_seeders;
                 let require_resolution = cfg.streaming.require_resolution;
+                let allow_4k           = cfg.streaming.allow_4k;
+                let allow_1080p        = cfg.streaming.allow_1080p;
+                let allow_720p         = cfg.streaming.allow_720p;
+                let allow_sd           = cfg.streaming.allow_sd;
+                tracing::info!(
+                    plugin = %plugin_name,
+                    min_seeders, require_seeders, require_resolution,
+                    allow_4k, allow_1080p, allow_720p, allow_sd,
+                    candidate_count = candidates.len(),
+                    "find_streams: filter inputs"
+                );
                 let wire: Vec<StreamInfoWire> = candidates
                     .iter()
                     .filter(|c| {
@@ -237,6 +273,17 @@ async fn run_find_streams_streaming(
                             None    => !require_seeders,
                         };
                         if !seeders_ok { return false; }
+                        // Per-tier resolution allowlist. Unknown is
+                        // governed by `require_resolution` below.
+                        use crate::providers::StreamQuality;
+                        let tier_ok = match c.stream.quality {
+                            StreamQuality::Uhd4k   => allow_4k,
+                            StreamQuality::Hd1080  => allow_1080p,
+                            StreamQuality::Hd720   => allow_720p,
+                            StreamQuality::Sd      => allow_sd,
+                            StreamQuality::Unknown => true,
+                        };
+                        if !tier_ok { return false; }
                         // Resolution gate — drop StreamQuality::Unknown
                         // when require_resolution is enabled. The
                         // ranker maps a missing/unparsed quality tag
@@ -273,8 +320,9 @@ async fn run_find_streams_streaming(
             }
             Ok(Some((plugin_name, Err(e)))) => {
                 pending.remove(&plugin_name);
-                tracing::warn!(plugin = %plugin_name, err = %e, "find_streams: plugin returned error");
-                errors_text.push(format!("{}: {}", plugin_name, e));
+                let sanitized = crate::ipc::sanitize_secrets(&e.to_string());
+                tracing::warn!(plugin = %plugin_name, err = %sanitized, "find_streams: plugin returned error");
+                errors_text.push(format!("{}: {}", plugin_name, sanitized));
             }
             Ok(None) => break, // all sources resolved
             Err(_) => {
@@ -296,8 +344,16 @@ async fn run_find_streams_streaming(
 
     // Final marker. Carry an error string ONLY when the user got
     // nothing at all — partial successes don't need a banner.
+    let all_timed_out = !errors_text.is_empty()
+        && errors_text.iter().all(|e| e.ends_with(": timed out"));
     let error = if had_any_results {
         None
+    } else if all_timed_out {
+        // Single tidy line instead of "jackett-provider: timed out;
+        // prowlarr-provider: timed out; torrentio-provider: timed out;
+        // …" — when everything timed out, the cause is almost always
+        // the network or the deadline budget, not any one provider.
+        Some("All stream providers timed out — check network or try again".to_string())
     } else if !errors_text.is_empty() {
         Some(errors_text.join("; "))
     } else {
@@ -321,6 +377,80 @@ async fn run_find_streams_streaming(
 ///
 /// Resolves streams via WASM plugin providers loaded through the Engine,
 /// optionally benchmarking HTTP streams for speed if `benchmark_streams` is enabled.
+/// Best-effort resolution of an IMDb id from whatever else the caller
+/// provided (TMDB id, or just title+year). Used by `find_streams` when
+/// the user pressed Enter before enrichment had populated `imdb_id`,
+/// which would otherwise cause torrentio (the fastest movie source) to
+/// skip the entry entirely. Returns `None` on timeout, plugin error, or
+/// when no usable identifier is present.
+async fn resolve_imdb_id(
+    engine: &Arc<Engine>,
+    r: &GetStreamsRequest,
+    kind: stui_plugin_sdk::EntryKind,
+) -> Option<String> {
+    use crate::abi::types::{EnrichRequest, PluginEntry};
+
+    // tmdb's enrich only handles movies / series / episodes — bail
+    // gracefully for any unrelated kind that lands here.
+    let kind_for_search = match kind {
+        stui_plugin_sdk::EntryKind::Movie => stui_plugin_sdk::EntryKind::Movie,
+        stui_plugin_sdk::EntryKind::Series | stui_plugin_sdk::EntryKind::Episode => {
+            stui_plugin_sdk::EntryKind::Series
+        }
+        _ => return None,
+    };
+
+    let tmdb_id = r
+        .tmdb_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| r.external_ids.get("tmdb").cloned().filter(|s| !s.is_empty()));
+
+    // Without at least a TMDB id or a non-empty title there's nothing for
+    // the plugin to anchor a lookup on.
+    if tmdb_id.is_none() && r.title.is_empty() {
+        return None;
+    }
+
+    let mut partial = PluginEntry {
+        title: r.title.clone(),
+        year: r.year,
+        kind: kind_for_search,
+        ..Default::default()
+    };
+    if let Some(t) = &tmdb_id {
+        partial.id = t.clone();
+        partial.source = "tmdb".to_string();
+        partial.external_ids.insert("tmdb".to_string(), t.clone());
+    }
+
+    let enrich_req = EnrichRequest {
+        partial,
+        prefer_id_source: Some("tmdb".to_string()),
+    };
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        engine.supervisor_enrich("tmdb", enrich_req, CallPriority::Foreground),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(entry)) => entry
+            .imdb_id
+            .filter(|s| !s.is_empty())
+            .or_else(|| entry.external_ids.get("imdb").cloned().filter(|s| !s.is_empty())),
+        Ok(Err(e)) => {
+            tracing::debug!(err = %e, "find_streams: tmdb enrich for imdb_id failed");
+            None
+        }
+        Err(_) => {
+            tracing::debug!("find_streams: tmdb enrich for imdb_id timed out");
+            None
+        }
+    }
+}
+
 pub async fn run_get_streams(
     engine: &Arc<Engine>,
     _catalog: &Arc<Catalog>,
