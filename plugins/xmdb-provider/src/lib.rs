@@ -341,32 +341,7 @@ impl CatalogPlugin for XmdbPlugin {
             Err(e) => return PluginResult::Err(e),
         };
 
-        let cast: Vec<CastMember> = detail
-            .full_cast_and_crew
-            .iter()
-            .filter(|c| c.is_cast())
-            .enumerate()
-            .map(|(i, c)| CastMember {
-                name: c.name.clone(),
-                role: CastRole::Actor,
-                character: c.character.clone(),
-                instrument: None,
-                billing_order: Some(i as u32 + 1),
-                external_ids: Default::default(),
-            })
-            .collect();
-        let crew: Vec<CrewMember> = detail
-            .full_cast_and_crew
-            .iter()
-            .filter(|c| !c.is_cast())
-            .map(|c| CrewMember {
-                name: c.name.clone(),
-                role: normalize_crew_role(c.role.as_deref().unwrap_or("crew")),
-                department: c.department.clone(),
-                external_ids: Default::default(),
-            })
-            .collect();
-
+        let (cast, crew) = split_credits(&detail.full_cast_and_crew);
         PluginResult::ok(CreditsResponse { cast, crew })
     }
 
@@ -438,6 +413,53 @@ fn build_episodes(series_id: &str, season: u32, raw: Vec<RawEpisode>) -> Vec<Epi
         .collect()
 }
 
+/// Walk a `full_cast_and_crew` map and split into typed cast / crew
+/// vectors. Cast rows pick up `characters[0]` as the character name
+/// (xmdb's `characters` is an array but the first entry is the
+/// canonical role; multi-character actors are rare). Crew rows take
+/// the role key verbatim and feed it through `normalize_crew_role`.
+/// Billing order is assigned in iteration order — for cast that means
+/// XMDb's underlying ranking inside the `Actor` array.
+fn split_credits(
+    fcc: &std::collections::HashMap<String, Vec<CreditPerson>>,
+) -> (Vec<CastMember>, Vec<CrewMember>) {
+    let mut cast: Vec<CastMember> = Vec::new();
+    let mut crew: Vec<CrewMember> = Vec::new();
+    for (role, people) in fcc {
+        if is_cast_role(role) {
+            for p in people {
+                let billing_order = Some(cast.len() as u32 + 1);
+                let mut external_ids = std::collections::HashMap::new();
+                if let Some(id) = p.id.as_deref().filter(|s| !s.is_empty()) {
+                    external_ids.insert(id_sources::IMDB.to_string(), id.to_string());
+                }
+                cast.push(CastMember {
+                    name: p.name.clone(),
+                    role: CastRole::Actor,
+                    character: p.characters.first().cloned(),
+                    instrument: None,
+                    billing_order,
+                    external_ids,
+                });
+            }
+        } else {
+            for p in people {
+                let mut external_ids = std::collections::HashMap::new();
+                if let Some(id) = p.id.as_deref().filter(|s| !s.is_empty()) {
+                    external_ids.insert(id_sources::IMDB.to_string(), id.to_string());
+                }
+                crew.push(CrewMember {
+                    name: p.name.clone(),
+                    role: normalize_crew_role(role),
+                    department: Some(role.clone()),
+                    external_ids,
+                });
+            }
+        }
+    }
+    (cast, crew)
+}
+
 // ── API types ─────────────────────────────────────────────────────────────────
 
 /// The `/search` response envelope. The exact wire shape isn't pinned
@@ -480,27 +502,24 @@ impl SearchHit {
     }
 }
 
-/// `/movies/{id}` response. Field set mirrors the keys list returned
-/// by the user's curl probe. Box-office fields are deserialized but
-/// not yet projected into PluginEntry (no canonical entry field for
-/// them today). Add later if the catalog grows a money column.
+/// `/movies/{id}` response. Serde silently ignores extra JSON fields
+/// (no `deny_unknown_fields`), so we only declare what we project. The
+/// box-office fields (`budget`, `lifetime_gross`, `opening_weekend_gross`,
+/// `worldwide_gross`) are dicts of `{amount, currency}` rather than raw
+/// numbers; intentionally skipped today since PluginEntry has no money
+/// column. Same for `trailer` (URL + thumbnail dict), `keywords`,
+/// `similar_titles`, `alternative_titles`, `release_dates` (per-country
+/// list), `top_credits` (subsumed by `full_cast_and_crew`), `languages`,
+/// `countries`, `review_count`, `certificate`, `vote_count`,
+/// `original_title`.
 #[derive(Debug, Deserialize)]
 struct MovieDetail {
     #[serde(default)] id:                String,
     #[serde(default)] title:             String,
-    /// Acknowledged but not yet projected onto PluginEntry — the entry
-    /// shape has no `original_title` field today.
-    #[serde(default, rename = "original_title")] _original_title: Option<String>,
     #[serde(default)] release_year:      Option<u32>,
-    /// Acknowledged; PluginEntry only carries `year` today, not full date.
-    #[serde(default, rename = "release_date")]   _release_date:   Option<String>,
     #[serde(default)] runtime_minutes:   Option<u32>,
     /// IMDb-shaped 0–10. Maps to entry.ratings["imdb"] and entry.rating.
     #[serde(default)] rating:            Option<f32>,
-    /// Acknowledged; the rating aggregator could use this for Bayesian
-    /// shrinkage but the wire shape doesn't carry per-source vote counts
-    /// today. Surface alongside `rating_votes["imdb"]` once added.
-    #[serde(default, rename = "vote_count")]     _vote_count:     Option<u32>,
     /// Metacritic 0–100. Maps to entry.ratings["metacritic"].
     #[serde(default)] metascore:         Option<f32>,
     #[serde(default)] genres:            Vec<String>,
@@ -508,12 +527,13 @@ struct MovieDetail {
     #[serde(default)] poster_url:        Option<String>,
     #[serde(default)] imdb_url:          Option<String>,
     #[serde(default)] title_type:        Option<String>,
-    #[serde(default)] full_cast_and_crew: Vec<CreditEntry>,
-    // Acknowledged but not consumed today:
-    #[serde(default)] _budget:           Option<u64>,
-    #[serde(default)] _worldwide_gross:  Option<u64>,
-    #[serde(default)] _certificate:      Option<String>,
+    /// Role-keyed map: `{"Actor": [{...}, ...], "Director": [{...}, ...], ...}`.
+    /// Each role's array carries `CreditPerson` rows. Splitting into
+    /// cast vs crew is done in `into_entry` based on the role key —
+    /// `Actor` / `Actress` go to cast, everything else to crew.
+    #[serde(default)] full_cast_and_crew: std::collections::HashMap<String, Vec<CreditPerson>>,
 }
+
 
 impl MovieDetail {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
@@ -559,29 +579,26 @@ impl MovieDetail {
     }
 }
 
-/// Credits row. xmdb may use `role` for cast members (e.g. "actor")
-/// and crew members alike, with an additional `character` field for
-/// cast and `department` for crew. The exact field names aren't
-/// documented; defaulting `role` to "crew" is the safe fallback.
+/// One person inside a `full_cast_and_crew[role]` array. Cast rows
+/// carry `characters` (an array — usually one name, sometimes multiple
+/// e.g. `["Frodo Baggins", "Bilbo's nephew"]`); crew rows omit it.
+/// `id` is the IMDb name id (`nm0000209` etc.); the wire also carries
+/// `profile_image` but PluginEntry's CastMember has no avatar field
+/// today, so it's ignored at deserialize time.
 #[derive(Debug, Deserialize)]
-struct CreditEntry {
+struct CreditPerson {
     #[serde(default)] name:       String,
-    #[serde(default)] role:       Option<String>,
-    #[serde(default)] department: Option<String>,
-    #[serde(default)] character:  Option<String>,
+    #[serde(default)] id:         Option<String>,
+    #[serde(default)] characters: Vec<String>,
 }
 
-impl CreditEntry {
-    fn is_cast(&self) -> bool {
-        // Treat anyone with a `character` populated, or a role string
-        // matching "cast"/"actor"/"actress", as cast. Everyone else is
-        // crew.
-        if self.character.as_deref().map(|c| !c.is_empty()).unwrap_or(false) {
-            return true;
-        }
-        let r = self.role.as_deref().unwrap_or("").to_ascii_lowercase();
-        r == "cast" || r == "actor" || r == "actress"
-    }
+/// Cast roles are the role keys we project as `CastMember`. Anything
+/// else under `full_cast_and_crew` becomes a `CrewMember`. Comparison
+/// is case-insensitive — XMDb has been observed to use both `"Actor"`
+/// and `"Actress"`; future role keys land in crew until added here.
+fn is_cast_role(role: &str) -> bool {
+    let r = role.to_ascii_lowercase();
+    r == "actor" || r == "actress" || r == "cast"
 }
 
 #[derive(Debug, Deserialize)]
@@ -651,22 +668,16 @@ mod tests {
         let detail = MovieDetail {
             id:                 "xmdb-123".into(),
             title:              "The Shawshank Redemption".into(),
-            _original_title:    None,
             release_year:       Some(1994),
-            _release_date:      Some("1994-09-23".into()),
             runtime_minutes:    Some(142),
             rating:             Some(9.3),
-            _vote_count:        Some(2_700_000),
             metascore:          Some(82.0),
             genres:             vec!["Drama".into()],
             plot:               Some("...".into()),
             poster_url:         Some("https://example.com/p.jpg".into()),
             imdb_url:           Some("https://www.imdb.com/title/tt0111161/".into()),
             title_type:         Some("movie".into()),
-            full_cast_and_crew: vec![],
-            _budget:            None,
-            _worldwide_gross:   None,
-            _certificate:       None,
+            full_cast_and_crew: std::collections::HashMap::new(),
         };
         let e = detail.into_entry(EntryKind::Movie);
         assert_eq!(e.kind, EntryKind::Movie);
@@ -687,22 +698,16 @@ mod tests {
         let detail = MovieDetail {
             id: "xmdb-123".into(),
             title: "Untracked".into(),
-            _original_title: None,
             release_year: None,
-            _release_date: None,
             runtime_minutes: None,
             rating: Some(7.0),
-            _vote_count: None,
             metascore: None,
             genres: vec![],
             plot: None,
             poster_url: None,
             imdb_url: None,
             title_type: None,
-            full_cast_and_crew: vec![],
-            _budget: None,
-            _worldwide_gross: None,
-            _certificate: None,
+            full_cast_and_crew: std::collections::HashMap::new(),
         };
         let e = detail.into_entry(EntryKind::Movie);
         assert_eq!(e.ratings.get("imdb").copied(), Some(7.0));
@@ -710,36 +715,77 @@ mod tests {
     }
 
     #[test]
-    fn credit_entry_is_cast_via_character() {
-        let c = CreditEntry {
-            name: "Tim Robbins".into(),
-            role: None,
-            department: None,
-            character: Some("Andy Dufresne".into()),
-        };
-        assert!(c.is_cast());
+    fn is_cast_role_matches_actor_actress_cast() {
+        assert!(is_cast_role("Actor"));
+        assert!(is_cast_role("actress"));
+        assert!(is_cast_role("CAST"));
+        assert!(!is_cast_role("Director"));
+        assert!(!is_cast_role("Writers"));
+        assert!(!is_cast_role(""));
     }
 
     #[test]
-    fn credit_entry_is_cast_via_role() {
-        let c = CreditEntry {
-            name: "Morgan Freeman".into(),
-            role: Some("actor".into()),
-            department: None,
-            character: None,
-        };
-        assert!(c.is_cast());
+    fn split_credits_routes_actors_to_cast_and_others_to_crew() {
+        let mut fcc = std::collections::HashMap::new();
+        fcc.insert(
+            "Actor".to_string(),
+            vec![
+                CreditPerson {
+                    name: "Tim Robbins".into(),
+                    id: Some("nm0000209".into()),
+                    characters: vec!["Andy Dufresne".into()],
+                },
+                CreditPerson {
+                    name: "Morgan Freeman".into(),
+                    id: Some("nm0000151".into()),
+                    characters: vec!["Ellis Boyd 'Red' Redding".into()],
+                },
+            ],
+        );
+        fcc.insert(
+            "Director".to_string(),
+            vec![CreditPerson {
+                name: "Frank Darabont".into(),
+                id: Some("nm0001104".into()),
+                characters: vec![],
+            }],
+        );
+
+        let (cast, crew) = split_credits(&fcc);
+        assert_eq!(cast.len(), 2);
+        assert_eq!(crew.len(), 1);
+
+        // Cast picks up first character + IMDb name id + sequential billing.
+        let andy = cast.iter().find(|c| c.name == "Tim Robbins").unwrap();
+        assert_eq!(andy.character.as_deref(), Some("Andy Dufresne"));
+        assert_eq!(
+            andy.external_ids.get(id_sources::IMDB).map(String::as_str),
+            Some("nm0000209"),
+        );
+        assert!(andy.billing_order.is_some());
+
+        // Crew row keeps the role key as the department string.
+        assert_eq!(crew[0].name, "Frank Darabont");
+        assert_eq!(crew[0].department.as_deref(), Some("Director"));
     }
 
     #[test]
-    fn credit_entry_default_to_crew() {
-        let c = CreditEntry {
-            name: "Frank Darabont".into(),
-            role: Some("director".into()),
-            department: Some("Directing".into()),
-            character: None,
-        };
-        assert!(!c.is_cast());
+    fn split_credits_handles_actor_without_characters() {
+        // Some entries have an empty `characters` array (uncredited /
+        // documentary). Cast row still gets created; character = None.
+        let mut fcc = std::collections::HashMap::new();
+        fcc.insert(
+            "Actor".to_string(),
+            vec![CreditPerson {
+                name: "Background".into(),
+                id: None,
+                characters: vec![],
+            }],
+        );
+        let (cast, crew) = split_credits(&fcc);
+        assert_eq!(cast.len(), 1);
+        assert!(cast[0].character.is_none());
+        assert!(crew.is_empty());
     }
 
     #[test]
@@ -825,7 +871,11 @@ mod tests {
             "id": "xmdb-1",
             "title": "The Shawshank Redemption",
             "release_year": 1994,
-            "release_date": "1994-09-23",
+            "release_date": {
+                "date": "1994-09-23",
+                "day": 23, "month": 9, "year": 1994,
+                "country": "United States", "country_code": "US"
+            },
             "runtime_minutes": 142,
             "rating": 9.3,
             "vote_count": 2700000,
@@ -835,7 +885,7 @@ mod tests {
             "poster_url": "https://p/1.jpg",
             "imdb_url": "https://www.imdb.com/title/tt0111161/",
             "title_type": "movie",
-            "full_cast_and_crew": []
+            "full_cast_and_crew": {}
         }"#;
         let _h = MockHost::new().with_fixture_response(
             "https://xmdbapi.com/api/v1/movies/tt0111161?apiKey=fake",

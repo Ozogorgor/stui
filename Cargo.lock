@@ -5285,6 +5285,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xmdb-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stui-plugin-sdk",
+ "urlencoding",
+]
+
+[[package]]
 name = "yasna"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
