@@ -9,10 +9,10 @@ resolver = "2"
 members = [
     "tmdb-provider",
     "omdb-provider",
+    "xmdb-provider",
     "anilist-provider",
     "kitsu",
     "discogs-provider",
     "lastfm-provider",
     "musicbrainz-provider",
-    "rjm-rating-weights",
 ]

@@ -1,0 +1,57 @@
+[plugin]
+id           = "xmdb"
+name         = "xmdb"
+version      = "0.1.0"
+abi_version  = 1
+description  = "XMDb API — IMDb ratings + Metacritic + cast/crew + box office (25k/day)"
+tags         = ["movies", "series"]
+
+[env]
+XMDB_API_KEY = ""
+
+[[config]]
+key       = "api_key"
+label     = "XMDb API Key"
+hint      = "Get a key at https://xmdbapi.com — 25,000 requests/day free tier"
+masked    = true
+required  = true
+env_var   = "XMDB_API_KEY"
+
+[permissions]
+network = ["xmdbapi.com"]
+
+[rate_limit]
+# 25k/day ÷ 86400 ≈ 0.29 rps steady state, but burst to 5 lets the
+# enrich pass fan out without serializing.
+requests_per_second = 5
+burst               = 10
+
+[capabilities.catalog]
+kinds = ["movie", "series"]
+
+# `/search?q=...` endpoint with imdb-keyed results.
+search  = true
+# `/movies/{imdb_id}` and `/movies/{xmdb_id}` both work — restrict to
+# imdb here since that's the canonical key the runtime fans out on.
+lookup  = { id_sources = ["imdb"] }
+# Same endpoint as lookup, but mapped through the rating extractor —
+# fills entry.ratings["imdb"] from `rating` and entry.ratings["metacritic"]
+# from `metascore`. Loses Rotten Tomatoes vs OMDb (no tomatometer field
+# in the response), so xmdb is best paired with omdb-provider rather
+# than as a straight replacement.
+enrich  = { id_sources = ["imdb"] }
+# Cast + crew live in `full_cast_and_crew` on the movies/{id} response,
+# bundled with everything else — get_credits reuses the same call.
+credits = { id_sources = ["imdb"] }
+# `/seasons/{series_id}` returns the per-episode list.
+episodes = true
+# Posters: `/poster/{id}` and `/posters` exist; deferred to v2.
+artwork = { stub = true, reason = "deferred to v2 — bundle into movies response first" }
+# `similar_titles` field exists in the movies response but isn't keyed
+# by id_source today; deferred until the response shape is verified.
+related = { stub = true, reason = "deferred — similar_titles needs id-shape verification" }
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://xmdbapi.com"
