@@ -277,33 +277,66 @@ async fn run_ratings_aggregator<E: MetadataDispatch>(
     payload
 }
 
-/// Resolve which `(id, id_source)` to send to a specific plugin given a
-/// request that may carry cross-provider external_ids.
+/// Resolve which `(id, id_source)` to send to a specific plugin for `verb`,
+/// driven by the manifest-declared `id_sources` list rather than a hardcoded
+/// plugin-name → id-source table.
 ///
-/// Prefers the plugin's native id from `req.external_ids` when present;
-/// otherwise falls back to the request's primary `(entry_id, id_source)`.
-fn id_for_plugin(req: &DetailMetadataRequest, plugin: &str) -> (String, String) {
-    // Plugin → native id_source mapping. Most providers' plugin name
-    // matches their id_source name (anilist, kitsu, tmdb, tvdb, …) so the
-    // direct lookup wins. OMDb is the exception: it keys entries by IMDB
-    // id, not by an "omdb" id_source. Future providers that operate on a
-    // foreign id namespace get added here.
-    let preferred = match plugin {
-        "omdb" => "imdb",
-        // fanart's movie endpoint accepts TMDB id; the TV endpoint
-        // requires TVDB id. Pick per `req.kind` so the same plugin name
-        // routes to the right id type.
-        "fanart" => match req.kind.as_str() {
+/// Routing order:
+/// 1. **Manifest path** — if the plugin declares `id_sources` for `verb`
+///    (e.g. xmdb's `enrich = { id_sources = ["imdb"] }`), walk the list and
+///    return the first id we can serve: either the request's primary
+///    `entry_id` (when its `id_source` matches) or `req.external_ids[src]`.
+///    Returns `None` if the plugin declares constraints but none can be met
+///    — caller skips this plugin instead of feeding it a mismatched id.
+/// 2. **Runtime-native special case** — `fanart` is kind-conditional
+///    (movies → tmdb id, series → tvdb id) and isn't a wasm plugin, so it
+///    keeps its hardcoded routing here until the manifest schema gains
+///    kind-conditional id_sources.
+/// 3. **Legacy fallback** — bool-form verbs (`enrich = true`, no
+///    declared id_sources) preserve the old plugin-name-as-id-source
+///    default: prefer `external_ids[plugin]`, else the entry's primary id.
+fn resolve_id_for_plugin(
+    req: &DetailMetadataRequest,
+    plugin: &str,
+    id_sources: &[String],
+) -> Option<(String, String)> {
+    // (2) fanart: runtime-native, kind-conditional. Skipped by the manifest
+    // path because fanart isn't a wasm plugin in the registry.
+    if plugin == "fanart" {
+        let preferred = match req.kind.as_str() {
             "movies" => "tmdb",
             "series" | "anime" | "episode" => "tvdb",
             _ => "tmdb",
-        },
-        other => other,
-    };
-    if let Some(id) = req.external_ids.get(preferred) {
-        return (id.clone(), preferred.to_string());
+        };
+        if let Some(id) = req.external_ids.get(preferred).filter(|s| !s.is_empty()) {
+            return Some((id.clone(), preferred.to_string()));
+        }
+        if id_source_as_str(&req.id_source) == preferred && !req.entry_id.is_empty() {
+            return Some((req.entry_id.clone(), preferred.to_string()));
+        }
+        return None;
     }
-    (req.entry_id.clone(), id_source_as_str(&req.id_source))
+
+    // (1) manifest-driven routing.
+    if !id_sources.is_empty() {
+        let primary_src = id_source_as_str(&req.id_source);
+        for src in id_sources {
+            if src.as_str() == primary_src && !req.entry_id.is_empty() {
+                return Some((req.entry_id.clone(), src.clone()));
+            }
+            if let Some(id) = req.external_ids.get(src).filter(|s| !s.is_empty()) {
+                return Some((id.clone(), src.clone()));
+            }
+        }
+        // Plugin declared constraints but none are available → skip.
+        return None;
+    }
+
+    // (3) legacy fallback for bool-form `verb = true` declarations.
+    if let Some(id) = req.external_ids.get(plugin).filter(|s| !s.is_empty()) {
+        return Some((id.clone(), plugin.to_string()));
+    }
+    Some((req.entry_id.clone(), id_source_as_str(&req.id_source)))
 }
 
 /// Single-verb pipeline: cache lookup → source resolution → fan-out →
@@ -479,11 +512,15 @@ async fn fan_out_enrich<E: MetadataDispatch>(
     req: &DetailMetadataRequest,
 ) -> Vec<EnrichResponse> {
     let kind = entry_kind_from_hint(&req.kind);
-    let calls = sources.iter().map(|plugin| {
+    let calls = sources.iter().filter_map(|plugin| {
         // Each plugin's enrich gets the entry id it natively recognises
-        // (when known via external_ids) plus title/year so plugins that
+        // (per its manifest `id_sources`) plus title/year so plugins that
         // don't yet have a native id can title-search to discover one.
-        let (id, _id_src) = id_for_plugin(req, plugin);
+        // Skip the plugin entirely when its declared id_sources can't be
+        // satisfied — feeding a strict plugin a mismatched id just wastes
+        // a round-trip on a guaranteed UNKNOWN_ID rejection.
+        let id_sources = engine.sources().id_sources_for(plugin, MetadataVerb::Enrich);
+        let (id, _id_src) = resolve_id_for_plugin(req, plugin, &id_sources)?;
         let er = EnrichRequest {
             partial: PluginEntry {
                 id,
@@ -500,7 +537,7 @@ async fn fan_out_enrich<E: MetadataDispatch>(
             },
             prefer_id_source: Some(id_source_as_str(&req.id_source)),
         };
-        engine.call_enrich(plugin, er)
+        Some(engine.call_enrich(plugin, er))
     });
     join_all(calls).await.into_iter().filter_map(Result::ok).collect()
 }
@@ -511,10 +548,11 @@ async fn fan_out_credits<E: MetadataDispatch>(
     req: &DetailMetadataRequest,
 ) -> Vec<CreditsResponse> {
     let kind = entry_kind_from_hint(&req.kind);
-    let calls = sources.iter().map(|plugin| {
-        let (id, id_source) = id_for_plugin(req, plugin);
+    let calls = sources.iter().filter_map(|plugin| {
+        let id_sources = engine.sources().id_sources_for(plugin, MetadataVerb::Credits);
+        let (id, id_source) = resolve_id_for_plugin(req, plugin, &id_sources)?;
         let cr = CreditsRequest { id, id_source, kind };
-        engine.call_credits(plugin, cr)
+        Some(engine.call_credits(plugin, cr))
     });
     drain_with_deadline(calls.collect(), req.per_verb_timeout).await
 }
@@ -525,15 +563,16 @@ async fn fan_out_artwork<E: MetadataDispatch>(
     req: &DetailMetadataRequest,
 ) -> Vec<ArtworkResponse> {
     let kind = entry_kind_from_hint(&req.kind);
-    let calls = sources.iter().map(|plugin| {
-        let (id, id_source) = id_for_plugin(req, plugin);
+    let calls = sources.iter().filter_map(|plugin| {
+        let id_sources = engine.sources().id_sources_for(plugin, MetadataVerb::Artwork);
+        let (id, id_source) = resolve_id_for_plugin(req, plugin, &id_sources)?;
         let ar = ArtworkRequest {
             id,
             id_source,
             kind,
             size: crate::abi::types::ArtworkSize::Any,
         };
-        engine.call_artwork(plugin, ar)
+        Some(engine.call_artwork(plugin, ar))
     });
     drain_with_deadline(calls.collect(), req.per_verb_timeout).await
 }
@@ -544,8 +583,9 @@ async fn fan_out_related<E: MetadataDispatch>(
     req: &DetailMetadataRequest,
 ) -> Vec<Vec<PluginEntry>> {
     let kind = entry_kind_from_hint(&req.kind);
-    let calls = sources.iter().map(|plugin| {
-        let (id, id_source) = id_for_plugin(req, plugin);
+    let calls = sources.iter().filter_map(|plugin| {
+        let id_sources = engine.sources().id_sources_for(plugin, MetadataVerb::Related);
+        let (id, id_source) = resolve_id_for_plugin(req, plugin, &id_sources)?;
         let rr = RelatedRequest {
             id,
             id_source,
@@ -553,7 +593,7 @@ async fn fan_out_related<E: MetadataDispatch>(
             relation: crate::abi::types::RelationKind::Any,
             limit: 20,
         };
-        engine.call_related(plugin, rr)
+        Some(engine.call_related(plugin, rr))
     });
     drain_with_deadline(calls.collect(), req.per_verb_timeout).await
 }
@@ -879,6 +919,67 @@ pub mod test_engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn req(kind: &str, id_source: IdSource, entry_id: &str) -> DetailMetadataRequest {
+        DetailMetadataRequest {
+            entry_id: entry_id.to_string(),
+            id_source,
+            kind: kind.to_string(),
+            per_verb_timeout: Duration::from_secs(1),
+            title: "T".into(),
+            year: None,
+            external_ids: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn resolve_manifest_routes_to_external_id_when_primary_does_not_match() {
+        // TMDB-keyed entry on movies tab. xmdb declares id_sources = ["imdb"].
+        // The catalog merge populated external_ids["imdb"] earlier; resolver
+        // must hand xmdb the imdb id rather than the unrelated tmdb entry_id.
+        let mut r = req("movies", IdSource::Tmdb, "12345");
+        r.external_ids.insert("imdb".into(), "tt0111161".into());
+        let got = resolve_id_for_plugin(&r, "xmdb", &["imdb".to_string()]);
+        assert_eq!(got, Some(("tt0111161".into(), "imdb".into())));
+    }
+
+    #[test]
+    fn resolve_manifest_skips_plugin_when_no_compatible_id_available() {
+        // Imdb-required plugin but the entry is TMDB-only with no imdb hint.
+        // Resolver returns None so the fan-out drops the plugin instead of
+        // wasting a round-trip on a guaranteed UNKNOWN_ID.
+        let r = req("movies", IdSource::Tmdb, "12345");
+        let got = resolve_id_for_plugin(&r, "xmdb", &["imdb".to_string()]);
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn resolve_manifest_uses_primary_when_id_source_matches_first_declared() {
+        // Imdb-keyed entry hitting an imdb-only plugin: primary entry_id is
+        // already the imdb id, no external_ids hop needed.
+        let r = req("movies", IdSource::Imdb, "tt0111161");
+        let got = resolve_id_for_plugin(&r, "omdb", &["imdb".to_string()]);
+        assert_eq!(got, Some(("tt0111161".into(), "imdb".into())));
+    }
+
+    #[test]
+    fn resolve_legacy_bool_form_uses_plugin_name_as_id_source() {
+        // tmdb declares enrich = true (no id_sources) — legacy fallback path:
+        // prefer external_ids["tmdb"], else the entry's primary id.
+        let mut r = req("movies", IdSource::Imdb, "tt0111161");
+        r.external_ids.insert("tmdb".into(), "999".into());
+        let got = resolve_id_for_plugin(&r, "tmdb", &[]);
+        assert_eq!(got, Some(("999".into(), "tmdb".into())));
+    }
+
+    #[test]
+    fn resolve_fanart_routes_kind_conditionally() {
+        let mut r = req("series", IdSource::Tmdb, "tmdbid");
+        r.external_ids.insert("tvdb".into(), "12345".into());
+        // Series → tvdb endpoint, even though primary id_source is tmdb.
+        let got = resolve_id_for_plugin(&r, "fanart", &[]);
+        assert_eq!(got, Some(("12345".into(), "tvdb".into())));
+    }
 
     #[tokio::test]
     async fn emits_four_partials_one_per_verb() {

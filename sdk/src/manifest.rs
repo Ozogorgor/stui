@@ -98,7 +98,9 @@ impl CatalogCapability {
 /// Accepts three TOML forms:
 /// - `verb = true` / `verb = false` → enabled / not-declared
 /// - `[capabilities.catalog.verb]` `stub = true` + `reason = "…"` → a declared stub
-/// - `[capabilities.catalog.verb]` with arbitrary typed fields → full config
+/// - `[capabilities.catalog.verb]` `id_sources = [...]` → routed config that
+///   tells the runtime which canonical id-sources this plugin can be served
+///   for the given verb (e.g. xmdb's `enrich = { id_sources = ["imdb"] }`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum VerbConfig {
@@ -107,8 +109,20 @@ pub enum VerbConfig {
     /// Stub: plugin declares the verb but returns NOT_IMPLEMENTED.
     /// `{ stub = true, reason = "…" }`
     Stub { stub: bool, reason: Option<String> },
-    /// Full typed config with arbitrary fields.
-    Typed(toml::Value),
+    /// Routed config carrying canonical `id_sources` the runtime uses to
+    /// pick which id from the entry to forward. Empty `id_sources` means
+    /// "no constraint" and falls back to the plugin-name-as-id-source
+    /// default at the runtime dispatch site.
+    Typed(VerbTyped),
+}
+
+/// Typed body of `VerbConfig::Typed` — carries the canonical `id_sources`
+/// list. Unknown TOML fields are ignored (serde default) so plugins can
+/// add forward-compatible keys without bumping the abi.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct VerbTyped {
+    #[serde(default)]
+    pub id_sources: Vec<String>,
 }
 
 impl VerbConfig {
@@ -123,6 +137,16 @@ impl VerbConfig {
             Self::Bool(b) => *b,
             Self::Stub { stub, .. } => *stub,
             Self::Typed(_) => true,
+        }
+    }
+
+    /// Manifest-declared id_sources for this verb, or `&[]` for bool/stub
+    /// forms. Lets the runtime route requests by canonical id-source rather
+    /// than by hardcoded plugin-name → id-source tables.
+    pub fn id_sources(&self) -> &[String] {
+        match self {
+            Self::Typed(t) => &t.id_sources,
+            _ => &[],
         }
     }
 }
@@ -842,10 +866,21 @@ mod verb_config_tests {
     #[test]
     fn verb_config_typed_table_enabled_not_stub() {
         // A typed table with no explicit stub flag → Typed variant.
+        // Unknown fields tolerated by serde default.
         let tbl: toml::Table = toml::from_str("[v]\nkey = \"value\"").unwrap();
         let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
         assert!(vc.is_enabled());
         assert!(!vc.is_stub());
+        assert!(vc.id_sources().is_empty());
+    }
+
+    #[test]
+    fn verb_config_typed_id_sources_surface_through_accessor() {
+        let tbl: toml::Table = toml::from_str("[v]\nid_sources = [\"imdb\", \"tmdb\"]").unwrap();
+        let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
+        assert!(vc.is_enabled());
+        assert!(!vc.is_stub());
+        assert_eq!(vc.id_sources(), &["imdb".to_string(), "tmdb".to_string()]);
     }
 
     #[test]

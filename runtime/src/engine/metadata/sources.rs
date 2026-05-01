@@ -35,6 +35,14 @@ pub trait SourceCapabilityProbe: Send + Sync {
     /// preserves the user's priority list and appends discovered
     /// plugins after.
     fn discover(&self, verb: MetadataVerb, kind_hint: &str) -> Vec<String>;
+
+    /// Manifest-declared canonical `id_sources` for `(plugin, verb)`.
+    /// Empty list means "no constraint" — the caller falls back to
+    /// plugin-name-as-id-source defaults. Default impl returns empty
+    /// for back-compat with mock probes that pre-date manifest routing.
+    fn id_sources_for(&self, _plugin: &str, _verb: MetadataVerb) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Ordered-source resolver — wraps the config-driven priority + disabled
@@ -89,6 +97,13 @@ impl SourceResolver {
         }
 
         result
+    }
+
+    /// Pass-through to the wrapped probe — exposes per-verb id_sources
+    /// to the dispatch fan-out so it can route by canonical id-source
+    /// rather than by hardcoded plugin-name → id-source tables.
+    pub fn id_sources_for(&self, plugin: &str, verb: MetadataVerb) -> Vec<String> {
+        self.probe.id_sources_for(plugin, verb)
     }
 }
 

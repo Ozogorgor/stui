@@ -84,9 +84,12 @@ impl VerbSet {
     }
 }
 
-/// Per-plugin capability bundle: declared verbs + kind tags. The tag
-/// set is used by [`ManifestCapabilityProbe::discover`] to decide
-/// whether a plugin should auto-join a kind's fan-out.
+/// Per-plugin capability bundle: declared verbs + kind tags + per-verb
+/// id_sources. The tag set is used by [`ManifestCapabilityProbe::discover`]
+/// to decide whether a plugin should auto-join a kind's fan-out.
+/// `verb_id_sources` is consumed by the detail-screen dispatch to pick
+/// which entry id to forward to each plugin (the manifest is the source
+/// of truth, replacing the old hardcoded plugin-name → id-source table).
 #[derive(Default, Clone)]
 struct PluginCaps {
     /// Canonical plugin name (display name from `[plugin] name`). The
@@ -98,6 +101,10 @@ struct PluginCaps {
     /// Lowercased manifest `tags` (e.g. `["movies", "anime"]`). Used
     /// for kind-based discovery.
     tags: Vec<String>,
+    /// Per-verb canonical id_sources declared in the manifest. Empty
+    /// list (or missing entry) means "no constraint" — the caller falls
+    /// back to plugin-name-as-id-source defaults.
+    verb_id_sources: std::collections::HashMap<MetadataVerb, Vec<String>>,
 }
 
 impl ManifestCapabilityProbe {
@@ -113,6 +120,8 @@ impl ManifestCapabilityProbe {
 
             let caps = &p.manifest.capabilities.catalog;
             let mut verbs = VerbSet::default();
+            let mut verb_id_sources: std::collections::HashMap<MetadataVerb, Vec<String>> =
+                std::collections::HashMap::new();
 
             if let stui_plugin_sdk::manifest::CatalogCapability::Typed {
                 search, lookup, enrich, artwork, credits, related, ..
@@ -124,6 +133,32 @@ impl ManifestCapabilityProbe {
                 verbs.artwork = artwork.is_some();
                 verbs.credits = credits.is_some();
                 verbs.related = related.is_some();
+
+                // Manifest-declared id_sources for the three verbs that the
+                // orchestrator fans out by id. Lookup has its own routing
+                // path (Dispatcher::by_lookup) so it isn't surfaced here;
+                // artwork has no id_sources field in the SDK schema today
+                // (fanart is runtime-native + kind-conditional, handled
+                // separately inside resolve_id_for_plugin).
+                if let Some(vc) = enrich {
+                    let s = vc.id_sources();
+                    if !s.is_empty() {
+                        verb_id_sources.insert(MetadataVerb::Enrich, s.to_vec());
+                    }
+                }
+                if let Some(vc) = credits {
+                    let s = vc.id_sources();
+                    if !s.is_empty() {
+                        verb_id_sources.insert(MetadataVerb::Credits, s.to_vec());
+                    }
+                }
+                if let Some(vc) = related {
+                    let s = vc.id_sources();
+                    if !s.is_empty() {
+                        verb_id_sources.insert(MetadataVerb::Related, s.to_vec());
+                    }
+                }
+                let _ = (lookup, artwork);
             } else {
                 // Legacy form: enabled = true means all verbs supported
                 verbs.search = true;
@@ -146,6 +181,7 @@ impl ManifestCapabilityProbe {
                 name: p.manifest.plugin.name.clone(),
                 verbs,
                 tags,
+                verb_id_sources,
             };
 
             plugin_caps.insert(p.manifest.plugin.name.clone(), entry.clone());
@@ -211,6 +247,14 @@ impl SourceCapabilityProbe for ManifestCapabilityProbe {
             out.push(caps.name.clone());
         }
         out
+    }
+
+    fn id_sources_for(&self, plugin: &str, verb: MetadataVerb) -> Vec<String> {
+        self.plugin_caps
+            .get(plugin)
+            .and_then(|c| c.verb_id_sources.get(&verb))
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -361,8 +405,8 @@ impl MetadataDispatch for EngineMetadataDispatch {
 /// Convert an `ArtworkRequest` into a fanart.tv fetch and wrap the
 /// returned URLs into `ArtworkVariant`s. Routes by `req.kind`:
 /// movies use the `/movies/{tmdb_id}` endpoint, series use
-/// `/tv/{tvdb_id}`. `id_for_plugin` upstream picks the right id type so
-/// the request's `id_source` will already match the kind.
+/// `/tv/{tvdb_id}`. `resolve_id_for_plugin` upstream picks the right id
+/// type so the request's `id_source` will already match the kind.
 ///
 /// All fanart variants are tagged `ArtworkSize::HiRes` — fanart serves
 /// full-resolution PNG/JPEG with no per-size endpoints. Width/height
@@ -417,6 +461,7 @@ mod capability_tests {
                 name: "tmdb".to_string(),
                 verbs: all_verbs.clone(),
                 tags: vec!["movies".to_string(), "series".to_string()],
+                verb_id_sources: std::collections::HashMap::new(),
             },
         );
         plugin_caps.insert(
@@ -425,6 +470,7 @@ mod capability_tests {
                 name: "anilist".to_string(),
                 verbs: all_verbs,
                 tags: vec!["anime".to_string()],
+                verb_id_sources: std::collections::HashMap::new(),
             },
         );
         ManifestCapabilityProbe {
