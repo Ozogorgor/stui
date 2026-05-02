@@ -1,0 +1,2578 @@
+{
+  "id": "tt0903747",
+  "title": "Breaking Bad",
+  "original_title": "Breaking Bad",
+  "title_type": "TV Series",
+  "release_year": 2008,
+  "runtime_minutes": 48,
+  "rating": 9.5,
+  "vote_count": 2609356,
+  "metascore": null,
+  "certificate": "TV-MA",
+  "budget": null,
+  "opening_weekend_gross": null,
+  "lifetime_gross": null,
+  "worldwide_gross": null,
+  "genres": [
+    "Crime",
+    "Drama",
+    "Thriller"
+  ],
+  "plot": "A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing and selling methamphetamine with a former student to secure his family's future.",
+  "poster_url": "https://m.media-amazon.com/images/M/MV5BMzU5ZGYzNmQtMTdhYy00OGRiLTg0NmQtYjVjNzliZTg1ZGE4XkEyXkFqcGc@._V1_.jpg",
+  "trailer": {
+    "id": "vi547929369",
+    "name": "Breaking Bad: Final Season",
+    "url": "https://imdb-video.media-imdb.com/vi547929369/1434659454657-dx9ykf-1552749122369.mp4?Expires=1777789467&Signature=f1Ku1GFJrECSO2ZNNv6xA~vZJeNOATKraXUXkBNyaxoA2YttqBHp845QgxhY248cChU71inYtk02RzO5qEukdj8evxEv~4pI68FD6IyNYauv22wZ8hKSYm5pRVPug8GbrfE8hzQ-0Gt0wUNwSJsOqX--EW3YrcfBozM10wxhoAMvJS-u9LuGciX0~Vy6EXsTM-SNFLoEik2SFnzS8M3bfLFhv2S6p6ZOckPbneIhi6U9PORxHQlw7XTslI6AGqo5XB36UObF9hw7K7~7ObnLhx-ux6QwgVnwKxAit10NfIpGzHvcQY0d9X2gY48NoqYkaIBCz00epmzp1sMjm7Z5Ug__&Key-Pair-Id=APKAIFLZBVQZ24NQH3KA",
+    "thumbnail": "https://m.media-amazon.com/images/M/MV5BNDNhZjE2MjctZmQ3OS00MmU2LTk5MjItOGU3ZTQ0ODcxOWMxXkEyXkFqcGdeQXRyYW5zY29kZS13b3JrZmxvdw@@._V1_.jpg"
+  },
+  "release_date": {
+    "date": "2008-01-20",
+    "day": 20,
+    "month": 1,
+    "year": 2008,
+    "country": "United States",
+    "country_code": "US"
+  },
+  "release_dates": [
+    {
+      "date": "2008-01-20",
+      "day": 20,
+      "month": 1,
+      "year": 2008,
+      "country": "Brazil",
+      "country_code": "BR",
+      "release_type": "January 20, 2008"
+    },
+    {
+      "date": "2008-01-20",
+      "day": 20,
+      "month": 1,
+      "year": 2008,
+      "country": "Canada",
+      "country_code": "CA",
+      "release_type": "January 20, 2008"
+    },
+    {
+      "date": "2008-01-20",
+      "day": 20,
+      "month": 1,
+      "year": 2008,
+      "country": "Mexico",
+      "country_code": "MX",
+      "release_type": "January 20, 2008"
+    },
+    {
+      "date": "2008-01-20",
+      "day": 20,
+      "month": 1,
+      "year": 2008,
+      "country": "Turkey",
+      "country_code": "TR",
+      "release_type": "January 20, 2008",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2008-01-20",
+      "day": 20,
+      "month": 1,
+      "year": 2008,
+      "country": "United States",
+      "country_code": "US",
+      "release_type": "January 20, 2008"
+    },
+    {
+      "date": "2008-05-05",
+      "day": 5,
+      "month": 5,
+      "year": 2008,
+      "country": "South Africa",
+      "country_code": "ZA",
+      "release_type": "May 5, 2008"
+    },
+    {
+      "date": "2008-05-18",
+      "day": 18,
+      "month": 5,
+      "year": 2008,
+      "country": "Sweden",
+      "country_code": "SE",
+      "release_type": "May 18, 2008"
+    },
+    {
+      "date": "2008-07-24",
+      "day": 24,
+      "month": 7,
+      "year": 2008,
+      "country": "Israel",
+      "country_code": "IL",
+      "release_type": "July 24, 2008"
+    },
+    {
+      "date": "2008-08-28",
+      "day": 28,
+      "month": 8,
+      "year": 2008,
+      "country": "Australia",
+      "country_code": "AU",
+      "release_type": "August 28, 2008"
+    },
+    {
+      "date": "2008-09-28",
+      "day": 28,
+      "month": 9,
+      "year": 2008,
+      "country": "United Kingdom",
+      "country_code": "GB",
+      "release_type": "September 28, 2008"
+    },
+    {
+      "date": "2008-11-15",
+      "day": 15,
+      "month": 11,
+      "year": 2008,
+      "country": "Italy",
+      "country_code": "IT",
+      "release_type": "November 15, 2008"
+    },
+    {
+      "date": "2009-01-01",
+      "day": null,
+      "month": null,
+      "year": 2009,
+      "country": "Mexico",
+      "country_code": "MX",
+      "release_type": "2009"
+    },
+    {
+      "date": "2009-01-01",
+      "day": 1,
+      "month": 1,
+      "year": 2009,
+      "country": "Finland",
+      "country_code": "FI",
+      "release_type": "January 1, 2009"
+    },
+    {
+      "date": "2009-02-04",
+      "day": 4,
+      "month": 2,
+      "year": 2009,
+      "country": "Germany",
+      "country_code": "DE",
+      "release_type": "February 4, 2009",
+      "attributes": [
+        "limited"
+      ]
+    },
+    {
+      "date": "2009-03-11",
+      "day": 11,
+      "month": 3,
+      "year": 2009,
+      "country": "Spain",
+      "country_code": "ES",
+      "release_type": "March 11, 2009"
+    },
+    {
+      "date": "2009-05-17",
+      "day": 17,
+      "month": 5,
+      "year": 2009,
+      "country": "Switzerland",
+      "country_code": "CH",
+      "release_type": "May 17, 2009",
+      "attributes": [
+        "German speaking region"
+      ]
+    },
+    {
+      "date": "2009-10-20",
+      "day": 20,
+      "month": 10,
+      "year": 2009,
+      "country": "France",
+      "country_code": "FR",
+      "release_type": "October 20, 2009",
+      "attributes": [
+        "limited"
+      ]
+    },
+    {
+      "date": "2009-10-29",
+      "day": 29,
+      "month": 10,
+      "year": 2009,
+      "country": "Belgium",
+      "country_code": "BE",
+      "release_type": "October 29, 2009",
+      "attributes": [
+        "French speaking region"
+      ]
+    },
+    {
+      "date": "2010-06-16",
+      "day": 16,
+      "month": 6,
+      "year": 2010,
+      "country": "Japan",
+      "country_code": "JP",
+      "release_type": "June 16, 2010",
+      "attributes": [
+        "DVD premiere"
+      ]
+    },
+    {
+      "date": "2010-10-09",
+      "day": 9,
+      "month": 10,
+      "year": 2010,
+      "country": "Germany",
+      "country_code": "DE",
+      "release_type": "October 9, 2010"
+    },
+    {
+      "date": "2010-10-09",
+      "day": 9,
+      "month": 10,
+      "year": 2010,
+      "country": "France",
+      "country_code": "FR",
+      "release_type": "October 9, 2010"
+    },
+    {
+      "date": "2010-12-19",
+      "day": 19,
+      "month": 12,
+      "year": 2010,
+      "country": "Bulgaria",
+      "country_code": "BG",
+      "release_type": "December 19, 2010"
+    },
+    {
+      "date": "2011-01-14",
+      "day": 14,
+      "month": 1,
+      "year": 2011,
+      "country": "Czech Republic",
+      "country_code": "CZ",
+      "release_type": "January 14, 2011"
+    },
+    {
+      "date": "2011-01-19",
+      "day": 19,
+      "month": 1,
+      "year": 2011,
+      "country": "Netherlands",
+      "country_code": "NL",
+      "release_type": "January 19, 2011",
+      "attributes": [
+        "DVD premiere"
+      ]
+    },
+    {
+      "date": "2011-02-01",
+      "day": 1,
+      "month": 2,
+      "year": 2011,
+      "country": "Hungary",
+      "country_code": "HU",
+      "release_type": "February 1, 2011"
+    },
+    {
+      "date": "2012-01-02",
+      "day": 2,
+      "month": 1,
+      "year": 2012,
+      "country": "Netherlands",
+      "country_code": "NL",
+      "release_type": "January 2, 2012"
+    },
+    {
+      "date": "2013-05-23",
+      "day": 23,
+      "month": 5,
+      "year": 2013,
+      "country": "Taiwan",
+      "country_code": "TW",
+      "release_type": "May 23, 2013",
+      "attributes": [
+        "DVD premiere"
+      ]
+    },
+    {
+      "date": "2015-04-14",
+      "day": 14,
+      "month": 4,
+      "year": 2015,
+      "country": "Hong Kong",
+      "country_code": "HK",
+      "release_type": "April 14, 2015",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2016-01-07",
+      "day": 7,
+      "month": 1,
+      "year": 2016,
+      "country": "Indonesia",
+      "country_code": "ID",
+      "release_type": "January 7, 2016",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2016-09-05",
+      "day": 5,
+      "month": 9,
+      "year": 2016,
+      "country": "India",
+      "country_code": "IN",
+      "release_type": "September 5, 2016"
+    },
+    {
+      "date": "2017-10-04",
+      "day": 4,
+      "month": 10,
+      "year": 2017,
+      "country": "Philippines",
+      "country_code": "PH",
+      "release_type": "October 4, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-10-05",
+      "day": 5,
+      "month": 10,
+      "year": 2017,
+      "country": "Egypt",
+      "country_code": "EG",
+      "release_type": "October 5, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-10-05",
+      "day": 5,
+      "month": 10,
+      "year": 2017,
+      "country": "South Korea",
+      "country_code": "KR",
+      "release_type": "October 5, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-10-05",
+      "day": 5,
+      "month": 10,
+      "year": 2017,
+      "country": "Singapore",
+      "country_code": "SG",
+      "release_type": "October 5, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-10-05",
+      "day": 5,
+      "month": 10,
+      "year": 2017,
+      "country": "Thailand",
+      "country_code": "TH",
+      "release_type": "October 5, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-10-05",
+      "day": 5,
+      "month": 10,
+      "year": 2017,
+      "country": "Taiwan",
+      "country_code": "TW",
+      "release_type": "October 5, 2017",
+      "attributes": [
+        "internet"
+      ]
+    },
+    {
+      "date": "2017-11-15",
+      "day": 15,
+      "month": 11,
+      "year": 2017,
+      "country": "Poland",
+      "country_code": "PL",
+      "release_type": "November 15, 2017",
+      "attributes": [
+        "Camerimage Film Festival"
+      ]
+    },
+    {
+      "date": "2019-03-13",
+      "day": 13,
+      "month": 3,
+      "year": 2019,
+      "country": "United Arab Emirates",
+      "country_code": "AE",
+      "release_type": "March 13, 2019",
+      "attributes": [
+        "DVD premiere"
+      ]
+    },
+    {
+      "date": "2019-11-25",
+      "day": 25,
+      "month": 11,
+      "year": 2019,
+      "country": "Taiwan",
+      "country_code": "TW",
+      "release_type": "November 25, 2019"
+    },
+    {
+      "date": "2021-04-23",
+      "day": 23,
+      "month": 4,
+      "year": 2021,
+      "country": "Ecuador",
+      "country_code": "EC",
+      "release_type": "April 23, 2021",
+      "attributes": [
+        "DVD premiere"
+      ]
+    }
+  ],
+  "top_credits": {
+    "Creator": [
+      {
+        "name": "Vince Gilligan",
+        "id": "nm0319213",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNTUyNzUxOTAxMV5BMl5BanBnXkFtZTcwNzk0MDM0Nw@@._V1_.jpg"
+      }
+    ],
+    "Stars": [
+      {
+        "name": "Bryan Cranston",
+        "id": "nm0186505",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTA2NjEyMTY4MTVeQTJeQWpwZ15BbWU3MDQ5NDAzNDc@._V1_.jpg",
+        "characters": [
+          "Walter White"
+        ]
+      },
+      {
+        "name": "Aaron Paul",
+        "id": "nm0666739",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTY1OTY5NjI5NV5BMl5BanBnXkFtZTcwODA4MjM0OA@@._V1_.jpg",
+        "characters": [
+          "Jesse Pinkman"
+        ]
+      },
+      {
+        "name": "Anna Gunn",
+        "id": "nm0348152",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU0NTk3MDQ3OV5BMl5BanBnXkFtZTcwNDY3NzQ4Mg@@._V1_.jpg",
+        "characters": [
+          "Skyler White"
+        ]
+      },
+      {
+        "name": "Betsy Brandt",
+        "id": "nm1336827",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU2OTQ3MzcxMV5BMl5BanBnXkFtZTcwMTk2MTk3Mw@@._V1_.jpg",
+        "characters": [
+          "Marie Schrader"
+        ]
+      }
+    ]
+  },
+  "full_cast_and_crew": {
+    "Actor": [
+      {
+        "name": "Bryan Cranston",
+        "id": "nm0186505",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTA2NjEyMTY4MTVeQTJeQWpwZ15BbWU3MDQ5NDAzNDc@._V1_.jpg",
+        "characters": [
+          "Walter White"
+        ]
+      },
+      {
+        "name": "Aaron Paul",
+        "id": "nm0666739",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTY1OTY5NjI5NV5BMl5BanBnXkFtZTcwODA4MjM0OA@@._V1_.jpg",
+        "characters": [
+          "Jesse Pinkman"
+        ]
+      },
+      {
+        "name": "RJ Mitte",
+        "id": "nm2666409",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTgxNDc1OTEwN15BMl5BanBnXkFtZTcwOTQyMTIwOQ@@._V1_.jpg",
+        "characters": [
+          "Walter White, Jr."
+        ]
+      },
+      {
+        "name": "Dean Norris",
+        "id": "nm0606487",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZDVhMDliNGMtMmViMi00MDMwLTk5YzctNDg1NGExNWI2ZDQ1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Hank Schrader"
+        ]
+      },
+      {
+        "name": "Bob Odenkirk",
+        "id": "nm0644022",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNjc1MDBkMWEtMzNmYy00NjFjLWFmZDktMzRlYThhMGQxZDYwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Saul Goodman"
+        ]
+      },
+      {
+        "name": "Steven Michael Quezada",
+        "id": "nm2366374",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjU0MGYzYWItODViMi00MjBiLTk0MGQtYTE0NmQ5MjM5Mjc5XkEyXkFqcGc@._V1_CR1,0,883,1325_.jpg",
+        "characters": [
+          "Steven Gomez"
+        ]
+      },
+      {
+        "name": "Jonathan Banks",
+        "id": "nm0052186",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BODI2OTYyOTQ4Nl5BMl5BanBnXkFtZTgwNTM3MTUxNDM@._V1_.jpg",
+        "characters": [
+          "Mike Ehrmantraut"
+        ]
+      },
+      {
+        "name": "Giancarlo Esposito",
+        "id": "nm0002064",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjEyODM1NjI0OF5BMl5BanBnXkFtZTcwMTE0OTA1Mg@@._V1_.jpg",
+        "characters": [
+          "Gus Fring"
+        ]
+      },
+      {
+        "name": "Charles Baker",
+        "id": "nm1889973",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYmY3Njk5ZmItNDZhOC00ZDg3LTk2NTgtZTMyNzI3YjY3MzJhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Skinny Pete"
+        ]
+      },
+      {
+        "name": "Jesse Plemons",
+        "id": "nm0687146",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMDJkODUwYzgtOGI1ZS00ZWUyLWE0OTEtODUwNDlhMjg2NDQ4XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Todd"
+        ]
+      },
+      {
+        "name": "Christopher Cousins",
+        "id": "nm0184086",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTYyMTAwMzE4Ml5BMl5BanBnXkFtZTgwOTQ5MDk3MTE@._V1_CR0,0,120,180_.jpg",
+        "characters": [
+          "Ted Beneke"
+        ]
+      },
+      {
+        "name": "Matt Jones",
+        "id": "nm2804503",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNTQ4OGM3MjUtN2Q2Yy00N2JjLTg0MjEtMDA5NjdlNmJkMDZkXkEyXkFqcGc@._V1_CR113,0,989,1483_.jpg",
+        "characters": [
+          "Badger"
+        ]
+      },
+      {
+        "name": "Michael Shamus Wiles",
+        "id": "nm0928795",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYjA1OTNjYWEtYWIxNS00MGEwLTk5YzktOTU2NTE0Mjc5ZDE5XkEyXkFqcGc@._V1_CR332,1,710,1065_.jpg",
+        "characters": [
+          "ASAC George Merkert"
+        ]
+      },
+      {
+        "name": "Lavell Crawford",
+        "id": "nm1089417",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjExNzkyNDYxM15BMl5BanBnXkFtZTgwNjM3NzEyMjE@._V1_.jpg",
+        "characters": [
+          "Huell"
+        ]
+      },
+      {
+        "name": "Ray Campbell",
+        "id": "nm1530474",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOTI3MzQwNWUtZTU3MC00NDA4LTgzNjctNGY5MzJkZGE4YWM2XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Tyrus Kitt"
+        ]
+      },
+      {
+        "name": "Mark Margolis",
+        "id": "nm0546797",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BM2NhYjg2ZDUtNzdiNS00MGEwLThjNjktNDNhMzM1MmQ1NmMyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Tio Salamanca"
+        ]
+      },
+      {
+        "name": "Jeremiah Bitsui",
+        "id": "nm0084497",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZTNlMTQ2YTUtYWQwNi00YWQyLWFlYTgtODRjZGUxZDFjOTE1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Victor"
+        ]
+      },
+      {
+        "name": "Ian Posada",
+        "id": "nm3970678",
+        "profile_image": null,
+        "characters": [
+          "Brock Cantillo"
+        ]
+      },
+      {
+        "name": "David Costabile",
+        "id": "nm0182345",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYzVkNDhkOGQtMDM2Ni00ZDMyLThkMzAtZDg0ZjBhZWE5ZWVhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Gale Boetticher"
+        ]
+      },
+      {
+        "name": "Michael Bowen",
+        "id": "nm0100889",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNTk0MTA2MjI3OF5BMl5BanBnXkFtZTcwNDAyMDYzOA@@._V1_.jpg",
+        "characters": [
+          "Uncle Jack"
+        ]
+      },
+      {
+        "name": "David House",
+        "id": "nm1450145",
+        "profile_image": null,
+        "characters": [
+          "Dr. Delcavoli"
+        ]
+      },
+      {
+        "name": "Kevin Rankin",
+        "id": "nm0710271",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZDc5MTc2YmEtNGMwYi00MTBkLTljNGEtYmJlMmFiMGQ4YTgxXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Kenny"
+        ]
+      },
+      {
+        "name": "Daniel Moncada",
+        "id": "nm3718379",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjE4NzI1MjE5M15BMl5BanBnXkFtZTgwNzUzMTI0ODE@._V1_.jpg",
+        "characters": [
+          "Leonel Salamanca"
+        ]
+      },
+      {
+        "name": "Patrick Sane",
+        "id": "nm4577760",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNDAxMjViNmItODk5MC00NzI0LWEyZDMtMDJhNTQ5MDczYWM1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Frankie"
+        ]
+      },
+      {
+        "name": "Bill Burr",
+        "id": "nm0122987",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTQwNDgwODg3NV5BMl5BanBnXkFtZTcwMTY5OTM3MQ@@._V1_.jpg",
+        "characters": [
+          "Kuby"
+        ]
+      },
+      {
+        "name": "Marius Stan",
+        "id": "nm2256387",
+        "profile_image": null,
+        "characters": [
+          "Bogdan Wolynetz"
+        ]
+      },
+      {
+        "name": "Rodney Rush",
+        "id": "nm2968788",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNzI3MTkyMjY5MV5BMl5BanBnXkFtZTgwMjA2ODE4NTM@._V1_.jpg",
+        "characters": [
+          "Combo"
+        ]
+      },
+      {
+        "name": "Todd Terry",
+        "id": "nm0856086",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZGVkYzllOGItNjM0MC00YzIxLWEwZjEtNjJjYTI3YzJhOTIwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "SAC Ramey",
+          "SAC"
+        ]
+      },
+      {
+        "name": "Luis Moncada",
+        "id": "nm1616991",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTYzNjE4MDkxNl5BMl5BanBnXkFtZTgwMzUzMTI0ODE@._V1_.jpg",
+        "characters": [
+          "Marco Salamanca"
+        ]
+      },
+      {
+        "name": "Tait Fletcher",
+        "id": "nm1324884",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNzlkZjdjZjItMjkyZi00NzA2LWFlNjktYWI3M2JlNzEwYWQzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Lester"
+        ]
+      },
+      {
+        "name": "Matthew T. Metzler",
+        "id": "nm5597998",
+        "profile_image": null,
+        "characters": [
+          "Matt"
+        ]
+      },
+      {
+        "name": "Raymond Cruz",
+        "id": "nm0190441",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTY3ODMxMzg4OV5BMl5BanBnXkFtZTcwMDA3NjA2NQ@@._V1_.jpg",
+        "characters": [
+          "Tuco Salamanca"
+        ]
+      },
+      {
+        "name": "John de Lancie",
+        "id": "nm0209496",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjIwMDk3OTAxM15BMl5BanBnXkFtZTcwNDM0NTQwOA@@._V1_.jpg",
+        "characters": [
+          "Donald Margolis"
+        ]
+      },
+      {
+        "name": "Jere Burns",
+        "id": "nm0122716",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNjZjODQ5OTYtZjBjMS00OTkyLWEyNjMtNzE1OWFhZjIyY2IzXkEyXkFqcGc@._V1_CR186,55,527,790_.jpg",
+        "characters": [
+          "Group Leader"
+        ]
+      },
+      {
+        "name": "Nigel Gibbs",
+        "id": "nm0316708",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU0NjI3MDI3Nl5BMl5BanBnXkFtZTgwNzQzNTA2MDI@._V1_.jpg",
+        "characters": [
+          "APD Detective Tim Roberts"
+        ]
+      },
+      {
+        "name": "Tom Kiesche",
+        "id": "nm0452622",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNjI3Njc3OTUtYzlmNS00NjA1LWIzNzAtMmUzZWE0YTM4NTZlXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Clovis"
+        ]
+      },
+      {
+        "name": "Maurice Compte",
+        "id": "nm0173997",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOGRhODI0ODItNzE5NC00MmJkLTkyZGMtNTEwZmE3YmMzNjFjXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Gaff"
+        ]
+      },
+      {
+        "name": "Morse Bicknell",
+        "id": "nm2813734",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYzVhMmFiOWEtYjdhZi00NDI4LWJjZjctZmIyYWI1MjZmNGZhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Declan's Driver"
+        ]
+      },
+      {
+        "name": "Christopher King",
+        "id": "nm5518772",
+        "profile_image": null,
+        "characters": [
+          "Chris Mara"
+        ]
+      },
+      {
+        "name": "Max Arciniega",
+        "id": "nm1362980",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOWQ5N2M2YWMtNGNjNy00MWYyLWJlZGEtMWVhODYyNjVlNTU2XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Krazy-8"
+        ]
+      },
+      {
+        "name": "Michael Bofshever",
+        "id": "nm0091480",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjAzMzg3MDIwMl5BMl5BanBnXkFtZTgwODM1MDU3OTE@._V1_.jpg",
+        "characters": [
+          "Mr. Pinkman"
+        ]
+      },
+      {
+        "name": "Adam Godley",
+        "id": "nm0324134",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMmRjNzczNmEtOGZiZi00Y2UzLWE3ZWItYzE5YjIyZDA1Y2NiXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Elliott Schwartz"
+        ]
+      },
+      {
+        "name": "Jesus Jr.",
+        "id": "nm2636838",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOTA0NTczOTQwNV5BMl5BanBnXkFtZTgwMTEzNjIyNzE@._V1_.jpg",
+        "characters": [
+          "No-Doze",
+          "Gonzo"
+        ]
+      },
+      {
+        "name": "Louis Ferreira",
+        "id": "nm0274371",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjRjY2YyYzktYmUyYy00ODU0LWJiMDEtODMxYWI0NjMzNDExXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Declan"
+        ]
+      },
+      {
+        "name": "Cesar Garcia",
+        "id": "nm1075323",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMzVhNmU1ZWQtNDQ2YS00MDA5LThhZDEtOTI4YzA1YTcyN2Q5XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Gonzo",
+          "No-Doze"
+        ]
+      },
+      {
+        "name": "Mike Batayeh",
+        "id": "nm2099399",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BY2Y2MjVjODQtZTAxOS00OGE0LThmMGMtZGY1NDdmMjM4MTEzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Dennis Markowski"
+        ]
+      },
+      {
+        "name": "Javier Grajeda",
+        "id": "nm0334462",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNjFkNzNkMTYtZTNiMS00MmI5LWEyN2UtOTIzMTE1NzNhNzgzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Juan Bolsa"
+        ]
+      },
+      {
+        "name": "Angelo Martinez",
+        "id": "nm3089692",
+        "profile_image": null,
+        "characters": [
+          "Tomas",
+          "Boy"
+        ]
+      },
+      {
+        "name": "Gonzalo Menendez",
+        "id": "nm0579460",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYzIwYWJjNzctYmQwNC00ZTZkLWI2OWEtZTlkZmZjY2UxYTZkXkEyXkFqcGc@._V1_CR40,1,2321,3481_.jpg",
+        "characters": [
+          "Detective Kalanchoe"
+        ]
+      },
+      {
+        "name": "Chris Freihofer",
+        "id": "nm0293803",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjczNmZlZjEtOGE4NC00YTgzLTg5Y2YtNWI1MDNmZWM1YWY0XkEyXkFqcGc@._V1_CR1803,0,1898,2847_.jpg",
+        "characters": [
+          "Dan Wachsberger"
+        ]
+      },
+      {
+        "name": "Mike Seal",
+        "id": "nm2608171",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMDg4MWQ5ZDItYTI3Ni00YjI2LTlkODAtZTc5ODEyNmU1NjRkXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Rival Dealer #1"
+        ]
+      },
+      {
+        "name": "Christopher Dempsey",
+        "id": "nm0218713",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTYxOTIyNjk3M15BMl5BanBnXkFtZTcwMzAxODkyMQ@@._V1_.jpg",
+        "characters": [
+          "E.M.T.",
+          "ER Doctor #1",
+          "Hospital Medic"
+        ]
+      },
+      {
+        "name": "Jason Douglas",
+        "id": "nm0235103",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNDliNjM2NTYtYzY0Ni00OTViLThjZjUtNmQ3ZWNhYjcyY2I3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Detective Munn"
+        ]
+      },
+      {
+        "name": "Antonio Leyba",
+        "id": "nm3128797",
+        "profile_image": null,
+        "characters": [
+          "Rival Dealer #2"
+        ]
+      },
+      {
+        "name": "John Koyama",
+        "id": "nm0468697",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMzMyMzk1ZWMtM2FiOS00MWNkLWFkYTMtZTAzNTUxZDQ3NjRlXkEyXkFqcGc@._V1_CR275,75,752,1128_.jpg",
+        "characters": [
+          "Emilio"
+        ]
+      },
+      {
+        "name": "Danny Trejo",
+        "id": "nm0001803",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMzcxNTQ1ODQxMl5BMl5BanBnXkFtZTYwMzI4MDA2._V1_.jpg",
+        "characters": [
+          "Tortuga"
+        ]
+      },
+      {
+        "name": "David Ury",
+        "id": "nm1352845",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMGMxNzQ5NTEtZWJlNy00MGIxLThiN2EtNTA3NWExNTIxMDU4XkEyXkFqcGc@._V1_CR81,0,419,628_.jpg",
+        "characters": [
+          "Spooge"
+        ]
+      },
+      {
+        "name": "Jim Beaver",
+        "id": "nm0064769",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYjMxNzk0ODktODkwZC00OTQ3LWEzMzQtYjEyOGJjMDUwMWMyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Lawson"
+        ]
+      },
+      {
+        "name": "Sam McMurray",
+        "id": "nm0573481",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTg0OTUwNDM4MV5BMl5BanBnXkFtZTcwODIxMzM5OA@@._V1_.jpg",
+        "characters": [
+          "Dr. Victor Bravenec"
+        ]
+      },
+      {
+        "name": "Dan Desmond",
+        "id": "nm0221430",
+        "profile_image": null,
+        "characters": [
+          "Mr. Gardiner"
+        ]
+      },
+      {
+        "name": "Jeremy Howard",
+        "id": "nm0397386",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOWU4MGFmMTEtYjAwYy00NDIxLTlmNGItMzg4NGYxOTg0MDcwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Sketchy"
+        ]
+      },
+      {
+        "name": "Larry Hankin",
+        "id": "nm0359969",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTc3Nzk3NDM0MV5BMl5BanBnXkFtZTcwOTI5NDMwMg@@._V1_.jpg",
+        "characters": [
+          "Old Joe"
+        ]
+      },
+      {
+        "name": "JB Blanc",
+        "id": "nm1072611",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTg1ZDM0MjEtMWJmOC00MjcyLTliMzUtM2VmODQ5MzBlYjY3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Dr. Barry Goodman"
+        ]
+      },
+      {
+        "name": "Jason Byrd",
+        "id": "nm2944601",
+        "profile_image": null,
+        "characters": [
+          "Ben",
+          "Chemistry Student"
+        ]
+      },
+      {
+        "name": "James Ning",
+        "id": "nm3130683",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTcxNTY1MjMxNF5BMl5BanBnXkFtZTgwMzY0MDQ3NDE@._V1_.jpg",
+        "characters": [
+          "Duane Chow"
+        ]
+      },
+      {
+        "name": "Russ Dillen",
+        "id": "nm2627391",
+        "profile_image": null,
+        "characters": [
+          "Ron Forenall"
+        ]
+      },
+      {
+        "name": "Jonathan Ragsdale",
+        "id": "nm3578462",
+        "profile_image": null,
+        "characters": [
+          "Barry"
+        ]
+      },
+      {
+        "name": "Steven Bauer",
+        "id": "nm0000874",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTkwNTY5MzMzMF5BMl5BanBnXkFtZTcwMjAyNDYzMQ@@._V1_.jpg",
+        "characters": [
+          "Don Eladio"
+        ]
+      },
+      {
+        "name": "Sam Webb",
+        "id": "nm3476022",
+        "profile_image": null,
+        "characters": [
+          "Drew Sharp"
+        ]
+      },
+      {
+        "name": "Caleb Landry Jones",
+        "id": "nm2655177",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNmZiNTU0NmYtMGVmYS00ZWNhLThkY2ItODdkYzE0NTg0NWYwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Louis"
+        ]
+      },
+      {
+        "name": "Eric Steinig",
+        "id": "nm5266231",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZWQ3ZTQ3MmItMjY4My00NDQ3LTk1ZTUtYzM2YTA2NmUwMWRhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Mike's Security Team Member"
+        ]
+      },
+      {
+        "name": "Pedro García",
+        "id": "nm1537818",
+        "profile_image": null,
+        "characters": [
+          "Mariano"
+        ]
+      },
+      {
+        "name": "Phil Duran",
+        "id": "nm3544251",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMmIyNWFiNWYtZTBmOC00NmNhLWE4YmQtYWYyMWQ1ODQ2M2MyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "DEA Agent",
+          "Van Oster"
+        ]
+      },
+      {
+        "name": "Miguel Martinez",
+        "id": "nm2093099",
+        "profile_image": null,
+        "characters": [
+          "Fernando"
+        ]
+      },
+      {
+        "name": "John Christopher Hicks",
+        "id": "nm2519097",
+        "profile_image": null,
+        "characters": [
+          "Big Biker",
+          "Biker"
+        ]
+      },
+      {
+        "name": "Lou Pimber",
+        "id": "nm3697343",
+        "profile_image": null,
+        "characters": [
+          "Cartel Henchman"
+        ]
+      },
+      {
+        "name": "Matt Berlin",
+        "id": "nm3557640",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZDE5MmQ3NzktNjgzMC00YTU3LWEzYjktMmFmY2ZiYjk2MjNmXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "DEA Agent"
+        ]
+      },
+      {
+        "name": "Joe Nemmers",
+        "id": "nm0625971",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjAxMTk2OTg3MV5BMl5BanBnXkFtZTgwNTc0MzE5NDE@._V1_.jpg",
+        "characters": [
+          "DEA Agent Scott"
+        ]
+      },
+      {
+        "name": "David Priemazon",
+        "id": "nm3467035",
+        "profile_image": null,
+        "characters": [
+          "DEA Point Man",
+          "Deputy #2"
+        ]
+      },
+      {
+        "name": "Mark Vasconcellos",
+        "id": "nm0890346",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNGJiNTc2ZjctMzg0NS00MzIxLWI4NjEtYzgxZTk1NTVkZDRkXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Jack's Henchman"
+        ]
+      },
+      {
+        "name": "DJ Qualls",
+        "id": "nm0702809",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTAyNjgzMzg3NjZeQTJeQWpwZ15BbWU3MDE0OTM5NDM@._V1_.jpg",
+        "characters": [
+          "Getz"
+        ]
+      },
+      {
+        "name": "Harry Groener",
+        "id": "nm0342881",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTgxODY1MTcyMV5BMl5BanBnXkFtZTYwODAwNTA1._V1_.jpg",
+        "characters": [
+          "Dr. Chavez"
+        ]
+      },
+      {
+        "name": "Shane Marinson",
+        "id": "nm2916821",
+        "profile_image": null,
+        "characters": [
+          "Ob-Gyn"
+        ]
+      },
+      {
+        "name": "Fred Cruz",
+        "id": "nm5725487",
+        "profile_image": null,
+        "characters": [
+          "Lt. Adam Estiguez"
+        ]
+      },
+      {
+        "name": "Kyle Bornheimer",
+        "id": "nm1531180",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjAxNDczNjc5Ml5BMl5BanBnXkFtZTgwMjM3MTI1NTE@._V1_.jpg",
+        "characters": [
+          "Ken Wins"
+        ]
+      },
+      {
+        "name": "Geoffrey Rivas",
+        "id": "nm0729060",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOGIwNWQxM2UtMGU0OC00ZWIxLThjOWYtMDMwNGJiYmM5MTUzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Police Officer"
+        ]
+      },
+      {
+        "name": "William Sterchi",
+        "id": "nm0827429",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNWE1MGI0MTMtMDA0Yi00NjAyLWE4ZDktZGM4ZmU0MzYwNWNhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Manager"
+        ]
+      },
+      {
+        "name": "Pierre Barrera",
+        "id": "nm2484601",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMzY5OTQ5OWUtODlmNS00YzE0LWEyNjAtNDNjNTMyMWNhMTYwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Hugo Archuleta"
+        ]
+      },
+      {
+        "name": "Jeff Fenter",
+        "id": "nm2370673",
+        "profile_image": null,
+        "characters": [
+          "Urinal Guy"
+        ]
+      },
+      {
+        "name": "Aaron Hill",
+        "id": "nm1341364",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMWZkNzZhODItZDUzNy00YjMwLTg4ZmYtMmI3ZTRjNzA4ZTMyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Jock"
+        ]
+      },
+      {
+        "name": "Benjamin Petry",
+        "id": "nm1264549",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOTQ4YWNlOGYtMzI0Ni00NGE3LWE5NTMtZjgyODc4NDQ0YzFkXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Jake Pinkman"
+        ]
+      },
+      {
+        "name": "Anthony Wamego",
+        "id": "nm1753919",
+        "profile_image": null,
+        "characters": [
+          "Backhoe Operator"
+        ]
+      },
+      {
+        "name": "Marc Mouchet",
+        "id": "nm0609631",
+        "profile_image": null,
+        "characters": [
+          "Farley"
+        ]
+      },
+      {
+        "name": "Isaac Kappy",
+        "id": "nm2367549",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNzI3NWNlYzMtYTU2NC00YmNlLTg0N2YtOTk1OTA3YzRkOWMzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Rowdy Prisoner"
+        ]
+      },
+      {
+        "name": "Drew Waters",
+        "id": "nm1988958",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZGE3OWE5OTUtZTQ0ZC00MGJkLTg1NzUtZjQyZmQwMDBiNTA4XkEyXkFqcGc@._V1_CR424,89,3333,5000_.jpg",
+        "characters": [
+          "Paul Tyree"
+        ]
+      },
+      {
+        "name": "Marcus M. Mauldin",
+        "id": "nm0560893",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZDJmNDk5ZGEtMDgzZi00MzliLTliMDctODEzZWZiMWViMTJlXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Technician"
+        ]
+      },
+      {
+        "name": "Tomas Potts",
+        "id": "nm3622132",
+        "profile_image": null,
+        "characters": [
+          "Tattooed Biker"
+        ]
+      },
+      {
+        "name": "Nate Mooney",
+        "id": "nm1183102",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNmE3OWYzMGUtOTMzNC00MTkxLWIxNGItMDIxNzRlNGI4Y2NiXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Arms Dealer"
+        ]
+      },
+      {
+        "name": "Damon Herriman",
+        "id": "nm0380632",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMDdmYjgyNTktNzNmYS00MmEzLWJkMWQtOTM3ZmRmMDJlYjFmXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Scary Skell"
+        ]
+      },
+      {
+        "name": "Gregory Chase",
+        "id": "nm0153767",
+        "profile_image": null,
+        "characters": [
+          "Dr. Belknap"
+        ]
+      },
+      {
+        "name": "Ryan Lee",
+        "id": "nm2619114",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjFkY2NiNzYtMDhhMy00MDFjLTg0ZjktYzBjZjg1ZTgzNTU3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Neighborhood Kid"
+        ]
+      },
+      {
+        "name": "Dylan Carr",
+        "id": "nm3365195",
+        "profile_image": null,
+        "characters": [
+          "Young Boy"
+        ]
+      },
+      {
+        "name": "Carl Savering",
+        "id": "nm0767580",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNDc3N2FlODAtY2M0Ni00MWEzLThhNTQtNGU3ODg5YzU3NmM3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Bob"
+        ]
+      },
+      {
+        "name": "Louis Herthum",
+        "id": "nm0381043",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYTQ2NGEwY2EtZTYwMC00ZDYwLWI5MjYtYzgwMzYzM2E0NTYxXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Realtor"
+        ]
+      },
+      {
+        "name": "Carlo Rota",
+        "id": "nm0744690",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTI2NzMyMzc5Ml5BMl5BanBnXkFtZTYwMjYwNjY3._V1_.jpg",
+        "characters": [
+          "Benicio Fuentes"
+        ]
+      },
+      {
+        "name": "Rob Brownstein",
+        "id": "nm0115282",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNzM5ZjRjZDktM2ZhMS00YjJiLWE4ZWYtNjQzOTc4YjU2NGI2XkEyXkFqcGc@._V1_CR0,1,1023,1535_.jpg",
+        "characters": [
+          "CID Special Agent"
+        ]
+      },
+      {
+        "name": "Blake Berris",
+        "id": "nm2062857",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZGNiZWFhMzMtODdmOC00MzJiLTllN2UtY2Y2MTAwMjc2OTRlXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Tucker"
+        ]
+      },
+      {
+        "name": "Norbert Weisser",
+        "id": "nm0919256",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOTQ2ODQ4MWUtZjQ5ZC00Yzc3LWExMDAtZmMwYWE5NzE4Zjc1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Peter Schuler"
+        ]
+      },
+      {
+        "name": "Bill Allen",
+        "id": "nm0020309",
+        "profile_image": null,
+        "characters": [
+          "Scientist"
+        ]
+      },
+      {
+        "name": "Daniel Serrano",
+        "id": "nm2005989",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYTI0MGVlODItZGM1OC00OWQ5LTliMDYtMTBhZjlkYTVhMWQ4XkEyXkFqcGc@._V1_CR691,8,3333,5000_.jpg",
+        "characters": [
+          "Meth Drug Dealer"
+        ]
+      },
+      {
+        "name": "Jon Kristian Moore",
+        "id": "nm2726231",
+        "profile_image": null,
+        "characters": [
+          "DEA Agent"
+        ]
+      },
+      {
+        "name": "J.D. Garfield",
+        "id": "nm0307267",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZjhiM2Y3ZWEtMGFmNC00Y2QzLTlmZmEtOGNhNzI0OWZhOTdkXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "DEA Agent Vanco"
+        ]
+      },
+      {
+        "name": "Shannon McCormick",
+        "id": "nm0566608",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYTAyYzY5NDYtNGQyOC00MjU2LWJjN2EtZjg3ZmEyNjE3YmNhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Tweaky Dude"
+        ]
+      },
+      {
+        "name": "Vic Browder",
+        "id": "nm2002316",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMDdhMGMyNjItODYyMi00YzU2LWI0MDgtMGIzZDIwZGRlMDhjXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Detective"
+        ]
+      },
+      {
+        "name": "Brandon Carr",
+        "id": "nm4078207",
+        "profile_image": null,
+        "characters": [
+          "Young Boy"
+        ]
+      },
+      {
+        "name": "Jimmy Daniels",
+        "id": "nm2824200",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTk5NjQ1MzIyMl5BMl5BanBnXkFtZTgwMzYzNTg0MjE@._V1_.jpg",
+        "characters": [
+          "James Edward Kilkelly",
+          "Jimmy in-'N-Out"
+        ]
+      },
+      {
+        "name": "Tony Whitecrow",
+        "id": "nm2537446",
+        "profile_image": null,
+        "characters": [
+          "Addict"
+        ]
+      },
+      {
+        "name": "Liam Ruggles",
+        "id": "nm3314530",
+        "profile_image": null,
+        "characters": [
+          "Henry Tyree"
+        ]
+      },
+      {
+        "name": "Mark Harelik",
+        "id": "nm0362862",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BODc0NGJmMDUtNDgyYi00MTUxLTlkYTUtMDJlM2MyNGYwNDI5XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Doctor"
+        ]
+      },
+      {
+        "name": "Michael Bryan French",
+        "id": "nm0294153",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BN2Y5MTg3NWYtYTE4Yi00YzNiLWE0YjctNDE4ZTM1MjU2MzQyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Doctor"
+        ]
+      },
+      {
+        "name": "Rutherford Cravens",
+        "id": "nm0186657",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BY2YxMTFhMWYtYzZiZS00ODJiLWFhOWQtYTY5Y2JhMDg1OWM5XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Mortgage Broker"
+        ]
+      },
+      {
+        "name": "Frank Andrade",
+        "id": "nm4563813",
+        "profile_image": null,
+        "characters": [
+          "Tweaker Thief"
+        ]
+      },
+      {
+        "name": "Jamie McShane",
+        "id": "nm0574535",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZDU4MGE2NTAtYmRkZS00YTFlLWI4OGItN2Q3NWNiYWFjYmY2XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Conductor"
+        ]
+      },
+      {
+        "name": "Wolf Muser",
+        "id": "nm0615645",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTk5MDIyMzYyMV5BMl5BanBnXkFtZTgwMTcxMjIyODE@._V1_.jpg",
+        "characters": [
+          "Herr Herzog"
+        ]
+      },
+      {
+        "name": "Franc Ross",
+        "id": "nm0743404",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTYyMzU3MzU4N15BMl5BanBnXkFtZTgwNzU1MDAxMTE@._V1_.jpg",
+        "characters": [
+          "Ira"
+        ]
+      },
+      {
+        "name": "Bruce McKenzie",
+        "id": "nm0571492",
+        "profile_image": null,
+        "characters": [
+          "Dave"
+        ]
+      },
+      {
+        "name": "Mike Miller",
+        "id": "nm1256275",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNTMzM2QyM2UtY2I4ZC00YWVmLWIyZWYtNTljN2ExYmFhOTJkXkEyXkFqcGc@._V1_CR34,1,749,1124_.jpg",
+        "characters": [
+          "Jewelry Store Owner"
+        ]
+      },
+      {
+        "name": "Evan Bobrick",
+        "id": "nm2944460",
+        "profile_image": null,
+        "characters": [
+          "Chad"
+        ]
+      },
+      {
+        "name": "Loren Haynes",
+        "id": "nm0371128",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYWI3MTMyZmQtZWNjYS00ZmQ0LWFiYTUtODA5YTA5ZjAzMzBiXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Music Producer"
+        ]
+      },
+      {
+        "name": "Shenoah Allen",
+        "id": "nm1698612",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOWEzOWE3NTctZWE0ZC00ODU0LWFmMzktMjI3YTc4ZDBiYWM2XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Schlubby Guy #1"
+        ]
+      },
+      {
+        "name": "Ka Beesler",
+        "id": "nm3195149",
+        "profile_image": null,
+        "characters": [
+          "Thug Buddy"
+        ]
+      },
+      {
+        "name": "Ruben Munoz-Soto",
+        "id": "nm3906764",
+        "profile_image": null,
+        "characters": [
+          "Young Marco"
+        ]
+      },
+      {
+        "name": "John Lawlor",
+        "id": "nm0492552",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BODQyODAwOTQwM15BMl5BanBnXkFtZTgwMTE0MjU2MTE@._V1_.jpg",
+        "characters": [
+          "Locksmith"
+        ]
+      },
+      {
+        "name": "Paul Neis",
+        "id": "nm4563906",
+        "profile_image": null,
+        "characters": [
+          "Support Group Leader"
+        ]
+      },
+      {
+        "name": "Scott Sharot",
+        "id": "nm1900164",
+        "profile_image": null,
+        "characters": [
+          "Car Wash Customer"
+        ]
+      },
+      {
+        "name": "Myk Watford",
+        "id": "nm0914223",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOGUwYWZlNWYtM2Q1MS00YjJhLWE5ZTctMGViNGYyYzJkNTVlXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Engineer"
+        ]
+      },
+      {
+        "name": "Carrington Vilmont",
+        "id": "nm3212315",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYzhkZGFiZjktMjk0Mi00ZjIxLWEwZDMtMGQ3ZDhmODMxOGJmXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Chief Food Technician"
+        ]
+      },
+      {
+        "name": "James Harris",
+        "id": "nm2196176",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjI1NjAzOTYwNF5BMl5BanBnXkFtZTgwNTUyNjUwMzE@._V1_.jpg",
+        "characters": [
+          "Duty Officer"
+        ]
+      },
+      {
+        "name": "Wray Crawford",
+        "id": "nm3719327",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZTIwZjY0ZGYtMTlhYS00Njk1LWJlZmYtYTQxNmQwMDYwYzllXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Locksmith"
+        ]
+      },
+      {
+        "name": "Kyle Swimmer",
+        "id": "nm2967320",
+        "profile_image": null,
+        "characters": [
+          "Louis"
+        ]
+      },
+      {
+        "name": "Rio Alexander",
+        "id": "nm1503313",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjA5MTU4Njg4NV5BMl5BanBnXkFtZTcwNzQ3MTYwNQ@@._V1_.jpg",
+        "characters": [
+          "Federale"
+        ]
+      },
+      {
+        "name": "Drew Pollock",
+        "id": "nm3228373",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNDk0MjUzNWQtMTkzMi00ZjZkLThkYTgtMzY2MTcyMTQ2M2NhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Schlubby Guy #2"
+        ]
+      },
+      {
+        "name": "Andrew Lutheran",
+        "id": "nm3131234",
+        "profile_image": null,
+        "characters": [
+          "Jeffrey"
+        ]
+      },
+      {
+        "name": "Phil Howell",
+        "id": "nm6163852",
+        "profile_image": null,
+        "characters": [
+          "O.M.I. Attendant"
+        ]
+      },
+      {
+        "name": "Argos MacCallum",
+        "id": "nm2121737",
+        "profile_image": null,
+        "characters": [
+          "Wino"
+        ]
+      },
+      {
+        "name": "Erik J. Bockemeier",
+        "id": "nm0090693",
+        "profile_image": null,
+        "characters": [
+          "NA Sponsor"
+        ]
+      },
+      {
+        "name": "Victor Munoz-Soto",
+        "id": "nm3905153",
+        "profile_image": null,
+        "characters": [
+          "Young Leonel"
+        ]
+      },
+      {
+        "name": "John Barbour",
+        "id": "nm0053827",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU4MjY0NjY4Ml5BMl5BanBnXkFtZTgwOTA5OTEzMjE@._V1_.jpg",
+        "characters": [
+          "Neighbor"
+        ]
+      },
+      {
+        "name": "Jason E. Hill",
+        "id": "nm2143506",
+        "profile_image": null,
+        "characters": [
+          "Truck Guard 1"
+        ]
+      },
+      {
+        "name": "Saginaw Grant",
+        "id": "nm0335636",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU4MDAwNWQtYWNjNC00NDc1LWI2MjctNTRjYjU5MWVlMmVhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Native American Man"
+        ]
+      },
+      {
+        "name": "Guy Wilson",
+        "id": "nm0933475",
+        "profile_image": null,
+        "characters": [
+          "Trent"
+        ]
+      },
+      {
+        "name": "Manny Rey",
+        "id": "nm3544953",
+        "profile_image": null,
+        "characters": [
+          "Carpet Cleaner"
+        ]
+      },
+      {
+        "name": "Robert Arrington",
+        "id": "nm2961828",
+        "profile_image": null,
+        "characters": [
+          "Soren"
+        ]
+      }
+    ],
+    "Actress": [
+      {
+        "name": "Anna Gunn",
+        "id": "nm0348152",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU0NTk3MDQ3OV5BMl5BanBnXkFtZTcwNDY3NzQ4Mg@@._V1_.jpg",
+        "characters": [
+          "Skyler White"
+        ]
+      },
+      {
+        "name": "Betsy Brandt",
+        "id": "nm1336827",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTU2OTQ3MzcxMV5BMl5BanBnXkFtZTcwMTk2MTk3Mw@@._V1_.jpg",
+        "characters": [
+          "Marie Schrader"
+        ]
+      },
+      {
+        "name": "Laura Fraser",
+        "id": "nm0292182",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTgxMDI4NjQzOF5BMl5BanBnXkFtZTgwNjc5MDUxNTE@._V1_.jpg",
+        "characters": [
+          "Lydia Rodarte-Quayle"
+        ]
+      },
+      {
+        "name": "Krysten Ritter",
+        "id": "nm1269983",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZmUyODcyZGUtMDM0NC00YWMzLTg4ZGEtMGNhNWU2MTIyNjBjXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Jane Margolis"
+        ]
+      },
+      {
+        "name": "Carmen Serano",
+        "id": "nm0784831",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTc4OTQwNDM0MV5BMl5BanBnXkFtZTcwNTkyNTIzMQ@@._V1_.jpg",
+        "characters": [
+          "Carmen Molina"
+        ]
+      },
+      {
+        "name": "Emily Rios",
+        "id": "nm1986960",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMDcwZDk0OTYtMDQ5YS00NWEzLWFiYmMtYTAxZTExZTdkZDgyXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Andrea Cantillo"
+        ]
+      },
+      {
+        "name": "Tina Parker",
+        "id": "nm0662669",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMzhkYzU0YzYtZjRiOS00OWI0LThkMjItNjdhNzllODQwN2ExXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Francesca"
+        ]
+      },
+      {
+        "name": "Moira Bryg MacDonald",
+        "id": "nm5987281",
+        "profile_image": null,
+        "characters": [
+          "Holly White"
+        ]
+      },
+      {
+        "name": "Jessica Hecht",
+        "id": "nm0372961",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTUyNDA3MzUxM15BMl5BanBnXkFtZTcwOTM1NTQ0NA@@._V1_.jpg",
+        "characters": [
+          "Gretchen Schwartz"
+        ]
+      },
+      {
+        "name": "Kaija Bales",
+        "id": "nm3979839",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTUzNzE0Mzg3OF5BMl5BanBnXkFtZTgwNzg3MjIxMzE@._V1_.jpg",
+        "characters": [
+          "Kaylee Ehrmantraut"
+        ]
+      },
+      {
+        "name": "Tess Harper",
+        "id": "nm0002128",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTk1OTEzMjk5Nl5BMl5BanBnXkFtZTcwNzk1ODQ1MQ@@._V1_.jpg",
+        "characters": [
+          "Mrs. Pinkman"
+        ]
+      },
+      {
+        "name": "Julie Dretzin",
+        "id": "nm0003740",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTA1MTM2MTE1NTZeQTJeQWpwZ15BbWU3MDk0ODA0OTM@._V1_.jpg",
+        "characters": [
+          "Pamela"
+        ]
+      },
+      {
+        "name": "Julia Minesci",
+        "id": "nm2928008",
+        "profile_image": null,
+        "characters": [
+          "Wendy",
+          "Meth Whore"
+        ]
+      },
+      {
+        "name": "Ashley Kajiki",
+        "id": "nm3612872",
+        "profile_image": null,
+        "characters": [
+          "Pollos Manager",
+          "Restaurant Manager"
+        ]
+      },
+      {
+        "name": "Mary Sue Evans",
+        "id": "nm2523921",
+        "profile_image": null,
+        "characters": [
+          "Janice"
+        ]
+      },
+      {
+        "name": "Dale Dickey",
+        "id": "nm0225460",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZWQxYjM4N2MtYmY2MS00ZmM1LThjZTQtOGZiYTkyNmJkM2QxXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Spooge's Woman"
+        ]
+      },
+      {
+        "name": "Judith Rane",
+        "id": "nm2964765",
+        "profile_image": null,
+        "characters": [
+          "Office Manager"
+        ]
+      },
+      {
+        "name": "Catherine Haun",
+        "id": "nm1697030",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BN2ViMDljOWUtYzRiYi00MzgyLWIzZjYtNTI0ZDc2ZTczMGI3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Receptionist"
+        ]
+      },
+      {
+        "name": "Virginia Montero",
+        "id": "nm1373205",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BM2Q3NjdjZmQtYzY1YS00ZDVjLTk2ZmItOWQ5YmVjY2RlNjQxXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Grandma"
+        ]
+      },
+      {
+        "name": "Antoinette Antonio",
+        "id": "nm3580261",
+        "profile_image": null,
+        "characters": [
+          "TV Reporter"
+        ]
+      },
+      {
+        "name": "Dana Cortez",
+        "id": "nm3535733",
+        "profile_image": null,
+        "characters": [
+          "Anchor #4",
+          "TV Reporter"
+        ]
+      },
+      {
+        "name": "Beth Bailey",
+        "id": "nm1544010",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BODBjMjQ1ZGItZDY2Ny00NWU0LWI5MTktMDc2OGY4N2FkYmI1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Realtor"
+        ]
+      },
+      {
+        "name": "Anna Felix",
+        "id": "nm2485687",
+        "profile_image": null,
+        "characters": [
+          "Sales Girl"
+        ]
+      },
+      {
+        "name": "Jennifer Hasty",
+        "id": "nm1859626",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZmYxNGYxZjYtODhkNC00NWQzLWEzZWUtZjZmYjgwMzY0N2E3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Stephanie Doswell"
+        ]
+      },
+      {
+        "name": "Kiira Arai",
+        "id": "nm2611012",
+        "profile_image": null,
+        "characters": [
+          "Server"
+        ]
+      },
+      {
+        "name": "Shauna McLean",
+        "id": "nm1851920",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTIwMzk2NDY3OF5BMl5BanBnXkFtZTcwODA5OTAzMQ@@._V1_.jpg",
+        "characters": [
+          "Sara Tyree"
+        ]
+      },
+      {
+        "name": "Cyd Schulte",
+        "id": "nm1720311",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTQwMTQ1MTY1OF5BMl5BanBnXkFtZTcwMDU2NjEzMQ@@._V1_.jpg",
+        "characters": [
+          "Tattooed Woman"
+        ]
+      },
+      {
+        "name": "Carole Gutierrez",
+        "id": "nm0349341",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTAzMzc2MGMtMzc0Ny00ZmI0LWFlZWQtNTJiZWUxMTVlMzNhXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Mrs. Ortega"
+        ]
+      },
+      {
+        "name": "Melissa McCurley",
+        "id": "nm2248304",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZjgzNzY0YTgtMzhkNy00MzI0LTkzZmMtYjc3OGQ1MjU0ZDE0XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Secretary"
+        ]
+      },
+      {
+        "name": "Vivian Nesbitt",
+        "id": "nm2964889",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMTA0MzQ0MTU5ODNeQTJeQWpwZ15BbWU4MDQ2OTcwNzUx._V1_.jpg",
+        "characters": [
+          "Mrs. Pope"
+        ]
+      },
+      {
+        "name": "Tish Rayburn-Miller",
+        "id": "nm2691147",
+        "profile_image": null,
+        "characters": [
+          "Bank Teller"
+        ]
+      },
+      {
+        "name": "Cocoa Brown",
+        "id": "nm2072060",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMjEyNmZmZTEtMjIzYS00OWY4LTg3ZDgtYjFmMGQxMzQ2Y2UzXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Mail Lady"
+        ]
+      },
+      {
+        "name": "Wendy Scott",
+        "id": "nm3622416",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZTJiMWQxYjUtYjkxNC00NjMyLWI4ZDctZjMyZTAwZWM5N2Q4XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Nurse"
+        ]
+      },
+      {
+        "name": "Jolene Purdy",
+        "id": "nm1066346",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYWM0NWNhYWItMzU5Yy00MjU5LWIxNWEtNGQ5MGI2NjRmNDNkXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Cara"
+        ]
+      },
+      {
+        "name": "Myra Turley",
+        "id": "nm0877252",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BOTRhNDk1NmQtYzUwOC00ODZhLWFlYjYtYWNhZjI2NzBiOGMwXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Caregiver"
+        ]
+      },
+      {
+        "name": "Roberta Marquez Seret",
+        "id": "nm1684152",
+        "profile_image": null,
+        "characters": [
+          "Chad's Girlfriend"
+        ]
+      },
+      {
+        "name": "Lorri Oliver",
+        "id": "nm2618727",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNjY1YjExOWMtNDQ2Yi00ZDQ4LWI2NjMtNTQ5NWU0ZTg3YmM1XkEyXkFqcGc@._V1_CR0,1,749,1124_.jpg",
+        "characters": [
+          "Concerned Parent"
+        ]
+      },
+      {
+        "name": "Taylor Dearden",
+        "id": "nm3846175",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BMGI0N2UwMTYtMTgzNy00NDg4LThlMWUtNTMxNDZlNmVjNDk1XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Sad Faced Girl"
+        ]
+      },
+      {
+        "name": "Tiley Chao",
+        "id": "nm1716526",
+        "profile_image": null,
+        "characters": [
+          "Peng"
+        ]
+      },
+      {
+        "name": "Brittany Gustin",
+        "id": "nm4563755",
+        "profile_image": null,
+        "characters": [
+          "Morning After Girl"
+        ]
+      },
+      {
+        "name": "Fran Martone",
+        "id": "nm2276891",
+        "profile_image": null,
+        "characters": [
+          "Colleen"
+        ]
+      },
+      {
+        "name": "Monique Candelaria",
+        "id": "nm3156214",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BZTlmZTZhMzMtZGRhNy00ODdmLWIzNjgtZTcwYzZhNjFiNDU3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Lucy"
+        ]
+      },
+      {
+        "name": "Kathleen Brady",
+        "id": "nm5233833",
+        "profile_image": null,
+        "characters": [
+          "Dorothy Yobs"
+        ]
+      },
+      {
+        "name": "Cheryl Ford-Mente",
+        "id": "nm5826452",
+        "profile_image": null,
+        "characters": [
+          "Carol"
+        ]
+      },
+      {
+        "name": "Seri DeYoung",
+        "id": "nm2727678",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BNGNkMGU1NTYtMWRhZi00ZGNiLWIxY2QtMjRlZTdmOTJhNTU3XkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "Student"
+        ]
+      },
+      {
+        "name": "Kristen Loree",
+        "id": "nm2770822",
+        "profile_image": null,
+        "characters": [
+          "Concerned Parent"
+        ]
+      },
+      {
+        "name": "Juliet Lopez",
+        "id": "nm3053274",
+        "profile_image": "https://m.media-amazon.com/images/M/MV5BYzMzODhjYTUtNjMzYy00MDNkLWIwZjYtZDE3YmFlODUxNTFjXkEyXkFqcGc@._V1_.jpg",
+        "characters": [
+          "O.M.I. Officer"
+        ]
+      }
+    ]
+  },
+  "languages": [
+    "English",
+    "Spanish"
+  ],
+  "countries": [
+    "United States"
+  ],
+  "keywords": [
+    "cancer",
+    "chemistry",
+    "drug trade",
+    "methamphetamine",
+    "chemistry teacher",
+    "crystal meth",
+    "drug",
+    "meth lab",
+    "albuquerque new mexico",
+    "drug lord"
+  ],
+  "review_count": 6593,
+  "similar_titles": [
+    {
+      "id": "tt3032476",
+      "title": "Better Call Saul",
+      "year": 2015,
+      "rating": 9,
+      "poster_url": "https://m.media-amazon.com/images/M/MV5BNDdjNTEzMjMtYjM3Mi00NzQ3LWFlNWMtZjdmYWU3ZDkzMjk1XkEyXkFqcGc@._V1_.jpg"
+    },
+    {
+      "id": "tt0944947",
+      "title": "Game of Thrones",
+      "year": 2011,
+      "rating": 9.2,
+      "poster_url": "https://m.media-amazon.com/images/M/MV5BMTNhMDJmNmYtNDQ5OS00ODdlLWE0ZDAtZTgyYTIwNDY3OTU3XkEyXkFqcGc@._V1_.jpg"
+    },
+    {
+      "id": "tt4574334",
+      "title": "Stranger Things",
+      "year": 2016,
+      "rating": 8.6,
+      "poster_url": "https://m.media-amazon.com/images/M/MV5BNjRiMTA4NWUtNmE0ZC00NGM0LWJhMDUtZWIzMDM5ZDIzNTg3XkEyXkFqcGc@._V1_.jpg"
+    },
+    {
+      "id": "tt0773262",
+      "title": "Dexter",
+      "year": 2006,
+      "rating": 8.6,
+      "poster_url": "https://m.media-amazon.com/images/M/MV5BNTE5ZGI2N2UtYmFiMi00ZGIxLWI1ZTMtYWJkZDYxNDZiOTQwXkEyXkFqcGc@._V1_.jpg"
+    },
+    {
+      "id": "tt3865294",
+      "title": "Ozymandias",
+      "year": null,
+      "rating": null,
+      "poster_url": null
+    }
+  ],
+  "alternative_titles": [
+    {
+      "title": "Breaking Bad",
+      "country": "Argentina",
+      "country_code": "AR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Australia",
+      "country_code": "AU",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Belgium",
+      "country_code": "BE",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Brazil",
+      "country_code": "BR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Canada",
+      "country_code": "CA",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Canada",
+      "country_code": "CA",
+      "language": "French",
+      "language_code": "fr"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Germany",
+      "country_code": "DE",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Spain",
+      "country_code": "ES",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "France",
+      "country_code": "FR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "United Kingdom",
+      "country_code": "GB",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Ireland",
+      "country_code": "IE",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "India",
+      "country_code": "IN",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "India",
+      "country_code": "IN",
+      "language": "Hindi",
+      "language_code": "hi"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Japan",
+      "country_code": "JP",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "South Korea",
+      "country_code": "KR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Mexico",
+      "country_code": "MX",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Netherlands",
+      "country_code": "NL",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "New Zealand",
+      "country_code": "NZ",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Philippines",
+      "country_code": "PH",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Poland",
+      "country_code": "PL",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Sweden",
+      "country_code": "SE",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Singapore",
+      "country_code": "SG",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "United States",
+      "country_code": "US",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "Uruguay",
+      "country_code": "UY",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad",
+      "country": "South Africa",
+      "country_code": "ZA",
+      "language": "English",
+      "language_code": "en"
+    },
+    {
+      "title": "絕命毒師",
+      "country": "Hong Kong",
+      "country_code": "HK",
+      "language": "Cantonese",
+      "language_code": "yue"
+    },
+    {
+      "title": "絕命毒師",
+      "country": "Taiwan",
+      "country_code": "TW",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Bad Biari",
+      "country": "Iran",
+      "country_code": "IR",
+      "language": "Persian",
+      "language_code": "fa"
+    },
+    {
+      "title": "Bədbəxt",
+      "country": "Azerbaijan",
+      "country_code": "AZ",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Biến Chất",
+      "country": "Vietnam",
+      "country_code": "VN",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking bad",
+      "country": "Romania",
+      "country_code": "RO",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad - A Química do Mal",
+      "country": "Brazil",
+      "country_code": "BR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad - Reazioni collaterali",
+      "country": "Italy",
+      "country_code": "IT",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Breaking Bad: Ruptura Total",
+      "country": "Portugal",
+      "country_code": "PT",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Bręstantis blogis",
+      "country": "Lithuania",
+      "country_code": "LT",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Bureikingu baddo",
+      "country": "Japan",
+      "country_code": "JP",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Egrilik sari",
+      "country": "Uzbekistan",
+      "country_code": "UZ",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Halvale teele",
+      "country": "Estonia",
+      "country_code": "EE",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Kriva pota",
+      "country": "Slovenia",
+      "country_code": "SI",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Mashaqqatlar sari",
+      "country": "Uzbekistan",
+      "country_code": "UZ",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Na putu prema dolje",
+      "country": "Croatia",
+      "country_code": "HR",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Pārkāpt robežu",
+      "country": "Latvia",
+      "country_code": "LV",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Perníkový táta",
+      "country": "Czech Republic",
+      "country_code": "CZ",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Perníkový tatko",
+      "country": "Slovakia",
+      "country_code": "SK",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Ruptura Total",
+      "country": "Portugal",
+      "country_code": "PT",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Shover shurot",
+      "country": "Israel",
+      "country_code": "IL",
+      "language": "Hebrew",
+      "language_code": "he"
+    },
+    {
+      "title": "Tập Làm Người Xấu",
+      "country": "Vietnam",
+      "country_code": "VN",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Totál szívás",
+      "country": "Hungary",
+      "country_code": "HU",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "В обувките на Сатаната",
+      "country": "Bulgaria",
+      "country_code": "BG",
+      "language": "Bulgarian",
+      "language_code": "bg"
+    },
+    {
+      "title": "Во все тяжкие",
+      "country": "Russia",
+      "country_code": "RU",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Күнәға бату",
+      "country": "Kazakhstan",
+      "country_code": "KZ",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Пуститися берега",
+      "country": "Ukraine",
+      "country_code": "UA",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "Чиста хемија",
+      "country": "Serbia",
+      "country_code": "RS",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "اختلال ضال",
+      "country": "United Arab Emirates",
+      "country_code": "AE",
+      "language": null,
+      "language_code": null
+    },
+    {
+      "title": "ブレイキング・バッド",
+      "country": "Japan",
+      "country_code": "JP",
+      "language": "Japanese",
+      "language_code": "ja"
+    },
+    {
+      "title": "绝命毒师",
+      "country": "China",
+      "country_code": "CN",
+      "language": "Mandarin",
+      "language_code": "cmn"
+    },
+    {
+      "title": "超越罪惡",
+      "country": "Taiwan",
+      "country_code": "TW",
+      "language": null,
+      "language_code": null
+    }
+  ],
+  "imdb_url": "https://www.imdb.com/title/tt0903747/"
+}

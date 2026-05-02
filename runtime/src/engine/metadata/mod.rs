@@ -40,7 +40,15 @@ use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
     EnrichResponse, PluginEntry, RelatedRequest,
 };
-use stui_plugin_sdk::EntryKind;
+use stui_plugin_sdk::{
+    EntryKind,
+    TrailersRequest, TrailersResponse,
+    ReleaseInfoRequest, ReleaseInfoResponse,
+    KeywordsRequest, KeywordsResponse, Keyword,
+    BoxOfficeRequest, BoxOfficeResponse,
+    AlternativeTitlesRequest, AlternativeTitlesResponse,
+    BulkEnrichRequest, BulkEnrichResponse,
+};
 use crate::cache::metadata::{MetadataCache, MetadataPayload};
 use crate::cache::metadata_key::{IdSource, MetadataCacheKey, MetadataVerb};
 
@@ -114,6 +122,32 @@ pub trait MetadataDispatch: Send + Sync {
         req: RelatedRequest,
     ) -> Result<Vec<PluginEntry>, String>;
 
+    async fn call_get_trailers(
+        &self,
+        plugin: &str,
+        req: TrailersRequest,
+    ) -> Result<TrailersResponse, String>;
+    async fn call_get_release_info(
+        &self,
+        plugin: &str,
+        req: ReleaseInfoRequest,
+    ) -> Result<ReleaseInfoResponse, String>;
+    async fn call_get_keywords(
+        &self,
+        plugin: &str,
+        req: KeywordsRequest,
+    ) -> Result<KeywordsResponse, String>;
+    async fn call_get_box_office(
+        &self,
+        plugin: &str,
+        req: BoxOfficeRequest,
+    ) -> Result<BoxOfficeResponse, String>;
+    async fn call_get_alternative_titles(
+        &self,
+        plugin: &str,
+        req: AlternativeTitlesRequest,
+    ) -> Result<AlternativeTitlesResponse, String>;
+
     /// Single-source fetch of the elfhosted rating-aggregator addon.
     /// Returns the addon's pre-formatted description block + external URL.
     /// `None` means the addon has no entry for this id; `Err` means
@@ -125,6 +159,12 @@ pub trait MetadataDispatch: Send + Sync {
         imdb_id: &str,
         kind: &str,
     ) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String>;
+
+    async fn call_bulk_enrich(
+        &self,
+        plugin: &str,
+        req: BulkEnrichRequest,
+    ) -> Result<BulkEnrichResponse, String>;
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -135,6 +175,12 @@ pub trait MetadataDispatch: Send + Sync {
 /// Takes the engine by value (require `Clone`) so each verb task can own
 /// its own handle — sidesteps the `'static` lifetime constraint of
 /// `tokio::spawn`. The real caller will pass an `Arc`-wrapped handle.
+//
+// New in ABI v2: fan_out_trailers / fan_out_release_info /
+// fan_out_keywords / fan_out_box_office / fan_out_alternative_titles
+// helpers exist below but are NOT invoked here yet — TUI consumption
+// is the next plan; that plan extends `MetadataVerb` + the IPC frames
+// + this orchestrator together.
 pub async fn fetch_detail_metadata<E>(
     engine: E,
     mut req: DetailMetadataRequest,
@@ -536,6 +582,7 @@ async fn fan_out_enrich<E: MetadataDispatch>(
                 ..Default::default()
             },
             prefer_id_source: Some(id_source_as_str(&req.id_source)),
+            force_refresh: false,
         };
         Some(engine.call_enrich(plugin, er))
     });
@@ -551,7 +598,7 @@ async fn fan_out_credits<E: MetadataDispatch>(
     let calls = sources.iter().filter_map(|plugin| {
         let id_sources = engine.sources().id_sources_for(plugin, MetadataVerb::Credits);
         let (id, id_source) = resolve_id_for_plugin(req, plugin, &id_sources)?;
-        let cr = CreditsRequest { id, id_source, kind };
+        let cr = CreditsRequest { id, id_source, kind, force_refresh: false };
         Some(engine.call_credits(plugin, cr))
     });
     drain_with_deadline(calls.collect(), req.per_verb_timeout).await
@@ -571,6 +618,7 @@ async fn fan_out_artwork<E: MetadataDispatch>(
             id_source,
             kind,
             size: crate::abi::types::ArtworkSize::Any,
+            force_refresh: false,
         };
         Some(engine.call_artwork(plugin, ar))
     });
@@ -592,10 +640,167 @@ async fn fan_out_related<E: MetadataDispatch>(
             kind,
             relation: crate::abi::types::RelationKind::Any,
             limit: 20,
+            force_refresh: false,
         };
         Some(engine.call_related(plugin, rr))
     });
     drain_with_deadline(calls.collect(), req.per_verb_timeout).await
+}
+
+// ── ABI v2 fan-out helpers (not yet wired into the orchestrator) ─────────────
+
+/// Returns the first `Ok` response from the plugin list, or the last `Err`
+/// if all fail. First-non-error-wins semantics mirror `fan_out_credits`.
+async fn fan_out_trailers<E: MetadataDispatch>(
+    engine: &E,
+    plugins: &[String],
+    req: TrailersRequest,
+) -> Result<TrailersResponse, String> {
+    let mut last_err = String::from("no trailers providers configured");
+    for plugin in plugins {
+        match engine.call_get_trailers(plugin, req.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                tracing::warn!(plugin = %plugin, error = %e, "get_trailers call failed");
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// Returns the first `Ok` response from the plugin list, or the last `Err`
+/// if all fail.
+async fn fan_out_release_info<E: MetadataDispatch>(
+    engine: &E,
+    plugins: &[String],
+    req: ReleaseInfoRequest,
+) -> Result<ReleaseInfoResponse, String> {
+    let mut last_err = String::from("no release_info providers configured");
+    for plugin in plugins {
+        match engine.call_get_release_info(plugin, req.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                tracing::warn!(plugin = %plugin, error = %e, "get_release_info call failed");
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// Returns the first `Ok` response from the plugin list, or the last `Err`
+/// if all fail.
+async fn fan_out_box_office<E: MetadataDispatch>(
+    engine: &E,
+    plugins: &[String],
+    req: BoxOfficeRequest,
+) -> Result<BoxOfficeResponse, String> {
+    let mut last_err = String::from("no box_office providers configured");
+    for plugin in plugins {
+        match engine.call_get_box_office(plugin, req.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                tracing::warn!(plugin = %plugin, error = %e, "get_box_office call failed");
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// Returns the first `Ok` response from the plugin list, or the last `Err`
+/// if all fail.
+async fn fan_out_alternative_titles<E: MetadataDispatch>(
+    engine: &E,
+    plugins: &[String],
+    req: AlternativeTitlesRequest,
+) -> Result<AlternativeTitlesResponse, String> {
+    let mut last_err = String::from("no alternative_titles providers configured");
+    for plugin in plugins {
+        match engine.call_get_alternative_titles(plugin, req.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                tracing::warn!(plugin = %plugin, error = %e, "get_alternative_titles call failed");
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// Maximum number of merged keywords across all providers.
+const MAX_MERGED_KEYWORDS: usize = 200;
+
+/// Round-robin fan-out for keywords across multiple providers.
+///
+/// Each provider is called concurrently upfront; then their keyword
+/// iterators are interleaved round-robin so that a provider with many
+/// keywords doesn't crowd out a late-joining provider with fewer.
+/// Keywords are deduplicated case-insensitively; the first occurrence
+/// wins. Each kept `Keyword.provider` is stamped with the originating
+/// plugin name. Capped at [`MAX_MERGED_KEYWORDS`] total.
+///
+/// Partial success: if some providers error and some succeed, the
+/// succeeded keywords are returned as `Ok`. Only returns `Err` when
+/// all providers failed.
+async fn fan_out_keywords<E: MetadataDispatch>(
+    engine: &E,
+    plugins: Vec<String>,
+    req: KeywordsRequest,
+) -> Result<KeywordsResponse, String> {
+    use std::collections::HashSet;
+
+    let total_plugins = plugins.len();
+    let mut iters: Vec<(String, std::vec::IntoIter<Keyword>)> = Vec::new();
+    let mut error_count = 0usize;
+
+    for p in &plugins {
+        let req_p = req.clone();
+        match engine.call_get_keywords(p, req_p).await {
+            Ok(resp) => iters.push((p.clone(), resp.keywords.into_iter())),
+            Err(e) => {
+                error_count += 1;
+                tracing::warn!(plugin = %p, error = %e, "keywords call failed");
+            }
+        }
+    }
+
+    if iters.is_empty() && total_plugins > 0 && error_count > 0 {
+        return Err(format!("all {error_count} keyword providers failed"));
+    }
+
+    let mut merged: Vec<Keyword> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    'outer: while !iters.is_empty() {
+        let mut progressed = false;
+        let mut i = 0;
+        while i < iters.len() {
+            let (provider_name, it) = &mut iters[i];
+            match it.next() {
+                Some(mut kw) => {
+                    progressed = true;
+                    let key = kw.name.trim().to_lowercase();
+                    if seen.insert(key) {
+                        kw.provider = Some(provider_name.clone());
+                        merged.push(kw);
+                        if merged.len() >= MAX_MERGED_KEYWORDS {
+                            break 'outer;
+                        }
+                    }
+                    i += 1;
+                }
+                None => {
+                    iters.remove(i);
+                }
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+
+    Ok(KeywordsResponse { keywords: merged })
 }
 
 /// Stream-collect results from a parallel fan-out, returning any
@@ -728,7 +933,7 @@ pub mod test_engine {
     }
 
     pub struct FakeProbe {
-        ids: Vec<String>,
+        pub ids: Vec<String>,
     }
     impl SourceCapabilityProbe for FakeProbe {
         fn supports(&self, plugin: &str, _verb: MetadataVerb, _kind_hint: &str) -> bool {
@@ -840,6 +1045,47 @@ pub mod test_engine {
             Ok(vec![])
         }
 
+        async fn call_get_trailers(
+            &self,
+            _plugin: &str,
+            _req: TrailersRequest,
+        ) -> Result<TrailersResponse, String> {
+            Ok(TrailersResponse { trailers: vec![] })
+        }
+        async fn call_get_release_info(
+            &self,
+            _plugin: &str,
+            _req: ReleaseInfoRequest,
+        ) -> Result<ReleaseInfoResponse, String> {
+            Ok(ReleaseInfoResponse { releases: vec![] })
+        }
+        async fn call_get_keywords(
+            &self,
+            _plugin: &str,
+            _req: KeywordsRequest,
+        ) -> Result<KeywordsResponse, String> {
+            Ok(KeywordsResponse { keywords: vec![] })
+        }
+        async fn call_get_box_office(
+            &self,
+            _plugin: &str,
+            _req: BoxOfficeRequest,
+        ) -> Result<BoxOfficeResponse, String> {
+            Ok(BoxOfficeResponse {
+                budget: None,
+                opening_weekend: None,
+                gross_domestic: None,
+                gross_worldwide: None,
+            })
+        }
+        async fn call_get_alternative_titles(
+            &self,
+            _plugin: &str,
+            _req: AlternativeTitlesRequest,
+        ) -> Result<AlternativeTitlesResponse, String> {
+            Ok(AlternativeTitlesResponse { titles: vec![] })
+        }
+
         async fn fetch_ratings_aggregator(
             &self,
             _imdb_id: &str,
@@ -847,6 +1093,14 @@ pub mod test_engine {
         ) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String> {
             self.apply_behavior(MetadataVerb::RatingsAggregator).await?;
             Ok(None)
+        }
+
+        async fn call_bulk_enrich(
+            &self,
+            _plugin: &str,
+            _req: BulkEnrichRequest,
+        ) -> Result<BulkEnrichResponse, String> {
+            Ok(BulkEnrichResponse { entries: vec![] })
         }
     }
 
@@ -913,6 +1167,132 @@ pub mod test_engine {
             }
         }
         out
+    }
+}
+
+// ── TestEngine wrappers for new verb fan-out tests ───────────────────────────
+
+/// A minimal `MetadataDispatch` for the new verb fan-out tests.
+///
+/// Allows wiring per-plugin, per-verb canned responses or errors — more
+/// flexible than `TestEngine` (which is verb-level only) for the round-robin
+/// keywords tests that need per-plugin keyword lists.
+#[cfg(test)]
+pub(crate) mod test_dispatch {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    pub type TrailersMap    = HashMap<String, Result<TrailersResponse, String>>;
+    pub type BoxOfficeMap   = HashMap<String, Result<BoxOfficeResponse, String>>;
+    pub type KeywordsMap    = HashMap<String, Result<KeywordsResponse, String>>;
+    pub type BulkEnrichMap  = HashMap<String, Result<BulkEnrichResponse, String>>;
+
+    #[derive(Clone)]
+    pub struct PluginDispatch {
+        cache: MetadataCache,
+        sources: Arc<SourceResolver>,
+        pub trailers:     Arc<TrailersMap>,
+        pub box_office:   Arc<BoxOfficeMap>,
+        pub keywords:     Arc<KeywordsMap>,
+        pub bulk_enrich:  Arc<BulkEnrichMap>,
+    }
+
+    impl PluginDispatch {
+        pub fn new(
+            trailers:    TrailersMap,
+            box_office:  BoxOfficeMap,
+            keywords:    KeywordsMap,
+            bulk_enrich: BulkEnrichMap,
+        ) -> Self {
+            let mut cfg = crate::config::types::MetadataSources::default();
+            cfg.movies = vec!["fake-p1".into(), "fake-p2".into()];
+            cfg.series = vec!["fake-p1".into(), "fake-p2".into()];
+            let probe = super::test_engine::FakeProbe { ids: vec!["fake-p1".into(), "fake-p2".into()] };
+            let sources = SourceResolver::new(cfg, Box::new(probe));
+            PluginDispatch {
+                cache:       MetadataCache::with_custom_ttl(Duration::from_secs(60)),
+                sources:     Arc::new(sources),
+                trailers:    Arc::new(trailers),
+                box_office:  Arc::new(box_office),
+                keywords:    Arc::new(keywords),
+                bulk_enrich: Arc::new(bulk_enrich),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl MetadataDispatch for PluginDispatch {
+        fn cache(&self) -> &MetadataCache { &self.cache }
+        fn sources(&self) -> &SourceResolver { &self.sources }
+
+        async fn call_enrich(&self, _: &str, _: EnrichRequest) -> Result<EnrichResponse, String> {
+            Ok(EnrichResponse { entry: PluginEntry::default(), confidence: 0.0 })
+        }
+        async fn call_credits(&self, _: &str, _: CreditsRequest) -> Result<CreditsResponse, String> {
+            Ok(CreditsResponse { cast: vec![], crew: vec![] })
+        }
+        async fn call_artwork(&self, _: &str, _: ArtworkRequest) -> Result<ArtworkResponse, String> {
+            Ok(ArtworkResponse { variants: vec![] })
+        }
+        async fn call_related(&self, _: &str, _: RelatedRequest) -> Result<Vec<PluginEntry>, String> {
+            Ok(vec![])
+        }
+        async fn call_get_trailers(&self, plugin: &str, _: TrailersRequest) -> Result<TrailersResponse, String> {
+            self.trailers.get(plugin).cloned().unwrap_or(Err("no fixture".into()))
+        }
+        async fn call_get_release_info(&self, _: &str, _: ReleaseInfoRequest) -> Result<ReleaseInfoResponse, String> {
+            Ok(ReleaseInfoResponse { releases: vec![] })
+        }
+        async fn call_get_keywords(&self, plugin: &str, _: KeywordsRequest) -> Result<KeywordsResponse, String> {
+            self.keywords.get(plugin).cloned().unwrap_or(Err("no fixture".into()))
+        }
+        async fn call_get_box_office(&self, plugin: &str, _: BoxOfficeRequest) -> Result<BoxOfficeResponse, String> {
+            self.box_office.get(plugin).cloned().unwrap_or(Err("no fixture".into()))
+        }
+        async fn call_get_alternative_titles(&self, _: &str, _: AlternativeTitlesRequest) -> Result<AlternativeTitlesResponse, String> {
+            Ok(AlternativeTitlesResponse { titles: vec![] })
+        }
+        async fn fetch_ratings_aggregator(&self, _: &str, _: &str) -> Result<Option<crate::ipc::v1::RatingsAggregatorData>, String> {
+            Ok(None)
+        }
+        async fn call_bulk_enrich(&self, plugin: &str, _req: BulkEnrichRequest) -> Result<BulkEnrichResponse, String> {
+            match self.bulk_enrich.get(plugin) {
+                Some(Ok(resp)) => Ok(resp.clone()),
+                Some(Err(e)) => Err(e.clone()),
+                None => Err(format!("no canned bulk_enrich response for plugin {plugin}")),
+            }
+        }
+    }
+
+    fn kw(name: &str) -> Keyword {
+        Keyword { name: name.to_string(), source_id: None, provider: None }
+    }
+
+    pub fn keywords_resp(names: &[&str]) -> Result<KeywordsResponse, String> {
+        Ok(KeywordsResponse { keywords: names.iter().map(|n| kw(n)).collect() })
+    }
+
+    pub fn trailers_resp(url: &str) -> Result<TrailersResponse, String> {
+        Ok(TrailersResponse {
+            trailers: vec![stui_plugin_sdk::Trailer {
+                url: url.to_string(),
+                thumbnail_url: None,
+                title: None,
+                kind: stui_plugin_sdk::TrailerKind::Trailer,
+                language: None,
+                duration_secs: None,
+            }],
+        })
+    }
+
+    pub fn box_office_resp(gross: u64) -> Result<BoxOfficeResponse, String> {
+        Ok(BoxOfficeResponse {
+            budget: None,
+            opening_weekend: None,
+            gross_domestic: None,
+            gross_worldwide: Some(stui_plugin_sdk::MoneyAmount { amount: gross, currency: "USD".into() }),
+        })
     }
 }
 
@@ -1089,5 +1469,169 @@ mod tests {
             engine.cache().get(&key).await.is_some(),
             "authoritative empty must be cached"
         );
+    }
+
+    // ── fan_out_trailers / fan_out_box_office smoke tests ─────────────────────
+
+    #[tokio::test]
+    async fn fan_out_trailers_returns_first_success() {
+        use test_dispatch::{PluginDispatch, trailers_resp};
+        use std::collections::HashMap;
+
+        let mut trailers = HashMap::new();
+        trailers.insert("fake-p1".to_string(), trailers_resp("https://youtube.com/trailer1"));
+        trailers.insert("fake-p2".to_string(), trailers_resp("https://youtube.com/trailer2"));
+
+        let engine = PluginDispatch::new(trailers, HashMap::new(), HashMap::new(), HashMap::new());
+        let req = TrailersRequest {
+            id: "tt1".into(),
+            id_source: "imdb".into(),
+            kind: EntryKind::Movie,
+            locale: None,
+            force_refresh: false,
+        };
+        let result = fan_out_trailers(&engine, &["fake-p1".to_string(), "fake-p2".to_string()], req).await;
+        assert!(result.is_ok());
+        // First-wins: should be fake-p1's URL
+        assert_eq!(result.unwrap().trailers[0].url, "https://youtube.com/trailer1");
+    }
+
+    #[tokio::test]
+    async fn fan_out_box_office_all_fail_returns_err() {
+        use test_dispatch::PluginDispatch;
+        use std::collections::HashMap;
+
+        let mut box_office = HashMap::new();
+        box_office.insert("fake-p1".to_string(), Err::<BoxOfficeResponse, String>("upstream error".into()));
+        box_office.insert("fake-p2".to_string(), Err("another error".into()));
+
+        let engine = PluginDispatch::new(HashMap::new(), box_office, HashMap::new(), HashMap::new());
+        let req = BoxOfficeRequest {
+            id: "tt1".into(),
+            id_source: "imdb".into(),
+            kind: EntryKind::Movie,
+            force_refresh: false,
+        };
+        let result = fan_out_box_office(&engine, &["fake-p1".to_string(), "fake-p2".to_string()], req).await;
+        assert!(result.is_err());
+    }
+
+    // ── fan_out_keywords tests ────────────────────────────────────────────────
+
+    fn kw_req() -> KeywordsRequest {
+        KeywordsRequest { id: "tt1".into(), id_source: "imdb".into(), kind: EntryKind::Movie, force_refresh: false }
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_dedups_case_insensitively() {
+        use test_dispatch::{PluginDispatch, keywords_resp};
+        use std::collections::HashMap;
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), keywords_resp(&["Thriller", "Drama"]));
+        kw.insert("fake-p2".to_string(), keywords_resp(&["thriller", "Horror"])); // "thriller" is dup
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await.unwrap();
+        let names: Vec<_> = result.keywords.iter().map(|k| k.name.to_lowercase()).collect();
+        // Should have thriller, drama, horror — not two "thriller"s
+        assert_eq!(result.keywords.len(), 3);
+        assert!(names.contains(&"thriller".to_string()));
+        assert!(names.contains(&"drama".to_string()));
+        assert!(names.contains(&"horror".to_string()));
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_round_robin_lets_late_providers_contribute() {
+        // Plugin A returns 250 keywords (more than cap alone); Plugin B returns ["independent film"].
+        // Round-robin ensures "independent film" gets a slot before cap is hit.
+        use test_dispatch::{PluginDispatch, keywords_resp};
+        use std::collections::HashMap;
+
+        let many: Vec<String> = (0..250).map(|i| format!("keyword_{i}")).collect();
+        let many_refs: Vec<&str> = many.iter().map(|s| s.as_str()).collect();
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), keywords_resp(&many_refs));
+        kw.insert("fake-p2".to_string(), keywords_resp(&["independent film"]));
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await.unwrap();
+        assert_eq!(result.keywords.len(), MAX_MERGED_KEYWORDS);
+        let names: Vec<_> = result.keywords.iter().map(|k| k.name.as_str()).collect();
+        assert!(names.contains(&"independent film"), "independent film should be present due to round-robin");
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_caps_at_max() {
+        use test_dispatch::{PluginDispatch, keywords_resp};
+        use std::collections::HashMap;
+
+        let many: Vec<String> = (0..300).map(|i| format!("kw_{i}")).collect();
+        let many_refs: Vec<&str> = many.iter().map(|s| s.as_str()).collect();
+        let many2: Vec<String> = (300..600).map(|i| format!("kw_{i}")).collect();
+        let many2_refs: Vec<&str> = many2.iter().map(|s| s.as_str()).collect();
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), keywords_resp(&many_refs));
+        kw.insert("fake-p2".to_string(), keywords_resp(&many2_refs));
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await.unwrap();
+        assert_eq!(result.keywords.len(), MAX_MERGED_KEYWORDS);
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_partial_failure_returns_partial() {
+        // Plugin A errors, plugin B succeeds → Ok with B's keywords.
+        use test_dispatch::{PluginDispatch, keywords_resp};
+        use std::collections::HashMap;
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), Err("upstream failed".into()));
+        kw.insert("fake-p2".to_string(), keywords_resp(&["sci-fi", "space"]));
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await;
+        assert!(result.is_ok());
+        let keywords = result.unwrap().keywords;
+        let names: Vec<_> = keywords.iter().map(|k| k.name.as_str()).collect();
+        assert!(names.contains(&"sci-fi"));
+        assert!(names.contains(&"space"));
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_all_failed_returns_err() {
+        use test_dispatch::PluginDispatch;
+        use std::collections::HashMap;
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), Err::<KeywordsResponse, String>("fail1".into()));
+        kw.insert("fake-p2".to_string(), Err("fail2".into()));
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("all 2 keyword providers failed"));
+    }
+
+    #[tokio::test]
+    async fn keywords_merge_provider_field_stamped() {
+        use test_dispatch::{PluginDispatch, keywords_resp};
+        use std::collections::HashMap;
+
+        let mut kw = HashMap::new();
+        kw.insert("fake-p1".to_string(), keywords_resp(&["action"]));
+        kw.insert("fake-p2".to_string(), keywords_resp(&["comedy"]));
+
+        let engine = PluginDispatch::new(HashMap::new(), HashMap::new(), kw, HashMap::new());
+        let result = fan_out_keywords(&engine, vec!["fake-p1".to_string(), "fake-p2".to_string()], kw_req()).await.unwrap();
+        for kw in &result.keywords {
+            assert!(kw.provider.is_some(), "every keyword must have provider stamped; name={}", kw.name);
+        }
+        let action = result.keywords.iter().find(|k| k.name == "action").unwrap();
+        assert_eq!(action.provider.as_deref(), Some("fake-p1"));
+        let comedy = result.keywords.iter().find(|k| k.name == "comedy").unwrap();
+        assert_eq!(comedy.provider.as_deref(), Some("fake-p2"));
     }
 }

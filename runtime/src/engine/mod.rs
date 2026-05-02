@@ -893,6 +893,30 @@ impl Engine {
             .collect()
     }
 
+    /// Enumerate names of currently loaded plugins that declare a
+    /// non-stub `bulk_enrich` capability for the given kind.
+    pub async fn bulk_enrich_plugins_for_kind(
+        &self,
+        kind: stui_plugin_sdk::EntryKind,
+    ) -> Vec<String> {
+        use stui_plugin_sdk::CatalogCapability;
+        let reg = self.registry.read().await;
+        reg.all()
+            .filter(|p| p.enabled)
+            .filter_map(|p| {
+                let CatalogCapability::Typed { kinds, bulk_enrich, .. } =
+                    &p.manifest.capabilities.catalog
+                else {
+                    return None;
+                };
+                if !kinds.contains(&kind) { return None; }
+                let cfg = bulk_enrich.as_ref()?;
+                if !cfg.is_enabled() || cfg.is_stub() { return None; }
+                Some(p.manifest.plugin.name.clone())
+            })
+            .collect()
+    }
+
     /// Call a single WASM plugin's `get_artwork` verb via its supervisor.
     ///
     /// Returns the full [`crate::abi::types::ArtworkResponse`]; callers decide
@@ -936,6 +960,84 @@ impl Engine {
     ) -> Result<Vec<crate::abi::types::PluginEntry>, PluginCallError> {
         self.call_plugin_verb(plugin_id, prio, |sup| async move {
             sup.related(&req).await.map(|resp| resp.items)
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_get_trailers` export via its supervisor.
+    pub async fn supervisor_get_trailers(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::TrailersRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::TrailersResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.get_trailers(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_get_release_info` export via its supervisor.
+    pub async fn supervisor_get_release_info(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::ReleaseInfoRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::ReleaseInfoResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.get_release_info(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_get_keywords` export via its supervisor.
+    pub async fn supervisor_get_keywords(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::KeywordsRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::KeywordsResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.get_keywords(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_get_box_office` export via its supervisor.
+    pub async fn supervisor_get_box_office(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::BoxOfficeRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::BoxOfficeResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.get_box_office(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_get_alternative_titles` export via its supervisor.
+    pub async fn supervisor_get_alternative_titles(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::AlternativeTitlesRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::AlternativeTitlesResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.get_alternative_titles(&req).await
+        })
+        .await
+    }
+
+    /// Call a single WASM plugin's `stui_bulk_enrich` export via its supervisor.
+    pub async fn supervisor_bulk_enrich(
+        &self,
+        plugin_id: &str,
+        req: stui_plugin_sdk::BulkEnrichRequest,
+        prio: CallPriority,
+    ) -> Result<stui_plugin_sdk::BulkEnrichResponse, PluginCallError> {
+        self.call_plugin_verb(plugin_id, prio, |sup| async move {
+            sup.bulk_enrich(&req).await
         })
         .await
     }
@@ -2445,6 +2547,7 @@ mod supervisor_search_tests {
             id_source: "imdb".into(),
             kind:      stui_plugin_sdk::EntryKind::Track,
             locale:    None,
+            force_refresh: false,
         };
         let result = engine.supervisor_lookup("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -2464,6 +2567,7 @@ mod supervisor_search_tests {
         let req = crate::abi::types::EnrichRequest {
             partial:          crate::abi::types::PluginEntry::default(),
             prefer_id_source: None,
+            force_refresh:    false,
         };
         let result = engine.supervisor_enrich("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -2478,10 +2582,11 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::ArtworkRequest {
-            id:        "e1".into(),
-            id_source: "tmdb".into(),
-            kind:      stui_plugin_sdk::EntryKind::Album,
-            size:      crate::abi::types::ArtworkSize::Any,
+            id:            "e1".into(),
+            id_source:     "tmdb".into(),
+            kind:          stui_plugin_sdk::EntryKind::Album,
+            size:          crate::abi::types::ArtworkSize::Any,
+            force_refresh: false,
         };
         let result = engine.supervisor_get_artwork("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -2496,9 +2601,10 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::CreditsRequest {
-            id:        "e1".into(),
-            id_source: "tmdb".into(),
-            kind:      stui_plugin_sdk::EntryKind::Movie,
+            id:            "e1".into(),
+            id_source:     "tmdb".into(),
+            kind:          stui_plugin_sdk::EntryKind::Movie,
+            force_refresh: false,
         };
         let result = engine.supervisor_get_credits("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -2513,11 +2619,12 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::RelatedRequest {
-            id:        "e1".into(),
-            id_source: "tmdb".into(),
-            kind:      stui_plugin_sdk::EntryKind::Track,
-            relation:  crate::abi::types::RelationKind::Any,
-            limit:     10,
+            id:            "e1".into(),
+            id_source:     "tmdb".into(),
+            kind:          stui_plugin_sdk::EntryKind::Track,
+            relation:      crate::abi::types::RelationKind::Any,
+            limit:         10,
+            force_refresh: false,
         };
         let result = engine.supervisor_related("no-such-plugin", req, CallPriority::Foreground).await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
@@ -2541,12 +2648,14 @@ mod supervisor_search_tests {
             e.supervisor_lookup("p", LookupRequest {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track, locale: None,
+                force_refresh: false,
             }, CallPriority::Foreground)
         }
         fn _enrich(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
             e.supervisor_enrich("p", EnrichRequest {
                 partial: PluginEntry::default(),
                 prefer_id_source: None,
+                force_refresh: false,
             }, CallPriority::Foreground)
         }
         fn _artwork(e: &Engine) -> impl Future<Output = Result<ArtworkResponse, PluginCallError>> + '_ {
@@ -2554,12 +2663,14 @@ mod supervisor_search_tests {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track,
                 size: ArtworkSize::Any,
+                force_refresh: false,
             }, CallPriority::Foreground)
         }
         fn _credits(e: &Engine) -> impl Future<Output = Result<CreditsResponse, PluginCallError>> + '_ {
             e.supervisor_get_credits("p", CreditsRequest {
                 id: "".into(), id_source: "".into(),
                 kind: stui_plugin_sdk::EntryKind::Track,
+                force_refresh: false,
             }, CallPriority::Foreground)
         }
         fn _related(e: &Engine) -> impl Future<Output = Result<Vec<PluginEntry>, PluginCallError>> + '_ {
@@ -2568,6 +2679,7 @@ mod supervisor_search_tests {
                 kind: stui_plugin_sdk::EntryKind::Track,
                 relation: RelationKind::Any,
                 limit: 10,
+                force_refresh: false,
             }, CallPriority::Foreground)
         }
     }

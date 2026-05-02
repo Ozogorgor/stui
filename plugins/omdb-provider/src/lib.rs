@@ -278,6 +278,7 @@ impl CatalogPlugin for OmdbPlugin {
                 id_source: id_sources::IMDB.to_string(),
                 kind: req.partial.kind,
                 locale: None,
+                force_refresh: false,
             };
             return match self.lookup(lookup_req) {
                 PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {

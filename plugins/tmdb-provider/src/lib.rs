@@ -747,6 +747,7 @@ impl CatalogPlugin for TmdbPlugin {
                 id_source: id_sources::TMDB.to_string(),
                 kind: req.partial.kind,
                 locale: None,
+                force_refresh: false,
             };
             return match self.lookup(lookup_req) {
                 PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
@@ -770,6 +771,7 @@ impl CatalogPlugin for TmdbPlugin {
                 id_source: id_sources::IMDB.to_string(),
                 kind: req.partial.kind,
                 locale: None,
+                force_refresh: false,
             };
             return match self.lookup(lookup_req) {
                 PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
@@ -854,6 +856,7 @@ impl CatalogPlugin for TmdbPlugin {
                     id_source: id_sources::TMDB.to_string(),
                     kind: req.partial.kind,
                     locale: None,
+                    force_refresh: false,
                 };
                 match self.lookup(lookup_req) {
                     PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
@@ -1299,6 +1302,7 @@ mod tests {
             release_date: Some("1985-06-01".into()),
             genre_ids: vec![18, 36],
             vote_average: 8.3,
+            vote_count: 0,
             overview: Some("desc".into()),
             poster_path: Some("/abc.jpg".into()),
             original_language: Some("ja".into()),
@@ -1322,8 +1326,10 @@ mod tests {
             first_air_date: Some("2011-04-17".into()),
             genre_ids: vec![10765],
             vote_average: 9.1,
+            vote_count: 0,
             overview: Some("desc".into()),
             poster_path: Some("/g.jpg".into()),
+            original_language: None,
         };
         let e = t.into_entry(EntryKind::Series);
         assert_eq!(e.id, "1399");
@@ -1399,6 +1405,7 @@ mod tests {
             release_date: Some("2005-04-28".into()),
             genres: vec![Genre { id: 35, name: "Comedy".into() }],
             vote_average: 6.8,
+            vote_count: 0,
             overview: None,
             poster_path: None,
             runtime: Some(109),
@@ -1407,6 +1414,9 @@ mod tests {
                 imdb_id: Some("tt0371724".into()),
                 tvdb_id: None,
             }),
+            images: None,
+            credits: None,
+            recommendations: None,
         };
         let e = d.into_entry();
         assert_eq!(e.external_ids.get("imdb").map(String::as_str), Some("tt0371724"));

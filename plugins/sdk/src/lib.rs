@@ -79,6 +79,12 @@ pub use capabilities::{
     RelatedRequest, RelatedResponse, RelationKind,
     err_not_implemented, normalize_crew_role,
     validate_manifest,
+    TrailersRequest, TrailersResponse, Trailer, TrailerKind,
+    ReleaseInfoRequest, ReleaseInfoResponse, ReleaseEntry, ReleaseKind,
+    KeywordsRequest, KeywordsResponse, Keyword,
+    BoxOfficeRequest, BoxOfficeResponse, MoneyAmount,
+    AlternativeTitlesRequest, AlternativeTitlesResponse, AlternativeTitle,
+    BulkEnrichRequest, BulkEnrichResponse, BulkEnrichEntry,
 };
 
 pub mod error_codes {
@@ -99,7 +105,7 @@ pub mod error_codes {
 
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
 
-pub const STUI_ABI_VERSION: i32 = 1;
+pub const STUI_ABI_VERSION: i32 = 2;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -172,6 +178,35 @@ pub struct PluginEntry {
     /// filters but not required for the anime quota to work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_language: Option<String>,
+
+    /// Title in the work's original language. The headline `title`
+    /// field carries the localized title (e.g. "Spirited Away");
+    /// `original_title` carries the original-language form ("千と千尋の神隠し").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_title: Option<String>,
+
+    /// Single canonical content-rating certificate (e.g. "PG-13", "R",
+    /// "TV-MA"). For per-country certificates, see the dedicated
+    /// `get_release_info` verb. Pair with `certificate_country` so
+    /// consumers know whether "15" means BBFC vs MPAA.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<String>,
+
+    /// ISO 3166-1 α2 country code that the `certificate` belongs to
+    /// (e.g. "US" for MPAA, "GB" for BBFC). Required to disambiguate
+    /// numeric/letter certificates that overlap across rating bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_country: Option<String>,
+
+    /// All spoken/produced languages of the work, ISO 639-1 codes.
+    /// `original_language` (above) is the primary; `languages`
+    /// captures the broader set for co-productions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+
+    /// Countries of production, ISO 3166-1 α2.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub countries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +229,7 @@ pub struct PluginError {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PluginResult<T> {
     Ok(T),
@@ -285,6 +320,60 @@ pub trait CatalogPlugin: Plugin {
         { err_not_implemented() }
     fn related(&self, _req: RelatedRequest) -> PluginResult<RelatedResponse>
         { err_not_implemented() }
+
+    // ── New in ABI v2 ──
+    fn get_trailers(&self, _req: TrailersRequest) -> PluginResult<TrailersResponse> {
+        err_not_implemented()
+    }
+    fn get_release_info(&self, _req: ReleaseInfoRequest) -> PluginResult<ReleaseInfoResponse> {
+        err_not_implemented()
+    }
+    fn get_keywords(&self, _req: KeywordsRequest) -> PluginResult<KeywordsResponse> {
+        err_not_implemented()
+    }
+    fn get_box_office(&self, _req: BoxOfficeRequest) -> PluginResult<BoxOfficeResponse> {
+        err_not_implemented()
+    }
+    fn get_alternative_titles(&self, _req: AlternativeTitlesRequest) -> PluginResult<AlternativeTitlesResponse> {
+        err_not_implemented()
+    }
+
+    /// Enrich a batch of partial entries in one call. Default impl
+    /// loops over `enrich()` per partial — slow-path fallback for
+    /// plugins that don't natively support batching. Plugins that
+    /// expose a bulk upstream endpoint (e.g. an HTTP `/movies/batch`)
+    /// SHOULD override this and declare `bulk_enrich` in their
+    /// manifest's `[capabilities.catalog]` so the runtime routes
+    /// catalog-grid enrichment via one call instead of N.
+    ///
+    /// The default impl collapses to top-level `Err(NOT_IMPLEMENTED)`
+    /// when every input entry returned NOT_IMPLEMENTED — saves the
+    /// runtime from re-issuing futile per-entry calls. Empty input
+    /// returns `Ok(empty)`, NOT NOT_IMPLEMENTED (the plugin
+    /// "succeeded" at processing zero rows).
+    fn bulk_enrich(&self, req: BulkEnrichRequest) -> PluginResult<BulkEnrichResponse> {
+        let mut entries = Vec::with_capacity(req.partials.len());
+        let mut all_not_implemented = !req.partials.is_empty();
+        for partial in req.partials {
+            let id = partial.imdb_id.clone()
+                .unwrap_or_else(|| partial.id.clone());
+            let result = self.enrich(EnrichRequest {
+                partial,
+                prefer_id_source: req.prefer_id_source.clone(),
+                force_refresh: req.force_refresh,
+            });
+            if !matches!(&result,
+                PluginResult::Err(e) if e.code == error_codes::NOT_IMPLEMENTED)
+            {
+                all_not_implemented = false;
+            }
+            entries.push(BulkEnrichEntry { id, result });
+        }
+        if all_not_implemented {
+            return err_not_implemented();
+        }
+        PluginResult::ok(BulkEnrichResponse { entries })
+    }
 }
 
 // ── Host function imports (called by plugin at runtime) ───────────────────────
@@ -305,6 +394,7 @@ extern "C" {
     pub fn stui_auth_allocate_port() -> i32;
     pub fn stui_auth_open_and_wait(url_ptr: *const u8, url_len: i32, timeout_ms: i32) -> i64;
     pub fn stui_exec(cmd_ptr: *const u8, cmd_len: i32, timeout_ms: i32) -> i64;
+    pub fn stui_now_unix() -> i64;
 }
 
 /// Log a message at the given level through the host logger.
@@ -483,11 +573,13 @@ pub fn http_get(url: &str) -> Result<String, String> {
 /// NOT clear fixtures (so fluent builders in test helpers work as
 /// expected).
 pub mod testing {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
 
     thread_local! {
         static FIXTURES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+        static CACHE: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+        static HTTP_CALL_COUNT: Cell<u32> = Cell::new(0);
     }
 
     /// Handle for registering canned HTTP responses. See module doc.
@@ -516,18 +608,55 @@ pub mod testing {
             self
         }
 
-        /// Clear every registered fixture on the current thread. Intended
-        /// for test tear-down; omit if your tests run on fresh threads or
-        /// only register once per case.
+        /// Pre-populate a cache entry accessible via [`crate::cache_get`] /
+        /// [`crate::cache_set`] on non-WASM test paths.
+        /// Returns `self` so calls can be chained.
+        pub fn with_cache_value(
+            self,
+            key: impl Into<String>,
+            value: impl Into<String>,
+        ) -> Self {
+            CACHE.with(|m| {
+                m.borrow_mut().insert(key.into(), value.into());
+            });
+            self
+        }
+
+        /// Return the number of `http_get` calls made since the last
+        /// [`MockHost::reset`] on this thread.
+        pub fn http_call_count() -> u32 {
+            HTTP_CALL_COUNT.with(|c| c.get())
+        }
+
+        /// Clear every registered fixture, cache entry, and counter on the
+        /// current thread. Intended for test tear-down.
         pub fn reset() {
             FIXTURES.with(|m| m.borrow_mut().clear());
+            CACHE.with(|m| m.borrow_mut().clear());
+            HTTP_CALL_COUNT.with(|c| c.set(0));
         }
     }
 
     /// Internal hook: [`crate::http_get`] on non-WASM targets consults
     /// this to resolve fixtures before returning its "no live host" error.
+    /// Also increments the HTTP call counter.
     pub(crate) fn try_fixture(url: &str) -> Option<String> {
+        HTTP_CALL_COUNT.with(|c| c.set(c.get() + 1));
         FIXTURES.with(|m| m.borrow().get(url).cloned())
+    }
+
+    /// Internal hook: [`crate::cache_get`] on non-WASM targets reads from
+    /// the thread-local cache populated by [`MockHost::with_cache_value`].
+    pub(crate) fn try_cache_get(key: &str) -> Option<String> {
+        CACHE.with(|m| m.borrow().get(key).cloned())
+    }
+
+    /// Internal hook: [`crate::cache_set`] on non-WASM targets writes into
+    /// the thread-local cache so values survive within the same test.
+    pub(crate) fn do_cache_set(key: &str, value: &str) {
+        CACHE.with(|m| {
+            m.borrow_mut().insert(key.to_string(), value.to_string());
+        });
     }
 }
 
@@ -569,6 +698,63 @@ mod mockhost_tests {
         assert!(http_get("https://x").is_ok());
         MockHost::reset();
         assert!(http_get("https://x").is_err());
+    }
+
+    #[test]
+    fn mock_host_cache_value_round_trips() {
+        MockHost::reset();
+        let _h = MockHost::new().with_cache_value("k1", "v1");
+        assert_eq!(crate::cache_get("k1"), Some("v1".to_string()));
+        crate::cache_set("k1", "v2");
+        assert_eq!(crate::cache_get("k1"), Some("v2".to_string()));
+    }
+
+    #[test]
+    fn mock_host_http_call_count_increments() {
+        MockHost::reset();
+        let _h = MockHost::new().with_fixture_response("https://example.com/x", "{}");
+        assert_eq!(MockHost::http_call_count(), 0);
+        let _ = http_get("https://example.com/x");
+        assert_eq!(MockHost::http_call_count(), 1);
+        let _ = http_get("https://example.com/x");
+        assert_eq!(MockHost::http_call_count(), 2);
+    }
+
+    #[test]
+    fn mock_host_http_request_returns_fixture_with_status_200() {
+        MockHost::reset();
+        let _h = MockHost::new().with_fixture_response(
+            "https://example.com/x", r#"{"k":"v"}"#);
+        let resp = super::http_request(super::HttpRequest {
+            method: "POST".into(),
+            url: "https://example.com/x".into(),
+            headers: vec![("X-Test".into(), "1".into())],
+            body: Some(r#"{"in":1}"#.into()),
+        }).unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body, r#"{"k":"v"}"#);
+    }
+
+    #[test]
+    fn mock_host_http_request_no_fixture_returns_error() {
+        MockHost::reset();
+        let err = super::http_request(super::HttpRequest {
+            method: "GET".into(),
+            url: "https://nope/x".into(),
+            headers: vec![],
+            body: None,
+        }).unwrap_err();
+        assert!(err.contains("http_request only available in WASM context"),
+                "expected wasm-context error, got: {err}");
+    }
+
+    #[test]
+    fn mock_host_http_post_json_returns_fixture() {
+        MockHost::reset();
+        let _h = MockHost::new().with_fixture_response(
+            "https://example.com/x", "ok-body");
+        let body = super::http_post_json("https://example.com/x", r#"{"in":1}"#).unwrap();
+        assert_eq!(body, "ok-body");
     }
 }
 
@@ -618,6 +804,9 @@ pub fn http_post_json(url: &str, body: &str) -> Result<String, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = payload;
+        if let Some(body) = crate::testing::try_fixture(url) {
+            return Ok(body);
+        }
         Err(format!(
             "http_post only available in WASM context (url: {url})"
         ))
@@ -641,7 +830,7 @@ pub fn cache_get(key: &str) -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = key;
-        None
+        crate::testing::try_cache_get(key)
     }
 }
 
@@ -659,10 +848,29 @@ pub fn cache_set(key: &str, value: &str) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        eprintln!(
-            "[stui-plugin cache_set] key={key} value_len={}",
-            value.len()
-        );
+        crate::testing::do_cache_set(key, value);
+    }
+}
+
+/// Wall-clock seconds since Unix epoch.
+///
+/// Backed by the host's `stui_now_unix` import on wasm32; falls back
+/// to `SystemTime::now()` on non-wasm test paths so unit tests run
+/// without a host runtime.
+///
+/// Used by plugin-side TTL caches (e.g. xmdb's `/movies/{id}`
+/// payload cache).
+#[inline]
+pub fn now_unix() -> i64 {
+    #[cfg(target_arch = "wasm32")]
+    unsafe { stui_now_unix() }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
     }
 }
 
@@ -753,6 +961,136 @@ pub fn auth_open_and_wait(url: &str, timeout_ms: u32) -> Result<OAuthCallback, S
     {
         let _ = (url, timeout_ms);
         Err("auth_open_and_wait only available in WASM context".into())
+    }
+}
+
+// ── http_request: full-headers HTTP primitive ────────────────────────────────
+
+/// Request payload for [`http_request`]. Use any HTTP method, attach
+/// arbitrary headers, optionally send a body. Method is matched
+/// case-insensitively (`"POST"`, `"post"`, etc.).
+#[derive(Debug, Clone, Default)]
+pub struct HttpRequest {
+    pub method: String,
+    pub url: String,
+    /// `(name, value)` pairs. Names are sent verbatim.
+    pub headers: Vec<(String, String)>,
+    /// Body payload — sent as-is. The host does NOT set a default
+    /// `Content-Type`; callers that send form bodies / JSON bodies should
+    /// add their own header.
+    pub body: Option<String>,
+}
+
+/// Response from [`http_request`]. Unlike the convenience wrappers
+/// (`http_get` / `http_post_json`), this surfaces response headers back
+/// to the plugin — required for session cookies (`Set-Cookie`), redirect
+/// chains (`Location`), ETag-driven caches.
+///
+/// Header names arrive lowercased (HTTP/2 convention preserved by
+/// reqwest); values are forwarded verbatim. Each header arrives as a
+/// separate entry — use [`HttpFullResponse::header`] / [`headers_all`]
+/// to look up a name (case-insensitive). Multi-value headers
+/// (e.g. multiple `Set-Cookie` lines) appear as multiple entries with
+/// the same name.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct HttpFullResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub body: String,
+}
+
+impl HttpFullResponse {
+    /// First header value matching `name` (case-insensitive), or `None`.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// All header values matching `name` (case-insensitive). Useful for
+    /// `Set-Cookie`, which legitimately appears multiple times.
+    pub fn headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.headers
+            .iter()
+            .filter(move |(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.status >= 200 && self.status < 300
+    }
+}
+
+/// General-purpose HTTP primitive: arbitrary method, request headers,
+/// response headers, status, body. Use this when one of the convenience
+/// wrappers doesn't fit — most commonly:
+///
+/// * Capturing `Set-Cookie` from a login POST (session-auth scrapers)
+/// * Reading `Location` from a 302 to detect login-page redirects
+///   (session-expiry detection)
+/// * Conditional GET via `If-None-Match` / `Etag`
+/// * Form-encoded POSTs that don't fit `http_post_form`'s shape
+///
+/// Redirects are NOT followed automatically — you see the 3xx response
+/// and decide what to do. This is intentional: a `302 → /login` is the
+/// signal a session-auth plugin uses to detect cookie expiry, and
+/// auto-following swallows it.
+///
+/// Sandbox rules apply: the URL host must be in the plugin manifest's
+/// `permissions.network` allowlist.
+pub fn http_request(req: HttpRequest) -> Result<HttpFullResponse, String> {
+    // Build a serde_json::Value so headers serialise as a flat
+    // {"k":"v"} map (matching the host's expected payload), not as
+    // a Vec<(String, String)>.
+    let headers_obj: serde_json::Map<String, serde_json::Value> = req
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+        .collect();
+    let payload_val = serde_json::json!({
+        "method":  req.method,
+        "url":     req.url,
+        "headers": headers_obj,
+        "body":    req.body,
+    });
+    let payload = payload_val.to_string();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[link(wasm_import_module = "stui")]
+        extern "C" {
+            fn stui_http_request(ptr: *const u8, len: i32) -> i64;
+        }
+        let packed = unsafe { stui_http_request(payload.as_ptr(), payload.len() as i32) };
+        if packed == 0 {
+            return Err("http_request returned null".into());
+        }
+        let ptr = ((packed >> 32) & 0xFFFFFFFF) as *const u8;
+        let len = (packed & 0xFFFFFFFF) as usize;
+        let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
+            .map_err(|e| e.to_string())?;
+        let resp: HttpFullResponse =
+            serde_json::from_str(json).map_err(|e| e.to_string())?;
+        Ok(resp)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = payload;
+        // Test path: consult MockHost fixtures.
+        if let Some(body) = crate::testing::try_fixture(&req.url) {
+            return Ok(HttpFullResponse {
+                status: 200,
+                headers: Vec::new(),
+                body,
+            });
+        }
+        Err(format!(
+            "http_request only available in WASM context (url: {})",
+            req.url,
+        ))
     }
 }
 
@@ -1009,6 +1347,60 @@ macro_rules! stui_export_plugin {
             resp_ty  = $crate::RelatedResponse,
         }
 
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_trailers,
+            method   = get_trailers,
+            req_ty   = $crate::TrailersRequest,
+            resp_ty  = $crate::TrailersResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_release_info,
+            method   = get_release_info,
+            req_ty   = $crate::ReleaseInfoRequest,
+            resp_ty  = $crate::ReleaseInfoResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_keywords,
+            method   = get_keywords,
+            req_ty   = $crate::KeywordsRequest,
+            resp_ty  = $crate::KeywordsResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_box_office,
+            method   = get_box_office,
+            req_ty   = $crate::BoxOfficeRequest,
+            resp_ty  = $crate::BoxOfficeResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_alternative_titles,
+            method   = get_alternative_titles,
+            req_ty   = $crate::AlternativeTitlesRequest,
+            resp_ty  = $crate::AlternativeTitlesResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_bulk_enrich,
+            method   = bulk_enrich,
+            req_ty   = $crate::BulkEnrichRequest,
+            resp_ty  = $crate::BulkEnrichResponse,
+        }
+
         // ── Legacy StuiPlugin resolve export (untouched) ──────────────────────
 
         /// Resolve entry point. Input: ResolveRequest JSON. Output: packed (ptr<<32)|len.
@@ -1187,6 +1579,60 @@ macro_rules! stui_export_catalog_plugin {
             method   = related,
             req_ty   = $crate::RelatedRequest,
             resp_ty  = $crate::RelatedResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_trailers,
+            method   = get_trailers,
+            req_ty   = $crate::TrailersRequest,
+            resp_ty  = $crate::TrailersResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_release_info,
+            method   = get_release_info,
+            req_ty   = $crate::ReleaseInfoRequest,
+            resp_ty  = $crate::ReleaseInfoResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_keywords,
+            method   = get_keywords,
+            req_ty   = $crate::KeywordsRequest,
+            resp_ty  = $crate::KeywordsResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_box_office,
+            method   = get_box_office,
+            req_ty   = $crate::BoxOfficeRequest,
+            resp_ty  = $crate::BoxOfficeResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_get_alternative_titles,
+            method   = get_alternative_titles,
+            req_ty   = $crate::AlternativeTitlesRequest,
+            resp_ty  = $crate::AlternativeTitlesResponse,
+        }
+
+        $crate::__catalog_abi_fn! {
+            plugin   = $plugin_ty,
+            getter   = get_plugin,
+            fn_name  = stui_bulk_enrich,
+            method   = bulk_enrich,
+            req_ty   = $crate::BulkEnrichRequest,
+            resp_ty  = $crate::BulkEnrichResponse,
         }
 
         // Note: stui_resolve is intentionally absent — catalog-only plugins do not
@@ -1440,6 +1886,234 @@ mod tests {
         assert!(s.contains("\"external_ids\""));
         assert!(s.contains("tt1234567"));
         assert!(s.contains("uuid-1"));
+    }
+
+    #[test]
+    fn plugin_entry_group_x_fields_round_trip() {
+        let mut e = PluginEntry::default();
+        e.title = "Shawshank".into();
+        e.original_title = Some("The Shawshank Redemption".into());
+        e.certificate = Some("R".into());
+        e.certificate_country = Some("US".into());
+        e.languages = vec!["en".into()];
+        e.countries = vec!["US".into()];
+        let s = serde_json::to_string(&e).unwrap();
+        let back: PluginEntry = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.original_title.as_deref(), Some("The Shawshank Redemption"));
+        assert_eq!(back.certificate_country.as_deref(), Some("US"));
+        assert_eq!(back.languages, vec!["en".to_string()]);
+        assert_eq!(back.countries, vec!["US".to_string()]);
+    }
+
+    #[test]
+    fn plugin_entry_group_x_omitted_when_unset() {
+        let e = PluginEntry::default();
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(!s.contains("original_title"));
+        assert!(!s.contains("certificate"));
+        assert!(!s.contains("languages"));
+        assert!(!s.contains("countries"));
+    }
+
+    #[test]
+    fn abi_version_is_v2() {
+        assert_eq!(STUI_ABI_VERSION, 2);
+    }
+
+    #[test]
+    fn now_unix_returns_recent_value() {
+        let n = now_unix();
+        let host_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!((n - host_now).abs() < 5, "now_unix drift > 5s: {n} vs {host_now}");
+        assert!(n > 1_700_000_000, "now_unix returned suspiciously small value: {n}");
+    }
+
+    #[test]
+    fn default_bulk_enrich_loops_over_enrich() {
+        use crate::error_codes;
+
+        struct StubPlugin;
+        impl Plugin for StubPlugin {
+            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+        }
+        impl CatalogPlugin for StubPlugin {
+            fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
+                err_not_implemented()
+            }
+            fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
+                PluginResult::ok(EnrichResponse {
+                    entry: req.partial,
+                    confidence: 0.5,
+                })
+            }
+        }
+
+        let p = StubPlugin;
+        let req = BulkEnrichRequest {
+            partials: vec![
+                PluginEntry { id: "a".into(), kind: EntryKind::Movie,
+                              imdb_id: Some("tt1".into()), ..Default::default() },
+                PluginEntry { id: "b".into(), kind: EntryKind::Movie,
+                              imdb_id: Some("tt2".into()), ..Default::default() },
+            ],
+            prefer_id_source: None,
+            force_refresh: false,
+        };
+        let resp = match p.bulk_enrich(req) {
+            PluginResult::Ok(r) => r,
+            PluginResult::Err(e) => panic!("expected Ok, got Err {} {}", e.code, e.message),
+        };
+        assert_eq!(resp.entries.len(), 2);
+        assert_eq!(resp.entries[0].id, "tt1");
+        assert_eq!(resp.entries[1].id, "tt2");
+        match &resp.entries[0].result {
+            PluginResult::Ok(r) => assert!((r.confidence - 0.5).abs() < f32::EPSILON),
+            _ => panic!("entry 0 should be Ok"),
+        }
+        let _ = error_codes::NOT_IMPLEMENTED;
+    }
+
+    #[test]
+    fn default_bulk_enrich_collapses_all_not_implemented_to_top_level_err() {
+        use crate::error_codes;
+
+        struct StubPlugin;
+        impl Plugin for StubPlugin {
+            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+        }
+        impl CatalogPlugin for StubPlugin {
+            fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
+                err_not_implemented()
+            }
+        }
+
+        let p = StubPlugin;
+        let req = BulkEnrichRequest {
+            partials: vec![
+                PluginEntry { id: "a".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry { id: "b".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry { id: "c".into(), kind: EntryKind::Movie, ..Default::default() },
+            ],
+            prefer_id_source: None,
+            force_refresh: false,
+        };
+        match p.bulk_enrich(req) {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::NOT_IMPLEMENTED),
+            PluginResult::Ok(_) => panic!("all-NOT_IMPLEMENTED should collapse to top-level Err"),
+        }
+    }
+
+    #[test]
+    fn default_bulk_enrich_does_not_collapse_partial_failure() {
+        use crate::error_codes;
+
+        struct StubPlugin;
+        impl Plugin for StubPlugin {
+            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+        }
+        impl CatalogPlugin for StubPlugin {
+            fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
+                err_not_implemented()
+            }
+            fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
+                match req.partial.id.as_str() {
+                    "a" => PluginResult::ok(EnrichResponse {
+                        entry: req.partial, confidence: 1.0,
+                    }),
+                    "b" => err_not_implemented(),
+                    _   => PluginResult::err(error_codes::TRANSIENT, "boom"),
+                }
+            }
+        }
+
+        let p = StubPlugin;
+        let req = BulkEnrichRequest {
+            partials: vec![
+                PluginEntry { id: "a".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry { id: "b".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry { id: "c".into(), kind: EntryKind::Movie, ..Default::default() },
+            ],
+            prefer_id_source: None,
+            force_refresh: false,
+        };
+        let resp = match p.bulk_enrich(req) {
+            PluginResult::Ok(r) => r,
+            PluginResult::Err(e) => panic!("partial-success should be top-level Ok, got Err {}: {}", e.code, e.message),
+        };
+        assert_eq!(resp.entries.len(), 3);
+        assert!(matches!(resp.entries[0].result, PluginResult::Ok(_)));
+        match &resp.entries[1].result {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::NOT_IMPLEMENTED),
+            _ => panic!("entry 1 should be NOT_IMPLEMENTED Err"),
+        }
+        match &resp.entries[2].result {
+            PluginResult::Err(e) => assert_eq!(e.code, error_codes::TRANSIENT),
+            _ => panic!("entry 2 should be TRANSIENT Err"),
+        }
+    }
+
+    #[test]
+    fn default_bulk_enrich_empty_input_returns_ok_empty() {
+        struct StubPlugin;
+        impl Plugin for StubPlugin {
+            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+        }
+        impl CatalogPlugin for StubPlugin {
+            fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
+                err_not_implemented()
+            }
+        }
+
+        let p = StubPlugin;
+        let req = BulkEnrichRequest {
+            partials: vec![],
+            prefer_id_source: None,
+            force_refresh: false,
+        };
+        let resp = match p.bulk_enrich(req) {
+            PluginResult::Ok(r) => r,
+            PluginResult::Err(e) => panic!("empty input should be Ok(empty), got Err {}: {}", e.code, e.message),
+        };
+        assert_eq!(resp.entries.len(), 0);
+    }
+
+    #[test]
+    fn bulk_enrich_entry_id_uses_imdb_id_when_present() {
+        struct StubPlugin;
+        impl Plugin for StubPlugin {
+            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+        }
+        impl CatalogPlugin for StubPlugin {
+            fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
+                err_not_implemented()
+            }
+            fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
+                PluginResult::ok(EnrichResponse {
+                    entry: req.partial, confidence: 1.0,
+                })
+            }
+        }
+
+        let p = StubPlugin;
+        let req = BulkEnrichRequest {
+            partials: vec![
+                PluginEntry { id: "xmdb-42".into(), kind: EntryKind::Movie,
+                              imdb_id: Some("tt1".into()), ..Default::default() },
+                PluginEntry { id: "xmdb-43".into(), kind: EntryKind::Movie,
+                              imdb_id: None, ..Default::default() },
+            ],
+            prefer_id_source: None,
+            force_refresh: false,
+        };
+        let resp = match p.bulk_enrich(req) {
+            PluginResult::Ok(r) => r,
+            _ => panic!("expected Ok"),
+        };
+        assert_eq!(resp.entries[0].id, "tt1");
+        assert_eq!(resp.entries[1].id, "xmdb-43");
     }
 }
 

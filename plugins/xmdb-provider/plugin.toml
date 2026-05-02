@@ -2,7 +2,7 @@
 id           = "xmdb"
 name         = "xmdb"
 version      = "0.1.0"
-abi_version  = 1
+abi_version  = 2
 description  = "XMDb API — IMDb ratings + Metacritic + cast/crew + box office (25k/day)"
 tags         = ["movies", "series"]
 
@@ -45,11 +45,23 @@ enrich  = { id_sources = ["imdb"] }
 credits = { id_sources = ["imdb"] }
 # `/seasons/{series_id}` returns the per-episode list.
 episodes = true
-# Posters: `/poster/{id}` and `/posters` exist; deferred to v2.
-artwork = { stub = true, reason = "deferred to v2 — bundle into movies response first" }
-# `similar_titles` field exists in the movies response but isn't keyed
-# by id_source today; deferred until the response shape is verified.
-related = { stub = true, reason = "deferred — similar_titles needs id-shape verification" }
+# Serves `poster_url` from the cached /movies/{id} payload as a single
+# Standard-size variant. Multi-resolution /poster/{id} endpoint deferred.
+artwork            = { id_sources = ["imdb"] }
+# Projects `similar_titles[]` from the /movies/{id} payload; IMDb-shaped
+# ids (tt\d+) are recognised and surfaced as imdb_id on each entry.
+related            = { id_sources = ["imdb"] }
+# Projects `trailer` (single Option) from the /movies/{id} payload.
+trailers           = { id_sources = ["imdb"] }
+# Projects `release_dates[]` — one ReleaseEntry per country row.
+release_info       = { id_sources = ["imdb"] }
+# Projects `keywords[]` — Vec<String> filtered for blank entries.
+keywords           = { id_sources = ["imdb"] }
+# Projects `budget`, `opening_weekend_gross`, `lifetime_gross`,
+# `worldwide_gross` — zero-amount and empty-currency rows are dropped.
+box_office         = { id_sources = ["imdb"] }
+# Projects `alternative_titles[]` — blank title rows filtered out.
+alternative_titles = { id_sources = ["imdb"] }
 
 [meta]
 author   = "stui"

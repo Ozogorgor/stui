@@ -1,9 +1,10 @@
 //! Stable ABI types — versioned JSON contract between the stui host and plugins.
 //!
 //! ## Versioning
-//! `STUI_ABI_VERSION` is embedded in every manifest and checked at load time.
-//! A plugin compiled against ABI v1 will refuse to load on a v2 host (and vice
-//! versa) unless the host explicitly declares backward-compatibility.
+//! `STUI_ABI_VERSION` is the host's maximum accepted ABI version.
+//! Plugins with `abi_version <= STUI_ABI_VERSION` load cleanly (backward-compat
+//! for v1 plugins under a v2+ host). Plugins with `abi_version > STUI_ABI_VERSION`
+//! are rejected — the plugin was built against a newer host than is installed.
 //!
 //! ## Memory model
 //! All data crosses the WASM boundary as UTF-8 JSON written into WASM linear
@@ -28,6 +29,7 @@
 //! stui_http_get(url_ptr: i32, url_len: i32) -> i64   packed result ptr/len
 //! stui_cache_get(key_ptr: i32, key_len: i32) -> i64
 //! stui_cache_set(kp: i32, kl: i32, vp: i32, vl: i32)
+//! stui_now_unix() -> i64                             seconds since UNIX epoch (v2+)
 //! ```
 
 use std::collections::HashMap;
@@ -36,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use stui_plugin_sdk::{EntryKind, SearchScope};
 
 /// Current ABI version. Bump this when making breaking changes.
-pub const STUI_ABI_VERSION: i32 = 1;
+/// v2 adds: `stui_now_unix`, trailers/release_info/keywords/box_office/alternative_titles verbs.
+pub const STUI_ABI_VERSION: i32 = 2;
 
 // ── Requests (host → plugin, serialized to JSON in WASM memory) ──────────────
 
@@ -169,6 +172,8 @@ pub struct LookupRequest {
     pub id_source: String,
     pub kind: EntryKind,
     pub locale: Option<String>,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// Returned by `stui_lookup`. Mirrors sdk::LookupResponse exactly.
@@ -184,6 +189,8 @@ pub struct LookupResponse {
 pub struct EnrichRequest {
     pub partial: PluginEntry,
     pub prefer_id_source: Option<String>,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// Returned by `stui_enrich`. Mirrors sdk::EnrichResponse exactly.
@@ -214,6 +221,8 @@ pub struct ArtworkRequest {
     pub id_source: String,
     pub kind: EntryKind,
     pub size: ArtworkSize,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// One resolved artwork URL with its metadata. Mirrors sdk::ArtworkVariant exactly.
@@ -240,6 +249,8 @@ pub struct CreditsRequest {
     pub id: String,
     pub id_source: String,
     pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// On-screen role for a cast member. Mirrors sdk::CastRole exactly.
@@ -331,6 +342,8 @@ pub struct RelatedRequest {
     pub kind: EntryKind,
     pub relation: RelationKind,
     pub limit: u32,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// Returned by `stui_related`. Mirrors sdk::RelatedResponse exactly.
@@ -526,6 +539,7 @@ mod tests {
             id_source: "imdb".into(),
             kind: EntryKind::Movie,
             locale: Some("en-US".into()),
+            force_refresh: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: LookupRequest = serde_json::from_str(&json).unwrap();
@@ -547,6 +561,7 @@ mod tests {
         let req = EnrichRequest {
             partial: sample_entry(),
             prefer_id_source: Some("tmdb".into()),
+            force_refresh: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: EnrichRequest = serde_json::from_str(&json).unwrap();
@@ -579,6 +594,7 @@ mod tests {
             id_source: "tmdb".into(),
             kind: EntryKind::Movie,
             size: ArtworkSize::Standard,
+            force_refresh: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: ArtworkRequest = serde_json::from_str(&json).unwrap();
@@ -635,6 +651,7 @@ mod tests {
             id: "tt0000003".into(),
             id_source: "tmdb".into(),
             kind: EntryKind::Movie,
+            force_refresh: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: CreditsRequest = serde_json::from_str(&json).unwrap();
@@ -682,6 +699,7 @@ mod tests {
             kind: EntryKind::Movie,
             relation: RelationKind::Sequel,
             limit: 10,
+            force_refresh: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: RelatedRequest = serde_json::from_str(&json).unwrap();

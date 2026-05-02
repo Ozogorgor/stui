@@ -57,6 +57,25 @@ pub enum CatalogCapability {
         credits: Option<VerbConfig>,
         #[serde(default)]
         related: Option<VerbConfig>,
+        // Cleanup: was already used in plugin.toml manifests
+        // (`episodes = true`) but missing from the typed struct, so
+        // serde silently dropped it. Add it now alongside the new
+        // ABI v2 verbs.
+        #[serde(default)]
+        episodes: Option<VerbConfig>,
+        // ── New in ABI v2 ──
+        #[serde(default)]
+        trailers: Option<VerbConfig>,
+        #[serde(default)]
+        release_info: Option<VerbConfig>,
+        #[serde(default)]
+        keywords: Option<VerbConfig>,
+        #[serde(default)]
+        box_office: Option<VerbConfig>,
+        #[serde(default)]
+        alternative_titles: Option<VerbConfig>,
+        #[serde(default)]
+        bulk_enrich: Option<VerbConfig>,
     },
 }
 
@@ -907,5 +926,67 @@ mod verb_config_tests {
         assert!(matches!(vc, VerbConfig::Stub { .. }));
         // But is_stub() says not a stub — behaviour is correct and intentional.
         assert_eq!(vc.is_stub(), false);
+    }
+}
+
+#[cfg(test)]
+mod bulk_enrich_manifest_tests {
+    use super::*;
+
+    #[test]
+    fn typed_catalog_capability_parses_bulk_enrich() {
+        let toml_text = r#"
+[capabilities.catalog]
+kinds = ["movie"]
+search = true
+bulk_enrich = true
+"#;
+        #[derive(serde::Deserialize)]
+        struct Wrapper { capabilities: Caps }
+        #[derive(serde::Deserialize)]
+        struct Caps { catalog: CatalogCapability }
+        let parsed: Wrapper = toml::from_str(toml_text).unwrap();
+        if let CatalogCapability::Typed { bulk_enrich, .. } = parsed.capabilities.catalog {
+            assert!(bulk_enrich.is_some(), "bulk_enrich missing");
+        } else {
+            panic!("expected Typed variant");
+        }
+    }
+}
+
+#[cfg(test)]
+mod new_verb_tests {
+    use super::*;
+
+    #[test]
+    fn typed_catalog_capability_parses_new_verbs() {
+        let toml_text = r#"
+[capabilities.catalog]
+kinds = ["movie"]
+search = true
+lookup = { id_sources = ["imdb"] }
+episodes = true
+trailers = true
+release_info = true
+keywords = true
+box_office = true
+alternative_titles = true
+"#;
+        #[derive(serde::Deserialize)]
+        struct Wrapper { capabilities: Caps }
+        #[derive(serde::Deserialize)]
+        struct Caps { catalog: CatalogCapability }
+        let parsed: Wrapper = toml::from_str(toml_text).unwrap();
+        if let CatalogCapability::Typed { episodes, trailers, release_info,
+            keywords, box_office, alternative_titles, .. } = parsed.capabilities.catalog {
+            assert!(episodes.is_some(),           "episodes missing");
+            assert!(trailers.is_some(),           "trailers missing");
+            assert!(release_info.is_some(),       "release_info missing");
+            assert!(keywords.is_some(),           "keywords missing");
+            assert!(box_office.is_some(),         "box_office missing");
+            assert!(alternative_titles.is_some(), "alternative_titles missing");
+        } else {
+            panic!("expected Typed variant");
+        }
     }
 }

@@ -644,8 +644,15 @@ impl Default for MetadataSources {
             series: defaults::metadata_sources_series(),
             anime:  defaults::metadata_sources_anime(),
             music:  defaults::metadata_sources_music(),
-            movies_disabled: Vec::new(),
-            series_disabled: Vec::new(),
+            // Default-disable omdb for fresh installs — xmdb covers
+            // IMDb id + IMDb rating + Metacritic, rt-provider covers
+            // Rotten Tomatoes scores; OMDB has no unique data
+            // contribution and burns ~half its 1k/day quota on a
+            // typical catalog refresh. Existing user `runtime.toml`
+            // configs are untouched (the merge function preserves
+            // explicit user disabled lists).
+            movies_disabled: vec!["omdb".to_string()],
+            series_disabled: vec!["omdb".to_string()],
             anime_disabled:  Vec::new(),
             music_disabled:  Vec::new(),
         }
@@ -1088,6 +1095,17 @@ mod music_normalize_tests {
 #[cfg(test)]
 mod metadata_config_tests {
     use super::*;
+
+    #[test]
+    fn metadata_sources_default_disables_omdb() {
+        let m = MetadataSources::default();
+        assert!(m.movies_disabled.iter().any(|s| s == "omdb"),
+                "fresh-install movies_disabled should include omdb (rt-provider supersedes); got {:?}",
+                m.movies_disabled);
+        assert!(m.series_disabled.iter().any(|s| s == "omdb"),
+                "fresh-install series_disabled should include omdb; got {:?}",
+                m.series_disabled);
+    }
 
     #[test]
     fn metadata_sources_defaults_include_tvdb() {

@@ -59,6 +59,14 @@ use super::types::{
     ResolveRequest, ResolveResponse,
     SearchRequest, SearchResponse,
 };
+use stui_plugin_sdk::{
+    TrailersRequest, TrailersResponse,
+    ReleaseInfoRequest, ReleaseInfoResponse,
+    KeywordsRequest, KeywordsResponse,
+    BoxOfficeRequest, BoxOfficeResponse,
+    AlternativeTitlesRequest, AlternativeTitlesResponse,
+    BulkEnrichRequest, BulkEnrichResponse,
+};
 use crate::plugin::rate_limit::TokenBucket;
 use crate::plugin::RateLimit;
 use crate::sandbox::SandboxCtx;
@@ -409,9 +417,39 @@ impl WasmSupervisor {
         self.call_verb("stui_episodes", "episodes", req).await
     }
 
+    /// Call `stui_get_trailers` with timeout and crash tracking.
+    pub async fn get_trailers(&self, req: &TrailersRequest) -> Result<TrailersResponse, AbiError> {
+        self.call_verb("stui_get_trailers", "get_trailers", req).await
+    }
+
+    /// Call `stui_get_release_info` with timeout and crash tracking.
+    pub async fn get_release_info(&self, req: &ReleaseInfoRequest) -> Result<ReleaseInfoResponse, AbiError> {
+        self.call_verb("stui_get_release_info", "get_release_info", req).await
+    }
+
+    /// Call `stui_get_keywords` with timeout and crash tracking.
+    pub async fn get_keywords(&self, req: &KeywordsRequest) -> Result<KeywordsResponse, AbiError> {
+        self.call_verb("stui_get_keywords", "get_keywords", req).await
+    }
+
+    /// Call `stui_get_box_office` with timeout and crash tracking.
+    pub async fn get_box_office(&self, req: &BoxOfficeRequest) -> Result<BoxOfficeResponse, AbiError> {
+        self.call_verb("stui_get_box_office", "get_box_office", req).await
+    }
+
+    /// Call `stui_get_alternative_titles` with timeout and crash tracking.
+    pub async fn get_alternative_titles(&self, req: &AlternativeTitlesRequest) -> Result<AlternativeTitlesResponse, AbiError> {
+        self.call_verb("stui_get_alternative_titles", "get_alternative_titles", req).await
+    }
+
     /// Call `stui_find_streams` with timeout and crash tracking.
     pub async fn find_streams(&self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
         self.call_verb("stui_find_streams", "find_streams", req).await
+    }
+
+    /// Call `stui_bulk_enrich` with timeout and crash tracking.
+    pub async fn bulk_enrich(&self, req: &BulkEnrichRequest) -> Result<BulkEnrichResponse, AbiError> {
+        self.call_verb("stui_bulk_enrich", "bulk_enrich", req).await
     }
 
     // ── Internals ─────────────────────────────────────────────────────────

@@ -126,6 +126,8 @@ pub struct LookupRequest {
     pub id_source: String,
     pub kind: EntryKind,
     pub locale: Option<String>,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +141,8 @@ pub struct LookupResponse {
 pub struct EnrichRequest {
     pub partial: PluginEntry,
     pub prefer_id_source: Option<String>,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +169,8 @@ pub struct ArtworkRequest {
     pub id_source: String,
     pub kind: EntryKind,
     pub size: ArtworkSize,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +194,8 @@ pub struct CreditsRequest {
     pub id: String,
     pub id_source: String,
     pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,11 +301,225 @@ pub struct RelatedRequest {
     pub kind: EntryKind,
     pub relation: RelationKind,
     pub limit: u32,
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedResponse {
     pub items: Vec<PluginEntry>,
+}
+
+// ── Trailers ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrailersRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrailerKind {
+    Trailer,
+    Teaser,
+    Clip,
+    Featurette,
+    BehindTheScenes,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Trailer {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub kind: TrailerKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrailersResponse {
+    pub trailers: Vec<Trailer>,
+}
+
+// ── Release info ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseInfoRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseKind {
+    Premiere,
+    Theatrical,
+    Limited,
+    Streaming,
+    Digital,
+    Physical,
+    Tv,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseEntry {
+    pub country: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_kind: Option<ReleaseKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseInfoResponse {
+    pub releases: Vec<ReleaseEntry>,
+}
+
+// ── Keywords ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeywordsRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Keyword {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Populated by the engine post-merge. Plugins leave None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeywordsResponse {
+    pub keywords: Vec<Keyword>,
+}
+
+// ── Box office ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoxOfficeRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoneyAmount {
+    /// Whole units of `currency` (not cents/decimals). Box-office
+    /// figures are typically rounded; if a provider returns
+    /// fractional amounts, round before constructing.
+    pub amount: u64,
+    /// ISO 4217 code (e.g. "USD", "EUR", "JPY").
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoxOfficeResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<MoneyAmount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening_weekend: Option<MoneyAmount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gross_domestic: Option<MoneyAmount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gross_worldwide: Option<MoneyAmount>,
+}
+
+// ── Alternative titles ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlternativeTitlesRequest {
+    pub id: String,
+    pub id_source: String,
+    pub kind: EntryKind,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlternativeTitle {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// Free-form provider label (e.g. `"AKA"`, `"working title"`,
+    /// `"international"`, `"original title"`). Distinct from the
+    /// request's `EntryKind` — this is a per-row classification of
+    /// the alternative title itself, not the work's kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlternativeTitlesResponse {
+    pub titles: Vec<AlternativeTitle>,
+}
+
+// ── Bulk enrich ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkEnrichRequest {
+    /// Partial entries to enrich, one per call. Each entry should
+    /// carry at least the fields the plugin needs to identify a row
+    /// (typically `imdb_id` or `external_ids["imdb"]`).
+    pub partials: Vec<PluginEntry>,
+    /// Single `prefer_id_source` shared across the batch. Same
+    /// semantics as `EnrichRequest.prefer_id_source` — advisory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefer_id_source: Option<String>,
+    /// Single `force_refresh` flag shared across the batch.
+    /// Forwarded into the underlying enrichment path's cache layer.
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkEnrichEntry {
+    /// Stable correlator that ties this output entry back to a
+    /// specific input partial. Convention: take from
+    /// `partial.imdb_id` if present, otherwise `partial.id`.
+    /// Plugins may reorder or omit entries; callers reconcile by
+    /// matching `id`.
+    pub id: String,
+    /// Per-entry result. Failures are reported here, NOT at the
+    /// outer `BulkEnrichResponse` level — partial success is the
+    /// expected mode.
+    pub result: PluginResult<EnrichResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkEnrichResponse {
+    pub entries: Vec<BulkEnrichEntry>,
 }
 
 // ── err_not_implemented helper ────────────────────────────────────────────────
@@ -450,6 +672,253 @@ mod tests {
             assert_eq!(x, "Extra");
         } else {
             panic!("round-trip lost Other variant");
+        }
+    }
+
+    #[test]
+    fn trailer_kind_serializes_snake_case() {
+        let v = TrailerKind::BehindTheScenes;
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, "\"behind_the_scenes\"");
+    }
+
+    #[test]
+    fn trailer_kind_other_round_trips() {
+        let v = TrailerKind::Other("FanEdit".to_string());
+        let s = serde_json::to_string(&v).unwrap();
+        let back: TrailerKind = serde_json::from_str(&s).unwrap();
+        if let TrailerKind::Other(x) = back { assert_eq!(x, "FanEdit"); }
+        else { panic!("lost Other variant"); }
+    }
+
+    #[test]
+    fn trailers_request_round_trips() {
+        let req = TrailersRequest {
+            id: "tt0111161".into(),
+            id_source: "imdb".into(),
+            kind: EntryKind::Movie,
+            locale: Some("en-US".into()),
+            force_refresh: false,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: TrailersRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.id, "tt0111161");
+        assert_eq!(back.force_refresh, false);
+    }
+
+    #[test]
+    fn trailers_request_force_refresh_defaults_to_false() {
+        let json = r#"{"id":"tt1","id_source":"imdb","kind":"movie"}"#;
+        let req: TrailersRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+        assert!(req.locale.is_none());
+    }
+
+    #[test]
+    fn release_kind_serializes_snake_case() {
+        assert_eq!(serde_json::to_string(&ReleaseKind::Theatrical).unwrap(),
+                   "\"theatrical\"");
+        assert_eq!(serde_json::to_string(&ReleaseKind::Tv).unwrap(),
+                   "\"tv\"");
+    }
+
+    #[test]
+    fn release_info_response_round_trips() {
+        let resp = ReleaseInfoResponse {
+            releases: vec![ReleaseEntry {
+                country: "US".into(),
+                date: Some("1994-09-23".into()),
+                release_kind: Some(ReleaseKind::Theatrical),
+                certificate: Some("R".into()),
+                note: None,
+            }],
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        let back: ReleaseInfoResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.releases.len(), 1);
+        assert_eq!(back.releases[0].country, "US");
+    }
+
+    #[test]
+    fn keyword_provider_field_round_trips() {
+        let kw = Keyword {
+            name: "indie".into(),
+            source_id: Some("xmdb-kw-42".into()),
+            provider: Some("xmdb".into()),
+        };
+        let s = serde_json::to_string(&kw).unwrap();
+        let back: Keyword = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.name, "indie");
+        assert_eq!(back.provider.as_deref(), Some("xmdb"));
+    }
+
+    #[test]
+    fn keyword_provider_field_omitted_when_none() {
+        let kw = Keyword {
+            name: "indie".into(),
+            source_id: None,
+            provider: None,
+        };
+        let s = serde_json::to_string(&kw).unwrap();
+        assert!(!s.contains("provider"));
+        assert!(!s.contains("source_id"));
+    }
+
+    #[test]
+    fn money_amount_round_trips() {
+        let m = MoneyAmount { amount: 25_000_000, currency: "USD".into() };
+        let s = serde_json::to_string(&m).unwrap();
+        let back: MoneyAmount = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.amount, 25_000_000);
+        assert_eq!(back.currency, "USD");
+    }
+
+    #[test]
+    fn box_office_response_with_partial_fields() {
+        let resp = BoxOfficeResponse {
+            budget: Some(MoneyAmount { amount: 25_000_000, currency: "USD".into() }),
+            opening_weekend: None,
+            gross_domestic: None,
+            gross_worldwide: Some(MoneyAmount { amount: 73_341_414, currency: "USD".into() }),
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        assert!(s.contains("budget"));
+        assert!(!s.contains("opening_weekend"));
+        let back: BoxOfficeResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.budget.unwrap().amount, 25_000_000);
+    }
+
+    #[test]
+    fn alternative_titles_response_round_trips() {
+        let resp = AlternativeTitlesResponse {
+            titles: vec![AlternativeTitle {
+                title: "Les Évadés".into(),
+                locale: Some("fr-FR".into()),
+                country: Some("FR".into()),
+                kind: Some("AKA".into()),
+            }],
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        let back: AlternativeTitlesResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.titles[0].title, "Les Évadés");
+    }
+
+    #[test]
+    fn trailer_kind_partial_eq() {
+        assert_eq!(TrailerKind::Trailer, TrailerKind::Trailer);
+        assert_ne!(TrailerKind::Trailer, TrailerKind::Teaser);
+        assert_eq!(
+            TrailerKind::Other("FanEdit".into()),
+            TrailerKind::Other("FanEdit".into()),
+        );
+    }
+
+    #[test]
+    fn release_kind_partial_eq() {
+        assert_eq!(ReleaseKind::Theatrical, ReleaseKind::Theatrical);
+        assert_ne!(ReleaseKind::Theatrical, ReleaseKind::Streaming);
+    }
+
+    #[test]
+    fn enrich_request_force_refresh_defaults_false() {
+        let json = r#"{"partial":{"id":"x","kind":"movie","title":"T","source":"s"}}"#;
+        let req: EnrichRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+    }
+
+    #[test]
+    fn artwork_request_force_refresh_defaults_false() {
+        let json = r#"{"id":"x","id_source":"imdb","kind":"movie","size":"standard"}"#;
+        let req: ArtworkRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+    }
+
+    #[test]
+    fn credits_request_force_refresh_defaults_false() {
+        let json = r#"{"id":"x","id_source":"imdb","kind":"movie"}"#;
+        let req: CreditsRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+    }
+
+    #[test]
+    fn related_request_force_refresh_defaults_false() {
+        let json = r#"{"id":"x","id_source":"imdb","kind":"movie","relation":"similar","limit":10}"#;
+        let req: RelatedRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+    }
+
+    #[test]
+    fn lookup_request_force_refresh_defaults_false() {
+        let json = r#"{"id":"x","id_source":"imdb","kind":"movie"}"#;
+        let req: LookupRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+    }
+
+    #[test]
+    fn bulk_enrich_request_round_trips_serde() {
+        let req = BulkEnrichRequest {
+            partials: vec![PluginEntry {
+                id: "tt0111161".into(),
+                kind: EntryKind::Movie,
+                title: "Shawshank".into(),
+                source: "test".into(),
+                imdb_id: Some("tt0111161".into()),
+                ..Default::default()
+            }],
+            prefer_id_source: Some("imdb".into()),
+            force_refresh: true,
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: BulkEnrichRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.partials.len(), 1);
+        assert_eq!(back.partials[0].imdb_id.as_deref(), Some("tt0111161"));
+        assert_eq!(back.prefer_id_source.as_deref(), Some("imdb"));
+        assert!(back.force_refresh);
+    }
+
+    #[test]
+    fn bulk_enrich_request_force_refresh_defaults_false() {
+        let json = r#"{"partials":[]}"#;
+        let req: BulkEnrichRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_refresh);
+        assert!(req.prefer_id_source.is_none());
+    }
+
+    #[test]
+    fn bulk_enrich_response_round_trips_with_mixed_results() {
+        let resp = BulkEnrichResponse {
+            entries: vec![
+                BulkEnrichEntry {
+                    id: "tt0111161".into(),
+                    result: PluginResult::ok(EnrichResponse {
+                        entry: PluginEntry {
+                            id: "tt0111161".into(),
+                            kind: EntryKind::Movie,
+                            title: "Shawshank".into(),
+                            source: "test".into(),
+                            ..Default::default()
+                        },
+                        confidence: 1.0,
+                    }),
+                },
+                BulkEnrichEntry {
+                    id: "tt9999999".into(),
+                    result: PluginResult::err(
+                        crate::error_codes::UNKNOWN_ID, "no such id"),
+                },
+            ],
+        };
+        let s = serde_json::to_string(&resp).unwrap();
+        let back: BulkEnrichResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.entries.len(), 2);
+        assert_eq!(back.entries[0].id, "tt0111161");
+        match &back.entries[0].result {
+            PluginResult::Ok(r) => assert!((r.confidence - 1.0).abs() < f32::EPSILON),
+            _ => panic!("entry 0 should be Ok"),
+        }
+        match &back.entries[1].result {
+            PluginResult::Err(e) => assert_eq!(e.code, crate::error_codes::UNKNOWN_ID),
+            _ => panic!("entry 1 should be Err"),
         }
     }
 }

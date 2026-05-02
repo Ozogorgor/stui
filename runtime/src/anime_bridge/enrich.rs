@@ -82,12 +82,14 @@ pub fn provider_priority_for_key(provider: &str, key: &str) -> u8 {
     } else {
         // Existing α priority for western-tier and title-fallback merges.
         match provider {
-            "tmdb"    => 0,
-            "tvdb"    => 1,
-            "omdb"    => 2,
-            "anilist" => 3,
-            "kitsu"   => 4,
-            _         => 5,
+            "tmdb"           => 0,
+            "tvdb"           => 1,
+            "xmdb"           => 2,   // beats omdb for IMDb id + ratings
+            "rottentomatoes" => 3,   // NEW — beats omdb for IMDb-keyed merges
+            "omdb"           => 4,
+            "anilist"        => 5,
+            "kitsu"          => 6,
+            _                => 7,
         }
     }
 }
@@ -122,6 +124,45 @@ mod priority_tests {
             provider_priority_for_key("tmdb", "title:foo:2024")
                 < provider_priority_for_key("anilist", "title:foo:2024"),
         );
+    }
+
+    #[test]
+    fn provider_priority_xmdb_beats_omdb_in_western_tier() {
+        let xmdb = provider_priority_for_key("xmdb", "imdb:tt1");
+        let omdb = provider_priority_for_key("omdb", "imdb:tt1");
+        assert!(xmdb < omdb, "xmdb={xmdb} should beat omdb={omdb}");
+    }
+
+    #[test]
+    fn provider_priority_anime_tier_unaffected_by_xmdb() {
+        // xmdb has no MAL bridge — falls into the catch-all bucket on
+        // the anime arm. AniList and Kitsu must still beat it.
+        let xmdb = provider_priority_for_key("xmdb", "mal:1");
+        let anilist = provider_priority_for_key("anilist", "mal:1");
+        let kitsu = provider_priority_for_key("kitsu", "mal:1");
+        assert!(anilist < xmdb, "anilist={anilist} should beat xmdb={xmdb}");
+        assert!(kitsu < xmdb, "kitsu={kitsu} should beat xmdb={xmdb}");
+    }
+
+    #[test]
+    fn provider_priority_rottentomatoes_beats_omdb() {
+        let rt   = provider_priority_for_key("rottentomatoes", "imdb:tt1");
+        let omdb = provider_priority_for_key("omdb", "imdb:tt1");
+        assert!(rt < omdb, "rt={rt} should beat omdb={omdb}");
+    }
+
+    #[test]
+    fn provider_priority_rottentomatoes_loses_to_xmdb() {
+        let rt   = provider_priority_for_key("rottentomatoes", "imdb:tt1");
+        let xmdb = provider_priority_for_key("xmdb", "imdb:tt1");
+        assert!(xmdb < rt, "xmdb={xmdb} should beat rottentomatoes={rt}");
+    }
+
+    #[test]
+    fn provider_priority_rottentomatoes_anime_arm_unchanged() {
+        let rt = provider_priority_for_key("rottentomatoes", "mal:1");
+        let anilist = provider_priority_for_key("anilist", "mal:1");
+        assert!(anilist < rt, "anilist={anilist} should beat rt={rt} on mal: keys");
     }
 }
 

@@ -18,6 +18,14 @@ use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
     EnrichResponse, PluginEntry, RelatedRequest,
 };
+use stui_plugin_sdk::{
+    TrailersRequest, TrailersResponse,
+    ReleaseInfoRequest, ReleaseInfoResponse,
+    KeywordsRequest, KeywordsResponse,
+    BoxOfficeRequest, BoxOfficeResponse,
+    AlternativeTitlesRequest, AlternativeTitlesResponse,
+    BulkEnrichRequest, BulkEnrichResponse,
+};
 use crate::cache::metadata::MetadataCache;
 use crate::cache::metadata_key::MetadataVerb;
 use crate::config::types::MetadataSources;
@@ -382,6 +390,61 @@ impl MetadataDispatch for EngineMetadataDispatch {
             .map_err(|e| e.to_string())
     }
 
+    async fn call_get_trailers(
+        &self,
+        plugin: &str,
+        req: TrailersRequest,
+    ) -> Result<TrailersResponse, String> {
+        self.engine
+            .supervisor_get_trailers(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn call_get_release_info(
+        &self,
+        plugin: &str,
+        req: ReleaseInfoRequest,
+    ) -> Result<ReleaseInfoResponse, String> {
+        self.engine
+            .supervisor_get_release_info(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn call_get_keywords(
+        &self,
+        plugin: &str,
+        req: KeywordsRequest,
+    ) -> Result<KeywordsResponse, String> {
+        self.engine
+            .supervisor_get_keywords(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn call_get_box_office(
+        &self,
+        plugin: &str,
+        req: BoxOfficeRequest,
+    ) -> Result<BoxOfficeResponse, String> {
+        self.engine
+            .supervisor_get_box_office(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn call_get_alternative_titles(
+        &self,
+        plugin: &str,
+        req: AlternativeTitlesRequest,
+    ) -> Result<AlternativeTitlesResponse, String> {
+        self.engine
+            .supervisor_get_alternative_titles(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     async fn fetch_ratings_aggregator(
         &self,
         imdb_id: &str,
@@ -399,6 +462,17 @@ impl MetadataDispatch for EngineMetadataDispatch {
             description: b.description,
             external_url: b.external_url,
         }))
+    }
+
+    async fn call_bulk_enrich(
+        &self,
+        plugin: &str,
+        req: BulkEnrichRequest,
+    ) -> Result<BulkEnrichResponse, String> {
+        self.engine
+            .supervisor_bulk_enrich(plugin, req, CallPriority::Background)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

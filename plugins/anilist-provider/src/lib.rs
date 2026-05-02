@@ -274,6 +274,7 @@ impl CatalogPlugin for AnilistPlugin {
                 id_source: id_sources::ANILIST.to_string(),
                 kind: req.partial.kind,
                 locale: None,
+                force_refresh: false,
             };
             return match self.lookup(lookup_req) {
                 PluginResult::Ok(r) => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 1.0 }),
@@ -325,6 +326,7 @@ impl CatalogPlugin for AnilistPlugin {
             id_source: req.id_source.clone(),
             kind: req.kind,
             locale: None,
+            force_refresh: false,
         };
         let media = match self.lookup(lookup_req) {
             PluginResult::Ok(r) => r.entry,

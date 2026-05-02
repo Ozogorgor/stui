@@ -20,6 +20,14 @@ use tracing::{debug, info};
 
 use super::types::*;
 use crate::sandbox::SandboxCtx;
+use stui_plugin_sdk::{
+    TrailersRequest, TrailersResponse,
+    ReleaseInfoRequest, ReleaseInfoResponse,
+    KeywordsRequest, KeywordsResponse,
+    BoxOfficeRequest, BoxOfficeResponse,
+    AlternativeTitlesRequest, AlternativeTitlesResponse,
+    BulkEnrichRequest, BulkEnrichResponse,
+};
 
 // Plugin HTTP fetches go through reqwest with this ceiling. Set high
 // enough to cover Jackett/Prowlarr Torznab fan-outs across many
@@ -178,9 +186,39 @@ impl WasmInstance {
         self.call_verb("stui_related", req).await
     }
 
+    /// Call the plugin's `stui_get_trailers` export.
+    pub async fn get_trailers(&mut self, req: &TrailersRequest) -> Result<TrailersResponse, AbiError> {
+        self.call_verb("stui_get_trailers", req).await
+    }
+
+    /// Call the plugin's `stui_get_release_info` export.
+    pub async fn get_release_info(&mut self, req: &ReleaseInfoRequest) -> Result<ReleaseInfoResponse, AbiError> {
+        self.call_verb("stui_get_release_info", req).await
+    }
+
+    /// Call the plugin's `stui_get_keywords` export.
+    pub async fn get_keywords(&mut self, req: &KeywordsRequest) -> Result<KeywordsResponse, AbiError> {
+        self.call_verb("stui_get_keywords", req).await
+    }
+
+    /// Call the plugin's `stui_get_box_office` export.
+    pub async fn get_box_office(&mut self, req: &BoxOfficeRequest) -> Result<BoxOfficeResponse, AbiError> {
+        self.call_verb("stui_get_box_office", req).await
+    }
+
+    /// Call the plugin's `stui_get_alternative_titles` export.
+    pub async fn get_alternative_titles(&mut self, req: &AlternativeTitlesRequest) -> Result<AlternativeTitlesResponse, AbiError> {
+        self.call_verb("stui_get_alternative_titles", req).await
+    }
+
     /// Call the plugin's `stui_find_streams` export.
     pub async fn find_streams(&mut self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
         self.call_verb("stui_find_streams", req).await
+    }
+
+    /// Call the plugin's `stui_bulk_enrich` export.
+    pub async fn bulk_enrich(&mut self, req: &BulkEnrichRequest) -> Result<BulkEnrichResponse, AbiError> {
+        self.call_verb("stui_bulk_enrich", req).await
     }
 }
 
@@ -206,11 +244,17 @@ impl WasmHost {
         info!(plugin = %plugin_name, path = %wasm_path.display(), max_memory_mb, "loading WASM plugin");
         let inner = WasmInner::load(wasm_path, plugin_name, ctx, max_memory_mb).await?;
         let abi_version = inner.abi_version().await;
-        if abi_version != STUI_ABI_VERSION {
+        if abi_version > STUI_ABI_VERSION {
             return Err(AbiError::VersionMismatch {
                 plugin: abi_version,
                 host: STUI_ABI_VERSION,
             });
+        }
+        // For v2 plugins, warn about any missing new-verb exports at load time
+        // so operators notice gaps before the first user request triggers them.
+        // v1 plugins are exempt — they pre-date these exports by design.
+        if abi_version >= 2 {
+            inner.probe_v2_exports(plugin_name).await;
         }
         debug!(plugin = %plugin_name, abi = abi_version, "WASM plugin loaded and ABI verified");
         Ok(WasmInstance {
@@ -698,6 +742,17 @@ mod inner_impl {
                 }
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
+            // ── stui_now_unix() -> i64 ────────────────────────────────────────────────
+            linker.func_wrap("stui", "stui_now_unix",
+                |_caller: Caller<HostState>| -> i64 {
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0)
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
+
             // ── stui_auth_allocate_port() -> i32 ──────────────────────────────────────
             // Starts the callback server. Returns port. Replaces any existing receiver.
             linker.func_wrap_async("stui", "stui_auth_allocate_port",
@@ -861,6 +916,33 @@ mod inner_impl {
             match self.instance.get_typed_func::<(), i32>(&mut *store, "stui_abi_version") {
                 Ok(f) => f.call_async(&mut *store, ()).await.unwrap_or(-1),
                 Err(_) => -1,
+            }
+        }
+
+        /// Warn about any missing v2-specific exports. v1 plugins are expected
+        /// to lack these; calling this only when `abi_version >= 2` avoids
+        /// false-positive warnings for v1 plugins that load under a v2 host.
+        ///
+        /// A missing export at load time produces a WARN (not an error) because
+        /// the first-call path in `call_export` will surface `MissingExport`
+        /// as a clean `AbiError`, giving the engine a NOT_IMPLEMENTED path.
+        pub async fn probe_v2_exports(&self, plugin_name: &str) {
+            let mut store = self.store.lock().await;
+            const V2_EXPORTS: &[&str] = &[
+                "stui_get_trailers",
+                "stui_get_release_info",
+                "stui_get_keywords",
+                "stui_get_box_office",
+                "stui_get_alternative_titles",
+            ];
+            for &export_name in V2_EXPORTS {
+                if self.instance.get_func(&mut *store, export_name).is_none() {
+                    warn!(
+                        plugin = %plugin_name,
+                        export = export_name,
+                        "v2 plugin missing new-verb export — verb will return NOT_IMPLEMENTED",
+                    );
+                }
             }
         }
 
@@ -1061,6 +1143,9 @@ mod stub_impl {
             STUI_ABI_VERSION
         }
 
+        /// No-op in stub mode — no wasm instance to inspect.
+        pub async fn probe_v2_exports(&self, _plugin_name: &str) {}
+
         pub async fn call_export(&self, fn_name: &str, _json: &str) -> Result<String, AbiError> {
             Err(AbiError::Execution(format!(
                 "plugin '{}': WASM host not compiled in (fn: {}). \
@@ -1076,3 +1161,22 @@ use inner_impl::WasmInner;
 
 #[cfg(not(feature = "wasm-host"))]
 use stub_impl::WasmInner;
+
+// ── ABI version gate tests ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod abi_version_tests {
+    use super::*;
+
+    fn abi_check_accepts(plugin_version: i32) -> bool {
+        plugin_version <= stui_plugin_sdk::STUI_ABI_VERSION
+    }
+
+    #[test]
+    fn abi_check_accepts_v1_under_v2_runtime() {
+        // STUI_ABI_VERSION == 2; v1 plugins should load.
+        assert!(abi_check_accepts(1));
+        assert!(abi_check_accepts(2));
+        assert!(!abi_check_accepts(3));
+    }
+}

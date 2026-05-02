@@ -168,13 +168,16 @@ mod tests {
 
     #[test]
     fn discovered_plugins_appended_after_priority_list() {
-        // A user with default priority [tmdb, omdb, tvdb] installs a
-        // hypothetical "letterboxd-rating" plugin tagged for movies. It
-        // should show up at the end of the fan-out without any toml
-        // edit.
+        // A user with priority [tmdb, omdb, tvdb] installs a hypothetical
+        // "letterboxd-rating" plugin tagged for movies. It should show up
+        // at the end of the fan-out without any toml edit.
+        // Use an explicit cfg so the default omdb-disabled list doesn't
+        // interfere with this resolver-logic test.
         let probe = MockProbe::new(vec!["tmdb", "omdb", "tvdb", "letterboxd"])
             .with_discoverable(vec!["letterboxd"]);
-        let r = SourceResolver::new(cfg_with_defaults(), Box::new(probe));
+        let mut cfg = cfg_with_defaults();
+        cfg.movies_disabled = Vec::new(); // isolate: test resolver logic, not defaults
+        let r = SourceResolver::new(cfg, Box::new(probe));
         let ordered = r.resolve(MetadataVerb::Enrich, "movies");
         assert_eq!(
             ordered,
@@ -186,9 +189,13 @@ mod tests {
     fn discovered_plugins_skipped_when_already_in_priority_list() {
         // No duplicates: priority list takes precedence; discover() can
         // surface the same plugin too without breaking ordering.
+        // Use an explicit cfg so the default omdb-disabled list doesn't
+        // interfere with this resolver-logic test.
         let probe = MockProbe::new(vec!["tmdb", "omdb", "tvdb"])
             .with_discoverable(vec!["tmdb", "omdb", "tvdb"]);
-        let r = SourceResolver::new(cfg_with_defaults(), Box::new(probe));
+        let mut cfg = cfg_with_defaults();
+        cfg.movies_disabled = Vec::new(); // isolate: test resolver logic, not defaults
+        let r = SourceResolver::new(cfg, Box::new(probe));
         let ordered = r.resolve(MetadataVerb::Enrich, "movies");
         assert_eq!(ordered, vec!["tmdb".to_string(), "omdb".into(), "tvdb".into()]);
     }

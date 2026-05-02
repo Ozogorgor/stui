@@ -2934,6 +2934,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rt-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stui-plugin-sdk",
+ "urlencoding",
+]
+
+[[package]]
 name = "rubato"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3435,7 +3445,7 @@ dependencies = [
 
 [[package]]
 name = "stui-plugin-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "reqwest",
  "serde",

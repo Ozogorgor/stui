@@ -427,6 +427,7 @@ async fn resolve_imdb_id(
     let enrich_req = EnrichRequest {
         partial,
         prefer_id_source: Some("tmdb".to_string()),
+        force_refresh: false,
     };
 
     let result = tokio::time::timeout(

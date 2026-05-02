@@ -150,6 +150,7 @@ async fn enrich_one(
             let req = EnrichRequest {
                 partial: partial.clone(),
                 prefer_id_source: None,
+                force_refresh: false,
             };
             let name = name.clone();
             async move {

@@ -351,14 +351,27 @@ fn weights_for(
 
 /// Bayesian global prior on the 0–10 scale. Single-vote outliers (e.g.
 /// "A Poet" with one TMDB user rating it 10/10) shrink toward this when
-/// the vote count is far below `BAYES_CONFIDENCE_CAP`.
+/// the vote count is far below the per-source cap from `bayesian_cap_for`.
 const BAYES_PRIOR: f64 = 6.5;
 
-/// Vote-count threshold past which raw ratings dominate. With v ≫ m the
-/// shrunk score approaches the raw rating; with v ≪ m it approaches the
-/// prior. Calibrated so that ~1k votes still pulls noticeably toward the
-/// prior, while ~100k votes are essentially unmoved.
-const BAYES_CONFIDENCE_CAP: f64 = 1000.0;
+/// Per-source vote-count thresholds past which raw ratings dominate.
+/// Calibrated to each source's vote distribution:
+///
+/// - **imdb** = 10_000 — popular IMDb titles have 100k–1M+ votes;
+///   anything <10k votes still pulls noticeably toward prior;
+///   anything >100k is essentially unmoved.
+/// - **tmdb** = 1_000 — TMDB's vote distribution is 1–2 orders of
+///   magnitude smaller than IMDb's; 1k cap matches its
+///   niche-vs-popular split.
+/// - **default** = 1_000 — sane fallback for future sources that
+///   expose vote counts (Letterboxd, MAL, etc.).
+fn bayesian_cap_for(source: &str) -> f64 {
+    match source {
+        "imdb" => 10_000.0,
+        "tmdb" => 1_000.0,
+        _      => 1_000.0,
+    }
+}
 
 /// Bayesian shrinkage: pull a raw rating toward the global prior in
 /// proportion to how few votes underpin it.
@@ -718,7 +731,8 @@ fn shrink_ratings(
             continue;
         }
         let normalised = (raw / w.normalize).clamp(0.0, 10.0);
-        let shrunk = bayesian_shrink(normalised, v, BAYES_PRIOR, BAYES_CONFIDENCE_CAP);
+        let cap = bayesian_cap_for(w.key);
+        let shrunk = bayesian_shrink(normalised, v, BAYES_PRIOR, cap);
         // Re-scale back into the source's native range so weighted_median's
         // own normalization step lands on the shrunk value.
         out.insert(w.key.to_string(), shrunk * w.normalize);
@@ -1425,5 +1439,73 @@ mod tests {
         );
         apply_weighted_rating(&mut entry);
         assert_eq!(entry.rating, Some("8.5".to_string()));
+    }
+
+    #[test]
+    fn bayesian_cap_for_returns_per_source_values() {
+        assert_eq!(bayesian_cap_for("imdb"), 10_000.0);
+        assert_eq!(bayesian_cap_for("tmdb"), 1_000.0);
+        assert_eq!(bayesian_cap_for("anilist"), 1_000.0);
+        assert_eq!(bayesian_cap_for("tomatometer"), 1_000.0);
+        assert_eq!(bayesian_cap_for(""), 1_000.0);
+    }
+
+    #[test]
+    fn shrink_ratings_high_vote_imdb_barely_moves() {
+        let mut ratings = std::collections::HashMap::new();
+        ratings.insert("imdb".to_string(), 9.0);
+        let mut votes = std::collections::HashMap::new();
+        votes.insert("imdb".to_string(), 200_000u32);
+        let shrunk = shrink_ratings(&ratings, &votes, WEIGHTS_MOVIE);
+        let v = *shrunk.get("imdb").unwrap();
+        // 200k / (200k + 10k) * 9.0 + 10k / 210k * 6.5 ≈ 8.881
+        assert!(v > 8.85 && v < 8.95, "expected ~8.88, got {v}");
+    }
+
+    #[test]
+    fn shrink_ratings_low_vote_imdb_pulls_toward_prior() {
+        let mut ratings = std::collections::HashMap::new();
+        ratings.insert("imdb".to_string(), 9.0);
+        let mut votes = std::collections::HashMap::new();
+        votes.insert("imdb".to_string(), 100u32);
+        let shrunk = shrink_ratings(&ratings, &votes, WEIGHTS_MOVIE);
+        let v = *shrunk.get("imdb").unwrap();
+        // 100 / 10_100 * 9.0 + 10_000 / 10_100 * 6.5 ≈ 6.525
+        assert!(v < 6.6, "expected <6.6 (heavy pull), got {v}");
+    }
+
+    #[test]
+    fn shrink_ratings_tmdb_cap_unchanged() {
+        let mut ratings = std::collections::HashMap::new();
+        ratings.insert("tmdb".to_string(), 9.0);
+        let mut votes = std::collections::HashMap::new();
+        votes.insert("tmdb".to_string(), 5_000u32);
+        let shrunk = shrink_ratings(&ratings, &votes, WEIGHTS_MOVIE);
+        let v = *shrunk.get("tmdb").unwrap();
+        // 5000 / 6000 * 9.0 + 1000 / 6000 * 6.5 ≈ 8.583
+        assert!(v > 8.55 && v < 8.62, "expected ~8.58, got {v}");
+    }
+
+    #[test]
+    fn shrink_ratings_imdb_monotonic_in_votes() {
+        // Sweep starts at 100 (not 0) — at 0 votes the shrinkage path is
+        // skipped entirely and the raw 9.0 passes through, breaking
+        // monotonicity against the n=100 result (~6.52). Pass-through at
+        // n=0 is correct behavior, just not part of this monotonicity
+        // claim. `bayesian_shrink` itself is also tested directly with
+        // votes=0 elsewhere.
+        let votes_seq = [100u32, 1_000, 10_000, 100_000, 1_000_000];
+        let mut prev: f64 = f64::NEG_INFINITY;
+        for &n in &votes_seq {
+            let mut ratings = std::collections::HashMap::new();
+            ratings.insert("imdb".to_string(), 9.0);
+            let mut votes = std::collections::HashMap::new();
+            votes.insert("imdb".to_string(), n);
+            let shrunk = shrink_ratings(&ratings, &votes, WEIGHTS_MOVIE);
+            let v = *shrunk.get("imdb").unwrap();
+            assert!(v >= prev, "non-monotonic at votes={n}: {v} < {prev}");
+            prev = v;
+        }
+        assert!(prev > 8.95 && prev <= 9.0, "1M votes should ≈ 9.0");
     }
 }

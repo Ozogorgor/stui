@@ -1,0 +1,69 @@
+[plugin]
+id           = "rottentomatoes"
+name         = "rottentomatoes"
+version      = "0.1.0"
+abi_version  = 2
+description  = "Rotten Tomatoes — critic + audience scores via self-hosted rt-api"
+tags         = ["movies", "series"]
+
+[env]
+RT_API_KEY      = ""
+RT_API_BASE_URL = ""
+
+[[config]]
+key       = "api_key"
+label     = "RT API Key"
+hint      = "Get a key from your self-hosted rt-api admin endpoint (X-API-Key header)"
+masked    = true
+required  = true
+env_var   = "RT_API_KEY"
+
+[[config]]
+key       = "base_url"
+label     = "RT API Base URL"
+hint      = "Your self-hosted rt-api deployment URL"
+masked    = false
+required  = false
+env_var   = "RT_API_BASE_URL"
+default   = "https://rotten-tomatoes-api-delta.vercel.app"
+
+[permissions]
+# NOTE: if you're self-hosting at a different URL, edit this list to
+# match. stui's permission validator pins network access to the
+# listed hosts.
+network = ["rotten-tomatoes-api-delta.vercel.app"]
+
+[rate_limit]
+# rt-api default user-key cap is 500/hr; user typically raises to
+# 5000/hr. Local rate cap stays conservative — server-side
+# enforcement is the real gate.
+requests_per_second = 5
+burst               = 10
+
+[capabilities.catalog]
+kinds = ["movie", "series"]
+
+# `search = true` is REQUIRED by the typed-manifest validator (see
+# `sdk/src/manifest.rs::validate()`) — even for plugins that don't
+# implement search. The plugin's `search()` impl returns
+# NOT_IMPLEMENTED via the trait default; the runtime route fan-out
+# treats that as a non-result. Wasted invocation per search; cost
+# is one wasm call returning quickly.
+search   = true
+
+# Bulk path — primary. rt-api's batch endpoint takes ≤50 ids per
+# call; the plugin chunks internally.
+bulk_enrich = { id_sources = ["imdb"] }
+# Single-entry fallback for any path that doesn't go through bulk
+# fan-out.
+enrich      = { id_sources = ["imdb"] }
+# Other verbs not implemented.
+artwork  = { stub = true, reason = "rt-api doesn't expose poster endpoint" }
+credits  = { stub = true, reason = "no API endpoint" }
+related  = { stub = true, reason = "no API endpoint" }
+episodes = false
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://github.com/Ozogorgor/rotten-tomatoes-api"
