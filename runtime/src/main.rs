@@ -7,6 +7,8 @@
 //!   4. Enter the IPC request/response loop
 
 mod abi;
+// Scheduled for removal in Task 9 of the librqbit migration.
+#[allow(dead_code)]
 mod aria2_bridge;
 mod cache;
 mod catalog;
@@ -32,6 +34,8 @@ mod resolver;
 mod sandbox;
 mod scraper;
 mod stremio;
+// Scheduled for removal in Task 9 of the librqbit migration.
+#[allow(dead_code)]
 mod streamer;
 mod torrent_engine;
 mod tvdb;
@@ -428,11 +432,24 @@ async fn main() -> Result<()> {
         event_tx.clone(),
     );
 
+    // ── Embedded torrent engine (librqbit) ────────────────────────────────
+    // Replaces the prior external aria2 daemon. Task 10 will polish this
+    // (config knob for staging dir, telemetry, etc.); for Task 8 we just
+    // need it constructed before PlayerBridge::new.
+    let torrent_staging_dir = cfg.cache_dir.join("torrents");
+    std::fs::create_dir_all(&torrent_staging_dir)?;
+    let torrents = Arc::new(
+        torrent_engine::TorrentEngine::new(torrent_staging_dir.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("torrent_engine boot failed: {e}"))?,
+    );
+    info!(staging = %torrent_staging_dir.display(), "torrent_engine booted");
+
     // ── mpv / player bridge ───────────────────────────────────────────────
     let player = player::PlayerBridge::new(
         Arc::clone(&engine),
         Arc::clone(&config),
-        aria2.clone(),
+        Arc::clone(&torrents),
         mpd_bridge.clone(),
         Arc::clone(&storage),
         Arc::clone(&watch_history),

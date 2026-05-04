@@ -18,7 +18,7 @@
 
 #![allow(dead_code)] // populated incrementally across the migration
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -35,6 +35,7 @@ const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "webm", "avi", "mov", "ts", "m4v"];
 pub struct TorrentEngine {
     pub(crate) session: Arc<librqbit::Session>,
     pub(crate) base_url: String,
+    pub(crate) staging_dir: PathBuf,
 }
 
 /// Handle returned by [`TorrentEngine::start_download`]. The consumer (the
@@ -51,12 +52,20 @@ pub struct DownloadHandle {
 
 impl TorrentEngine {
     pub async fn new(staging_dir: PathBuf) -> Result<Self> {
-        let s = session::TorrentSession::new(staging_dir).await?;
+        let s = session::TorrentSession::new(staging_dir.clone()).await?;
         let server = http_server::StreamingServer::spawn(s.inner.clone()).await?;
         Ok(Self {
             session: s.inner,
             base_url: format!("http://{}", server.addr),
+            staging_dir,
         })
+    }
+
+    /// Directory librqbit writes torrent payloads into. Callers join
+    /// [`DownloadHandle::final_path`] onto this to get an absolute path
+    /// suitable for `MpdBridge::queue_and_play` or the download translator.
+    pub fn staging_dir(&self) -> &Path {
+        &self.staging_dir
     }
 
     /// Add a torrent and return an HTTP URL pointing at the largest video
