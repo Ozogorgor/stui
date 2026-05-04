@@ -7,7 +7,7 @@
 //! Public surface:
 //! - [`TorrentEngine::new`] — boot session + local HTTP server.
 //! - [`TorrentEngine::start_stream`] — add torrent, return HTTP URL mpv plays.
-//! - [`TorrentEngine::start_download`] — add torrent without streaming bias.
+//! - [`TorrentEngine::start_download`] — add torrent + return completion handle.
 //!
 //! Streaming uses librqbit's built-in stream-aware piece scheduler: when a
 //! client reads the per-file HTTP endpoint, librqbit's `TorrentStreams`
@@ -35,6 +35,18 @@ const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "webm", "avi", "mov", "ts", "m4v"];
 pub struct TorrentEngine {
     pub(crate) session: Arc<librqbit::Session>,
     pub(crate) base_url: String,
+}
+
+/// Handle returned by [`TorrentEngine::start_download`]. The consumer (the
+/// download translator that runs after `d` keybind) reads `final_path`
+/// relative to the engine's `staging_dir` and awaits `completion` to learn
+/// when every piece has landed on disk.
+pub struct DownloadHandle {
+    pub torrent_id: usize,
+    /// Largest file in the torrent, **relative** to staging_dir. The
+    /// consumer joins this onto staging_dir to get the absolute path.
+    pub final_path: PathBuf,
+    pub completion: tokio::sync::oneshot::Receiver<Result<()>>,
 }
 
 impl TorrentEngine {
@@ -90,6 +102,63 @@ impl TorrentEngine {
             .ok_or_else(|| anyhow!("no playable video file in torrent"))?;
 
         Ok(stream_url_for(&self.base_url, id, file_idx))
+    }
+
+    /// Add a torrent for bulk download and return a [`DownloadHandle`]
+    /// whose `completion` future resolves when every piece is on disk.
+    ///
+    /// Unlike [`start_stream`](Self::start_stream), the caller never opens
+    /// librqbit's `/stream/` endpoint, so librqbit falls back to its
+    /// default rarest-first piece scheduler — appropriate for the `d`
+    /// keybind workflow where the user wants the full torrent before
+    /// playback/organisation.
+    pub async fn start_download(&self, magnet_or_url: &str) -> Result<DownloadHandle> {
+        use librqbit::{AddTorrent, AddTorrentOptions};
+
+        let resp = self
+            .session
+            .add_torrent(
+                AddTorrent::from_url(magnet_or_url),
+                Some(AddTorrentOptions {
+                    paused: false,
+                    overwrite: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .context("adding torrent to librqbit session")?;
+
+        let handle = resp
+            .into_handle()
+            .ok_or_else(|| anyhow!("librqbit returned a list-only response, not a handle"))?;
+        let torrent_id = handle.id();
+
+        // Largest file → the "main" payload the download_translator will
+        // later move into the user's library.
+        let final_path: PathBuf = handle
+            .with_metadata(|m| {
+                m.file_infos
+                    .iter()
+                    .max_by_key(|fi| fi.len)
+                    .map(|fi| fi.relative_filename.clone())
+                    .unwrap_or_default()
+            })
+            .context("reading torrent metadata for final path")?;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let h2 = Arc::clone(&handle);
+        tokio::spawn(async move {
+            let res = h2.wait_until_completed().await;
+            // Receiver may be gone (caller dropped the handle); ignore the
+            // send error in that case.
+            let _ = tx.send(res);
+        });
+
+        Ok(DownloadHandle {
+            torrent_id,
+            final_path,
+            completion: rx,
+        })
     }
 }
 
