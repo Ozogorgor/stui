@@ -34,7 +34,7 @@ use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
 use stui_aria2::{Aria2Client, Aria2Config, Aria2Error, AddOptions, NotificationEvent};
-use crate::storage::aria2_translator::{Aria2Translator, DownloadSession, MediaType};
+use crate::storage::download_translator::{DownloadTranslator, DownloadSession, MediaType};
 
 // ── Wire message shapes ───────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ pub struct Aria2Bridge {
 struct BridgeInner {
     client:     Aria2Client,
     cfg:        Aria2Config,
-    translator: Aria2Translator,
+    translator: DownloadTranslator,
     /// GID → original URI, tracked for the started message
     active: Mutex<HashMap<String, String>>,
 }
@@ -94,7 +94,7 @@ impl Aria2Bridge {
     }
 
     /// Try to connect to aria2c. Returns None if not reachable (non-fatal).
-    pub async fn try_connect(translator: Aria2Translator) -> Option<Self> {
+    pub async fn try_connect(translator: DownloadTranslator) -> Option<Self> {
         let cfg = Aria2Config::from_env();
         match cfg.connect().await {
             Ok(client) => {
@@ -142,11 +142,11 @@ impl Aria2Bridge {
         self.inner.active.lock().await.insert(gid.clone(), uri.to_string());
 
         // Register session with translator for path organization
-        let aria2_dir: PathBuf = dir.clone().into();
+        let staging_dir: PathBuf = dir.clone().into();
         let session = DownloadSession::new(
             gid.clone(),
             title.unwrap_or("unknown").to_string(),
-            aria2_dir,
+            staging_dir,
             PathBuf::new(), // organized_base set later when metadata available
             media_type.unwrap_or(MediaType::Movie),
             year,
@@ -299,7 +299,7 @@ impl Aria2Bridge {
     }
 
     /// Get the translator for external access.
-    pub fn translator(&self) -> &Aria2Translator {
+    pub fn translator(&self) -> &DownloadTranslator {
         &self.inner.translator
     }
 }

@@ -41,7 +41,7 @@ use crate::dsp::DspPipeline;
 use crate::engine::Engine;
 use crate::mpd_bridge::MpdBridge;
 use crate::ipc::{MediaTab, MediaType};
-use crate::storage::aria2_translator::MediaType as Aria2MediaType;
+use crate::storage::download_translator::MediaType as Aria2MediaType;
 use super::mpv::{MpvEvent, MpvPlayer, PlayerEndedReason};
 use crate::streamer::Streamer;
 

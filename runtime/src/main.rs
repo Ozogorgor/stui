@@ -68,7 +68,7 @@ use dsp::{DspPipeline, OutputTarget};
 use providers::{HealthRegistry, StreamBenchmarker};
 
 use skipper::{Skipper, SkipperStore};
-use storage::aria2_translator::Aria2Translator;
+use storage::download_translator::DownloadTranslator;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Configuration is now loaded via config::load() which reads
@@ -344,7 +344,7 @@ async fn main() -> Result<()> {
 
     // ── aria2c bridge ─────────────────────────────────────────────────────
     // Initialize the aria2 translator for path organization
-    let translator = Aria2Translator::new(
+    let translator = DownloadTranslator::new(
         cfg.data_dir.join("aria2-translations.json"),
     );
     translator.init().await?;

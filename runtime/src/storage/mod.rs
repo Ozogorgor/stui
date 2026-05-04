@@ -1,6 +1,6 @@
 //! Media storage manager — handles file organization and path generation.
 
-pub mod aria2_translator;
+pub mod download_translator;
 
 use std::collections::HashMap;
 use std::fs;
