@@ -14,6 +14,7 @@
 
 #![allow(dead_code)] // populated incrementally across the migration
 
+pub mod http_server;
 pub mod session;
 
 pub struct TorrentEngine;
