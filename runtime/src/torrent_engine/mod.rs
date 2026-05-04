@@ -14,6 +14,8 @@
 
 #![allow(dead_code)] // populated incrementally across the migration
 
+pub mod session;
+
 pub struct TorrentEngine;
 
 impl TorrentEngine {
