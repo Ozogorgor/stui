@@ -33,6 +33,7 @@ mod sandbox;
 mod scraper;
 mod stremio;
 mod streamer;
+mod torrent_engine;
 mod tvdb;
 mod anime_bridge;
 mod pipeline;

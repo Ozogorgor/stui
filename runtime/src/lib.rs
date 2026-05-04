@@ -42,6 +42,7 @@ pub mod sandbox;
 pub mod scraper;
 pub mod stremio;
 pub mod streamer;
+pub mod torrent_engine;
 pub mod tvdb;
 pub mod anime_bridge;
 pub mod storage;
