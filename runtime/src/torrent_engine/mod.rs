@@ -14,13 +14,29 @@
 
 #![allow(dead_code)] // populated incrementally across the migration
 
-pub mod http_server;
-pub mod session;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-pub struct TorrentEngine;
+use anyhow::Result;
+
+mod http_server;
+mod session;
+mod url;
+
+pub use url::stream_url_for;
+
+pub struct TorrentEngine {
+    pub(crate) session: Arc<librqbit::Session>,
+    pub(crate) base_url: String,
+}
 
 impl TorrentEngine {
-    pub async fn new() -> anyhow::Result<Self> {
-        Ok(TorrentEngine)
+    pub async fn new(staging_dir: PathBuf) -> Result<Self> {
+        let s = session::TorrentSession::new(staging_dir).await?;
+        let server = http_server::StreamingServer::spawn(s.inner.clone()).await?;
+        Ok(Self {
+            session: s.inner,
+            base_url: format!("http://{}", server.addr),
+        })
     }
 }
