@@ -345,7 +345,8 @@ impl PlayerBridge {
         let stream_url = match self.torrents.start_stream(uri).await {
             Ok(u)  => u,
             Err(e) => {
-                self.push_ended("error", &e.to_string()).await;
+                error!("player_bridge: torrent_engine.start_stream failed: {e:#}");
+                self.push_ended("error", &format!("torrent error: {e}")).await;
                 return;
             }
         };

@@ -20,8 +20,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+
+/// How long to wait for librqbit to fetch metadata from peers before giving
+/// up. Dead magnets would hang forever otherwise; 60 s is generous enough
+/// for healthy torrents on a slow link.
+const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 
 mod http_server;
 mod session;
@@ -77,17 +83,21 @@ impl TorrentEngine {
 
         // For magnets, `add_torrent` blocks until the metadata handshake
         // completes, so the returned handle always has `metadata` populated.
-        let resp = self
-            .session
-            .add_torrent(
-                AddTorrent::from_url(magnet_or_url),
-                Some(AddTorrentOptions {
-                    paused: false,
-                    overwrite: true,
-                    ..Default::default()
-                }),
-            )
+        // Dead/poorly-seeded magnets would hang forever — bound the wait.
+        let add_fut = self.session.add_torrent(
+            AddTorrent::from_url(magnet_or_url),
+            Some(AddTorrentOptions {
+                paused: false,
+                overwrite: true,
+                ..Default::default()
+            }),
+        );
+        let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
             .await
+            .map_err(|_| anyhow!(
+                "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
+                METADATA_TIMEOUT.as_secs()
+            ))?
             .context("adding torrent to librqbit session")?;
 
         let handle = resp
@@ -124,17 +134,20 @@ impl TorrentEngine {
     pub async fn start_download(&self, magnet_or_url: &str) -> Result<DownloadHandle> {
         use librqbit::{AddTorrent, AddTorrentOptions};
 
-        let resp = self
-            .session
-            .add_torrent(
-                AddTorrent::from_url(magnet_or_url),
-                Some(AddTorrentOptions {
-                    paused: false,
-                    overwrite: true,
-                    ..Default::default()
-                }),
-            )
+        let add_fut = self.session.add_torrent(
+            AddTorrent::from_url(magnet_or_url),
+            Some(AddTorrentOptions {
+                paused: false,
+                overwrite: true,
+                ..Default::default()
+            }),
+        );
+        let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
             .await
+            .map_err(|_| anyhow!(
+                "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
+                METADATA_TIMEOUT.as_secs()
+            ))?
             .context("adding torrent to librqbit session")?;
 
         let handle = resp
