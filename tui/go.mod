@@ -4,10 +4,12 @@ go 1.25.5
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/charmbracelet/x/mosaic v0.0.0-20260503005035-c113ba3d2310
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/madelynnblue/go-dsp v1.0.0
 	github.com/mattn/go-runewidth v0.0.23
-	golang.org/x/text v0.3.8
+	golang.org/x/image v0.39.0
+	golang.org/x/text v0.36.0
 )
 
 require (

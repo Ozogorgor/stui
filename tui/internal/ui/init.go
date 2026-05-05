@@ -44,7 +44,7 @@ func (m Model) Init() tea.Cmd {
 			m.loadingSpinner.Tick,
 			func() tea.Msg { return ipc.RuntimeReadyMsg{} },
 			pollPosterRefresh(),
-			components.ChafaPollCmd(),
+			components.ImageRenderPollCmd(),
 		)
 	}
 
@@ -58,7 +58,7 @@ func (m Model) Init() tea.Cmd {
 			return runtimeStartedMsg{client: client}
 		},
 		pollPosterRefresh(),
-		components.ChafaPollCmd(),
+		components.ImageRenderPollCmd(),
 		rainbowTickCmd(),
 	)
 }

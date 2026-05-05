@@ -349,6 +349,7 @@ func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 		Tab:         entry.Tab,
 		ImdbID:      derefStr(entry.ImdbID),
 		TmdbID:      derefStr(entry.TmdbID),
+		OriginalLanguage: derefStr(entry.OriginalLanguage),
 		Providers:   []string{entry.Provider},
 	}
 	ds := screens.NewDetailState(detail)

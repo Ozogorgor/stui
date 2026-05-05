@@ -129,6 +129,10 @@ type CatalogEntry struct {
 	// so the JSON key on the wire is `artist_name` (MediaEntry's
 	// field). Nil for non-music entries.
 	Artist *string `json:"artist_name,omitempty"`
+	// ISO 639-1 language code (e.g. "ja", "en"). Populated by plugins
+	// that expose it (tmdb, kitsu, anilist). Surfaced in the detail
+	// screen as a human-readable language name.
+	OriginalLanguage *string `json:"original_language,omitempty"`
 	// Fields added for scoped search (Chunk 4).
 	Kind   EntryKind `json:"kind,omitempty"`
 	Source string    `json:"source,omitempty"`
@@ -154,7 +158,11 @@ type DetailEntry struct {
 	// season/episode lookups through TMDB even when the catalog
 	// entry is anilist/kitsu-spined.
 	TmdbID      string       `json:"tmdb_id,omitempty"`
-	Tab         string       `json:"tab"`
+	// ISO 639-1 language code (e.g. "ja", "en"). Mirrored from
+	// CatalogEntry at detail-open time. Rendered as a human-readable
+	// language name under the synopsis.
+	OriginalLanguage string `json:"original_language,omitempty"`
+	Tab              string `json:"tab"`
 
 	// Metadata-enrichment fields populated by DetailMetadataPartial "enrich"
 	// verbs after the detail panel opens. They default to zero values when
