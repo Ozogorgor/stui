@@ -9,7 +9,6 @@
 mod abi;
 // Scheduled for removal in Task 9 of the librqbit migration.
 #[allow(dead_code)]
-mod aria2_bridge;
 mod cache;
 mod catalog;
 mod catalog_engine;
@@ -34,9 +33,6 @@ mod resolver;
 mod sandbox;
 mod scraper;
 mod stremio;
-// Scheduled for removal in Task 9 of the librqbit migration.
-#[allow(dead_code)]
-mod streamer;
 mod torrent_engine;
 mod tvdb;
 mod anime_bridge;
@@ -343,20 +339,16 @@ async fn main() -> Result<()> {
         });
     }
 
-    // ── Shared event channel (aria2 + mpv/player → Go) ──────────────────
+    // ── Shared event channel (mpv/player → Go) ──────────────────
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(128);
 
-    // ── aria2c bridge ─────────────────────────────────────────────────────
-    // Initialize the aria2 translator for path organization
+    // ── Download translator ───────────────────────────────────────────────
+    // Organizes finished downloads into the user's [storage] library dirs.
+    // Re-wired into the playback pipeline in Task 10's organize-on-complete work.
     let translator = DownloadTranslator::new(
-        cfg.data_dir.join("aria2-translations.json"),
+        cfg.data_dir.join("download-translations.json"),
     );
     translator.init().await?;
-    let aria2 = aria2_bridge::Aria2Bridge::try_connect(translator).await;
-    if let Some(ref bridge) = aria2 {
-        bridge.spawn_monitors(event_tx.clone());
-        info!("aria2: bridge active");
-    }
 
     // ── MPD bridge ────────────────────────────────────────────────────────────
     let mpd_bridge = if cfg.mpd.host != "disabled" {

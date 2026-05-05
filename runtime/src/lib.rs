@@ -15,10 +15,6 @@
 //! | `wasm-host` | Enable full WASM plugin execution via wasmtime |
 
 pub mod abi;
-// Scheduled for removal in Task 9 of the librqbit migration. Kept around so
-// the binary still compiles while the player_bridge swap is reviewed.
-#[allow(dead_code)]
-pub mod aria2_bridge;
 pub mod cache;
 pub mod catalog;
 pub mod catalog_engine;
@@ -44,11 +40,6 @@ pub mod resolver;
 pub mod sandbox;
 pub mod scraper;
 pub mod stremio;
-// Scheduled for removal in Task 9 of the librqbit migration. mpv handles its
-// own buffering against librqbit's HTTP server now, so the preroll/stall-guard
-// machinery is dead.
-#[allow(dead_code)]
-pub mod streamer;
 pub mod torrent_engine;
 pub mod tvdb;
 pub mod anime_bridge;
