@@ -425,9 +425,9 @@ async fn main() -> Result<()> {
     );
 
     // ── Embedded torrent engine (librqbit) ────────────────────────────────
-    // Replaces the prior external aria2 daemon. Task 10 will polish this
-    // (config knob for staging dir, telemetry, etc.); for Task 8 we just
-    // need it constructed before PlayerBridge::new.
+    // Boots an in-process BitTorrent session + a localhost HTTP server that
+    // serves torrent file bytes with Range support, so mpv plays directly
+    // from `http://127.0.0.1:<port>/...` instead of needing a daemon.
     let torrent_staging_dir = cfg.cache_dir.join("torrents");
     std::fs::create_dir_all(&torrent_staging_dir)?;
     let torrents = Arc::new(
