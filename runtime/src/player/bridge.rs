@@ -286,6 +286,19 @@ impl PlayerBridge {
         }
     }
 
+    /// Cold-start playback from a URL when mpv isn't running. Used by
+    /// the SwitchStream IPC path so users can pick a stream from the
+    /// stream-picker UI without first triggering a `play()` via the
+    /// provider row. Title is derived from the URL since we have no
+    /// catalog context here; subtitles are skipped (no imdb_id to
+    /// drive the auto-download flow).
+    pub async fn start_stream_for_switch(&self, url: &str) {
+        let title = title_from_url(url);
+        let entry_id = format!("switch_stream|{title}");
+        info!("player_bridge: cold-starting playback for switch_stream url={}", &url[..url.len().min(80)]);
+        self.start_stream(&entry_id, url, &title, None, None, None).await;
+    }
+
     pub async fn switch_stream_mpd(&self, url: &str, title: &str) {
         let Some(ref mpd) = self.mpd else {
             warn!("switch_stream_mpd called but MPD not configured");
@@ -546,6 +559,28 @@ fn is_torrent_url(url: &str) -> bool {
     u.ends_with(".torrent")
         || u.contains("/download/torrent/")
         || u.contains("/torrent/download")
+}
+
+/// Best-effort title extraction from a stream URL. Used by the
+/// SwitchStream cold-start path where we have no catalog context.
+/// Magnets: parse `dn=` parameter. HTTP: take the last path segment
+/// (minus query string). Falls back to a generic label if neither
+/// produces something useful.
+fn title_from_url(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("magnet:?") {
+        for kv in rest.split('&') {
+            if let Some(name) = kv.strip_prefix("dn=") {
+                let decoded = urlencoding::decode(name).map(|s| s.into_owned()).unwrap_or_default();
+                if !decoded.is_empty() { return decoded; }
+            }
+        }
+        return "Magnet stream".to_string();
+    }
+    if let Some(last) = url.rsplit('/').next() {
+        let segment = last.split('?').next().unwrap_or(last);
+        if !segment.is_empty() { return segment.to_string(); }
+    }
+    "Stream".to_string()
 }
 
 fn find_subtitle(data_dir: &str, imdb_id: &str) -> Option<String> {

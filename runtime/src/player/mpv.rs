@@ -224,6 +224,24 @@ impl MpvPlayer {
         *self.inner.sock_tx.lock().await = None;
     }
 
+    /// Check whether an mpv child process exists AND its stdin pipe is still
+    /// alive. Used by the SwitchStream IPC handler to decide between
+    /// loadfile-into-existing-mpv vs cold-starting a fresh playback.
+    /// Side effect: if the child has exited, clears the proc slot so
+    /// the next `play()` call gets a clean spawn.
+    pub async fn is_running(&self) -> bool {
+        let mut guard = self.inner.proc.lock().await;
+        let Some(child) = guard.as_mut() else { return false; };
+        match child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) => {
+                *guard = None;
+                false
+            }
+            Err(_) => true,
+        }
+    }
+
     /// Send a raw mpv IPC command array, e.g. `["cycle","pause"]`.
     pub async fn send_command(&self, cmd: &Value) -> Result<(), String> {
         let req_id = self.inner.req_id.fetch_add(1, Ordering::Relaxed);

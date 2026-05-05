@@ -164,7 +164,17 @@ impl PlayerManager {
             SwitchStream { url } => {
                 info!("manager: switching stream to {}", &url[..url.len().min(80)]);
                 self.bus.emit(RuntimeEvent::StreamSwitchRequested { entry_id: url.clone() });
-                self.bridge.mpv().loadfile_replace(&url).await
+                if self.bridge.mpv().is_running().await {
+                    // Hot path: existing mpv, just retarget it.
+                    self.bridge.mpv().loadfile_replace(&url).await
+                } else {
+                    // Cold path: no mpv running yet. Route through the
+                    // bridge's full start_stream pipeline so torrent/HTTP
+                    // classification + librqbit handoff still happen.
+                    info!("manager: mpv not running — cold-starting playback");
+                    self.bridge.start_stream_for_switch(&url).await;
+                    Ok(())
+                }
             }
             NextStreamCandidate => {
                 self.try_next_candidate().await;
