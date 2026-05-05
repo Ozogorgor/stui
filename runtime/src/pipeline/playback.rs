@@ -196,8 +196,11 @@ pub async fn run_player_cmd(player: &PlayerBridge, mpd: Option<&MpdBridge>, cmd:
             if via_mpd {
                 let title = display_title_from_url(&url);
                 player.switch_stream_mpd(&url, &title).await;
-            } else {
+            } else if player.mpv().is_running().await {
                 player.send_command("loadfile", &[json!(url), json!("replace")]).await;
+            } else {
+                tracing::info!("playback: switch_stream cold-start url={}", &url[..url.len().min(80)]);
+                player.start_stream_for_switch(&url).await;
             }
         }
 
