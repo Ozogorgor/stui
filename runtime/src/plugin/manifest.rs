@@ -30,11 +30,17 @@ use serde::{Deserialize, Serialize};
 pub enum PluginType {
     /// Provides catalog metadata: trending lists, search results, posters, ratings.
     /// Does NOT supply playable stream URLs.
-    #[serde(alias = "metadata")]
+    ///
+    /// Wire-format aliases `"metadata"` and `"provider"` deserialize to this
+    /// variant — legacy plugin.toml files still parse without re-serialising.
+    #[serde(alias = "metadata", alias = "provider")]
     MetadataProvider,
     /// Provides playable stream URLs or magnet links for a given media item.
     StreamProvider,
     /// Provides subtitle tracks (.srt / .vtt) for a given media item.
+    ///
+    /// Wire-format alias `"subtitle"` deserializes to this variant.
+    #[serde(alias = "subtitle")]
     SubtitleProvider,
     /// Resolves a catalog entry ID into a stream URL (legacy — prefer StreamProvider).
     Resolver,
@@ -42,13 +48,6 @@ pub enum PluginType {
     Auth,
     /// Scans and indexes a local library of media files.
     Indexer,
-
-    // ── Backward-compatible aliases ───────────────────────────────────────
-    // Existing plugin.toml files that use the old type names will still load.
-    /// Legacy alias for MetadataProvider.
-    Provider,
-    /// Legacy alias for SubtitleProvider.
-    Subtitle,
 }
 
 impl PluginType {
@@ -59,12 +58,12 @@ impl PluginType {
 
     /// Returns true if this plugin type can supply subtitle tracks.
     pub fn is_subtitle_provider(&self) -> bool {
-        matches!(self, PluginType::SubtitleProvider | PluginType::Subtitle)
+        matches!(self, PluginType::SubtitleProvider)
     }
 
     /// Returns true if this plugin type supplies catalog / metadata.
     pub fn is_metadata_provider(&self) -> bool {
-        matches!(self, PluginType::MetadataProvider | PluginType::Provider)
+        matches!(self, PluginType::MetadataProvider)
     }
 
     /// Return the set of runtime capabilities this plugin type advertises.
@@ -73,15 +72,11 @@ impl PluginType {
     /// having to inspect `PluginType` variants directly.
     pub fn capabilities(&self) -> Vec<PluginCapability> {
         match self {
-            PluginType::MetadataProvider | PluginType::Provider => {
-                vec![PluginCapability::Catalog]
-            }
+            PluginType::MetadataProvider => vec![PluginCapability::Catalog],
             PluginType::StreamProvider => {
                 vec![PluginCapability::Catalog, PluginCapability::Streams]
             }
-            PluginType::SubtitleProvider | PluginType::Subtitle => {
-                vec![PluginCapability::Subtitles]
-            }
+            PluginType::SubtitleProvider => vec![PluginCapability::Subtitles],
             PluginType::Resolver => vec![PluginCapability::Streams],
             PluginType::Auth => vec![PluginCapability::Auth],
             PluginType::Indexer => vec![PluginCapability::Index],
@@ -98,9 +93,6 @@ impl std::fmt::Display for PluginType {
             PluginType::Resolver => "resolver",
             PluginType::Auth => "auth",
             PluginType::Indexer => "indexer",
-            // legacy aliases
-            PluginType::Provider => "provider",
-            PluginType::Subtitle => "subtitle",
         };
         write!(f, "{}", s)
     }
@@ -109,19 +101,20 @@ impl std::fmt::Display for PluginType {
 impl std::str::FromStr for PluginType {
     type Err = String;
 
-    /// Parse the plugin-type string emitted by `plugin.toml`. Accepts both the
+    /// Parse the plugin-type string emitted by `plugin.toml`. Accepts the
     /// canonical names (`metadata-provider`) and the legacy aliases
-    /// (`metadata`, `provider`, `subtitle`).
+    /// (`metadata`, `provider`, `subtitle`) — the latter map to the
+    /// canonical variants. serde uses `#[serde(alias = …)]` for the same
+    /// mapping on TOML deserialise paths; this `FromStr` is the fallback
+    /// for non-serde config reads (e.g. CLI arg parsing).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "metadata-provider" | "metadata" => Ok(PluginType::MetadataProvider),
+            "metadata-provider" | "metadata" | "provider" => Ok(PluginType::MetadataProvider),
             "stream-provider" => Ok(PluginType::StreamProvider),
-            "subtitle-provider" => Ok(PluginType::SubtitleProvider),
+            "subtitle-provider" | "subtitle" => Ok(PluginType::SubtitleProvider),
             "resolver" => Ok(PluginType::Resolver),
             "auth" => Ok(PluginType::Auth),
             "indexer" => Ok(PluginType::Indexer),
-            "provider" => Ok(PluginType::Provider),
-            "subtitle" => Ok(PluginType::Subtitle),
             _ => Err(format!("unknown plugin type: {s}")),
         }
     }
@@ -257,9 +250,35 @@ mod plugin_type_tests {
 
     #[test]
     fn plugin_type_parses_legacy_aliases() {
+        // Legacy strings now collapse onto the canonical variants — same
+        // wire-format compatibility, no orphan unit-variants in the enum.
         assert_eq!("metadata".parse::<PluginType>().unwrap(), PluginType::MetadataProvider);
-        assert_eq!("provider".parse::<PluginType>().unwrap(), PluginType::Provider);
-        assert_eq!("subtitle".parse::<PluginType>().unwrap(), PluginType::Subtitle);
+        assert_eq!("provider".parse::<PluginType>().unwrap(), PluginType::MetadataProvider);
+        assert_eq!("subtitle".parse::<PluginType>().unwrap(), PluginType::SubtitleProvider);
+    }
+
+    #[test]
+    fn plugin_type_serde_aliases_map_to_canonical() {
+        // TOML deserialise path also collapses legacy strings.
+        let m: PluginMeta = toml::from_str(
+            r#"
+name = "legacy"
+version = "0.1.0"
+type = "provider"
+"#,
+        )
+        .unwrap();
+        assert_eq!(m.plugin_type_enum().unwrap(), PluginType::MetadataProvider);
+
+        let m: PluginMeta = toml::from_str(
+            r#"
+name = "legacy"
+version = "0.1.0"
+type = "subtitle"
+"#,
+        )
+        .unwrap();
+        assert_eq!(m.plugin_type_enum().unwrap(), PluginType::SubtitleProvider);
     }
 
     #[test]
