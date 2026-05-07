@@ -32,18 +32,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
-use crate::aria2_bridge::Aria2Bridge;
 use crate::config::ConfigManager;
 use crate::config::types::PlaybackConfig;
 use crate::dsp::DspPipeline;
 use crate::engine::Engine;
 use crate::mpd_bridge::MpdBridge;
 use crate::ipc::{MediaTab, MediaType};
-use crate::storage::aria2_translator::MediaType as Aria2MediaType;
+use crate::torrent_engine::TorrentEngine;
 use super::mpv::{MpvEvent, MpvPlayer, PlayerEndedReason};
-use crate::streamer::Streamer;
 
 // ── Wire shapes ───────────────────────────────────────────────────────────────
 
@@ -78,10 +76,17 @@ struct PlayerEndedWire {
 #[allow(clippy::type_complexity)]
 pub struct PlayerBridge {
     mpv:          MpvPlayer,
-    aria2:        Option<Aria2Bridge>,
+    /// Embedded librqbit-backed torrent engine. Always present — librqbit boots
+    /// in-process so there is no "is the daemon running?" question that
+    /// the old `Option<Aria2Bridge>` had to answer.
+    torrents:     Arc<TorrentEngine>,
     mpd:          Option<MpdBridge>,
     engine:       Arc<Engine>,
     config:       Arc<ConfigManager>,
+    /// Library-organisation helper. Currently unused after the aria2 → librqbit
+    /// swap; will be re-wired in Task 10 when organize-on-complete lands on
+    /// `DownloadTranslator`.
+    #[allow(dead_code)]
     storage:      Arc<crate::storage::MediaStorage>,
     watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
     ipc_tx:       mpsc::Sender<String>,
@@ -98,7 +103,7 @@ impl PlayerBridge {
     pub fn new(
         engine:       Arc<Engine>,
         config:       Arc<ConfigManager>,
-        aria2:        Option<Aria2Bridge>,
+        torrents:     Arc<TorrentEngine>,
         mpd:          Option<MpdBridge>,
         storage:      Arc<crate::storage::MediaStorage>,
         watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
@@ -116,7 +121,7 @@ impl PlayerBridge {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, aria2, mpd, engine, config, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
+        PlayerBridge { mpv, torrents, mpd, engine, config, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
     }
 
     /// Build the DSP-derived mpv flags for the current pipeline configuration.
@@ -224,36 +229,47 @@ impl PlayerBridge {
         self.mpv.stop().await;
     }
 
-    /// Download a torrent/magnet URL via aria2 without launching mpv.
-    /// Progress events are emitted automatically by the aria2 bridge monitors.
-    pub async fn download_only(&self, url: &str, title: &str, media_type: Option<MediaType>, year: Option<u32>) {
-        let Some(ref aria2) = self.aria2 else {
-            warn!("player_bridge: download_only — aria2 not available");
-            return;
-        };
-        let aria2_media_type = media_type.map(|m| Aria2MediaType::from_ipc(&m));
-        let mut sink = std::io::sink();
-        match aria2.start_download(url, &mut sink, aria2_media_type, Some(title), year).await {
-            Ok(gid) => {
-                let msg = serde_json::to_string(&serde_json::json!({
-                    "type":  "download_started",
-                    "gid":   gid,
-                    "title": title,
-                    "uri":   url,
-                })).unwrap_or_default();
-                let _ = self.ipc_tx.send(msg).await;
-                info!("player_bridge: download_only gid={gid}");
+    /// Download a torrent/magnet URL via the embedded torrent engine without
+    /// launching mpv. A background task awaits completion and logs the
+    /// outcome.
+    ///
+    /// NOTE: organize-on-complete wiring (the old aria2 per-GID monitor →
+    /// `DownloadTranslator` flow) is intentionally deferred — see Task 9/10
+    /// in the librqbit migration plan. For now the file simply lands in
+    /// `TorrentEngine::staging_dir()`.
+    pub async fn download_only(&self, url: &str, title: &str, _media_type: Option<MediaType>, _year: Option<u32>) {
+        let dl = match self.torrents.start_download(url).await {
+            Ok(d)  => d,
+            Err(e) => {
+                warn!("player_bridge: download_only torrent error: {e}");
+                return;
             }
-            Err(e) => warn!("player_bridge: download_only aria2 error: {e}"),
-        }
+        };
+        let started = serde_json::to_string(&serde_json::json!({
+            "type":  "download_started",
+            "title": title,
+            "uri":   url,
+        })).unwrap_or_default();
+        let _ = self.ipc_tx.send(started).await;
+        info!("player_bridge: download_only torrent_id={}", dl.torrent_id);
+
+        tokio::spawn(async move {
+            match dl.completion.await {
+                Ok(Ok(()))  => info!("download_only: completed torrent_id={}", dl.torrent_id),
+                Ok(Err(e))  => warn!("download_only: torrent failed: {e}"),
+                Err(_)      => warn!("download_only: completion channel dropped"),
+            }
+        });
     }
 
-    /// Cancel an active aria2 download by GID.
-    pub async fn cancel_download(&self, gid: &str) {
-        let Some(ref aria2) = self.aria2 else { return; };
-        if let Err(e) = aria2.client().remove(gid).await {
-            warn!("player_bridge: cancel_download {gid}: {e}");
-        }
+    /// Cancel an active torrent download.
+    ///
+    /// Until the librqbit migration finishes wiring per-torrent IDs through
+    /// the IPC layer (see Task 10), this no-ops. The previous aria2 GID
+    /// shape isn't a valid librqbit handle, so we'd just log and do nothing
+    /// either way.
+    pub async fn cancel_download(&self, _id: &str) {
+        warn!("player_bridge: cancel_download not yet wired to TorrentEngine");
     }
 
     /// Play a local file path directly via mpv (used for completed downloads).
@@ -268,6 +284,19 @@ impl PlayerBridge {
         if let Err(e) = self.mpv.send_command(&json!(full_cmd)).await {
             warn!("player_bridge: send_command failed: {e}");
         }
+    }
+
+    /// Cold-start playback from a URL when mpv isn't running. Used by
+    /// the SwitchStream IPC path so users can pick a stream from the
+    /// stream-picker UI without first triggering a `play()` via the
+    /// provider row. Title is derived from the URL since we have no
+    /// catalog context here; subtitles are skipped (no imdb_id to
+    /// drive the auto-download flow).
+    pub async fn start_stream_for_switch(&self, url: &str) {
+        let title = title_from_url(url);
+        let entry_id = format!("switch_stream|{title}");
+        info!("player_bridge: cold-starting playback for switch_stream url={}", &url[..url.len().min(80)]);
+        self.start_stream(&entry_id, url, &title, None, None, None).await;
     }
 
     pub async fn switch_stream_mpd(&self, url: &str, title: &str) {
@@ -293,112 +322,62 @@ impl PlayerBridge {
 
     async fn start_stream(&self, entry_id: &str, url: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
         if is_torrent_url(url) || is_magnet(url) {
-            self.play_via_aria2(entry_id, url, title, sub, media_type, year).await;
+            self.play_via_torrent(entry_id, url, title, sub, media_type, year).await;
         } else {
             self.launch_mpv(url, title, sub).await;
         }
     }
 
-    async fn play_via_aria2(&self, entry_id: &str, uri: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
+    /// Stream a torrent/magnet by handing librqbit's HTTP URL straight to
+    /// mpv. mpv handles its own buffering against librqbit's Range-supporting
+    /// HTTP server, so the old preroll / stall-guard machinery is gone.
+    async fn play_via_torrent(
+        &self,
+        entry_id: &str,
+        uri: &str,
+        title: &str,
+        sub: Option<&str>,
+        _media_type: Option<MediaType>,
+        _year: Option<u32>,
+    ) {
         self.mpd_active.store(false, Ordering::Relaxed);
-        let Some(aria2) = &self.aria2 else {
-            warn!("player_bridge: aria2 not available");
-            self.push_ended(
-                "error",
-                "aria2 not running — start with: ./scripts/aria2c-start.sh",
-            ).await;
-            return;
+
+        let stream_url = match self.torrents.start_stream(uri).await {
+            Ok(u)  => u,
+            Err(e) => {
+                error!("player_bridge: torrent_engine.start_stream failed: {e:#}");
+                self.push_ended("error", &format!("torrent error: {e}")).await;
+                return;
+            }
         };
 
-        let aria2_media_type = media_type.map(|m| Aria2MediaType::from_ipc(&m)).unwrap_or(Aria2MediaType::Movie);
-
-        // Start download
-        let mut sink = std::io::sink();
-        let gid = match aria2.start_download(uri, &mut sink, Some(aria2_media_type.clone()), Some(title), year).await {
-            Ok(g)  => g,
-            Err(e) => { self.push_ended("error", &e.to_string()).await; return; }
-        };
-
-        // Calculate and set organized path based on media type and title
-        let organized_base = self.calculate_organized_path(&aria2_media_type, title, year);
-        aria2.set_organized_base(&gid, organized_base.clone()).await;
-
-        // Emit download_started with human-readable title to IPC.
+        // Emit a UI event so the TUI can show "Buffering…" until mpv
+        // reports playback_restart. No preroll wait on our side.
         let started = serde_json::to_string(&serde_json::json!({
             "type":  "download_started",
-            "gid":   &gid,
             "title": title,
             "uri":   uri,
         })).unwrap_or_default();
         let _ = self.ipc_tx.send(started).await;
 
-        info!("player_bridge: aria2 gid={gid} organized={}", organized_base.display());
+        info!("player_bridge: streaming {title} via torrent_engine ({stream_url})");
 
-        // ── Adaptive pre-roll (blocks until buffer is safe) ───────────────
-        let streamer = Streamer::new(self.ipc_tx.clone());
+        // Update watch history with the streaming URL so resume works.
+        self.watch_history.update_file_path(entry_id, &stream_url).await;
 
-        let (file_path, plan) = match streamer
-            .wait_for_preroll(aria2.client(), &gid, 0.0)
-            .await
-        {
-            Some(r) => r,
-            None    => {
-                self.push_ended("error", "download timed out or failed").await;
-                return;
-            }
-        };
-
-        // Update watch history with the downloaded file path
-        self.watch_history.update_file_path(entry_id, &file_path).await;
-        debug!(entry_id = %entry_id, path = %file_path, "updated watch history with file path");
-
-        // ── Launch mpv ────────────────────────────────────────────────────
         if !self.playback_cfg.terminal_vo.is_empty() {
             self.push_terminal_takeover().await;
         }
         let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
         extra_flags.extend(self.mpv_dsp_flags().await);
         if let Err(e) = self.mpv.play(
-            &file_path, title, sub, &self.data_dir,
+            &stream_url, title, sub, &self.data_dir,
             &extra_flags,
             &self.playback_cfg.terminal_vo,
         ).await {
             error!("player_bridge: mpv failed: {e}");
             self.push_ended("error", &e).await;
-            return;
         }
-
-        // ── Stall guard (background task) ─────────────────────────────────
-        let bridge2  = self.clone();
-        let gid2     = gid.clone();
-        let streamer2 = streamer.clone();
-        tokio::spawn(async move {
-            let Some(ref aria2) = bridge2.aria2 else {
-                warn!("stall guard: aria2 unavailable; skipping stall guard");
-                return;
-            };
-            streamer2.run_stall_guard(
-                aria2.client(),
-                &gid2,
-                &bridge2.mpv,
-                plan,
-            ).await;
-        });
-
-        // ── Feed mpv position into streamer (for stall-guard accuracy) ────
-        let streamer3 = streamer.clone();
-        let mut rx = self.mpv.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(MpvEvent::Progress(p)) => {
-                        streamer3.on_mpv_progress(p.position, p.duration).await;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    _ => {}
-                }
-            }
-        });
     }
 
     async fn launch_mpv(&self, url: &str, title: &str, sub: Option<&str>) {
@@ -420,34 +399,40 @@ impl PlayerBridge {
 
     async fn play_via_mpd(&self, mpd: &MpdBridge, url: &str, title: &str) {
         if is_torrent_url(url) || is_magnet(url) {
-            // Download via aria2 first, then hand local path to MPD
-            let Some(aria2) = &self.aria2 else {
-                warn!("player_bridge: aria2 not available for audio torrent");
-                self.push_ended("error", "aria2 not running").await;
-                return;
-            };
-            let mut sink = std::io::sink();
-            let gid = match aria2.start_download(url, &mut sink, Some(Aria2MediaType::Music), Some(title), None).await {
-                Ok(g)  => g,
+            // Audio torrents: librqbit's per-file HTTP endpoint isn't a great
+            // fit for MPD (which wants a stable file:// or http stream that
+            // doesn't reshuffle pieces). Pre-download the whole torrent —
+            // music payloads are small enough that the wait is acceptable —
+            // then hand the staged path to MPD.
+            let dl = match self.torrents.start_download(url).await {
+                Ok(d)  => d,
                 Err(e) => {
-                    let msg = e.to_string();
-                    self.push_ended("error", &msg).await;
+                    self.push_ended("error", &e.to_string()).await;
                     return;
                 }
             };
             let started = serde_json::to_string(&serde_json::json!({
                 "type":  "download_started",
-                "gid":   &gid,
                 "title": title,
                 "uri":   url,
             })).unwrap_or_default();
             let _ = self.ipc_tx.send(started).await;
-            let streamer = crate::streamer::Streamer::new(self.ipc_tx.clone());
-            let Some((file_path, _)) = streamer.wait_for_preroll(aria2.client(), &gid, 0.0).await else {
-                self.push_ended("error", "download timed out").await;
-                return;
-            };
-            let file_url = format!("file://{file_path}");
+
+            let final_rel = dl.final_path.clone();
+            match dl.completion.await {
+                Ok(Ok(()))  => {}
+                Ok(Err(e))  => {
+                    self.push_ended("error", &format!("torrent failed: {e}")).await;
+                    return;
+                }
+                Err(_) => {
+                    self.push_ended("error", "torrent completion channel dropped").await;
+                    return;
+                }
+            }
+
+            let abs_path = self.torrents.staging_dir().join(&final_rel);
+            let file_url = format!("file://{}", abs_path.display());
             match mpd.queue_and_play(&file_url).await {
                 Ok(()) => {
                     self.mpd_active.store(true, Ordering::Relaxed);
@@ -577,6 +562,28 @@ fn is_torrent_url(url: &str) -> bool {
         || u.contains("/torrent/download")
 }
 
+/// Best-effort title extraction from a stream URL. Used by the
+/// SwitchStream cold-start path where we have no catalog context.
+/// Magnets: parse `dn=` parameter. HTTP: take the last path segment
+/// (minus query string). Falls back to a generic label if neither
+/// produces something useful.
+fn title_from_url(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("magnet:?") {
+        for kv in rest.split('&') {
+            if let Some(name) = kv.strip_prefix("dn=") {
+                let decoded = urlencoding::decode(name).map(|s| s.into_owned()).unwrap_or_default();
+                if !decoded.is_empty() { return decoded; }
+            }
+        }
+        return "Magnet stream".to_string();
+    }
+    if let Some(last) = url.rsplit('/').next() {
+        let segment = last.split('?').next().unwrap_or(last);
+        if !segment.is_empty() { return segment.to_string(); }
+    }
+    "Stream".to_string()
+}
+
 fn find_subtitle(data_dir: &str, imdb_id: &str) -> Option<String> {
     if imdb_id.is_empty() { return None; }
     let sub_dir = format!("{}/subtitles/{}", data_dir, imdb_id);
@@ -593,15 +600,9 @@ fn find_subtitle(data_dir: &str, imdb_id: &str) -> Option<String> {
 }
 
 impl PlayerBridge {
-    fn calculate_organized_path(&self, media_type: &Aria2MediaType, title: &str, year: Option<u32>) -> std::path::PathBuf {
-        use Aria2MediaType::*;
-        match media_type {
-            Movie | AnimeMovie => self.storage.movie_folder(title, year),
-            Series | AnimeSeries => self.storage.series_folder(title, year),
-            Music => self.storage.artist_folder(title),
-            Podcast => self.storage.podcast_folder(title),
-        }
-    }
+    // NOTE: calculate_organized_path was removed alongside play_via_aria2.
+    // The download_translator now owns "where does this file end up" once
+    // organize-on-complete is wired up against TorrentEngine (Task 10+).
 
     /// Resolve the candidate's entry_id to a subtitle URL via the plugin,
     /// HTTP-GET the file to the canonical sidecar path. Returns the basename

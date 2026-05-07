@@ -95,7 +95,12 @@ func (m Model) handlePlayerStarted(msg ipc.PlayerStartedMsg) (tea.Model, tea.Cmd
 	if m.notifyCfg.OnPlayback {
 		notify.Send(m.notifyCfg, "▶ Now Playing", msg.Title, notify.UrgencyLow)
 	}
-	return m, nil
+	// Toast confirms the action visibly even when StatusMsg lives in
+	// a hidden bar — important after the SwitchStream cold-start fix
+	// so users know the click→play loop closed without log-diving.
+	t, toastCmd := components.ShowToast("▶ Playing: "+msg.Title, false)
+	m.activeToast = &t
+	return m, toastCmd
 }
 
 // handlePlayerBuffering handles ipc.PlayerBufferingMsg.

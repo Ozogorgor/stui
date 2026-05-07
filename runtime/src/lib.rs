@@ -15,7 +15,6 @@
 //! | `wasm-host` | Enable full WASM plugin execution via wasmtime |
 
 pub mod abi;
-pub mod aria2_bridge;
 pub mod cache;
 pub mod catalog;
 pub mod catalog_engine;
@@ -41,7 +40,7 @@ pub mod resolver;
 pub mod sandbox;
 pub mod scraper;
 pub mod stremio;
-pub mod streamer;
+pub mod torrent_engine;
 pub mod tvdb;
 pub mod anime_bridge;
 pub mod storage;

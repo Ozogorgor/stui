@@ -367,6 +367,16 @@ func renderHeaderInfo(ds *DetailState, w, h int) string {
 		)
 	}
 
+	// Language line — sits under the synopsis when known. ISO 639-1
+	// codes ("ja", "en", "ko") get formatted as their English display
+	// name via golang.org/x/text/language. Unknown codes fall back to
+	// the upper-cased code so the user still sees something useful.
+	if lang := formatLanguage(ds.Entry.OriginalLanguage); lang != "" {
+		sections = append(sections,
+			theme.T.DetailMetaStyle().Render("Language: "+lang),
+		)
+	}
+
 	// Continue Watching — kept in the always-visible header (per user
 	// preference) so the resume affordance is one glance away
 	// regardless of which tab is active.

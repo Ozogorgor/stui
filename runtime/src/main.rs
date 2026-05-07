@@ -7,7 +7,8 @@
 //!   4. Enter the IPC request/response loop
 
 mod abi;
-mod aria2_bridge;
+// Scheduled for removal in Task 9 of the librqbit migration.
+#[allow(dead_code)]
 mod cache;
 mod catalog;
 mod catalog_engine;
@@ -32,7 +33,7 @@ mod resolver;
 mod sandbox;
 mod scraper;
 mod stremio;
-mod streamer;
+mod torrent_engine;
 mod tvdb;
 mod anime_bridge;
 mod pipeline;
@@ -67,7 +68,7 @@ use dsp::{DspPipeline, OutputTarget};
 use providers::{HealthRegistry, StreamBenchmarker};
 
 use skipper::{Skipper, SkipperStore};
-use storage::aria2_translator::Aria2Translator;
+use storage::download_translator::DownloadTranslator;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Configuration is now loaded via config::load() which reads
@@ -338,20 +339,16 @@ async fn main() -> Result<()> {
         });
     }
 
-    // ── Shared event channel (aria2 + mpv/player → Go) ──────────────────
+    // ── Shared event channel (mpv/player → Go) ──────────────────
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<String>(128);
 
-    // ── aria2c bridge ─────────────────────────────────────────────────────
-    // Initialize the aria2 translator for path organization
-    let translator = Aria2Translator::new(
-        cfg.data_dir.join("aria2-translations.json"),
+    // ── Download translator ───────────────────────────────────────────────
+    // Organizes finished downloads into the user's [storage] library dirs.
+    // Re-wired into the playback pipeline in Task 10's organize-on-complete work.
+    let translator = DownloadTranslator::new(
+        cfg.data_dir.join("download-translations.json"),
     );
     translator.init().await?;
-    let aria2 = aria2_bridge::Aria2Bridge::try_connect(translator).await;
-    if let Some(ref bridge) = aria2 {
-        bridge.spawn_monitors(event_tx.clone());
-        info!("aria2: bridge active");
-    }
 
     // ── MPD bridge ────────────────────────────────────────────────────────────
     let mpd_bridge = if cfg.mpd.host != "disabled" {
@@ -427,11 +424,24 @@ async fn main() -> Result<()> {
         event_tx.clone(),
     );
 
+    // ── Embedded torrent engine (librqbit) ────────────────────────────────
+    // Boots an in-process BitTorrent session + a localhost HTTP server that
+    // serves torrent file bytes with Range support, so mpv plays directly
+    // from `http://127.0.0.1:<port>/...` instead of needing a daemon.
+    let torrent_staging_dir = cfg.cache_dir.join("torrents");
+    std::fs::create_dir_all(&torrent_staging_dir)?;
+    let torrents = Arc::new(
+        torrent_engine::TorrentEngine::new(torrent_staging_dir.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("torrent_engine boot failed: {e}"))?,
+    );
+    info!(staging = %torrent_staging_dir.display(), "torrent_engine booted");
+
     // ── mpv / player bridge ───────────────────────────────────────────────
     let player = player::PlayerBridge::new(
         Arc::clone(&engine),
         Arc::clone(&config),
-        aria2.clone(),
+        Arc::clone(&torrents),
         mpd_bridge.clone(),
         Arc::clone(&storage),
         Arc::clone(&watch_history),

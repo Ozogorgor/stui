@@ -1,8 +1,9 @@
 // imageview.go — Reusable terminal image rendering component.
 //
-// Renders images using the best available terminal protocol:
-//   - Kitty graphics protocol (Ghostty, Kitty, WezTerm) — true color images
-//   - Unicode symbols via chafa (all other terminals) — half-block fallback
+// Renders images via charmbracelet/x/mosaic (pure-Go half-block ANSI).
+// Kitty graphics protocol code is kept as a future hook but unused
+// today because Bubbletea's diff-based alt-screen redraws don't survive
+// the inline image escapes.
 //
 // Usage:
 //
@@ -10,19 +11,15 @@
 //	iv.SetImage("/path/to/cover.jpg")
 //	rendered := iv.View() // returns string for embedding in a View
 //
-// The component caches rendered output and only re-shells to chafa when
+// The component caches rendered output and only re-decodes when
 // the image path or dimensions change. Safe to call View() every frame.
 
 package components
 
 import (
-	"fmt"
-	"log"
-	"os/exec"
 	"strings"
 	"sync"
 )
-
 
 // ImageProtocol is the terminal image rendering protocol to use.
 type ImageProtocol int
@@ -49,10 +46,10 @@ type ImageView struct {
 	path     string // current image file path
 	protocol ImageProtocol
 	// Cache
-	cachedPath   string
+	cachedPath       string
 	cachedW, cachedH int
-	cachedLines  []string // pre-split lines for symbols; single element for kitty
-	placeholder  string
+	cachedLines      []string // pre-split lines for symbols; single element for kitty
+	placeholder      string
 }
 
 // NewImageView creates an ImageView with the given cell dimensions.
@@ -98,8 +95,8 @@ func (iv *ImageView) SetPlaceholder(s string) {
 //
 //   1. L1 (in-memory, per ImageView): hit → return immediately.
 //   2. L2 (disk): hit → load + populate L1 → return.
-//   3. Miss → enqueue an async chafa job, return placeholder lines.
-//      The pool emits ChafaRenderedMsg on completion; the controller
+//   3. Miss → enqueue an async render job, return placeholder lines.
+//      The pool emits ImageRenderedMsg on completion; the controller
 //      triggers a View() refresh and the next Lines() call hits L1
 //      via L2 (the worker wrote the result to disk).
 //
@@ -118,8 +115,8 @@ func (iv *ImageView) Lines() []string {
 		return iv.cachedLines
 	}
 
-	// L2 disk cache. Skip chafa entirely on warm hit.
-	if cached, hit := chafaCacheGet(iv.path, iv.width, iv.height); hit {
+	// L2 disk cache. Skip the renderer entirely on warm hit.
+	if cached, hit := imageRenderCacheGet(iv.path, iv.width, iv.height); hit {
 		lines := iv.parseRendered(string(cached))
 		iv.cachedPath = iv.path
 		iv.cachedW = iv.width
@@ -130,9 +127,9 @@ func (iv *ImageView) Lines() []string {
 
 	// Miss on both tiers. Kick an async render and return placeholder
 	// lines for this frame — the worker pool will refill the disk
-	// cache and fire ChafaRenderedMsg, which triggers a View() refresh
+	// cache and fire ImageRenderedMsg, which triggers a View() refresh
 	// that hits L2 on the next pass.
-	EnqueueChafaRender(iv.path, iv.width, iv.height)
+	EnqueueImageRender(iv.path, iv.width, iv.height)
 	return iv.placeholderLines()
 }
 
@@ -141,51 +138,7 @@ func (iv *ImageView) View() string {
 	return strings.Join(iv.Lines(), "\n")
 }
 
-func (iv *ImageView) render() []string {
-	format := "symbols"
-	if iv.protocol == ImageProtocolKitty {
-		format = "kitty"
-	}
-
-	// L2 disk cache: skip chafa entirely on a warm hit. The cache
-	// key includes the source file's mtime, so swapped posters
-	// invalidate automatically. Kitty protocol output is also
-	// cacheable — it's a single escape sequence the disk happily
-	// stores.
-	if cached, hit := chafaCacheGet(iv.path, iv.width, iv.height); hit {
-		return iv.parseRendered(string(cached))
-	}
-
-	cmd := exec.Command("chafa",
-		"--format", format,
-		"--size", fmt.Sprintf("%dx%d", iv.width, iv.height),
-		"--animate", "off",
-		iv.path,
-	)
-	// Capture stderr separately so we can include it in the diagnostic
-	// log when chafa fails or returns empty output. Helps identify
-	// corrupt/unsupported poster files that otherwise render as noise.
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
-		if err != nil || stderr.Len() > 0 {
-			// One diagnostic line per failure — chafa path + truncated stderr.
-			// Spammy but opt-in via the runtime log file (not the main TUI).
-			log.Printf("chafa render failed: path=%q err=%v stderr=%q",
-				iv.path, err, truncate(stderr.String(), 200))
-		}
-		return iv.placeholderLines()
-	}
-
-	// Cache the raw output (before our line-parsing) so the next
-	// launch can skip chafa entirely.
-	chafaCachePut(iv.path, iv.width, iv.height, out)
-
-	return iv.parseRendered(string(out))
-}
-
-// parseRendered splits chafa's raw output into one line per row,
+// parseRendered splits the renderer's raw output into one line per row,
 // padded/trimmed to exactly iv.height lines. Shared by the live-render
 // and disk-cache-hit paths so they produce identical layouts.
 func (iv *ImageView) parseRendered(raw string) []string {

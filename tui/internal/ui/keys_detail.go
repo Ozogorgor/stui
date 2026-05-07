@@ -395,19 +395,38 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 
 		case ds.Focus == screens.FocusDetailEpisodes,
 			ds.Focus == screens.FocusDetailEpisodeStreams && ds.ActiveTab == screens.DetailTabStreams:
-			// Two paths trigger a stream search:
-			//   - Episodes tab: Enter on the focused episode row.
-			//   - Streams tab (movies): Enter while focused on the
-			//     streams panel — there's no row above it to act as
-			//     the trigger, so the streams panel itself accepts
-			//     the keystroke.
-			// Both clear the cached entry for the current key first so
-			// a stale timeout / empty-result from a prior dispatch
-			// can't shadow the new in-flight request — the renderer
-			// falls through to "Searching torrents…" until the
-			// runtime replies.
+			// Two paths reach this branch:
+			//   - Episodes tab: Enter on a focused episode row →
+			//     dispatch find_streams for that episode.
+			//   - Streams panel: Enter on the panel itself →
+			//     EITHER play the focused stream (if streams are
+			//     already loaded) OR dispatch find_streams (first
+			//     load / explicit refresh).
+			//
+			// Cleared cache + in-flight bookkeeping only happens in
+			// the dispatch branch so an accidental "play" doesn't
+			// throw away the current stream list.
+
+			// Play branch: focus on streams panel + at least one stream
+			// in the cache. We don't gate on EpisodeStreamsLoaded — that
+			// flag is for renderer state, and partial loads may not flip
+			// it consistently. If a stream is under the cursor, play it.
+			if ds.Focus == screens.FocusDetailEpisodeStreams {
+				key := ds.CurrentStreamsKey()
+				streams := ds.EpisodeStreams[key]
+				if ds.EpisodeStreamCursor >= 0 && ds.EpisodeStreamCursor < len(streams) && m.client != nil {
+					m.client.SwitchStream(streams[ds.EpisodeStreamCursor].URL)
+					t, toastCmd := components.ShowToast("▶ Starting stream…", false)
+					m.activeToast = &t
+					return m, toastCmd
+				}
+			}
+
+			// Dispatch branch: clear cache for the current key first so a
+			// stale timeout / empty-result from a prior dispatch can't
+			// shadow the new in-flight request — the renderer falls
+			// through to "Searching torrents…" until the runtime replies.
 			key := ds.CurrentStreamsKey()
-			// Episodes tab guard: bail if no episode is selected.
 			if ds.ActiveTab == screens.DetailTabEpisodes {
 				eps := ds.Episodes[ds.SeasonCursor+1]
 				if ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(eps) {

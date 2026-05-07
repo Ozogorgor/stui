@@ -536,6 +536,26 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.openDetail(entries[idx])
 			}
 			return m, nil
+		case "p":
+			// Direct play: open detail (so the user has somewhere to land
+			// when they Esc out of the picker) AND open the stream picker
+			// in one keypress. The MPD prev-track `p` higher up only fires
+			// when mpdNowPlaying != nil, so this branch is only reached
+			// when no MPD audio is active — no conflict.
+			if m.cwFocused || m.client == nil {
+				return m, nil
+			}
+			idx := m.gridCursor.Index(components.CardColumns)
+			if idx < 0 || idx >= len(entries) {
+				return m, nil
+			}
+			entry := entries[idx]
+			detailCmd := m.openDetail(entry)
+			pickerCmd := screen.TransitionCmd(
+				screens.NewStreamPickerScreen(m.client, entry.Title, entry.ID, m.state.Settings.BenchmarkStreams),
+				true,
+			)
+			return m, tea.Batch(detailCmd, pickerCmd)
 		case "i":
 			if m.cwFocused {
 				cwItems := m.cwCurrentItems()

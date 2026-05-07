@@ -81,13 +81,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case poster.PostersUpdatedMsg:
 		return m.handlePostersUpdated(msg)
 
-	case components.ChafaRenderedMsg:
-		// Async chafa render finished. The worker has already written
+	case components.ImageRenderedMsg:
+		// Async image render finished. The worker has already written
 		// the result to the disk cache; the next View() pass will hit
 		// L2 and replace the placeholder. We just need to re-subscribe
 		// to the next render notification — Bubbletea will trigger a
 		// re-render naturally.
-		return m, components.ChafaPollCmd()
+		return m, components.ImageRenderPollCmd()
 
 	case components.ToastDismissMsg:
 		return m.handleToastDismiss(msg)

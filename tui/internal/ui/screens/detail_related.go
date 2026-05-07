@@ -148,7 +148,13 @@ func renderRelatedRow(ds *DetailState, w, h int) string {
 		}
 		if posterURL != "" {
 			if cached, hit := posterpkg.CachedPath(posterURL); hit {
-				posterBlock = relatedCardImageView(cached, innerW, posterH).View()
+				// mosaic emits left-aligned, top-anchored output (no padding);
+				// match the catalog grid by centering horizontally inside the
+				// card's inner width via lipgloss.
+				posterBlock = lipgloss.NewStyle().
+					Width(innerW).
+					Align(lipgloss.Center).
+					Render(relatedCardImageView(cached, innerW, posterH).View())
 			} else {
 				posterpkg.Global().Enqueue(posterURL)
 			}
