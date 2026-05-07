@@ -233,7 +233,18 @@ async fn run_find_streams_streaming(
                 let provider_streams: Vec<crate::providers::Stream> =
                     plugin_streams.into_iter().map(plugin_stream_to_provider).collect();
 
-                let policy = crate::quality::RankingPolicy::default();
+                let policy = match cfg.streaming.ranking_preset.as_str() {
+                    "bandwidth_saver" => crate::quality::RankingPolicy::bandwidth_saver(),
+                    "fastest_start"   => crate::quality::RankingPolicy::fastest_start(),
+                    "balanced" | ""   => crate::quality::RankingPolicy::default(),
+                    other => {
+                        tracing::warn!(
+                            preset = %other,
+                            "unknown streaming.ranking_preset; falling back to `balanced`"
+                        );
+                        crate::quality::RankingPolicy::default()
+                    }
+                };
                 let candidates = if !health_map.is_empty() {
                     crate::quality::rank_with_health(provider_streams, &policy, Some(&health_map))
                 } else {

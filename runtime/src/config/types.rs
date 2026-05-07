@@ -404,6 +404,18 @@ pub struct StreamingConfig {
 
     #[serde(default = "defaults::allow_tier_true")]
     pub allow_sd: bool,
+
+    /// Stream-ranking preset. One of:
+    ///   - `"balanced"` (default): RankingPolicy::default — best quality
+    ///     first, balanced seeder weighting.
+    ///   - `"bandwidth_saver"`: RankingPolicy::bandwidth_saver — prefers
+    ///     720p, demands ≥5 seeders.
+    ///   - `"fastest_start"`: RankingPolicy::fastest_start — heavy seeder
+    ///     weighting, demands ≥10 seeders, accepts lower resolution to
+    ///     minimise buffering.
+    /// Unrecognised strings fall back to `balanced` with a warn.
+    #[serde(default = "defaults::ranking_preset")]
+    pub ranking_preset: String,
 }
 
 impl Default for StreamingConfig {
@@ -417,6 +429,7 @@ impl Default for StreamingConfig {
             min_seeders: defaults::min_seeders(),
             require_seeders: false,
             require_resolution: false,
+            ranking_preset: defaults::ranking_preset(),
             allow_4k: true,
             allow_1080p: true,
             allow_720p: true,
@@ -918,6 +931,11 @@ mod defaults {
     /// each need their own `fn allow_4k_default`-style trampoline.
     pub fn allow_tier_true() -> bool {
         true
+    }
+    /// Default ranking-preset string. Mirrors `RankingPolicy::default()`'s
+    /// "best quality first" intent.
+    pub fn ranking_preset() -> String {
+        "balanced".to_string()
     }
 
     // SubtitlesConfig defaults
