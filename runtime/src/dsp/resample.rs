@@ -53,7 +53,18 @@ impl Resampler {
     pub fn new(config: Arc<RwLock<DspConfig>>) -> Result<Self, String> {
         let cfg = config.blocking_read();
         let input_rate = cfg.input_sample_rate;
-        let output_rate = cfg.output_sample_rate;
+        let upsample_ratio = cfg.upsample_ratio;
+        // upsample_ratio is the authoritative knob (audio-settings UI
+        // exposes it as the user-facing resample control). When it's
+        // non-default (>1), the effective output rate = input * ratio.
+        // Falling back to the explicit `output_sample_rate` only when
+        // the ratio is 1 keeps legacy configs that pinned a target rate
+        // without setting a ratio working as before.
+        let output_rate = if upsample_ratio > 1 {
+            input_rate.saturating_mul(upsample_ratio)
+        } else {
+            cfg.output_sample_rate
+        };
         let chunk_size = cfg.buffer_size;
         let filter_type = cfg.filter_type;
         drop(cfg);
@@ -274,7 +285,25 @@ mod tests {
 
     #[test]
     fn test_resampler_output_rate() {
+        // upsample_ratio=2 is authoritative now → output = input × 2.
         let r = Resampler::new(make_test_config()).unwrap();
+        assert_eq!(r.output_rate(), 44100 * 2);
+    }
+
+    #[test]
+    fn test_output_rate_falls_back_to_explicit_when_ratio_is_one() {
+        // ratio=1 disables the multiply; the explicit output_sample_rate wins.
+        // Useful for users who want an exact target like 96k from a 44.1k source.
+        let config = Arc::new(RwLock::new(DspConfig {
+            enabled: true,
+            output_sample_rate: 96000,
+            input_sample_rate: 44100,
+            upsample_ratio: 1,
+            filter_type: FilterType::Synchronous,
+            resample_enabled: true,
+            ..Default::default()
+        }));
+        let r = Resampler::new(config).unwrap();
         assert_eq!(r.output_rate(), 96000);
     }
 
@@ -283,6 +312,8 @@ mod tests {
         let config = Arc::new(RwLock::new(DspConfig {
             output_sample_rate: 96000,
             input_sample_rate: 96000,
+            // ratio=1 → passthrough; ratio>1 would force upsampling.
+            upsample_ratio: 1,
             ..Default::default()
         }));
         let mut r = Resampler::new(config).unwrap();
@@ -293,12 +324,32 @@ mod tests {
 
     #[test]
     fn test_invalid_rate() {
+        // ratio=1 forces the explicit output_sample_rate=0 to be used,
+        // tripping the validate_rates check. Without ratio=1, the new
+        // semantic computes input*ratio (44100*4=176400) and validates fine.
         let config = Arc::new(RwLock::new(DspConfig {
             output_sample_rate: 0,
             input_sample_rate: 44100,
+            upsample_ratio: 1,
             ..Default::default()
         }));
         assert!(Resampler::new(config).is_err());
+    }
+
+    #[test]
+    fn test_upsample_ratio_drives_output_rate() {
+        // 44.1 kHz × 4 = 176.4 kHz (canonical "DSD-friendly" upsample).
+        let config = Arc::new(RwLock::new(DspConfig {
+            enabled: true,
+            input_sample_rate: 44100,
+            output_sample_rate: 192000,  // ignored when ratio > 1
+            upsample_ratio: 4,
+            filter_type: FilterType::Synchronous,
+            resample_enabled: true,
+            ..Default::default()
+        }));
+        let r = Resampler::new(config).unwrap();
+        assert_eq!(r.output_rate(), 176_400);
     }
 
     proptest! {
@@ -316,6 +367,7 @@ mod tests {
                 enabled: true,
                 output_sample_rate: 96000,
                 input_sample_rate: 44100,
+                upsample_ratio: 1,  // pin to explicit output_sample_rate
                 filter_type,
                 resample_enabled: true,
                 ..Default::default()

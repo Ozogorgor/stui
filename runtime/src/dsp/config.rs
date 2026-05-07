@@ -45,9 +45,13 @@ impl TryFrom<u32> for OutputSampleRate {
 
 /// Upsampling ratios.
 ///
-/// TODO: connect to the resample node — pass `UpsampleRatio` through `DspConfig`
-/// into `Resampler::new()` as the target output rate multiplier, then expose
-/// the setting in the audio settings panel. See SCAFFOLD_TODOS.md.
+/// Authoritative knob for the resample stage: `Resampler::new` reads
+/// `DspConfig::upsample_ratio` (a u32 mirror of these enum values, kept
+/// as u32 on the wire since the IPC layer treats it as a numeric setting)
+/// and computes `output_rate = input_rate * ratio` whenever ratio > 1.
+/// The explicit `output_sample_rate` field only takes effect when ratio = 1,
+/// for users who want an exact target like 96kHz instead of a multiple
+/// of the source rate.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[allow(dead_code)] // pub API: used by DSP pipeline
 pub enum UpsampleRatio {
