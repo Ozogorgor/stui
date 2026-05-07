@@ -195,6 +195,27 @@ fn parse_env_content(content: &str) -> anyhow::Result<HashMap<String, String>> {
                 }
             }
 
+            // Transparent decryption: values stored as `enc:<base64>` are
+            // machine-id-bound AES-256-GCM ciphertexts; decrypt them on
+            // load so plugins see the same plaintext they would have seen
+            // from a bare `KEY=value` line. Decryption failures (tampered,
+            // wrong machine, malformed) drop the entry with a warning
+            // rather than crashing — the plugin then surfaces a
+            // missing-key error instead of a silent stale value.
+            if let Some(enc_payload) = value.strip_prefix("enc:") {
+                match super::secrets_enc::decrypt(enc_payload) {
+                    Ok(pt) => value = pt,
+                    Err(e) => {
+                        tracing::warn!(
+                            key = %key,
+                            error = %e,
+                            "secrets.env: failed to decrypt enc-prefixed value, dropping entry"
+                        );
+                        continue;
+                    }
+                }
+            }
+
             if !key.is_empty() && !value.is_empty() {
                 vars.insert(key.to_string(), value);
             }
@@ -265,6 +286,37 @@ EMPTY_KEY=
         assert_eq!(redact("short"), "s****");
         assert_eq!(redact("abcdefghij"), "ab********");
         assert_eq!(redact("1234567890"), "12********");
+    }
+
+    /// Encrypted-prefix round-trip: a value written via `secrets_enc::encrypt`
+    /// and prefixed with `enc:` must come out of `parse_env_content` as
+    /// the original plaintext.
+    #[test]
+    fn test_parse_env_decrypts_enc_prefix() {
+        static MU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = MU.lock().unwrap();
+        env::set_var("STUI_MACHINE_ID", "deadbeef-test-machine-id");
+        let ciphertext = super::super::secrets_enc::encrypt("real-tmdb-key").unwrap();
+        let content = format!("TMDB_API_KEY=enc:{}\nOTHER_KEY=plain\n", ciphertext);
+        let vars = parse_env_content(&content).unwrap();
+        env::remove_var("STUI_MACHINE_ID");
+        assert_eq!(vars.get("TMDB_API_KEY"), Some(&"real-tmdb-key".to_string()));
+        // Bare values still pass through unchanged.
+        assert_eq!(vars.get("OTHER_KEY"), Some(&"plain".to_string()));
+    }
+
+    /// Tampered enc-prefixed values are dropped (warned), not crashed-on.
+    #[test]
+    fn test_parse_env_drops_corrupt_enc_value() {
+        static MU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = MU.lock().unwrap();
+        env::set_var("STUI_MACHINE_ID", "deadbeef-test-machine-id");
+        // Garbage payload after enc: — decrypt fails.
+        let content = "TMDB_API_KEY=enc:not-real-base64-or-cipher\nOTHER=plain\n";
+        let vars = parse_env_content(content).unwrap();
+        env::remove_var("STUI_MACHINE_ID");
+        assert!(!vars.contains_key("TMDB_API_KEY"), "corrupt enc value should be dropped");
+        assert_eq!(vars.get("OTHER"), Some(&"plain".to_string()));
     }
 
     #[test]
