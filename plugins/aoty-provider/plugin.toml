@@ -1,0 +1,60 @@
+[plugin]
+id           = "albumoftheyear"
+name         = "albumoftheyear"
+version      = "0.1.0"
+abi_version  = 2
+description  = "Album of the Year — critic + user scores via self-hosted AOTY API"
+tags         = ["music"]
+
+[env]
+AOTY_API_KEY      = ""
+AOTY_API_BASE_URL = ""
+
+[[config]]
+key       = "api_key"
+label     = "AOTY API Key"
+hint      = "X-API-Key from your self-hosted album-of-the-year-api admin"
+masked    = true
+required  = true
+env_var   = "AOTY_API_KEY"
+
+[[config]]
+key       = "base_url"
+label     = "AOTY API Base URL"
+hint      = "Your self-hosted AOTY API deployment URL"
+masked    = false
+required  = false
+env_var   = "AOTY_API_BASE_URL"
+default   = "https://album-of-the-year-api.vercel.app"
+
+[permissions]
+network = ["album-of-the-year-api.vercel.app"]
+
+[rate_limit]
+requests_per_second = 5
+burst               = 10
+
+[capabilities.catalog]
+kinds = ["artist", "album"]
+
+# search = true is REQUIRED by the typed-manifest validator even though
+# this plugin doesn't implement search. Trait default returns
+# NOT_IMPLEMENTED so the runtime fan-out treats us as a non-result.
+search   = true
+
+# AOTY API has no real batch endpoint for the MB→AOTY chain (the
+# /artists/batch endpoint is slug-keyed, not MB-keyed). bulk_enrich
+# loops single-id calls internally; the overhead is per-request cache
+# hits at the API layer.
+bulk_enrich = { id_sources = ["musicbrainz"] }
+enrich      = { id_sources = ["musicbrainz"] }
+
+artwork  = { stub = true, reason = "AOTY API doesn't expose poster endpoint" }
+credits  = { stub = true, reason = "no API endpoint" }
+related  = { stub = true, reason = "no API endpoint" }
+episodes = false
+
+[meta]
+author   = "stui"
+license  = "MIT"
+homepage = "https://github.com/Ozogorgor/AlbumOfTheYearAPI"

@@ -52,6 +52,8 @@ var canonicalSources = []sourceMeta{
 	{key: "audience_score", label: "RT Audience", scale: "0–100%"},
 	{key: "metacritic", label: "Metacritic", scale: "0–100"},
 	{key: "tmdb", label: "TMDB", scale: "0–10"},
+	{key: "aoty_critic", label: "AOTY Critic", scale: "0–100"},
+	{key: "aoty_user", label: "AOTY User", scale: "0–100"},
 	{key: "discogs", label: "Discogs", scale: "0–5"},
 	{key: "musicbrainz", label: "MusicBrainz", scale: "0–10"},
 	{key: "lastfm", label: "Last.fm (popularity)", scale: "0–10"},
