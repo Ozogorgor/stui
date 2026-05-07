@@ -19,6 +19,15 @@ pub enum PluginCmd {
     Test,
     /// Lint the plugin manifest + impl surface.
     Lint,
+    /// Parse + validate a plugin directory without going through the
+    /// runtime supervisor — fast iteration for plugin authors.
+    /// Reports manifest validation, entrypoint resolution, and a
+    /// capability summary.
+    Load {
+        /// Plugin directory containing plugin.toml. Defaults to cwd.
+        #[arg(default_value = ".")]
+        dir: std::path::PathBuf,
+    },
     /// Install the built plugin to ~/.stui/plugins/<name>/ (dev-mode: symlink).
     Install {
         #[arg(long)]
@@ -32,6 +41,7 @@ pub fn run(cmd: PluginCmd) -> anyhow::Result<()> {
         PluginCmd::Build { release } => crate::cmd::build::run(release),
         PluginCmd::Test => crate::cmd::test::run(),
         PluginCmd::Lint => crate::cmd::lint::run(),
+        PluginCmd::Load { dir } => crate::cmd::load::run(dir),
         PluginCmd::Install { dev } => crate::cmd::install::run(dev),
     }
 }
