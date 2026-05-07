@@ -30,7 +30,7 @@ use crate::cache::metadata::MetadataCache;
 use crate::cache::metadata_key::MetadataVerb;
 use crate::config::types::MetadataSources;
 use crate::engine::{CallPriority, Engine};
-use crate::plugin::manifest::PluginMetaExt;
+use crate::plugin::PluginMetaExt;
 
 use super::sources::{SourceCapabilityProbe, SourceResolver};
 use super::MetadataDispatch;

@@ -1182,7 +1182,7 @@ impl Engine {
                         // effective map is surfaced as both `env` (string) and
                         // `config` (JSON string values) so plugins can read
                         // either without pulling the `toml` crate.
-                        let resolved = crate::plugin::state::resolve_config(
+                        let resolved = crate::plugin::resolve_config(
                             &loaded.manifest,
                             &user_config,
                             crate::config::secrets::env_lookup,
@@ -2374,7 +2374,7 @@ mod supervisor_search_tests {
     // ── PluginRegistry::resolve_id ────────────────────────────────────────────
 
     fn mini_loaded_plugin(id: &str, name: &str) -> LoadedPlugin {
-        use crate::plugin::manifest::{Capabilities, PluginManifest, PluginMeta};
+        use crate::plugin::{Capabilities, PluginManifest, PluginMeta};
         LoadedPlugin {
             id: id.into(),
             manifest: PluginManifest {

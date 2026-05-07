@@ -67,8 +67,7 @@ use stui_plugin_sdk::{
     AlternativeTitlesRequest, AlternativeTitlesResponse,
     BulkEnrichRequest, BulkEnrichResponse,
 };
-use crate::plugin::rate_limit::TokenBucket;
-use crate::plugin::RateLimit;
+use crate::plugin::{RateLimit, TokenBucket};
 use crate::sandbox::SandboxCtx;
 
 // ── Configuration ─────────────────────────────────────────────────────────────
