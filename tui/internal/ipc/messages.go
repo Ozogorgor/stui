@@ -196,12 +196,6 @@ type PersonSearchMsg struct {
 	FromID     string
 }
 
-// DetailReadyMsg carries fetched/assembled detail data into the UI.
-type DetailReadyMsg struct {
-	Entry DetailEntry
-	Err   error
-}
-
 // StreamInfo describes a single resolved stream candidate.
 type StreamInfo struct {
 	URL       string  `json:"url"`

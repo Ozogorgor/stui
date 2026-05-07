@@ -164,9 +164,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Detail data ───────────────────────────────────────────────────────
 
-	case ipc.DetailReadyMsg:
-		return m.handleDetailReady(msg)
-
 	case ipc.DetailMetadataPartial:
 		return m.handleDetailMetadataPartial(msg)
 

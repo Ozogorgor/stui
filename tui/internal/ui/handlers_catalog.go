@@ -290,22 +290,6 @@ func (m Model) handleCollectionOpenDetail(msg screens.CollectionOpenDetailMsg) (
 	return m, m.openDetail(msg.Entry)
 }
 
-// handleDetailReady handles ipc.DetailReadyMsg.
-func (m Model) handleDetailReady(msg ipc.DetailReadyMsg) (tea.Model, tea.Cmd) {
-	if m.detail == nil {
-		return m, nil
-	}
-	if msg.Err != nil {
-		m.detail.Loading = false
-		m.state.StatusMsg = fmt.Sprintf("Detail error: %v", msg.Err)
-		return m, nil
-	}
-	m.detail.Entry = msg.Entry
-	m.detail.Loading = false
-	m.state.StatusMsg = msg.Entry.Title
-	return m, m.sendGetDetailMetadata(msg.Entry)
-}
-
 // handleDetailMetadataPartial handles ipc.DetailMetadataPartial.
 func (m Model) handleDetailMetadataPartial(msg ipc.DetailMetadataPartial) (tea.Model, tea.Cmd) {
 	// Streamed per-verb partial from GetDetailMetadata. Apply to the
@@ -353,12 +337,18 @@ func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 		Providers:   []string{entry.Provider},
 	}
 	ds := screens.NewDetailState(detail)
+	// Catalog entry already carries everything for the initial paint
+	// (title / year / genre / desc / poster); enrichment streams in
+	// later via DetailMetadataPartial. So skip the spinner — there is
+	// no "loading" gap to cover.
+	ds.Loading = false
 	// Populate watch history so the detail screen can show a resume hint.
 	if m.historyStore != nil {
 		ds.WatchHistory = m.historyStore.Get(entry.ID)
 	}
 	m.detail = &ds
 	m.screen = screenDetail
+	m.state.StatusMsg = entry.Title
 	m.state.CurrentMedia = state.CurrentMedia{
 		ID:       entry.ID,
 		Title:    entry.Title,
@@ -369,7 +359,7 @@ func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 		Provider: entry.Provider,
 		ImdbID:   derefStr(entry.ImdbID),
 	}
-	return m.fetchDetailMetadata(detail)
+	return m.sendGetDetailMetadata(detail)
 }
 
 // formatDurationHMS converts seconds to a H:MM:SS or M:SS string.
@@ -382,22 +372,6 @@ func formatDurationHMS(secs float64) string {
 		return fmt.Sprintf("%d:%02d:%02d", h, min, s)
 	}
 	return fmt.Sprintf("%d:%02d", min, s)
-}
-
-// fetchDetailMetadata synthesises the initial DetailReadyMsg from the
-// in-memory catalog entry. Until the runtime gains a dedicated detail
-// endpoint (chunk 7+), this populates the overlay with whatever we
-// already have; the four-verb fan-out filed by sendGetDetailMetadata
-// streams back enrichments (studio, networks, credits, artwork,
-// related) as they arrive via DetailMetadataPartial.
-func (m *Model) fetchDetailMetadata(entry ipc.DetailEntry) tea.Cmd {
-	tabProviders := m.providersForTab()
-	return func() tea.Msg {
-		if len(tabProviders) > 0 && len(entry.Providers) == 0 {
-			entry.Providers = tabProviders
-		}
-		return ipc.DetailReadyMsg{Entry: entry}
-	}
 }
 
 // sendGetDetailMetadata fires the runtime's GetDetailMetadata fan-out
