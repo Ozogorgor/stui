@@ -194,6 +194,34 @@ func (d *DetailState) HasEpisodesTab() bool {
 	return t == "series" || t == "Series"
 }
 
+// SeasonSlotCount returns the total number of rows the season list
+// should render. Regular seasons 1..SeasonCount + a trailing
+// "Specials" slot when the provider exposes one.
+func (d *DetailState) SeasonSlotCount() int {
+	count := int(d.Entry.SeasonCount)
+	if count <= 0 {
+		count = 1
+	}
+	if d.Entry.HasSpecials {
+		count++
+	}
+	return count
+}
+
+// SeasonNumberForCursor maps SeasonCursor → the season number to send
+// over IPC (LoadEpisodes, FindStreams). Cursors over the Specials slot
+// resolve to season 0; regular seasons are cursor+1.
+func (d *DetailState) SeasonNumberForCursor() int {
+	regular := int(d.Entry.SeasonCount)
+	if regular <= 0 {
+		regular = 1
+	}
+	if d.Entry.HasSpecials && d.SeasonCursor == regular {
+		return 0
+	}
+	return d.SeasonCursor + 1
+}
+
 // AvailableTabs returns the ordered tab list for this entry — used by
 // both the tab-bar renderer and the tab-cycle key handler so they
 // agree on the layout.
@@ -284,6 +312,12 @@ func (d *DetailState) ApplyMetadataPartial(p ipc.DetailMetadataPartial) {
 		if len(p.Payload.SeasonIDs) > 0 {
 			d.Entry.SeasonIDs = append([]string(nil), p.Payload.SeasonIDs...)
 		}
+		// Latch true once any provider reports specials — different
+		// providers might disagree, but if any of them have a Specials
+		// track we want to expose it.
+		if p.Payload.HasSpecials {
+			d.Entry.HasSpecials = true
+		}
 		d.Meta.EnrichStatus = status
 	case "credits":
 		d.Meta.Credits = p.Payload
@@ -353,11 +387,12 @@ func (d *DetailState) CurrentStreamsKey() EpisodeStreamsKey {
 	if d.ActiveTab == DetailTabStreams {
 		return EpisodeStreamsKey{Season: 0, Episode: 0}
 	}
-	eps := d.Episodes[d.SeasonCursor+1]
+	seasonNum := d.SeasonNumberForCursor()
+	eps := d.Episodes[seasonNum]
 	if d.EpisodeCursor < 0 || d.EpisodeCursor >= len(eps) {
 		return EpisodeStreamsKey{}
 	}
-	return EpisodeStreamsKey{Season: d.SeasonCursor + 1, Episode: int(eps[d.EpisodeCursor].Episode)}
+	return EpisodeStreamsKey{Season: seasonNum, Episode: int(eps[d.EpisodeCursor].Episode)}
 }
 
 func (d *DetailState) SelectedProvider() string {

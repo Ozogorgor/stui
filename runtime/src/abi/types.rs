@@ -107,6 +107,9 @@ pub struct PluginEntry {
     /// catalog entry. Mirrors
     /// `stui_plugin_sdk::PluginEntry::season_ids`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")] pub season_ids: Vec<String>,
+    /// True when the provider exposes a "Specials" track (TVDB season 0).
+    /// Mirrors `stui_plugin_sdk::PluginEntry::has_specials`.
+    #[serde(default)] pub has_specials: bool,
     /// ISO 639-1 original language. Mirrors `stui_plugin_sdk::PluginEntry`.
     /// Used by the engine's anime-mix classifier alongside genre.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub original_language: Option<String>,

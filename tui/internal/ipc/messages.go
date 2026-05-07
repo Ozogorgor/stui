@@ -181,6 +181,11 @@ type DetailEntry struct {
 	// season. EpisodeScreen uses this to pick the right id when fetching
 	// episodes for season N.
 	SeasonIDs []string `json:"season_ids,omitempty"`
+	// True when the underlying provider has a Specials track (TVDB
+	// season 0). The episode browser renders a row labeled "Specials"
+	// after the regular seasons; selecting it sends `season=0` to the
+	// runtime's LoadEpisodes verb.
+	HasSpecials bool `json:"has_specials,omitempty"`
 }
 
 // CastMember is a single person in the cast/crew list.
@@ -583,6 +588,9 @@ type MetadataPayload struct {
 	ExternalIDs map[string]string `json:"external_ids,omitempty"`
 	SeasonCount *uint32           `json:"season_count,omitempty"`
 	SeasonIDs   []string          `json:"season_ids,omitempty"`
+	// True when the provider exposes a "Specials" track (TVDB season 0).
+	// The episode browser appends a "Specials" row when set.
+	HasSpecials bool `json:"has_specials,omitempty"`
 
 	// Credits fields
 	Cast []CastWire `json:"cast,omitempty"`

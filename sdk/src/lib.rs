@@ -185,6 +185,13 @@ pub struct PluginEntry {
     /// season, with the season number passed through.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub season_ids: Vec<String>,
+    /// True when the underlying provider exposes "Specials" content
+    /// (TVDB season 0 / TMDB season 0). Surfaced separately from
+    /// `season_count` so the TUI can label the slot "Specials" instead
+    /// of "Season 0" without inflating the regular season tally.
+    /// Defaults to false; providers that don't model specials never set it.
+    #[serde(default)]
+    pub has_specials: bool,
 
     /// ISO 639-1 code of the entry's original spoken/produced language
     /// (e.g. `"en"`, `"ja"`, `"ko"`). Used by the runtime's post-merge

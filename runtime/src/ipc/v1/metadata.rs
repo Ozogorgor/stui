@@ -102,6 +102,10 @@ pub struct EnrichData {
     /// Empty for TMDB-style providers. See `PluginEntry::season_ids`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub season_ids: Vec<String>,
+    /// True when the provider has Specials content (TVDB season 0).
+    /// Forwarded from `PluginEntry::has_specials`.
+    #[serde(default)]
+    pub has_specials: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

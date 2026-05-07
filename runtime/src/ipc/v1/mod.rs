@@ -1738,6 +1738,10 @@ pub struct MediaEntry {
     /// looked up) keeps the TUI on its single-season default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub season_count: Option<u32>,
+    /// True when the provider has a Specials track (e.g. TVDB season 0).
+    /// The TUI appends a "Specials" row to its season list when set.
+    #[serde(default)]
+    pub has_specials: bool,
 }
 
 /// A single stream candidate as sent to the TUI.

@@ -49,6 +49,14 @@ pub fn extract_enrich_series(extended: &ExtendedSeries, kind: EntryKind) -> Enri
         .filter(|s| s.number >= 1 && s.season_type.id == TVDB_DEFAULT_SEASON_TYPE)
         .map(|s| s.number)
         .max();
+    // Specials = season 0 in the default ordering. TVDB's Season struct
+    // doesn't carry an episode count, so we treat the existence of the
+    // row as the signal — if season 0 is in the canonical order, the
+    // show has specials, full stop.
+    let has_specials = extended
+        .seasons
+        .iter()
+        .any(|s| s.number == 0 && s.season_type.id == TVDB_DEFAULT_SEASON_TYPE);
 
     let entry = PluginEntry {
         id: format!("tvdb-{}", extended.id),
@@ -68,6 +76,7 @@ pub fn extract_enrich_series(extended: &ExtendedSeries, kind: EntryKind) -> Enri
         external_ids,
         season_count,
         season_ids: Vec::new(), // TMDB-style routing — TUI calls per-season
+        has_specials,
         original_language: extended.original_language.clone(),
         ..Default::default()
     };
@@ -397,7 +406,7 @@ mod tests {
             id: 1,
             name: "X".into(),
             seasons: vec![
-                season(0, 1), // specials → excluded
+                season(0, 1), // specials → excluded from season_count
                 season(1, 1),
                 season(2, 1),
                 season(3, 1),
@@ -406,6 +415,39 @@ mod tests {
         };
         let r = extract_enrich_series(&s, EntryKind::Series);
         assert_eq!(r.entry.season_count, Some(3));
+        // …but the specials presence is surfaced separately so the
+        // TUI can render a "Specials" row after the canonical seasons.
+        assert!(r.entry.has_specials, "season 0 in default order → has_specials=true");
+    }
+
+    #[test]
+    fn enrich_series_no_season_zero_means_no_specials() {
+        let s = ExtendedSeries {
+            id: 1,
+            name: "X".into(),
+            seasons: vec![season(1, 1), season(2, 1)],
+            ..Default::default()
+        };
+        let r = extract_enrich_series(&s, EntryKind::Series);
+        assert!(!r.entry.has_specials);
+    }
+
+    #[test]
+    fn enrich_series_alternate_order_specials_dont_count() {
+        // Season 0 only present in DVD ordering shouldn't trigger
+        // has_specials — we only honor the canonical aired order.
+        let s = ExtendedSeries {
+            id: 1,
+            name: "X".into(),
+            seasons: vec![
+                season(0, 2), // DVD order specials — ignored
+                season(1, 1),
+                season(2, 1),
+            ],
+            ..Default::default()
+        };
+        let r = extract_enrich_series(&s, EntryKind::Series);
+        assert!(!r.entry.has_specials);
     }
 
     #[test]

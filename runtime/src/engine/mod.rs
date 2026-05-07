@@ -369,6 +369,7 @@ fn catalog_entries_to_media(
         season:      None,
         episode:     None,
         season_count: None,
+        has_specials: false,
     }).collect()
 }
 
@@ -1467,6 +1468,7 @@ impl Engine {
                                 season: None,
                                 episode: None,
                                 season_count: None,
+                                has_specials: false,
                             })
                             .collect();
                         cache.insert(cache_key_for_task, entries.clone()).await;
@@ -1569,6 +1571,7 @@ impl Engine {
                                         season: None,
                                         episode: None,
                                         season_count: None,
+                                        has_specials: false,
                                     })
                                     .collect();
                                 cache.insert(cache_key_for_task, entries.clone()).await;
@@ -1684,6 +1687,7 @@ impl Engine {
                                         season:      e.season,
                                         episode:     e.episode,
                                         season_count: e.season_count,
+                                        has_specials: e.has_specials,
                                     }
                                     }).collect::<Vec<_>>())
                                     .map_err(|e| anyhow::anyhow!("{e}"))
@@ -2253,6 +2257,7 @@ fn abi_entry_to_media_entry(
         season:       e.season,
         episode:      e.episode,
         season_count: e.season_count,
+        has_specials: e.has_specials,
     }
 }
 

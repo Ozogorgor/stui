@@ -602,11 +602,18 @@ func renderEpisodesTab(ds *DetailState, w, h int) string {
 	if count <= 0 {
 		count = 1
 	}
+	// "Specials" appears as the row immediately after the regular
+	// seasons when the provider has a season-0 track. The total slot
+	// count includes it so the cursor + bounds math is uniform.
+	totalSlots := count
+	if ds.Entry.HasSpecials {
+		totalSlots++
+	}
 	if ds.SeasonCursor < 0 {
 		ds.SeasonCursor = 0
 	}
-	if ds.SeasonCursor >= count {
-		ds.SeasonCursor = count - 1
+	if ds.SeasonCursor >= totalSlots {
+		ds.SeasonCursor = totalSlots - 1
 	}
 
 	// Column widths. Seasons is fixed at PosterWidth so it lines up
@@ -631,15 +638,22 @@ func renderEpisodesTab(ds *DetailState, w, h int) string {
 
 	// ── Column 1: seasons ──────────────────────────────────────────
 	var seasonLines []string
-	for i := 0; i < count; i++ {
-		num := i + 1
+	for i := 0; i < totalSlots; i++ {
+		// Slots 0..count-1 → "Season 1..N"; the trailing slot (when
+		// HasSpecials is set) → "Specials".
+		var label string
+		if ds.Entry.HasSpecials && i == count {
+			label = "Specials"
+		} else {
+			label = fmt.Sprintf("Season %d", i+1)
+		}
 		var line string
 		if i == ds.SeasonCursor && ds.Focus == FocusDetailSeasons {
-			line = acc.Render(fmt.Sprintf("▶ Season %d", num))
+			line = acc.Render("▶ " + label)
 		} else if i == ds.SeasonCursor {
-			line = normal.Render(fmt.Sprintf("▶ Season %d", num))
+			line = normal.Render("▶ " + label)
 		} else {
-			line = dim.Render(fmt.Sprintf("  Season %d", num))
+			line = dim.Render("  " + label)
 		}
 		seasonLines = append(seasonLines, line)
 	}
@@ -662,10 +676,11 @@ func renderEpisodesTab(ds *DetailState, w, h int) string {
 	}
 
 	// ── Column 2: episodes ─────────────────────────────────────────
-	episodes, loaded := ds.Episodes[ds.SeasonCursor+1], ds.EpisodesLoaded[ds.SeasonCursor+1]
+	curSeason := ds.SeasonNumberForCursor()
+	episodes, loaded := ds.Episodes[curSeason], ds.EpisodesLoaded[curSeason]
 	var epLines []string
 	epCursor := 0
-	currentSeasonErr := ds.EpisodesError[ds.SeasonCursor+1]
+	currentSeasonErr := ds.EpisodesError[curSeason]
 	switch {
 	case currentSeasonErr != "":
 		// Strip SDK error-code prefix (METADATA_FAILED:, etc.) so the

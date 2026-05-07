@@ -51,7 +51,7 @@ func (m Model) maybeLoadEpisodesForTab(ds *screens.DetailState) tea.Cmd {
 	if ds.ActiveTab != screens.DetailTabEpisodes {
 		return nil
 	}
-	season := ds.SeasonCursor + 1
+	season := ds.SeasonNumberForCursor()
 	if ds.EpisodesLoaded[season] {
 		return nil
 	}
@@ -120,12 +120,13 @@ func (m Model) dispatchFindStreamsForCursor(ds *screens.DetailState) tea.Cmd {
 	if ds.ActiveTab == screens.DetailTabStreams {
 		req.Kind = "Movie"
 	} else {
-		eps := ds.Episodes[ds.SeasonCursor+1]
+		seasonNum := ds.SeasonNumberForCursor()
+		eps := ds.Episodes[seasonNum]
 		if ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(eps) {
 			return nil
 		}
 		ep := eps[ds.EpisodeCursor]
-		seasonPtr := uint32(ds.SeasonCursor + 1)
+		seasonPtr := uint32(seasonNum)
 		episodePtr := uint32(ep.Episode)
 		req.Kind = "Series"
 		req.Season = &seasonPtr
@@ -229,16 +230,12 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 		case ds.PersonMode:
 			ds.PersonCursor = screens.MoveCursorDown(ds.PersonCursor, len(ds.PersonResults))
 		case ds.Focus == screens.FocusDetailSeasons:
-			count := int(ds.Entry.SeasonCount)
-			if count <= 0 {
-				count = 1
-			}
-			if ds.SeasonCursor < count-1 {
+			if ds.SeasonCursor < ds.SeasonSlotCount()-1 {
 				ds.SeasonCursor++
 				return m, m.maybeLoadEpisodesForTab(ds)
 			}
 		case ds.Focus == screens.FocusDetailEpisodes:
-			eps := ds.Episodes[ds.SeasonCursor+1]
+			eps := ds.Episodes[ds.SeasonNumberForCursor()]
 			if ds.EpisodeCursor < len(eps)-1 {
 				ds.EpisodeCursor++
 			}
@@ -348,7 +345,7 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			// every focus shift dispatched stale searches when the
 			// user was just navigating, and the responses fought
 			// over the streams column.
-			if len(ds.Episodes[ds.SeasonCursor+1]) > 0 {
+			if len(ds.Episodes[ds.SeasonNumberForCursor()]) > 0 {
 				ds.Focus = screens.FocusDetailEpisodes
 			}
 		case ds.Focus == screens.FocusDetailEpisodes:
@@ -356,7 +353,7 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			// for the current (season, episode) shows; if nothing,
 			// the user presses Enter from the episode list to
 			// dispatch a fresh search.
-			eps := ds.Episodes[ds.SeasonCursor+1]
+			eps := ds.Episodes[ds.SeasonNumberForCursor()]
 			if ds.EpisodeCursor >= 0 && ds.EpisodeCursor < len(eps) {
 				ds.Focus = screens.FocusDetailEpisodeStreams
 				ds.EpisodeStreamCursor = 0
@@ -428,7 +425,7 @@ func (m Model) handleDetailKey(key string) (tea.Model, tea.Cmd) {
 			// through to "Searching torrents…" until the runtime replies.
 			key := ds.CurrentStreamsKey()
 			if ds.ActiveTab == screens.DetailTabEpisodes {
-				eps := ds.Episodes[ds.SeasonCursor+1]
+				eps := ds.Episodes[ds.SeasonNumberForCursor()]
 				if ds.EpisodeCursor < 0 || ds.EpisodeCursor >= len(eps) {
 					return m, nil
 				}

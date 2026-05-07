@@ -47,11 +47,13 @@ pub(super) fn enrich_to_payload(resp: EnrichResponse) -> MetadataPayload {
     }
     data.season_count = resp.entry.season_count;
     data.season_ids = resp.entry.season_ids.clone();
+    data.has_specials = resp.entry.has_specials;
     tracing::info!(
         provider = %resp.entry.source,
         title = %resp.entry.title,
         season_count = ?resp.entry.season_count,
         season_ids = ?resp.entry.season_ids,
+        has_specials = resp.entry.has_specials,
         "enrich_to_payload: emitting season_count"
     );
     MetadataPayload::Enrich(data)

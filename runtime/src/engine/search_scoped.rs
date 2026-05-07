@@ -198,6 +198,7 @@ fn tvdb_items_to_entries(items: Vec<crate::tvdb::TvdbEntry>, scope: SearchScope)
             season: None,
             episode: None,
             season_count: None,
+            has_specials: false,
         })
         .collect()
 }
