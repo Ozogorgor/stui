@@ -233,12 +233,12 @@ impl MpvPlayer {
         let mut guard = self.inner.proc.lock().await;
         let Some(child) = guard.as_mut() else { return false; };
         match child.try_wait() {
-            Ok(None) => true,
-            Ok(Some(_)) => {
+            Ok(None) => true,        // still running
+            Ok(Some(_)) => {         // exited; clean up
                 *guard = None;
                 false
             }
-            Err(_) => true,
+            Err(_) => true,          // assume alive on error
         }
     }
 
