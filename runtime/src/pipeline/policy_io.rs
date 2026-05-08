@@ -24,7 +24,10 @@ pub fn load_stream_policy() -> StreamPreferences {
 
 pub fn save_stream_policy(prefs: &StreamPreferences) -> std::io::Result<()> {
     let path = policy_path();
-    std::fs::create_dir_all(path.parent().expect("policy_io: output path has no parent directory"))?;
+    std::fs::create_dir_all(
+        path.parent()
+            .expect("policy_io: output path has no parent directory"),
+    )?;
     let data = serde_json::to_vec_pretty(prefs).expect("serialize StreamPreferences");
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &data)?;
@@ -35,12 +38,12 @@ impl From<StreamPreferences> for StreamPreferencesWire {
     fn from(p: StreamPreferences) -> Self {
         StreamPreferencesWire {
             prefer_protocol: p.prefer_protocol,
-            max_resolution:  p.max_resolution,
-            max_size_mb:     p.max_size_mb,
-            min_seeders:     p.min_seeders,
-            avoid_labels:    p.avoid_labels,
-            prefer_hdr:      p.prefer_hdr,
-            prefer_codecs:   p.prefer_codecs,
+            max_resolution: p.max_resolution,
+            max_size_mb: p.max_size_mb,
+            min_seeders: p.min_seeders,
+            avoid_labels: p.avoid_labels,
+            prefer_hdr: p.prefer_hdr,
+            prefer_codecs: p.prefer_codecs,
         }
     }
 }
@@ -63,17 +66,17 @@ mod tests {
     fn wire_roundtrip() {
         let prefs = StreamPreferences {
             prefer_protocol: Some("torrent".to_string()),
-            max_resolution:  Some("1080p".to_string()),
-            max_size_mb:     4096,
-            min_seeders:     5,
-            avoid_labels:    vec!["cam".to_string()],
-            prefer_hdr:      true,
-            prefer_codecs:   vec!["hevc".to_string()],
+            max_resolution: Some("1080p".to_string()),
+            max_size_mb: 4096,
+            min_seeders: 5,
+            avoid_labels: vec!["cam".to_string()],
+            prefer_hdr: true,
+            prefer_codecs: vec!["hevc".to_string()],
         };
         let wire: StreamPreferencesWire = prefs.clone().into();
         let back: StreamPreferences = wire.into();
         assert_eq!(back.prefer_protocol, prefs.prefer_protocol);
-        assert_eq!(back.max_size_mb,     prefs.max_size_mb);
-        assert_eq!(back.avoid_labels,    prefs.avoid_labels);
+        assert_eq!(back.max_size_mb, prefs.max_size_mb);
+        assert_eq!(back.avoid_labels, prefs.avoid_labels);
     }
 }

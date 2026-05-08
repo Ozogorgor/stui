@@ -21,8 +21,7 @@ use tracing::{debug, warn};
 
 use super::http::{HttpFetch, ReqwestFetcher};
 use super::types::{
-    Envelope, EpisodeRecord, EpisodesPayload, ExtendedMovie, ExtendedSeries, LoginData,
-    SearchItem,
+    Envelope, EpisodeRecord, EpisodesPayload, ExtendedMovie, ExtendedSeries, LoginData, SearchItem,
 };
 
 const BASE_URL: &str = "https://api4.thetvdb.com/v4";
@@ -47,7 +46,10 @@ struct CacheEntry<T> {
 
 impl<T> CacheEntry<T> {
     fn new(value: T) -> Self {
-        Self { value, inserted_at: Instant::now() }
+        Self {
+            value,
+            inserted_at: Instant::now(),
+        }
     }
 
     fn is_fresh(&self, ttl: Duration) -> bool {
@@ -106,8 +108,10 @@ pub struct TvdbClient {
     http: Arc<dyn HttpFetch>,
     api_key: String,
     jwt: RwLock<Option<String>>,
-    extended_cache: Mutex<LruCache<u64, Arc<OnceCell<Result<Arc<ExtendedSeries>, Arc<anyhow::Error>>>>>>,
-    extended_movie_cache: Mutex<LruCache<u64, Arc<OnceCell<Result<Arc<ExtendedMovie>, Arc<anyhow::Error>>>>>>,
+    extended_cache:
+        Mutex<LruCache<u64, Arc<OnceCell<Result<Arc<ExtendedSeries>, Arc<anyhow::Error>>>>>>,
+    extended_movie_cache:
+        Mutex<LruCache<u64, Arc<OnceCell<Result<Arc<ExtendedMovie>, Arc<anyhow::Error>>>>>>,
     /// Foreign-id → tvdb_id resolution. Negative results (`None`) cache
     /// so we don't re-query for entries TVDB doesn't index. Key is
     /// `(source, id)` where source is "imdb" or "tmdb".
@@ -123,10 +127,7 @@ impl TvdbClient {
     /// Crate-internal constructor that accepts a custom `HttpFetch`. Primary
     /// use is dependency injection from the cache-logic tests in this
     /// module; production callers should use [`Self::new`].
-    pub(crate) fn with_http(
-        api_key: String,
-        http: Arc<dyn HttpFetch>,
-    ) -> Result<Arc<Self>> {
+    pub(crate) fn with_http(api_key: String, http: Arc<dyn HttpFetch>) -> Result<Arc<Self>> {
         if api_key.trim().is_empty() {
             return Err(anyhow!("tvdb api_key is empty"));
         }
@@ -151,7 +152,11 @@ impl TvdbClient {
             .await
             .context("tvdb login request")?;
         if !(200..300).contains(&resp.status) {
-            return Err(anyhow!("tvdb /login returned {}: {}", resp.status, resp.body));
+            return Err(anyhow!(
+                "tvdb /login returned {}: {}",
+                resp.status,
+                resp.body
+            ));
         }
         let env: Envelope<LoginData> =
             serde_json::from_str(&resp.body).context("tvdb login parse")?;
@@ -223,7 +228,12 @@ impl TvdbClient {
     }
 
     /// Free-text search, restricted to movie or series.
-    pub async fn search(&self, query: &str, kind: SearchKind, limit: u32) -> Result<Vec<TvdbEntry>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        kind: SearchKind,
+        limit: u32,
+    ) -> Result<Vec<TvdbEntry>> {
         let qs = format!(
             "/search?query={}&type={}&limit={}",
             urlencoding::encode(query),
@@ -273,7 +283,10 @@ impl TvdbClient {
     /// next attempt then re-fetches fresh. Failures are NEVER permanent.
     pub async fn extended_series(&self, tvdb_id: u64) -> Result<Arc<ExtendedSeries>> {
         let cell = {
-            let mut guard = self.extended_cache.lock().expect("tvdb cache mutex poisoned");
+            let mut guard = self
+                .extended_cache
+                .lock()
+                .expect("tvdb cache mutex poisoned");
             // Evict if the slot already resolved to an error so failures
             // aren't permanent — next call gets a fresh fetch.
             if let Some(existing) = guard.get(&tvdb_id) {
@@ -305,7 +318,10 @@ impl TvdbClient {
     /// [`Self::extended_series`] for the movie shape.
     pub async fn extended_movie(&self, tvdb_id: u64) -> Result<Arc<ExtendedMovie>> {
         let cell = {
-            let mut guard = self.extended_movie_cache.lock().expect("tvdb cache mutex poisoned");
+            let mut guard = self
+                .extended_movie_cache
+                .lock()
+                .expect("tvdb cache mutex poisoned");
             if let Some(existing) = guard.get(&tvdb_id) {
                 if existing.get().is_some_and(|r| r.is_err()) {
                     guard.pop(&tvdb_id);
@@ -341,7 +357,10 @@ impl TvdbClient {
 
         // Fast path: cache hit on a fresh slot.
         {
-            let mut guard = self.id_resolution_cache.lock().expect("tvdb cache mutex poisoned");
+            let mut guard = self
+                .id_resolution_cache
+                .lock()
+                .expect("tvdb cache mutex poisoned");
             if let Some(entry) = guard.get(&key) {
                 if entry.is_fresh(ID_RESOLUTION_CACHE_TTL) {
                     return Ok(entry.value.clone());
@@ -366,7 +385,10 @@ impl TvdbClient {
             }
         };
 
-        let mut guard = self.id_resolution_cache.lock().expect("tvdb cache mutex poisoned");
+        let mut guard = self
+            .id_resolution_cache
+            .lock()
+            .expect("tvdb cache mutex poisoned");
         guard.put(key, CacheEntry::new(resolved.clone()));
         Ok(resolved)
     }
@@ -471,9 +493,23 @@ mod tests {
     #[test]
     fn flatten_filters_to_requested_season_and_sorts_by_number() {
         let raw = vec![
-            rec(Some(2), Some(2), Some(1), Some("E2"), Some("2020-01-08"), Some(45)),
+            rec(
+                Some(2),
+                Some(2),
+                Some(1),
+                Some("E2"),
+                Some("2020-01-08"),
+                Some(45),
+            ),
             rec(Some(11), Some(1), Some(2), Some("S2E1"), None, None),
-            rec(Some(1), Some(1), Some(1), Some("E1"), Some("2020-01-01"), Some(45)),
+            rec(
+                Some(1),
+                Some(1),
+                Some(1),
+                Some("E1"),
+                Some("2020-01-01"),
+                Some(45),
+            ),
             rec(Some(3), Some(3), Some(1), Some("E3"), None, None),
         ];
         let s1 = flatten_episodes(raw, 1);
@@ -485,9 +521,9 @@ mod tests {
     #[test]
     fn flatten_drops_rows_missing_id_or_number() {
         let raw = vec![
-            rec(None,    Some(1), Some(1), Some("no id"),     None, None),
-            rec(Some(1), None,    Some(1), Some("no number"), None, None),
-            rec(Some(2), Some(7), Some(1), Some("real"),      None, None),
+            rec(None, Some(1), Some(1), Some("no id"), None, None),
+            rec(Some(1), None, Some(1), Some("no number"), None, None),
+            rec(Some(2), Some(7), Some(1), Some("real"), None, None),
         ];
         let eps = flatten_episodes(raw, 1);
         assert_eq!(eps.len(), 1);
@@ -506,7 +542,14 @@ mod tests {
 
     #[test]
     fn flatten_passes_through_aired_and_runtime() {
-        let raw = vec![rec(Some(99), Some(1), Some(1), Some("T"), Some("2024-01-01"), Some(23))];
+        let raw = vec![rec(
+            Some(99),
+            Some(1),
+            Some(1),
+            Some("T"),
+            Some("2024-01-01"),
+            Some(23),
+        )];
         let eps = flatten_episodes(raw, 1);
         assert_eq!(eps[0].air_date.as_deref(), Some("2024-01-01"));
         assert_eq!(eps[0].runtime_mins, Some(23));
@@ -546,7 +589,10 @@ mod tests {
     impl HttpFetch for CountingFetcher {
         async fn get_json(&self, _url: &str, _jwt: &str) -> Result<HttpOk> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(HttpOk { status: 200, body: self.body.clone() })
+            Ok(HttpOk {
+                status: 200,
+                body: self.body.clone(),
+            })
         }
 
         async fn post_json(&self, _url: &str, _body: &str) -> Result<HttpOk> {
@@ -567,7 +613,9 @@ mod tests {
 
     impl NotFoundFetcher {
         fn new() -> Arc<Self> {
-            Arc::new(Self { calls: AtomicU32::new(0) })
+            Arc::new(Self {
+                calls: AtomicU32::new(0),
+            })
         }
 
         fn calls(&self) -> u32 {
@@ -579,7 +627,10 @@ mod tests {
     impl HttpFetch for NotFoundFetcher {
         async fn get_json(&self, _url: &str, _jwt: &str) -> Result<HttpOk> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(HttpOk { status: 404, body: "not found".into() })
+            Ok(HttpOk {
+                status: 404,
+                body: "not found".into(),
+            })
         }
 
         async fn post_json(&self, _url: &str, _body: &str) -> Result<HttpOk> {
@@ -603,16 +654,20 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..5 {
             let c = Arc::clone(&client);
-            handles.push(tokio::spawn(async move {
-                c.extended_series(42).await.unwrap()
-            }));
+            handles.push(tokio::spawn(
+                async move { c.extended_series(42).await.unwrap() },
+            ));
         }
         for h in handles {
             let s = h.await.unwrap();
             assert_eq!(s.id, 1);
         }
 
-        assert_eq!(mock.calls(), 1, "concurrent fetches should de-dupe to one HTTP call");
+        assert_eq!(
+            mock.calls(),
+            1,
+            "concurrent fetches should de-dupe to one HTTP call"
+        );
     }
 
     #[tokio::test]
@@ -641,7 +696,11 @@ mod tests {
         // Critical assertion: the second call MUST be served from cache.
         // Otherwise every detail-card open re-queries TVDB for entries it
         // already knows are absent.
-        assert_eq!(mock.calls(), 1, "second resolve_remote_id call should be served from cache");
+        assert_eq!(
+            mock.calls(),
+            1,
+            "second resolve_remote_id call should be served from cache"
+        );
     }
 
     #[tokio::test]
@@ -662,4 +721,3 @@ mod tests {
         assert_eq!(mock.calls(), 3, "distinct ids should each trigger a fetch");
     }
 }
-

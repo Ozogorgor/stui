@@ -12,11 +12,11 @@ import (
 
 // VisualizerSettings holds the persisted audio-visualizer preferences.
 type VisualizerSettings struct {
-	Backend     string `toml:"backend"`      // "off" | "cava" | "chroma"
-	Bars        int    `toml:"bars"`         // number of frequency bars
-	Height      int    `toml:"height"`       // rows in terminal
-	Framerate   int    `toml:"framerate"`    // fps
-	Mode        string `toml:"mode"`         // cliamp: "wave"|"scope"|"retro"|"matrix"|"flame"|"pulse"|"binary"|"butterfly"|"terrain"|"sakura"|"firework"|"glitch"|"lightning"|"rain"|"scatter"|"columns"|"bricks" — classic: "bars"|"mirror"|"filled"|"led"
+	Backend     string `toml:"backend"`   // "off" | "cava" | "chroma"
+	Bars        int    `toml:"bars"`      // number of frequency bars
+	Height      int    `toml:"height"`    // rows in terminal
+	Framerate   int    `toml:"framerate"` // fps
+	Mode        string `toml:"mode"`      // cliamp: "wave"|"scope"|"retro"|"matrix"|"flame"|"pulse"|"binary"|"butterfly"|"terrain"|"sakura"|"firework"|"glitch"|"lightning"|"rain"|"scatter"|"columns"|"bricks" — classic: "bars"|"mirror"|"filled"|"led"
 	Gradient    bool   `toml:"gradient"`
 	PeakHold    bool   `toml:"peak_hold"`
 	InputMethod string `toml:"input_method"` // "pulse" | "pipewire" | "alsa"
@@ -83,12 +83,12 @@ type DownloadsConfig struct {
 // MPD bridge should also scan, beyond the primary Music root. Useful when
 // a user keeps music split across multiple drives or NAS shares.
 type StorageConfig struct {
-	Movies          string   `toml:"movies"`
-	Series          string   `toml:"series"`
-	Anime           string   `toml:"anime"`
-	Music           string   `toml:"music"`
-	Podcasts        string   `toml:"podcasts"`
-	ExtraMusicDirs  []string `toml:"extra_music_dirs"`
+	Movies         string   `toml:"movies"`
+	Series         string   `toml:"series"`
+	Anime          string   `toml:"anime"`
+	Music          string   `toml:"music"`
+	Podcasts       string   `toml:"podcasts"`
+	ExtraMusicDirs []string `toml:"extra_music_dirs"`
 }
 
 type SubtitlesConfig struct {
@@ -114,7 +114,7 @@ type NotificationsConfig struct {
 	Backend    string `toml:"backend"`
 	OnPlayback bool   `toml:"on_playback"`
 	OnDownload bool   `toml:"on_download"`
-	OnStreams   bool   `toml:"on_streams"`
+	OnStreams  bool   `toml:"on_streams"`
 }
 
 type SkipperConfig struct {

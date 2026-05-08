@@ -17,13 +17,11 @@ pub struct CachedTab {
 }
 
 #[allow(dead_code)] // pub API: used by engine and IPC layer
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MediaCache {
     #[serde(rename = "tabs")]
     tabs: HashMap<String, CachedTab>,
 }
-
 
 impl MediaCache {
     #[allow(dead_code)] // pub API: used by engine and IPC layer
@@ -67,11 +65,14 @@ impl MediaCache {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        self.tabs.insert(tab.clone(), CachedTab {
-            tab,
-            entries,
-            updated_at: now,
-        });
+        self.tabs.insert(
+            tab.clone(),
+            CachedTab {
+                tab,
+                entries,
+                updated_at: now,
+            },
+        );
     }
 
     #[allow(dead_code)] // pub API: used by engine and IPC layer
@@ -187,11 +188,14 @@ mod tests {
     #[test]
     fn test_cache_save_load() {
         let mut cache = MediaCache::new();
-        cache.tabs.insert("movies".to_string(), CachedTab {
-            tab: "movies".to_string(),
-            entries: vec![],
-            updated_at: 1000,
-        });
+        cache.tabs.insert(
+            "movies".to_string(),
+            CachedTab {
+                tab: "movies".to_string(),
+                entries: vec![],
+                updated_at: 1000,
+            },
+        );
 
         let temp_path = std::env::temp_dir().join("test_mediacache.json");
         cache.save(&temp_path).unwrap();
@@ -213,16 +217,28 @@ mod tests {
             media_type: MediaType::Movie,
             ..Default::default()
         };
-        cache.tabs.insert("movies".to_string(), CachedTab {
-            tab: "movies".to_string(),
-            entries: vec![entry.clone(), entry.clone(), entry.clone(), entry.clone(), entry.clone()],
-            updated_at: 1000,
-        });
-        cache.tabs.insert("series".to_string(), CachedTab {
-            tab: "series".to_string(),
-            entries: vec![entry.clone(), entry.clone(), entry],
-            updated_at: 1001,
-        });
+        cache.tabs.insert(
+            "movies".to_string(),
+            CachedTab {
+                tab: "movies".to_string(),
+                entries: vec![
+                    entry.clone(),
+                    entry.clone(),
+                    entry.clone(),
+                    entry.clone(),
+                    entry.clone(),
+                ],
+                updated_at: 1000,
+            },
+        );
+        cache.tabs.insert(
+            "series".to_string(),
+            CachedTab {
+                tab: "series".to_string(),
+                entries: vec![entry.clone(), entry.clone(), entry],
+                updated_at: 1001,
+            },
+        );
 
         assert_eq!(cache.total_count(), 8);
     }

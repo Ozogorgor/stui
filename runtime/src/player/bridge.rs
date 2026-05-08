@@ -27,47 +27,47 @@
 //   {"type":"player_progress",    "position":42.1,"duration":5400.0,"paused":false,"cache_percent":100}
 //   {"type":"player_ended",       "reason":"eof"|"quit"|"error","error":"…"}
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::config::ConfigManager;
+use super::mpv::{MpvEvent, MpvPlayer, PlayerEndedReason};
 use crate::config::types::PlaybackConfig;
+use crate::config::ConfigManager;
 use crate::dsp::DspPipeline;
 use crate::engine::Engine;
-use crate::mpd_bridge::MpdBridge;
 use crate::ipc::{MediaTab, MediaType};
+use crate::mpd_bridge::MpdBridge;
 use crate::torrent_engine::TorrentEngine;
-use super::mpv::{MpvEvent, MpvPlayer, PlayerEndedReason};
 
 // ── Wire shapes ───────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct PlayerStartedWire<'a> {
-    r#type:   &'static str,
-    title:    &'a str,
-    path:     &'a str,
+    r#type: &'static str,
+    title: &'a str,
+    path: &'a str,
     duration: f64,
 }
 
 #[derive(Serialize)]
 struct PlayerProgressWire {
-    r#type:        &'static str,
-    position:      f64,
-    duration:      f64,
-    paused:        bool,
+    r#type: &'static str,
+    position: f64,
+    duration: f64,
+    paused: bool,
     cache_percent: f64,
 }
 
 #[derive(Serialize)]
 struct PlayerEndedWire {
-    r#type:  &'static str,
-    reason:  &'static str,
+    r#type: &'static str,
+    reason: &'static str,
     #[serde(skip_serializing_if = "String::is_empty")]
-    error:   String,
+    error: String,
 }
 
 // ── PlayerBridge ──────────────────────────────────────────────────────────────
@@ -75,60 +75,75 @@ struct PlayerEndedWire {
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct PlayerBridge {
-    mpv:          MpvPlayer,
+    mpv: MpvPlayer,
     /// Embedded librqbit-backed torrent engine. Always present — librqbit boots
     /// in-process so there is no "is the daemon running?" question that
     /// the old `Option<Aria2Bridge>` had to answer.
-    torrents:     Arc<TorrentEngine>,
-    mpd:          Option<MpdBridge>,
-    engine:       Arc<Engine>,
-    config:       Arc<ConfigManager>,
+    torrents: Arc<TorrentEngine>,
+    mpd: Option<MpdBridge>,
+    engine: Arc<Engine>,
+    config: Arc<ConfigManager>,
     /// Library-organisation helper. Currently unused after the aria2 → librqbit
     /// swap; will be re-wired in Task 10 when organize-on-complete lands on
     /// `DownloadTranslator`.
     #[allow(dead_code)]
-    storage:      Arc<crate::storage::MediaStorage>,
+    storage: Arc<crate::storage::MediaStorage>,
     watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
-    ipc_tx:       mpsc::Sender<String>,
-    data_dir:     String,
+    ipc_tx: mpsc::Sender<String>,
+    data_dir: String,
     playback_cfg: PlaybackConfig,
     /// DSP pipeline reference. When present and `config.enabled`, mpv receives
     /// equivalent `--af` / `--audio-samplerate` flags so movie presets apply.
-    dsp:          Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
+    dsp: Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
     /// Tracks whether MPD is the active player (true) or mpv (false).
-    mpd_active:   Arc<AtomicBool>,
+    mpd_active: Arc<AtomicBool>,
 }
 
 impl PlayerBridge {
     pub fn new(
-        engine:       Arc<Engine>,
-        config:       Arc<ConfigManager>,
-        torrents:     Arc<TorrentEngine>,
-        mpd:          Option<MpdBridge>,
-        storage:      Arc<crate::storage::MediaStorage>,
+        engine: Arc<Engine>,
+        config: Arc<ConfigManager>,
+        torrents: Arc<TorrentEngine>,
+        mpd: Option<MpdBridge>,
+        storage: Arc<crate::storage::MediaStorage>,
         watch_history: Arc<crate::watchhistory::WatchHistoryStore>,
-        ipc_tx:       mpsc::Sender<String>,
-        data_dir:     String,
+        ipc_tx: mpsc::Sender<String>,
+        data_dir: String,
         playback_cfg: PlaybackConfig,
-        dsp:          Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
+        dsp: Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
     ) -> Self {
         let mpv = MpvPlayer::new();
 
         // Forward mpv events → Go IPC channel
-        let tx   = ipc_tx.clone();
+        let tx = ipc_tx.clone();
         let mpv2 = mpv.clone();
         tokio::spawn(async move {
             run_mpv_event_forwarder(mpv2, tx).await;
         });
 
-        PlayerBridge { mpv, torrents, mpd, engine, config, storage, watch_history, ipc_tx, data_dir, playback_cfg, dsp, mpd_active: Arc::new(AtomicBool::new(false)) }
+        PlayerBridge {
+            mpv,
+            torrents,
+            mpd,
+            engine,
+            config,
+            storage,
+            watch_history,
+            ipc_tx,
+            data_dir,
+            playback_cfg,
+            dsp,
+            mpd_active: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Build the DSP-derived mpv flags for the current pipeline configuration.
     ///
     /// Returns an empty vec when the DSP pipeline is absent or disabled.
     async fn mpv_dsp_flags(&self) -> Vec<String> {
-        let Some(ref dsp) = self.dsp else { return vec![]; };
+        let Some(ref dsp) = self.dsp else {
+            return vec![];
+        };
         // Clone the inner Arc while briefly holding the pipeline mutex, then drop
         // the guard before the config read await so the future stays Send.
         let config_arc = dsp.lock().await.config_arc();
@@ -149,11 +164,22 @@ impl PlayerBridge {
         self.mpd_active.load(Ordering::Relaxed)
     }
 
-    pub async fn play(&self, entry_id: &str, provider: &str, imdb_id: &str, tab: Option<MediaTab>, media_type: Option<MediaType>, year: Option<u32>) {
-        info!("player_bridge: play entry_id={} provider={}", entry_id, provider);
+    pub async fn play(
+        &self,
+        entry_id: &str,
+        provider: &str,
+        imdb_id: &str,
+        tab: Option<MediaTab>,
+        media_type: Option<MediaType>,
+        year: Option<u32>,
+    ) {
+        info!(
+            "player_bridge: play entry_id={} provider={}",
+            entry_id, provider
+        );
 
         let stream_url = match self.engine.resolve_raw(entry_id, provider).await {
-            Ok(r)  => r.stream_url,
+            Ok(r) => r.stream_url,
             Err(e) => {
                 error!("player_bridge: resolve failed: {e}");
                 self.push_ended("error", &e).await;
@@ -161,8 +187,11 @@ impl PlayerBridge {
             }
         };
 
-        let title    = entry_id.split('|').next().unwrap_or(entry_id);
-        let is_audio = matches!(tab, Some(MediaTab::Music) | Some(MediaTab::Radio) | Some(MediaTab::Podcasts));
+        let title = entry_id.split('|').next().unwrap_or(entry_id);
+        let is_audio = matches!(
+            tab,
+            Some(MediaTab::Music) | Some(MediaTab::Radio) | Some(MediaTab::Podcasts)
+        );
 
         if is_audio {
             if let Some(ref mpd) = self.mpd {
@@ -178,8 +207,7 @@ impl PlayerBridge {
         let cfg_snap = self.config.snapshot().await;
         if cfg_snap.subtitles.auto_download && !imdb_id.is_empty() {
             let kind = match tab {
-                Some(crate::ipc::MediaTab::Series) =>
-                    stui_plugin_sdk::EntryKind::Series,
+                Some(crate::ipc::MediaTab::Series) => stui_plugin_sdk::EntryKind::Series,
                 _ => stui_plugin_sdk::EntryKind::Movie,
             };
             let lang = cfg_snap.subtitles.preferred_language.clone();
@@ -193,19 +221,28 @@ impl PlayerBridge {
             let fetched = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 crate::engine::subtitles::fetch_subtitles(
-                    &engine, &title_owned, Some(&imdb_owned), kind, &lang,
+                    &engine,
+                    &title_owned,
+                    Some(&imdb_owned),
+                    kind,
+                    &lang,
                 ),
-            ).await.unwrap_or_default();
+            )
+            .await
+            .unwrap_or_default();
 
             if let Some(candidate) = fetched.into_iter().next() {
-                match Self::download_subtitle_candidate(&engine, &candidate, &imdb_owned, &data_dir).await {
+                match Self::download_subtitle_candidate(&engine, &candidate, &imdb_owned, &data_dir)
+                    .await
+                {
                     Ok(file_name) => {
                         let msg = serde_json::to_string(&serde_json::json!({
                             "type":      "subtitle_fetched",
                             "language":  candidate.language.unwrap_or_else(|| "unknown".into()),
                             "provider":  candidate.plugin_name,
                             "file_name": file_name,
-                        })).unwrap_or_default();
+                        }))
+                        .unwrap_or_default();
                         let _ = tx.send(msg).await;
                     }
                     Err(e) => {
@@ -213,7 +250,8 @@ impl PlayerBridge {
                         let msg = serde_json::to_string(&serde_json::json!({
                             "type":   "subtitle_search_failed",
                             "reason": e.to_string(),
-                        })).unwrap_or_default();
+                        }))
+                        .unwrap_or_default();
                         let _ = tx.send(msg).await;
                     }
                 }
@@ -222,7 +260,15 @@ impl PlayerBridge {
         drop(cfg_snap);
 
         let sub_path = find_subtitle(&self.data_dir, imdb_id);
-        self.start_stream(entry_id, &stream_url, title, sub_path.as_deref(), media_type, year).await;
+        self.start_stream(
+            entry_id,
+            &stream_url,
+            title,
+            sub_path.as_deref(),
+            media_type,
+            year,
+        )
+        .await;
     }
 
     pub async fn stop(&self) {
@@ -237,9 +283,15 @@ impl PlayerBridge {
     /// `DownloadTranslator` flow) is intentionally deferred — see Task 9/10
     /// in the librqbit migration plan. For now the file simply lands in
     /// `TorrentEngine::staging_dir()`.
-    pub async fn download_only(&self, url: &str, title: &str, _media_type: Option<MediaType>, _year: Option<u32>) {
+    pub async fn download_only(
+        &self,
+        url: &str,
+        title: &str,
+        _media_type: Option<MediaType>,
+        _year: Option<u32>,
+    ) {
         let dl = match self.torrents.start_download(url).await {
-            Ok(d)  => d,
+            Ok(d) => d,
             Err(e) => {
                 warn!("player_bridge: download_only torrent error: {e}");
                 return;
@@ -249,15 +301,16 @@ impl PlayerBridge {
             "type":  "download_started",
             "title": title,
             "uri":   url,
-        })).unwrap_or_default();
+        }))
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(started).await;
         info!("player_bridge: download_only torrent_id={}", dl.torrent_id);
 
         tokio::spawn(async move {
             match dl.completion.await {
-                Ok(Ok(()))  => info!("download_only: completed torrent_id={}", dl.torrent_id),
-                Ok(Err(e))  => warn!("download_only: torrent failed: {e}"),
-                Err(_)      => warn!("download_only: completion channel dropped"),
+                Ok(Ok(())) => info!("download_only: completed torrent_id={}", dl.torrent_id),
+                Ok(Err(e)) => warn!("download_only: torrent failed: {e}"),
+                Err(_) => warn!("download_only: completion channel dropped"),
             }
         });
     }
@@ -295,8 +348,12 @@ impl PlayerBridge {
     pub async fn start_stream_for_switch(&self, url: &str) {
         let title = title_from_url(url);
         let entry_id = format!("switch_stream|{title}");
-        info!("player_bridge: cold-starting playback for switch_stream url={}", &url[..url.len().min(80)]);
-        self.start_stream(&entry_id, url, &title, None, None, None).await;
+        info!(
+            "player_bridge: cold-starting playback for switch_stream url={}",
+            &url[..url.len().min(80)]
+        );
+        self.start_stream(&entry_id, url, &title, None, None, None)
+            .await;
     }
 
     pub async fn switch_stream_mpd(&self, url: &str, title: &str) {
@@ -320,9 +377,18 @@ impl PlayerBridge {
 
     // ── Routing ───────────────────────────────────────────────────────────────
 
-    async fn start_stream(&self, entry_id: &str, url: &str, title: &str, sub: Option<&str>, media_type: Option<MediaType>, year: Option<u32>) {
+    async fn start_stream(
+        &self,
+        entry_id: &str,
+        url: &str,
+        title: &str,
+        sub: Option<&str>,
+        media_type: Option<MediaType>,
+        year: Option<u32>,
+    ) {
         if is_torrent_url(url) || is_magnet(url) {
-            self.play_via_torrent(entry_id, url, title, sub, media_type, year).await;
+            self.play_via_torrent(entry_id, url, title, sub, media_type, year)
+                .await;
         } else {
             self.launch_mpv(url, title, sub).await;
         }
@@ -343,10 +409,11 @@ impl PlayerBridge {
         self.mpd_active.store(false, Ordering::Relaxed);
 
         let stream_url = match self.torrents.start_stream(uri).await {
-            Ok(u)  => u,
+            Ok(u) => u,
             Err(e) => {
                 error!("player_bridge: torrent_engine.start_stream failed: {e:#}");
-                self.push_ended("error", &format!("torrent error: {e}")).await;
+                self.push_ended("error", &format!("torrent error: {e}"))
+                    .await;
                 return;
             }
         };
@@ -357,24 +424,34 @@ impl PlayerBridge {
             "type":  "download_started",
             "title": title,
             "uri":   uri,
-        })).unwrap_or_default();
+        }))
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(started).await;
 
         info!("player_bridge: streaming {title} via torrent_engine ({stream_url})");
 
         // Update watch history with the streaming URL so resume works.
-        self.watch_history.update_file_path(entry_id, &stream_url).await;
+        self.watch_history
+            .update_file_path(entry_id, &stream_url)
+            .await;
 
         if !self.playback_cfg.terminal_vo.is_empty() {
             self.push_terminal_takeover().await;
         }
         let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
         extra_flags.extend(self.mpv_dsp_flags().await);
-        if let Err(e) = self.mpv.play(
-            &stream_url, title, sub, &self.data_dir,
-            &extra_flags,
-            &self.playback_cfg.terminal_vo,
-        ).await {
+        if let Err(e) = self
+            .mpv
+            .play(
+                &stream_url,
+                title,
+                sub,
+                &self.data_dir,
+                &extra_flags,
+                &self.playback_cfg.terminal_vo,
+            )
+            .await
+        {
             error!("player_bridge: mpv failed: {e}");
             self.push_ended("error", &e).await;
         }
@@ -387,11 +464,18 @@ impl PlayerBridge {
         }
         let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
         extra_flags.extend(self.mpv_dsp_flags().await);
-        if let Err(e) = self.mpv.play(
-            url, title, sub, &self.data_dir,
-            &extra_flags,
-            &self.playback_cfg.terminal_vo,
-        ).await {
+        if let Err(e) = self
+            .mpv
+            .play(
+                url,
+                title,
+                sub,
+                &self.data_dir,
+                &extra_flags,
+                &self.playback_cfg.terminal_vo,
+            )
+            .await
+        {
             error!("player_bridge: mpv launch failed: {e}");
             self.push_ended("error", &e).await;
         }
@@ -405,7 +489,7 @@ impl PlayerBridge {
             // music payloads are small enough that the wait is acceptable —
             // then hand the staged path to MPD.
             let dl = match self.torrents.start_download(url).await {
-                Ok(d)  => d,
+                Ok(d) => d,
                 Err(e) => {
                     self.push_ended("error", &e.to_string()).await;
                     return;
@@ -415,18 +499,21 @@ impl PlayerBridge {
                 "type":  "download_started",
                 "title": title,
                 "uri":   url,
-            })).unwrap_or_default();
+            }))
+            .unwrap_or_default();
             let _ = self.ipc_tx.send(started).await;
 
             let final_rel = dl.final_path.clone();
             match dl.completion.await {
-                Ok(Ok(()))  => {}
-                Ok(Err(e))  => {
-                    self.push_ended("error", &format!("torrent failed: {e}")).await;
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    self.push_ended("error", &format!("torrent failed: {e}"))
+                        .await;
                     return;
                 }
                 Err(_) => {
-                    self.push_ended("error", "torrent completion channel dropped").await;
+                    self.push_ended("error", "torrent completion channel dropped")
+                        .await;
                     return;
                 }
             }
@@ -465,7 +552,8 @@ impl PlayerBridge {
         let msg = serde_json::to_string(&serde_json::json!({
             "type": "player_terminal_takeover",
             "vo":   &self.playback_cfg.terminal_vo,
-        })).unwrap_or_default();
+        }))
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(msg).await;
     }
 
@@ -473,18 +561,20 @@ impl PlayerBridge {
         let msg = serde_json::to_string(&PlayerEndedWire {
             r#type: "player_ended",
             reason,
-            error:  err.to_string(),
-        }).unwrap_or_default();
+            error: err.to_string(),
+        })
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(msg).await;
     }
 
     async fn push_started(&self, title: &str, path: &str, duration: f64) {
         let msg = serde_json::to_string(&PlayerStartedWire {
-            r#type:   "player_started",
+            r#type: "player_started",
             title,
             path,
             duration,
-        }).unwrap_or_default();
+        })
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(msg).await;
     }
 }
@@ -499,29 +589,32 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
                 Ok(event) => {
                     let wire = match event {
                         MpvEvent::Started(e) => serde_json::to_string(&PlayerStartedWire {
-                            r#type:   "player_started",
-                            title:    &e.title,
-                            path:     &e.path,
+                            r#type: "player_started",
+                            title: &e.title,
+                            path: &e.path,
                             duration: e.duration,
-                        }).ok(),
+                        })
+                        .ok(),
                         MpvEvent::Progress(e) => serde_json::to_string(&PlayerProgressWire {
-                            r#type:        "player_progress",
-                            position:      e.position,
-                            duration:      e.duration,
-                            paused:        e.paused,
+                            r#type: "player_progress",
+                            position: e.position,
+                            duration: e.duration,
+                            paused: e.paused,
                             cache_percent: e.cache_percent,
-                        }).ok(),
+                        })
+                        .ok(),
                         MpvEvent::Ended(r) => {
                             let (reason, error) = match r {
-                                PlayerEndedReason::Eof        => ("eof",   String::new()),
-                                PlayerEndedReason::Quit       => ("quit",  String::new()),
+                                PlayerEndedReason::Eof => ("eof", String::new()),
+                                PlayerEndedReason::Quit => ("quit", String::new()),
                                 PlayerEndedReason::Error(msg) => ("error", msg),
                             };
                             serde_json::to_string(&PlayerEndedWire {
                                 r#type: "player_ended",
                                 reason,
                                 error,
-                            }).ok()
+                            })
+                            .ok()
                         }
                         MpvEvent::TracksUpdated(tracks) => {
                             serde_json::to_string(&serde_json::json!({
@@ -534,7 +627,8 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
                                     "selected":   t.selected,
                                     "external":   t.external,
                                 })).collect::<Vec<_>>(),
-                            })).ok()
+                            }))
+                            .ok()
                         }
                     };
                     if let Some(msg) = wire {
@@ -553,13 +647,13 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn is_magnet(url: &str)     -> bool { url.starts_with("magnet:") }
+fn is_magnet(url: &str) -> bool {
+    url.starts_with("magnet:")
+}
 
 fn is_torrent_url(url: &str) -> bool {
     let u = url.to_lowercase();
-    u.ends_with(".torrent")
-        || u.contains("/download/torrent/")
-        || u.contains("/torrent/download")
+    u.ends_with(".torrent") || u.contains("/download/torrent/") || u.contains("/torrent/download")
 }
 
 /// Best-effort title extraction from a stream URL. Used by the
@@ -571,25 +665,35 @@ fn title_from_url(url: &str) -> String {
     if let Some(rest) = url.strip_prefix("magnet:?") {
         for kv in rest.split('&') {
             if let Some(name) = kv.strip_prefix("dn=") {
-                let decoded = urlencoding::decode(name).map(|s| s.into_owned()).unwrap_or_default();
-                if !decoded.is_empty() { return decoded; }
+                let decoded = urlencoding::decode(name)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_default();
+                if !decoded.is_empty() {
+                    return decoded;
+                }
             }
         }
         return "Magnet stream".to_string();
     }
     if let Some(last) = url.rsplit('/').next() {
         let segment = last.split('?').next().unwrap_or(last);
-        if !segment.is_empty() { return segment.to_string(); }
+        if !segment.is_empty() {
+            return segment.to_string();
+        }
     }
     "Stream".to_string()
 }
 
 fn find_subtitle(data_dir: &str, imdb_id: &str) -> Option<String> {
-    if imdb_id.is_empty() { return None; }
+    if imdb_id.is_empty() {
+        return None;
+    }
     let sub_dir = format!("{}/subtitles/{}", data_dir, imdb_id);
     for ext in &["en.srt", "srt", "en.ass", "ass"] {
         let path = format!("{}/{}", sub_dir, ext);
-        if std::path::Path::new(&path).exists() { return Some(path); }
+        if std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
     }
     if let Ok(mut rd) = std::fs::read_dir(&sub_dir) {
         if let Some(Ok(e)) = rd.next() {
@@ -621,11 +725,14 @@ impl PlayerBridge {
         let resp = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             crate::engine::subtitles::call_plugin_resolve(
-                engine, &candidate.plugin_id, &candidate.entry.id,
+                engine,
+                &candidate.plugin_id,
+                &candidate.entry.id,
             ),
-        ).await
-            .map_err(|_| anyhow::anyhow!("subtitle resolve timeout (10s)"))?
-            .map_err(|e| anyhow::anyhow!("subtitle resolve: {e}"))?;
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("subtitle resolve timeout (10s)"))?
+        .map_err(|e| anyhow::anyhow!("subtitle resolve: {e}"))?;
 
         let url = resp.stream_url;
         if url.is_empty() {
@@ -635,27 +742,29 @@ impl PlayerBridge {
         // 2. Compose sidecar path.
         let lang = candidate.language.as_deref().unwrap_or("unknown");
         let sub_dir = format!("{data_dir}/subtitles/{imdb_id}");
-        tokio::fs::create_dir_all(&sub_dir).await
+        tokio::fs::create_dir_all(&sub_dir)
+            .await
             .map_err(|e| anyhow::anyhow!("mkdir {sub_dir}: {e}"))?;
         let file_name = format!("{lang}.srt");
         let file_path = format!("{sub_dir}/{file_name}");
 
         // 3. HTTP GET — 15s cap. Subtitle files are typically <100KB;
         // aria2 is overkill for a one-shot fetch.
-        let bytes = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            async {
-                reqwest::get(&url).await
-                    .map_err(|e| anyhow::anyhow!("GET {url}: {e}"))?
-                    .error_for_status()
-                    .map_err(|e| anyhow::anyhow!("GET {url}: HTTP {e}"))?
-                    .bytes().await
-                    .map_err(|e| anyhow::anyhow!("read {url}: {e}"))
-            },
-        ).await
-            .map_err(|_| anyhow::anyhow!("subtitle download timeout (15s)"))??;
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            reqwest::get(&url)
+                .await
+                .map_err(|e| anyhow::anyhow!("GET {url}: {e}"))?
+                .error_for_status()
+                .map_err(|e| anyhow::anyhow!("GET {url}: HTTP {e}"))?
+                .bytes()
+                .await
+                .map_err(|e| anyhow::anyhow!("read {url}: {e}"))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("subtitle download timeout (15s)"))??;
 
-        tokio::fs::write(&file_path, &bytes).await
+        tokio::fs::write(&file_path, &bytes)
+            .await
             .map_err(|e| anyhow::anyhow!("write {file_path}: {e}"))?;
 
         tracing::info!(plugin = %candidate.plugin_name, path = %file_path,

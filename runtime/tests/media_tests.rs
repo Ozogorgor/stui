@@ -1,7 +1,7 @@
 //! Integration tests for the media domain module (MediaId, MediaItem).
 
-use stui_runtime::media::id::MediaId;
 use stui_runtime::ipc::MediaType;
+use stui_runtime::media::id::MediaId;
 
 // ── MediaId ───────────────────────────────────────────────────────────────────
 

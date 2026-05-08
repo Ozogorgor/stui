@@ -14,10 +14,10 @@
 //
 // # Usage
 //
-//   import "github.com/stui/stui/internal/msg"
+//	import "github.com/stui/stui/internal/msg"
 //
-//   case msg.PlayerStartedMsg:     // identical to ipc.PlayerStartedMsg
-//   case msg.GridUpdateMsg:
+//	case msg.PlayerStartedMsg:     // identical to ipc.PlayerStartedMsg
+//	case msg.GridUpdateMsg:
 //
 // # Adding a new message
 //

@@ -38,8 +38,8 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
@@ -47,28 +47,18 @@ use tracing::{error, info, warn};
 
 use super::host::{WasmHost, WasmInstance};
 use super::types::{
-    AbiError, InitError, InitRequest,
-    ArtworkRequest, ArtworkResponse,
-    CreditsRequest, CreditsResponse,
-    EnrichRequest, EnrichResponse,
-    EpisodesRequest, EpisodesResponse,
-    FindStreamsRequest, FindStreamsResponse,
-    LookupRequest, LookupResponse,
-    PluginResult,
-    RelatedRequest, RelatedResponse,
-    ResolveRequest, ResolveResponse,
-    SearchRequest, SearchResponse,
-};
-use stui_plugin_sdk::{
-    TrailersRequest, TrailersResponse,
-    ReleaseInfoRequest, ReleaseInfoResponse,
-    KeywordsRequest, KeywordsResponse,
-    BoxOfficeRequest, BoxOfficeResponse,
-    AlternativeTitlesRequest, AlternativeTitlesResponse,
-    BulkEnrichRequest, BulkEnrichResponse,
+    AbiError, ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
+    EnrichResponse, EpisodesRequest, EpisodesResponse, FindStreamsRequest, FindStreamsResponse,
+    InitError, InitRequest, LookupRequest, LookupResponse, PluginResult, RelatedRequest,
+    RelatedResponse, ResolveRequest, ResolveResponse, SearchRequest, SearchResponse,
 };
 use crate::plugin::{RateLimit, TokenBucket};
 use crate::sandbox::SandboxCtx;
+use stui_plugin_sdk::{
+    AlternativeTitlesRequest, AlternativeTitlesResponse, BoxOfficeRequest, BoxOfficeResponse,
+    BulkEnrichRequest, BulkEnrichResponse, KeywordsRequest, KeywordsResponse, ReleaseInfoRequest,
+    ReleaseInfoResponse, TrailersRequest, TrailersResponse,
+};
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -105,13 +95,13 @@ impl Default for WasmSupervisorConfig {
     #[allow(deprecated)]
     fn default() -> Self {
         Self {
-            max_reloads:       5,
+            max_reloads: 5,
             crash_window_secs: 60,
-            backoff_base_ms:   1_000,
-            backoff_max_ms:    60_000,
+            backoff_base_ms: 1_000,
+            backoff_max_ms: 60_000,
             call_timeout_secs: 30,
-            max_memory_mb:     512,
-            slow_upstream:     false,
+            max_memory_mb: 512,
+            slow_upstream: false,
             cooldown_after_timeout_secs: 30,
         }
     }
@@ -137,23 +127,23 @@ pub struct WasmSupervisorStats {
 /// Wraps a [`WasmInstance`] with timeout enforcement, crash detection,
 /// and automatic reload on trap or timeout.
 pub struct WasmSupervisor {
-    wasm_path:   PathBuf,
+    wasm_path: PathBuf,
     plugin_name: String,
-    ctx:         SandboxCtx,
-    config:      WasmSupervisorConfig,
+    ctx: SandboxCtx,
+    config: WasmSupervisorConfig,
     /// The live instance, or `None` while reloading.
-    instance:    Arc<Mutex<Option<WasmInstance>>>,
+    instance: Arc<Mutex<Option<WasmInstance>>>,
     /// Timestamps of recent crashes — used for the sliding-window check.
     crash_times: Arc<Mutex<Vec<Instant>>>,
     /// When the most recent call timed out. Read by `call_verb` to
     /// short-circuit subsequent calls during the cooldown window when
     /// `cooldown_after_timeout_secs > 0`.
     last_timeout_at: Arc<Mutex<Option<Instant>>>,
-    stats:       Arc<Mutex<WasmSupervisorStats>>,
-    failed:      Arc<AtomicBool>,
+    stats: Arc<Mutex<WasmSupervisorStats>>,
+    failed: Arc<AtomicBool>,
     /// Optional rate-limiter from the manifest's `[rate_limit]` block.
     /// `None` means the plugin runs un-throttled.
-    rate_limit:  Option<TokenBucket>,
+    rate_limit: Option<TokenBucket>,
 }
 
 impl std::fmt::Debug for WasmSupervisor {
@@ -173,11 +163,11 @@ impl WasmSupervisor {
     /// acquires a token before running. `None` means the plugin is
     /// un-throttled.
     pub async fn load(
-        wasm_path:   PathBuf,
+        wasm_path: PathBuf,
         plugin_name: String,
-        ctx:         SandboxCtx,
-        config:      WasmSupervisorConfig,
-        rate_limit:  Option<&RateLimit>,
+        ctx: SandboxCtx,
+        config: WasmSupervisorConfig,
+        rate_limit: Option<&RateLimit>,
     ) -> Result<Self, AbiError> {
         let instance = WasmHost::load(&wasm_path, &plugin_name, &ctx, config.max_memory_mb).await?;
         let bucket = rate_limit.map(|rl| TokenBucket::new(rl.rps, rl.burst));
@@ -186,12 +176,15 @@ impl WasmSupervisor {
             plugin_name,
             ctx,
             config,
-            instance:    Arc::new(Mutex::new(Some(instance))),
+            instance: Arc::new(Mutex::new(Some(instance))),
             crash_times: Arc::new(Mutex::new(Vec::new())),
             last_timeout_at: Arc::new(Mutex::new(None)),
-            stats:       Arc::new(Mutex::new(WasmSupervisorStats { is_alive: true, ..Default::default() })),
-            failed:      Arc::new(AtomicBool::new(false)),
-            rate_limit:  bucket,
+            stats: Arc::new(Mutex::new(WasmSupervisorStats {
+                is_alive: true,
+                ..Default::default()
+            })),
+            failed: Arc::new(AtomicBool::new(false)),
+            rate_limit: bucket,
         })
     }
 
@@ -224,26 +217,25 @@ impl WasmSupervisor {
 
         // Serialize before acquiring the instance lock — no borrow of `req`
         // crosses the async boundary.
-        let json = serde_json::to_string(req)
-            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        let json = serde_json::to_string(req).map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
 
         let timeout = Duration::from_secs(self.config.call_timeout_secs);
         let result = {
             let mut guard = self.instance.lock().await;
             match guard.as_mut() {
-                None => return Err(InitError::Abi(AbiError::Execution(format!(
-                    "plugin '{}' is reloading, try again shortly",
-                    self.plugin_name,
-                )))),
-                Some(inst) => {
-                    tokio::time::timeout(timeout, inst.call_init_with_json(&json)).await
+                None => {
+                    return Err(InitError::Abi(AbiError::Execution(format!(
+                        "plugin '{}' is reloading, try again shortly",
+                        self.plugin_name,
+                    ))))
                 }
+                Some(inst) => tokio::time::timeout(timeout, inst.call_init_with_json(&json)).await,
             }
         };
 
         match result {
-            Ok(Ok(()))  => Ok(()),
-            Ok(Err(e))  => {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
                 // Only count plumbing errors as crashes — a plugin reporting
                 // its own InitError::Plugin is working as intended.
                 if matches!(&e, InitError::Abi(_)) {
@@ -270,12 +262,12 @@ impl WasmSupervisor {
     /// lifetime problems cross the await point.
     async fn call_verb<Req, Resp>(
         &self,
-        fn_name:   &str,
+        fn_name: &str,
         verb_name: &str,
         req: &Req,
     ) -> Result<Resp, AbiError>
     where
-        Req:  serde::Serialize,
+        Req: serde::Serialize,
         Resp: for<'de> serde::Deserialize<'de>,
     {
         if self.is_failed() {
@@ -321,13 +313,19 @@ impl WasmSupervisor {
         let result = {
             let mut guard = self.instance.lock().await;
             match guard.as_mut() {
-                None => return Err(AbiError::Execution(format!(
-                    "plugin '{}' is reloading, try again shortly",
-                    self.plugin_name,
-                ))),
+                None => {
+                    return Err(AbiError::Execution(format!(
+                        "plugin '{}' is reloading, try again shortly",
+                        self.plugin_name,
+                    )))
+                }
                 Some(inst) => {
                     let fn_name = fn_name.to_string();
-                    tokio::time::timeout(timeout, inst.call_export_envelope::<Resp>(&fn_name, &json)).await
+                    tokio::time::timeout(
+                        timeout,
+                        inst.call_export_envelope::<Resp>(&fn_name, &json),
+                    )
+                    .await
                 }
             }
         };
@@ -418,36 +416,57 @@ impl WasmSupervisor {
 
     /// Call `stui_get_trailers` with timeout and crash tracking.
     pub async fn get_trailers(&self, req: &TrailersRequest) -> Result<TrailersResponse, AbiError> {
-        self.call_verb("stui_get_trailers", "get_trailers", req).await
+        self.call_verb("stui_get_trailers", "get_trailers", req)
+            .await
     }
 
     /// Call `stui_get_release_info` with timeout and crash tracking.
-    pub async fn get_release_info(&self, req: &ReleaseInfoRequest) -> Result<ReleaseInfoResponse, AbiError> {
-        self.call_verb("stui_get_release_info", "get_release_info", req).await
+    pub async fn get_release_info(
+        &self,
+        req: &ReleaseInfoRequest,
+    ) -> Result<ReleaseInfoResponse, AbiError> {
+        self.call_verb("stui_get_release_info", "get_release_info", req)
+            .await
     }
 
     /// Call `stui_get_keywords` with timeout and crash tracking.
     pub async fn get_keywords(&self, req: &KeywordsRequest) -> Result<KeywordsResponse, AbiError> {
-        self.call_verb("stui_get_keywords", "get_keywords", req).await
+        self.call_verb("stui_get_keywords", "get_keywords", req)
+            .await
     }
 
     /// Call `stui_get_box_office` with timeout and crash tracking.
-    pub async fn get_box_office(&self, req: &BoxOfficeRequest) -> Result<BoxOfficeResponse, AbiError> {
-        self.call_verb("stui_get_box_office", "get_box_office", req).await
+    pub async fn get_box_office(
+        &self,
+        req: &BoxOfficeRequest,
+    ) -> Result<BoxOfficeResponse, AbiError> {
+        self.call_verb("stui_get_box_office", "get_box_office", req)
+            .await
     }
 
     /// Call `stui_get_alternative_titles` with timeout and crash tracking.
-    pub async fn get_alternative_titles(&self, req: &AlternativeTitlesRequest) -> Result<AlternativeTitlesResponse, AbiError> {
-        self.call_verb("stui_get_alternative_titles", "get_alternative_titles", req).await
+    pub async fn get_alternative_titles(
+        &self,
+        req: &AlternativeTitlesRequest,
+    ) -> Result<AlternativeTitlesResponse, AbiError> {
+        self.call_verb("stui_get_alternative_titles", "get_alternative_titles", req)
+            .await
     }
 
     /// Call `stui_find_streams` with timeout and crash tracking.
-    pub async fn find_streams(&self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
-        self.call_verb("stui_find_streams", "find_streams", req).await
+    pub async fn find_streams(
+        &self,
+        req: &FindStreamsRequest,
+    ) -> Result<FindStreamsResponse, AbiError> {
+        self.call_verb("stui_find_streams", "find_streams", req)
+            .await
     }
 
     /// Call `stui_bulk_enrich` with timeout and crash tracking.
-    pub async fn bulk_enrich(&self, req: &BulkEnrichRequest) -> Result<BulkEnrichResponse, AbiError> {
+    pub async fn bulk_enrich(
+        &self,
+        req: &BulkEnrichRequest,
+    ) -> Result<BulkEnrichResponse, AbiError> {
         self.call_verb("stui_bulk_enrich", "bulk_enrich", req).await
     }
 
@@ -501,18 +520,17 @@ impl WasmSupervisor {
 
         // Compute backoff: 1s, 2s, 4s, …, capped at backoff_max_ms.
         let backoff_ms = std::cmp::min(
-            self.config.backoff_base_ms
-                * (1u64 << (crashes_in_window as u64).saturating_sub(1)),
+            self.config.backoff_base_ms * (1u64 << (crashes_in_window as u64).saturating_sub(1)),
             self.config.backoff_max_ms,
         );
 
         // Spawn the reload so we don't hold up the failing call.
-        let instance    = Arc::clone(&self.instance);
-        let stats       = Arc::clone(&self.stats);
-        let wasm_path   = self.wasm_path.clone();
+        let instance = Arc::clone(&self.instance);
+        let stats = Arc::clone(&self.stats);
+        let wasm_path = self.wasm_path.clone();
         let plugin_name = self.plugin_name.clone();
-        let ctx         = self.ctx.clone();
-        let max_mem     = self.config.max_memory_mb;
+        let ctx = self.ctx.clone();
+        let max_mem = self.config.max_memory_mb;
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(backoff_ms)).await;

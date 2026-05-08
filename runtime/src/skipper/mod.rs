@@ -24,12 +24,12 @@ pub mod analyzer;
 pub mod detector;
 pub mod fingerprint;
 pub mod store;
-pub mod video_analysis;
 pub mod text_analysis;
+pub mod video_analysis;
 
-pub use detector::Skipper;
 #[allow(unused_imports)]
 pub use analyzer::Segment;
+pub use detector::Skipper;
 #[allow(dead_code, unused_imports)]
 pub use fingerprint::Fingerprint;
 #[allow(dead_code, unused_imports)]

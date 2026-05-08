@@ -94,10 +94,12 @@ impl TorrentEngine {
         );
         let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
             .await
-            .map_err(|_| anyhow!(
-                "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
-                METADATA_TIMEOUT.as_secs()
-            ))?
+            .map_err(|_| {
+                anyhow!(
+                    "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
+                    METADATA_TIMEOUT.as_secs()
+                )
+            })?
             .context("adding torrent to librqbit session")?;
 
         let handle = resp
@@ -117,8 +119,8 @@ impl TorrentEngine {
             })
             .context("reading torrent metadata for file list")?;
 
-        let file_idx = pick_video_file(&files)
-            .ok_or_else(|| anyhow!("no playable video file in torrent"))?;
+        let file_idx =
+            pick_video_file(&files).ok_or_else(|| anyhow!("no playable video file in torrent"))?;
 
         Ok(stream_url_for(&self.base_url, id, file_idx))
     }
@@ -144,10 +146,12 @@ impl TorrentEngine {
         );
         let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
             .await
-            .map_err(|_| anyhow!(
-                "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
-                METADATA_TIMEOUT.as_secs()
-            ))?
+            .map_err(|_| {
+                anyhow!(
+                    "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
+                    METADATA_TIMEOUT.as_secs()
+                )
+            })?
             .context("adding torrent to librqbit session")?;
 
         let handle = resp

@@ -2,11 +2,11 @@
 //! browseable offline library when providers are unreachable or the runtime
 //! fails to start.
 
-mod store;
 pub mod album_art;
 pub mod normalize;
-pub mod tag_writer;
+mod store;
 pub mod tag_write_job;
+pub mod tag_writer;
 
 pub use store::MediaCacheStore;
 

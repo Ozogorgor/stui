@@ -34,8 +34,14 @@ pub fn build_diff(
     for (file, raw) in files {
         let lookup = lookups.get(&file);
         let normalized = normalize::normalize(&raw, cfg, lookup);
-        if normalized_equals_raw(&normalized, &raw) { continue; }
-        out.push(DiffRow { file, raw, normalized });
+        if normalized_equals_raw(&normalized, &raw) {
+            continue;
+        }
+        out.push(DiffRow {
+            file,
+            raw,
+            normalized,
+        });
     }
     out
 }
@@ -55,8 +61,20 @@ pub fn to_wire_rows(rows: &[DiffRow]) -> Vec<TagDiffRowWire> {
     let mut out = Vec::new();
     for row in rows {
         let f = row.file.to_string_lossy().to_string();
-        push_if_diff(&mut out, &f, "artist", &row.raw.artist, &row.normalized.artist);
-        push_if_diff(&mut out, &f, "album_artist", &row.raw.album_artist, &row.normalized.album_artist);
+        push_if_diff(
+            &mut out,
+            &f,
+            "artist",
+            &row.raw.artist,
+            &row.normalized.artist,
+        );
+        push_if_diff(
+            &mut out,
+            &f,
+            "album_artist",
+            &row.raw.album_artist,
+            &row.normalized.album_artist,
+        );
         push_if_diff(&mut out, &f, "album", &row.raw.album, &row.normalized.album);
         push_if_diff(&mut out, &f, "title", &row.raw.title, &row.normalized.title);
         push_if_diff(&mut out, &f, "year", &row.raw.date, &row.normalized.year);
@@ -80,10 +98,15 @@ pub fn common_ancestor(files: &[PathBuf]) -> Option<PathBuf> {
     let mut iter = files.iter();
     let first = iter.next()?.clone();
     // Seed with the first file's parent (or itself if no parent).
-    let mut common: PathBuf = first.parent().map(|p| p.to_path_buf()).unwrap_or(first.clone());
+    let mut common: PathBuf = first
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(first.clone());
     for f in iter {
         while !f.starts_with(&common) {
-            if !common.pop() { return None; }
+            if !common.pop() {
+                return None;
+            }
         }
     }
     Some(common)
@@ -103,7 +126,9 @@ pub struct JobStore {
     inner: Mutex<HashMap<String, Vec<DiffRow>>>,
 }
 impl JobStore {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn insert(&self, id: String, rows: Vec<DiffRow>) {
         self.inner.lock().unwrap().insert(id, rows);
     }
@@ -117,16 +142,24 @@ pub struct JobRegistry {
     flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 impl JobRegistry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn register(&self, id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
-        self.flags.lock().unwrap().insert(id.to_string(), flag.clone());
+        self.flags
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), flag.clone());
         flag
     }
     pub fn cancel(&self, id: &str) -> bool {
         if let Some(flag) = self.flags.lock().unwrap().get(id) {
-            flag.store(true, Ordering::Relaxed); true
-        } else { false }
+            flag.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
     pub fn done(&self, id: &str) {
         self.flags.lock().unwrap().remove(id);
@@ -140,9 +173,19 @@ pub type ProgressSender = tokio::sync::mpsc::UnboundedSender<ApplyProgress>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplyProgress {
-    Started { job_id: String, total: usize },
-    FileDone { job_id: String, file: String, ok: bool },
-    Finished { job_id: String, outcome: ApplyOutcome },
+    Started {
+        job_id: String,
+        total: usize,
+    },
+    FileDone {
+        job_id: String,
+        file: String,
+        ok: bool,
+    },
+    Finished {
+        job_id: String,
+        outcome: ApplyOutcome,
+    },
 }
 
 /// Execute a diff set: writes normalized tags, concurrency capped at 4.
@@ -158,7 +201,10 @@ pub async fn apply(
     let sem = Arc::new(Semaphore::new(4));
     let total = rows.len();
     if let Some(tx) = &progress {
-        let _ = tx.send(ApplyProgress::Started { job_id: job_id.clone(), total });
+        let _ = tx.send(ApplyProgress::Started {
+            job_id: job_id.clone(),
+            total,
+        });
     }
 
     let mut handles = Vec::with_capacity(total);
@@ -174,9 +220,10 @@ pub async fn apply(
             }
             let file_c = row.file.clone();
             let nd = row.normalized.clone();
-            let write_res = tokio::task::spawn_blocking(move || {
-                tag_writer::write_normalized(&row.file, &nd)
-            }).await.unwrap();
+            let write_res =
+                tokio::task::spawn_blocking(move || tag_writer::write_normalized(&row.file, &nd))
+                    .await
+                    .unwrap();
 
             let ok = write_res.is_ok();
             if let Some(tx) = progress {
@@ -193,7 +240,11 @@ pub async fn apply(
         }));
     }
 
-    let mut outcome = ApplyOutcome { succeeded: 0, failed: Vec::new(), skipped_cancelled: 0 };
+    let mut outcome = ApplyOutcome {
+        succeeded: 0,
+        failed: Vec::new(),
+        skipped_cancelled: 0,
+    };
     for h in handles {
         match h.await.unwrap() {
             FileResult::Ok => outcome.succeeded += 1,
@@ -202,7 +253,10 @@ pub async fn apply(
         }
     }
     if let Some(tx) = progress {
-        let _ = tx.send(ApplyProgress::Finished { job_id, outcome: outcome.clone() });
+        let _ = tx.send(ApplyProgress::Finished {
+            job_id,
+            outcome: outcome.clone(),
+        });
     }
     outcome
 }
@@ -226,7 +280,10 @@ mod tests {
     fn common_ancestor_same_dir() {
         let a = PathBuf::from("/music/rock/a.mp3");
         let b = PathBuf::from("/music/rock/b.mp3");
-        assert_eq!(common_ancestor(&[a, b]).unwrap(), PathBuf::from("/music/rock"));
+        assert_eq!(
+            common_ancestor(&[a, b]).unwrap(),
+            PathBuf::from("/music/rock")
+        );
     }
     #[test]
     fn common_ancestor_divergent() {
@@ -237,10 +294,18 @@ mod tests {
     #[test]
     fn build_diff_skips_noop() {
         let ex = normalize::exceptions::ExceptionList::default();
-        let cfg = NormalizationConfig { enabled: true, use_lookup: false, exceptions: &ex };
+        let cfg = NormalizationConfig {
+            enabled: true,
+            use_lookup: false,
+            exceptions: &ex,
+        };
         let files = vec![(
             PathBuf::from("a.mp3"),
-            RawTags { artist: "Pink Floyd".into(), album: "The Wall".into(), ..Default::default() },
+            RawTags {
+                artist: "Pink Floyd".into(),
+                album: "The Wall".into(),
+                ..Default::default()
+            },
         )];
         let lookups = HashMap::new();
         assert!(build_diff(files, &cfg, &lookups).is_empty());
@@ -248,10 +313,17 @@ mod tests {
     #[test]
     fn build_diff_keeps_change() {
         let ex = normalize::exceptions::ExceptionList::default();
-        let cfg = NormalizationConfig { enabled: true, use_lookup: false, exceptions: &ex };
+        let cfg = NormalizationConfig {
+            enabled: true,
+            use_lookup: false,
+            exceptions: &ex,
+        };
         let files = vec![(
             PathBuf::from("a.mp3"),
-            RawTags { artist: "pink floyd".into(), ..Default::default() },
+            RawTags {
+                artist: "pink floyd".into(),
+                ..Default::default()
+            },
         )];
         let lookups = HashMap::new();
         let diff = build_diff(files, &cfg, &lookups);

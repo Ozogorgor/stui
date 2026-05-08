@@ -331,4 +331,3 @@ func New(opts Options, cfg config.Config) Model {
 }
 
 func (m *Model) SetProgram(p *tea.Program) { m.program = p }
-

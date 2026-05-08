@@ -20,23 +20,23 @@
 //! let pipeline = DspPipeline::new(config);
 //! ```
 
+pub mod command;
 pub mod config;
-pub mod resample;
-pub mod dsd;
 pub mod convolution;
 pub mod crossfeed;
 pub mod dc_offset;
+pub mod dsd;
+pub mod eq;
 pub mod lufs;
 pub mod mid_side;
-pub mod eq;
-pub mod raat;
-pub mod output;
-pub mod nodes;
-pub mod command;
-pub mod profile_store;
-pub mod preset_store;
-pub mod ns_filters;
 pub mod mpd_config;
+pub mod nodes;
+pub mod ns_filters;
+pub mod output;
+pub mod preset_store;
+pub mod profile_store;
+pub mod raat;
+pub mod resample;
 
 // Re-export from ns_filters for backwards compatibility
 #[allow(dead_code, unused_imports)]
@@ -45,20 +45,20 @@ pub use ns_filters::dither::{DitherFilter, NoiseShaping};
 pub use ns_filters::saw::{SawNode, StftProcessor};
 
 #[allow(dead_code, unused_imports)]
-pub use config::{DspConfig, DspProfile, DspStage, FilterType, OutputMode, OutputTarget};
-#[allow(dead_code, unused_imports)]
-pub use output::{AudioOutput, OutputError, open_output};
-pub use pipeline::DspPipeline;
-#[allow(dead_code, unused_imports)]
-pub use nodes::{DspChain, DspNode, GainNode, EqNode};
-#[allow(dead_code, unused_imports)]
 pub use command::DspCommand;
 #[allow(dead_code, unused_imports)]
-pub use profile_store::CustomProfileStore;
+pub use config::{DspConfig, DspProfile, DspStage, FilterType, OutputMode, OutputTarget};
+#[allow(dead_code, unused_imports)]
+pub use eq::ParametricEq;
+#[allow(dead_code, unused_imports)]
+pub use nodes::{DspChain, DspNode, EqNode, GainNode};
+#[allow(dead_code, unused_imports)]
+pub use output::{open_output, AudioOutput, OutputError};
+pub use pipeline::DspPipeline;
 #[allow(dead_code, unused_imports)]
 pub use preset_store::PresetStore;
 #[allow(dead_code, unused_imports)]
-pub use eq::ParametricEq;
+pub use profile_store::CustomProfileStore;
 
 mod pipeline {
     use std::sync::Arc;
@@ -68,57 +68,59 @@ mod pipeline {
     use super::{
         config::{DspConfig, DspProfileConfig, OutputSampleRate},
         convolution::ConvolutionEngine,
-        crossfeed::{CrossfeedFilter, probe_headphones},
-            ns_filters::dither::DitherFilter,
+        crossfeed::{probe_headphones, CrossfeedFilter},
         dc_offset::DcOffsetFilter,
         dsd::DsdConverter,
+        eq::ParametricEq,
         lufs::LufsNormalizer,
         mid_side::MidSideProcessor,
         nodes::{DspNode, EqNode, GainNode},
+        ns_filters::dither::DitherFilter,
+        output::{open_output, AudioOutput, DsdAudioOutput},
         preset_store,
         profile_store::CustomProfileStore,
-        output::{open_output, AudioOutput, DsdAudioOutput},
-        eq::ParametricEq,
         resample::Resampler,
     };
 
     /// Main DSP processing pipeline.
     #[allow(dead_code)] // planned: DSP pipeline, wired in by audio output subsystem
     pub struct DspPipeline {
-        config:        Arc<RwLock<DspConfig>>,
-        config_dir:    std::path::PathBuf,
-        resampler:     Option<Resampler>,
+        config: Arc<RwLock<DspConfig>>,
+        config_dir: std::path::PathBuf,
+        resampler: Option<Resampler>,
         dsd_converter: Option<DsdConverter>,
-        dsd_mode:      super::config::DsdMode,
-        convolution:   Option<ConvolutionEngine>,
-        crossfeed:     Option<CrossfeedFilter>,
-        dither:        Option<DitherFilter>,
-        dc_offset:     Option<DcOffsetFilter>,
-        lufs:          Option<LufsNormalizer>,
-        mid_side:      MidSideProcessor,
-        eq:            Option<ParametricEq>,
-        output:        Option<Box<dyn AudioOutput>>,
-        dsd_output:    Option<Box<dyn DsdAudioOutput>>,
-        gain:          Option<GainNode>,
-        eq_node:       Option<EqNode>,
+        dsd_mode: super::config::DsdMode,
+        convolution: Option<ConvolutionEngine>,
+        crossfeed: Option<CrossfeedFilter>,
+        dither: Option<DitherFilter>,
+        dc_offset: Option<DcOffsetFilter>,
+        lufs: Option<LufsNormalizer>,
+        mid_side: MidSideProcessor,
+        eq: Option<ParametricEq>,
+        output: Option<Box<dyn AudioOutput>>,
+        dsd_output: Option<Box<dyn DsdAudioOutput>>,
+        gain: Option<GainNode>,
+        eq_node: Option<EqNode>,
         profile_store: CustomProfileStore,
-        preset_store:  preset_store::PresetStore,
+        preset_store: preset_store::PresetStore,
         pcm_to_dsd_warned: bool,
     }
 
     #[allow(dead_code)] // planned: DspPipeline pub API, called from main.rs IPC command handler
     impl DspPipeline {
         fn build_dither(cfg: &DspConfig) -> Option<DitherFilter> {
-            use super::ns_filters::dither::NoiseShaping;
             use super::config::OutputTarget;
+            use super::ns_filters::dither::NoiseShaping;
             let enabled = if cfg.dither_auto {
                 cfg.output_target == OutputTarget::Alsa && cfg.dither_bit_depth == 16
             } else {
                 cfg.dither_enabled
             };
-            if !enabled { return None; }
-            let shaping = NoiseShaping::from_str(&cfg.dither_noise_shaping)
-                .unwrap_or(NoiseShaping::None);
+            if !enabled {
+                return None;
+            }
+            let shaping =
+                NoiseShaping::from_str(&cfg.dither_noise_shaping).unwrap_or(NoiseShaping::None);
             Some(DitherFilter::new(cfg.dither_bit_depth, shaping))
         }
 
@@ -131,14 +133,14 @@ mod pipeline {
         pub fn with_config_dir(config: DspConfig, config_dir: std::path::PathBuf) -> Self {
             let profile_store = CustomProfileStore::load(&config_dir);
             let preset_store = preset_store::PresetStore::load(&config_dir);
-            
+
             // Take a snapshot before moving config into the Arc so all sub-components see the same state.
             let config_snap = config.clone();
             let config = Arc::new(RwLock::new(config));
 
-            let resampler     = Resampler::new(config.clone()).ok();
+            let resampler = Resampler::new(config.clone()).ok();
             let dsd_converter = DsdConverter::new(config.clone()).ok();
-            let convolution   = ConvolutionEngine::new(config.clone()).ok();
+            let convolution = ConvolutionEngine::new(config.clone()).ok();
 
             let eq = if config_snap.eq_enabled && !config_snap.eq_bands.is_empty() {
                 let mut peq = ParametricEq::new(&config_snap.eq_bands);
@@ -151,7 +153,7 @@ mod pipeline {
             let output = if config_snap.enabled {
                 match open_output(config_snap.output_target, &config_snap) {
                     Ok(out) => Some(out),
-                    Err(e)  => {
+                    Err(e) => {
                         warn!(error = %e, "failed to open audio output — DSP will process but not deliver");
                         None
                     }
@@ -199,15 +201,15 @@ mod pipeline {
             };
 
             info!(
-                resampler   = resampler.is_some(),
-                dsd         = dsd_converter.is_some(),
+                resampler = resampler.is_some(),
+                dsd = dsd_converter.is_some(),
                 convolution = convolution.is_some(),
-                crossfeed   = crossfeed.is_some(),
-                dither      = dither.is_some(),
-                dc_offset   = dc_offset.is_some(),
-                lufs        = lufs.is_some(),
-                eq          = eq.is_some(),
-                output      = output.is_some(),
+                crossfeed = crossfeed.is_some(),
+                dither = dither.is_some(),
+                dc_offset = dc_offset.is_some(),
+                lufs = lufs.is_some(),
+                eq = eq.is_some(),
+                output = output.is_some(),
                 "DSP pipeline initialized"
             );
 
@@ -258,7 +260,8 @@ mod pipeline {
 
             let eq_after_conv = config.convolution_enabled;
             let eq_before_resamp = !eq_after_conv && config.resample_enabled;
-            let eq_after_dsd = !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
+            let eq_after_dsd =
+                !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
             // If none of the above, EQ is the only stage (runs at the end / start)
 
             macro_rules! run_eq {
@@ -269,10 +272,12 @@ mod pipeline {
                             debug!("eq applied");
                         }
                     }
-                }
+                };
             }
 
-            if eq_before_resamp { run_eq!(); }
+            if eq_before_resamp {
+                run_eq!();
+            }
 
             // DC offset filter - apply early to remove DC before other processing
             if let Some(ref mut dc) = self.dc_offset {
@@ -285,7 +290,11 @@ mod pipeline {
                     input = resampler.process(&input, sample_rate);
                     if !input.is_empty() {
                         output_rate = resampler.output_rate();
-                        debug!(input_rate = sample_rate, output_rate = output_rate, "resampled");
+                        debug!(
+                            input_rate = sample_rate,
+                            output_rate = output_rate,
+                            "resampled"
+                        );
                     }
                 }
             }
@@ -300,7 +309,9 @@ mod pipeline {
                 }
             }
 
-            if eq_after_dsd { run_eq!(); }
+            if eq_after_dsd {
+                run_eq!();
+            }
 
             if let Some(ref mut convolution) = self.convolution {
                 if convolution.is_enabled() {
@@ -323,7 +334,12 @@ mod pipeline {
             // M/S processing - apply stereo width and mid/side gains
             if config.ms_enabled {
                 input = self.mid_side.process(&input);
-                debug!(width = self.mid_side.width(), mid_gain = self.mid_side.mid_gain(), side_gain = self.mid_side.side_gain(), "M/S applied");
+                debug!(
+                    width = self.mid_side.width(),
+                    mid_gain = self.mid_side.mid_gain(),
+                    side_gain = self.mid_side.side_gain(),
+                    "M/S applied"
+                );
             }
 
             // EQ node (preset-based) — placed after convolution per audio engineering standards
@@ -378,9 +394,10 @@ mod pipeline {
             let mut output_rate = sample_rate;
             let config = self.config.blocking_read();
 
-            let eq_after_conv   = config.convolution_enabled;
+            let eq_after_conv = config.convolution_enabled;
             let eq_before_resamp = !eq_after_conv && config.resample_enabled;
-            let eq_after_dsd    = !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
+            let eq_after_dsd =
+                !eq_after_conv && !config.resample_enabled && config.dsd_to_pcm_enabled;
 
             macro_rules! log_eq {
                 () => {
@@ -390,16 +407,20 @@ mod pipeline {
                             input = eq.process(&input, output_rate);
                         }
                     }
-                }
+                };
             }
 
-            if eq_before_resamp { log_eq!(); }
+            if eq_before_resamp {
+                log_eq!();
+            }
 
             if let Some(ref mut resampler) = self.resampler {
                 if config.resample_enabled {
                     log.record("resample");
                     input = resampler.process(&input, sample_rate);
-                    if !input.is_empty() { output_rate = resampler.output_rate(); }
+                    if !input.is_empty() {
+                        output_rate = resampler.output_rate();
+                    }
                 }
             }
 
@@ -410,7 +431,9 @@ mod pipeline {
                 }
             }
 
-            if eq_after_dsd { log_eq!(); }
+            if eq_after_dsd {
+                log_eq!();
+            }
 
             if let Some(ref mut conv) = self.convolution {
                 // Record "convolution" whenever the config says it's enabled, even if the
@@ -424,8 +447,12 @@ mod pipeline {
                 }
             }
 
-            if eq_after_conv { log_eq!(); }
-            if !eq_before_resamp && !eq_after_dsd && !eq_after_conv { log_eq!(); }
+            if eq_after_conv {
+                log_eq!();
+            }
+            if !eq_before_resamp && !eq_after_dsd && !eq_after_conv {
+                log_eq!();
+            }
 
             (input, output_rate)
         }
@@ -457,8 +484,12 @@ mod pipeline {
                 }
                 if new_cfg.enabled {
                     match super::output::open_output(new_cfg.output_target, &new_cfg) {
-                        Ok(out) => { self.output = Some(out); }
-                        Err(e) => { warn!(error = %e, "failed to re-open audio output"); }
+                        Ok(out) => {
+                            self.output = Some(out);
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "failed to re-open audio output");
+                        }
                     }
                 }
             }
@@ -477,7 +508,9 @@ mod pipeline {
             let dc_recreate = old.dc_offset_enabled != new_cfg.dc_offset_enabled;
             if dc_recreate {
                 self.dc_offset = if new_cfg.dc_offset_enabled {
-                    Some(super::dc_offset::DcOffsetFilter::new(new_cfg.dc_offset_cutoff_hz))
+                    Some(super::dc_offset::DcOffsetFilter::new(
+                        new_cfg.dc_offset_cutoff_hz,
+                    ))
                 } else {
                     None
                 };
@@ -579,8 +612,8 @@ mod pipeline {
             let old = self.config.read().await.clone();
             *self.config.write().await = new_cfg.clone();
 
-            let output_changed = old.output_target  != new_cfg.output_target
-                || old.alsa_device   != new_cfg.alsa_device
+            let output_changed = old.output_target != new_cfg.output_target
+                || old.alsa_device != new_cfg.alsa_device
                 || old.pipewire_role != new_cfg.pipewire_role;
 
             if output_changed {
@@ -589,8 +622,12 @@ mod pipeline {
                 }
                 if new_cfg.enabled {
                     match open_output(new_cfg.output_target, &new_cfg) {
-                        Ok(out) => { self.output = Some(out); }
-                        Err(e)  => { warn!(error = %e, "failed to re-open audio output"); }
+                        Ok(out) => {
+                            self.output = Some(out);
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "failed to re-open audio output");
+                        }
                     }
                 }
             }
@@ -607,11 +644,11 @@ mod pipeline {
             }
 
             // Recreate crossfeed when enable state, auto flag, or output device changes.
-            let crossfeed_recreate = old.crossfeed_enabled  != new_cfg.crossfeed_enabled
-                || old.crossfeed_auto    != new_cfg.crossfeed_auto
-                || old.output_target     != new_cfg.output_target
-                || old.alsa_device       != new_cfg.alsa_device
-                || old.pipewire_role     != new_cfg.pipewire_role;
+            let crossfeed_recreate = old.crossfeed_enabled != new_cfg.crossfeed_enabled
+                || old.crossfeed_auto != new_cfg.crossfeed_auto
+                || old.output_target != new_cfg.output_target
+                || old.alsa_device != new_cfg.alsa_device
+                || old.pipewire_role != new_cfg.pipewire_role;
 
             let crossfeed_params_changed = old.crossfeed_feed_level != new_cfg.crossfeed_feed_level
                 || old.crossfeed_cutoff_hz != new_cfg.crossfeed_cutoff_hz;
@@ -643,11 +680,11 @@ mod pipeline {
                 }
             }
 
-            let dither_changed = old.dither_enabled       != new_cfg.dither_enabled
-                || old.dither_auto          != new_cfg.dither_auto
-                || old.dither_bit_depth     != new_cfg.dither_bit_depth
+            let dither_changed = old.dither_enabled != new_cfg.dither_enabled
+                || old.dither_auto != new_cfg.dither_auto
+                || old.dither_bit_depth != new_cfg.dither_bit_depth
                 || old.dither_noise_shaping != new_cfg.dither_noise_shaping
-                || old.output_target        != new_cfg.output_target;
+                || old.output_target != new_cfg.output_target;
 
             if dither_changed {
                 self.dither = Self::build_dither(&new_cfg);
@@ -767,7 +804,7 @@ mod pipeline {
         /// Handle DSP command for real-time adjustments.
         /// Commands: :gain +2dB, :gain mute, :eq bass_boost, :dsp profile music, etc.
         pub fn handle_command(&mut self, cmd: &str) -> String {
-            use super::command::{DspCommand, EqPreset, GainAdjust, DspProfileCmd};
+            use super::command::{DspCommand, DspProfileCmd, EqPreset, GainAdjust};
 
             match DspCommand::parse(cmd) {
                 Some(DspCommand::Gain(gain_cmd)) => {
@@ -1000,8 +1037,16 @@ mod pipeline {
             let mut input: Vec<f32> = (0..64).flat_map(|_| [1.0_f32, 0.0_f32]).collect(); // L=1.0 R=0.0
             let (out, _) = pipeline.process(&mut input, 44100);
             // Right channel after crossfeed must be > 0
-            let r_max = out.iter().skip(1).step_by(2).cloned().fold(0.0_f32, f32::max);
-            assert!(r_max > 0.0, "right channel should have crossfeed contribution");
+            let r_max = out
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .cloned()
+                .fold(0.0_f32, f32::max);
+            assert!(
+                r_max > 0.0,
+                "right channel should have crossfeed contribution"
+            );
         }
 
         #[test]
@@ -1014,16 +1059,24 @@ mod pipeline {
             let mut input: Vec<f32> = (0..64).flat_map(|_| [1.0_f32, 0.0_f32]).collect();
             let (out, _) = pipeline.process(&mut input, 44100);
             // Right channel must remain 0.0 — no crossfeed applied
-            let r_max = out.iter().skip(1).step_by(2).cloned().fold(0.0_f32, f32::max);
-            assert_eq!(r_max, 0.0, "right channel must be untouched when crossfeed disabled");
+            let r_max = out
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .cloned()
+                .fold(0.0_f32, f32::max);
+            assert_eq!(
+                r_max, 0.0,
+                "right channel must be untouched when crossfeed disabled"
+            );
         }
 
         #[test]
         fn dither_applied_when_enabled() {
             // 16-bit dither on a DC signal: output must be quantized (not exact float).
             let cfg = DspConfig {
-                dither_enabled:       true,
-                dither_bit_depth:     16,
+                dither_enabled: true,
+                dither_bit_depth: 16,
                 dither_noise_shaping: "none".to_string(),
                 ..Default::default()
             };
@@ -1043,7 +1096,7 @@ mod pipeline {
         fn dither_bypassed_when_disabled() {
             let cfg = DspConfig {
                 dither_enabled: false,
-                resample_enabled: false,  // disable resampler so passthrough is exact
+                resample_enabled: false, // disable resampler so passthrough is exact
                 ..Default::default()
             };
             let mut pipeline = DspPipeline::new(cfg);
@@ -1055,71 +1108,86 @@ mod pipeline {
             }
         }
 
-    pub(super) mod pipeline_eq_tests {
-        use super::*;
-        use crate::dsp::config::{DspConfig, EqBand, EqFilterType};
-        use std::sync::{Arc, Mutex};
+        pub(super) mod pipeline_eq_tests {
+            use super::*;
+            use crate::dsp::config::{DspConfig, EqBand, EqFilterType};
+            use std::sync::{Arc, Mutex};
 
-        /// Test helper: records which stages ran in order.
-        #[derive(Clone, Default)]
-        pub struct StageLog(pub Arc<Mutex<Vec<String>>>);
+            /// Test helper: records which stages ran in order.
+            #[derive(Clone, Default)]
+            pub struct StageLog(pub Arc<Mutex<Vec<String>>>);
 
-        impl StageLog {
-            pub fn record(&self, name: &str) {
-                self.0.lock().unwrap().push(name.to_string());
+            impl StageLog {
+                pub fn record(&self, name: &str) {
+                    self.0.lock().unwrap().push(name.to_string());
+                }
+                pub fn entries(&self) -> Vec<String> {
+                    self.0.lock().unwrap().clone()
+                }
             }
-            pub fn entries(&self) -> Vec<String> {
-                self.0.lock().unwrap().clone()
+
+            fn eq_band() -> EqBand {
+                EqBand {
+                    enabled: true,
+                    filter_type: EqFilterType::Peak,
+                    freq: 1000.0,
+                    gain_db: 6.0,
+                    q: 1.0,
+                }
             }
-        }
 
-        fn eq_band() -> EqBand {
-            EqBand { enabled: true, filter_type: EqFilterType::Peak,
-                     freq: 1000.0, gain_db: 6.0, q: 1.0 }
-        }
+            #[test]
+            fn eq_runs_before_resample_when_convolution_disabled() {
+                let cfg = DspConfig {
+                    enabled: true,
+                    eq_enabled: true,
+                    eq_bands: vec![eq_band()],
+                    resample_enabled: true,
+                    convolution_enabled: false,
+                    ..DspConfig::default()
+                };
+                let mut pipeline = DspPipeline::new(cfg);
+                let log = StageLog::default();
+                let samples = vec![0.0f32; 256];
+                pipeline.process_with_log(&mut samples.clone(), 44100, &log);
+                let entries = log.entries();
+                let eq_pos = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
+                let resamp_pos = entries
+                    .iter()
+                    .position(|s| s == "resample")
+                    .unwrap_or(usize::MAX);
+                assert!(
+                    eq_pos < resamp_pos,
+                    "eq must run before resample; log={entries:?}"
+                );
+            }
 
-        #[test]
-        fn eq_runs_before_resample_when_convolution_disabled() {
-            let cfg = DspConfig {
-                enabled: true,
-                eq_enabled: true,
-                eq_bands: vec![eq_band()],
-                resample_enabled: true,
-                convolution_enabled: false,
-                ..DspConfig::default()
-            };
-            let mut pipeline = DspPipeline::new(cfg);
-            let log = StageLog::default();
-            let samples = vec![0.0f32; 256];
-            pipeline.process_with_log(&mut samples.clone(), 44100, &log);
-            let entries = log.entries();
-            let eq_pos    = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
-            let resamp_pos = entries.iter().position(|s| s == "resample").unwrap_or(usize::MAX);
-            assert!(eq_pos < resamp_pos,
-                "eq must run before resample; log={entries:?}");
-        }
-
-        #[test]
-        fn eq_runs_after_convolution_when_enabled() {
-            let cfg = DspConfig {
-                enabled: true,
-                eq_enabled: true,
-                eq_bands: vec![eq_band()],
-                convolution_enabled: true,
-                ..DspConfig::default()
-            };
-            let mut pipeline = DspPipeline::new(cfg);
-            let log = StageLog::default();
-            let mut samples = vec![0.0f32; 256];
-            pipeline.process_with_log(&mut samples, 44100, &log);
-            let entries = log.entries();
-            let conv_pos = entries.iter().position(|s| s == "convolution").unwrap_or(usize::MAX);
-            let eq_pos   = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
-            assert!(conv_pos < eq_pos,
-                "eq must run after convolution; log={entries:?}");
+            #[test]
+            fn eq_runs_after_convolution_when_enabled() {
+                let cfg = DspConfig {
+                    enabled: true,
+                    eq_enabled: true,
+                    eq_bands: vec![eq_band()],
+                    convolution_enabled: true,
+                    ..DspConfig::default()
+                };
+                let mut pipeline = DspPipeline::new(cfg);
+                let log = StageLog::default();
+                let mut samples = vec![0.0f32; 256];
+                pipeline.process_with_log(&mut samples, 44100, &log);
+                let entries = log.entries();
+                let conv_pos = entries
+                    .iter()
+                    .position(|s| s == "convolution")
+                    .unwrap_or(usize::MAX);
+                let eq_pos = entries.iter().position(|s| s == "eq").unwrap_or(usize::MAX);
+                assert!(
+                    conv_pos < eq_pos,
+                    "eq must run after convolution; log={entries:?}"
+                );
+            }
         }
     }
-}
 } // mod pipeline
 
 // ── mpv DSP bridge ────────────────────────────────────────────────────────────
@@ -1198,7 +1266,9 @@ pub fn dsp_to_mpv_flags(config: &config::DspConfig) -> Vec<String> {
     // crossfeed_enabled is set to true by the auto-detect probe when crossfeed_auto
     // is on and headphones are detected at DSP pipeline init / config update.
     if config.crossfeed_enabled {
-        let feed = (config.crossfeed_feed_level * 100.0).clamp(0.0, 90.0).round() as u32;
+        let feed = (config.crossfeed_feed_level * 100.0)
+            .clamp(0.0, 90.0)
+            .round() as u32;
         let fcut = config.crossfeed_cutoff_hz as u32;
         lavfi.push(format!("bs2b=fcut={fcut}:feed={feed}"));
     }
@@ -1227,7 +1297,10 @@ mod dsp_mpv_flags_tests {
 
     #[test]
     fn disabled_dsp_returns_empty() {
-        let cfg = DspConfig { enabled: false, ..Default::default() };
+        let cfg = DspConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(dsp_to_mpv_flags(&cfg).is_empty());
     }
 
@@ -1253,7 +1326,10 @@ mod dsp_mpv_flags_tests {
             ..Default::default()
         };
         let flags = dsp_to_mpv_flags(&cfg);
-        let af = flags.iter().find(|f| f.starts_with("--af=")).expect("--af flag");
+        let af = flags
+            .iter()
+            .find(|f| f.starts_with("--af="))
+            .expect("--af flag");
         assert!(af.contains("loudnorm"));
         assert!(af.contains("I=-24.0"));
     }
@@ -1269,7 +1345,10 @@ mod dsp_mpv_flags_tests {
             ..Default::default()
         };
         let flags = dsp_to_mpv_flags(&cfg);
-        let af = flags.iter().find(|f| f.starts_with("--af=")).expect("--af flag");
+        let af = flags
+            .iter()
+            .find(|f| f.starts_with("--af="))
+            .expect("--af flag");
         assert!(af.contains("bs2b"));
     }
 
@@ -1282,7 +1361,10 @@ mod dsp_mpv_flags_tests {
             ..Default::default()
         };
         let flags = dsp_to_mpv_flags(&cfg);
-        let af = flags.iter().find(|f| f.starts_with("--af=")).expect("--af flag");
+        let af = flags
+            .iter()
+            .find(|f| f.starts_with("--af="))
+            .expect("--af flag");
         assert!(af.contains("equalizer"));
     }
 
@@ -1326,7 +1408,10 @@ pub async fn run_mpd_dsp_loop(
 
     // Create the FIFO if absent.
     if !std::path::Path::new(&fifo_path).exists() {
-        match std::process::Command::new("mkfifo").arg(&fifo_path).status() {
+        match std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+        {
             Ok(s) if s.success() => info!(path = %fifo_path, "created MPD DSP FIFO"),
             Ok(s) => warn!(path = %fifo_path, status = %s, "mkfifo exited non-zero"),
             Err(e) => warn!(path = %fifo_path, error = %e, "mkfifo command failed"),
@@ -1371,7 +1456,10 @@ pub async fn run_mpd_dsp_loop(
                 Ok(n) => {
                     // Convert 16-bit LE bytes to f32 samples in [-1.0, 1.0].
                     if n % 2 != 0 {
-                        warn!(bytes = n, "MPD FIFO read returned odd byte count — trailing byte dropped");
+                        warn!(
+                            bytes = n,
+                            "MPD FIFO read returned odd byte count — trailing byte dropped"
+                        );
                     }
                     let mut samples: Vec<f32> = buf[..n]
                         .chunks_exact(2)

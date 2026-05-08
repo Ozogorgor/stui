@@ -508,7 +508,9 @@ func (m *EqEditorModel) View() tea.View {
 		curveHeight = 2
 	}
 	curveWidth := m.width - 8 // leave room for dB labels
-	if curveWidth < 1 { curveWidth = 1 }
+	if curveWidth < 1 {
+		curveWidth = 1
+	}
 
 	activeBands := make([]EqBand, 0, len(m.bands))
 	for _, b := range m.bands {
@@ -594,7 +596,7 @@ func (m *EqEditorModel) View() tea.View {
 	}
 	sb.WriteString(strings.Repeat("─", m.width) + "\n")
 	sb.WriteString(dimmed.Render(
-		"  "+addHint+"  d del  space toggle  tab next  +/- nudge  e edit\n"+
+		"  " + addHint + "  d del  space toggle  tab next  +/- nudge  e edit\n" +
 			"  b bypass  q close\n"))
 
 	return tea.NewView(sb.String())

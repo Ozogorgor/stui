@@ -3,10 +3,7 @@
 //! Extracts the first embedded picture (front cover preferred) and caches
 //! it to `~/.stui/cache/art/<sha256>.jpg` so subsequent requests are instant.
 
-use lofty::{
-    file::TaggedFileExt,
-    probe::Probe,
-};
+use lofty::{file::TaggedFileExt, probe::Probe};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,13 +28,22 @@ pub fn extract(audio_path: &Path) -> Option<PathBuf> {
     let tagged = match Probe::open(audio_path) {
         Ok(p) => match p.read() {
             Ok(t) => t,
-            Err(e) => { tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty read failed"); return None; }
+            Err(e) => {
+                tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty read failed");
+                return None;
+            }
         },
-        Err(e) => { tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty open failed"); return None; }
+        Err(e) => {
+            tracing::warn!(path = %audio_path.display(), error = %e, "album_art: lofty open failed");
+            return None;
+        }
     };
     let tag = match tagged.primary_tag().or(tagged.first_tag()) {
         Some(t) => t,
-        None => { tracing::warn!(path = %audio_path.display(), "album_art: no tags found"); return None; }
+        None => {
+            tracing::warn!(path = %audio_path.display(), "album_art: no tags found");
+            return None;
+        }
     };
     let pictures = tag.pictures();
     tracing::info!(path = %audio_path.display(), count = pictures.len(), "album_art: pictures found");
@@ -46,7 +52,8 @@ pub fn extract(audio_path: &Path) -> Option<PathBuf> {
     }
 
     // Prefer front cover, fall back to first picture
-    let pic = pictures.iter()
+    let pic = pictures
+        .iter()
         .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
         .unwrap_or(&pictures[0]);
 

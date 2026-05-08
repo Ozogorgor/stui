@@ -72,7 +72,11 @@ impl LimiterState {
     fn cooldown_remaining(&self) -> Option<Duration> {
         self.cooldown_until.and_then(|t| {
             let now = Instant::now();
-            if now < t { Some(t - now) } else { None }
+            if now < t {
+                Some(t - now)
+            } else {
+                None
+            }
         })
     }
 
@@ -128,7 +132,7 @@ impl ProviderThrottle {
     /// Create a new throttle with `default_capacity` req/s for unknown providers.
     pub fn new() -> Self {
         ProviderThrottle {
-            inner:            Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(Mutex::new(HashMap::new())),
             default_capacity: 4,
         }
     }
@@ -142,7 +146,8 @@ impl ProviderThrottle {
     /// Set the rate limit for a specific provider (requests per second).
     pub async fn set_limit(&self, provider: &str, requests_per_second: u32) {
         let mut map = self.inner.lock().await;
-        let entry = map.entry(provider.to_string())
+        let entry = map
+            .entry(provider.to_string())
             .or_insert_with(|| LimiterState::new(requests_per_second));
         entry.capacity = requests_per_second;
     }
@@ -158,7 +163,8 @@ impl ProviderThrottle {
             let wait = {
                 let mut map = self.inner.lock().await;
                 let cap = self.default_capacity;
-                let state = map.entry(provider.to_string())
+                let state = map
+                    .entry(provider.to_string())
                     .or_insert_with(|| LimiterState::new(cap));
 
                 if let Some(remaining) = state.cooldown_remaining() {
@@ -172,7 +178,11 @@ impl ProviderThrottle {
                 None => return, // token acquired
                 Some(d) => {
                     if d > Duration::from_secs(30) {
-                        warn!(provider, secs = d.as_secs(), "long throttle wait — consider skipping");
+                        warn!(
+                            provider,
+                            secs = d.as_secs(),
+                            "long throttle wait — consider skipping"
+                        );
                     }
                     tokio::time::sleep(d).await;
                 }
@@ -182,7 +192,9 @@ impl ProviderThrottle {
 
     /// Check whether a provider is in cooldown without consuming a token.
     pub async fn is_cooling_down(&self, provider: &str) -> bool {
-        self.inner.lock().await
+        self.inner
+            .lock()
+            .await
             .get(provider)
             .map(|s| s.is_cooling_down())
             .unwrap_or(false)
@@ -190,7 +202,9 @@ impl ProviderThrottle {
 
     /// Time remaining in the cooldown for `provider`, or `None`.
     pub async fn cooldown_remaining(&self, provider: &str) -> Option<Duration> {
-        self.inner.lock().await
+        self.inner
+            .lock()
+            .await
             .get(provider)
             .and_then(|s| s.cooldown_remaining())
     }
@@ -201,7 +215,8 @@ impl ProviderThrottle {
     pub async fn record_rate_limited(&self, provider: &str, retry_after_secs: Option<u64>) {
         let mut map = self.inner.lock().await;
         let cap = self.default_capacity;
-        let state = map.entry(provider.to_string())
+        let state = map
+            .entry(provider.to_string())
             .or_insert_with(|| LimiterState::new(cap));
         state.enter_cooldown(retry_after_secs);
         warn!(
@@ -221,10 +236,13 @@ impl ProviderThrottle {
 
     /// All providers currently in cooldown, with remaining seconds.
     pub async fn cooling_down_providers(&self) -> Vec<(String, u64)> {
-        self.inner.lock().await
+        self.inner
+            .lock()
+            .await
             .iter()
             .filter_map(|(name, state)| {
-                state.cooldown_remaining()
+                state
+                    .cooldown_remaining()
                     .map(|d| (name.clone(), d.as_secs()))
             })
             .collect()
@@ -232,18 +250,20 @@ impl ProviderThrottle {
 }
 
 impl Default for ProviderThrottle {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Default rate limits ───────────────────────────────────────────────────────
 
 /// Apply sensible default rate limits for known providers.
 pub async fn apply_default_limits(throttle: &ProviderThrottle) {
-    throttle.set_limit("tmdb",          4).await;  // TMDB: 4 req/s (their public limit)
-    throttle.set_limit("omdb",          1).await;  // OMDB: ~1 req/s free tier
-    throttle.set_limit("torrentio",     2).await;  // Torrentio: be polite
-    throttle.set_limit("prowlarr",      5).await;  // Local — can be higher
-    throttle.set_limit("opensubtitles", 2).await;  // OS has strict limits
+    throttle.set_limit("tmdb", 4).await; // TMDB: 4 req/s (their public limit)
+    throttle.set_limit("omdb", 1).await; // OMDB: ~1 req/s free tier
+    throttle.set_limit("torrentio", 2).await; // Torrentio: be polite
+    throttle.set_limit("prowlarr", 5).await; // Local — can be higher
+    throttle.set_limit("opensubtitles", 2).await; // OS has strict limits
 }
 
 #[cfg(test)]

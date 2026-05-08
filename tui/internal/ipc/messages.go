@@ -157,7 +157,7 @@ type DetailEntry struct {
 	// detail-open time. Used by the EpisodeScreen open path to route
 	// season/episode lookups through TMDB even when the catalog
 	// entry is anilist/kitsu-spined.
-	TmdbID      string       `json:"tmdb_id,omitempty"`
+	TmdbID string `json:"tmdb_id,omitempty"`
 	// ISO 639-1 language code (e.g. "ja", "en"). Mirrored from
 	// CatalogEntry at detail-open time. Rendered as a human-readable
 	// language name under the synopsis.
@@ -324,9 +324,9 @@ type EpisodesLoadFailedMsg struct {
 
 // LastFMAlbumTracksMsg carries track data for an album from LastFM.
 type LastFMAlbumTracksMsg struct {
-	Album   string
-	Artist  string
-	Tracks  []AlbumTrack
+	Album  string
+	Artist string
+	Tracks []AlbumTrack
 }
 
 // AlbumTrack represents a single track from an album.

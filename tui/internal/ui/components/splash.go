@@ -20,9 +20,9 @@ import (
 type SplashState int
 
 const (
-	SplashStateReveal      SplashState = iota // dots dance through random colors
-	SplashStateColorCycle                     // gradually lock dots to tyrian purple
-	SplashStateWordmark                       // type STUI wordmark
+	SplashStateReveal     SplashState = iota // dots dance through random colors
+	SplashStateColorCycle                    // gradually lock dots to tyrian purple
+	SplashStateWordmark                      // type STUI wordmark
 	SplashStateDone
 )
 

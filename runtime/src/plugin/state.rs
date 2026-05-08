@@ -54,7 +54,9 @@ pub struct StateStore {
 }
 
 impl StateStore {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Insert or replace a plugin's state. Called on load / reload.
     pub fn insert(&mut self, state: PluginState) {
@@ -137,7 +139,10 @@ where
         let full = field.full_key(&manifest.plugin.name);
 
         // 1. user TUI settings — keyed by full_key (plugins.<name>.<key>) or by bare key.
-        if let Some(v) = user_config.get(&full).or_else(|| user_config.get(&field.key)) {
+        if let Some(v) = user_config
+            .get(&full)
+            .or_else(|| user_config.get(&field.key))
+        {
             out.insert(field.key.clone(), v.clone());
             continue;
         }
@@ -196,7 +201,10 @@ mod tests {
         Capabilities, CatalogCapability, PluginConfigField, PluginManifest, PluginMeta,
     };
 
-    fn manifest_with_field(field: PluginConfigField, env_defaults: Vec<(&str, &str)>) -> PluginManifest {
+    fn manifest_with_field(
+        field: PluginConfigField,
+        env_defaults: Vec<(&str, &str)>,
+    ) -> PluginManifest {
         PluginManifest {
             plugin: PluginMeta {
                 name: "tester".to_string(),
@@ -210,9 +218,16 @@ mod tests {
             },
             permissions: None,
             meta: None,
-            env: env_defaults.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            env: env_defaults
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             config: vec![field],
-            capabilities: Capabilities { catalog: CatalogCapability::default(), streams: false, _extra: Default::default() },
+            capabilities: Capabilities {
+                catalog: CatalogCapability::default(),
+                streams: false,
+                _extra: Default::default(),
+            },
             rate_limit: None,
             supervisor: None,
             _extra: Default::default(),
@@ -234,10 +249,17 @@ mod tests {
         let m = manifest_with_field(field, vec![("api_key", "env-default-value")]);
 
         let mut user = HashMap::new();
-        user.insert("plugins.tester.api_key".to_string(), "user-value".to_string());
+        user.insert(
+            "plugins.tester.api_key".to_string(),
+            "user-value".to_string(),
+        );
 
         let env_lookup = |k: &str| {
-            if k == "TEST_API_KEY" { Some("env-var-value".to_string()) } else { None }
+            if k == "TEST_API_KEY" {
+                Some("env-var-value".to_string())
+            } else {
+                None
+            }
         };
 
         let resolved = resolve_config(&m, &user, env_lookup);
@@ -259,7 +281,11 @@ mod tests {
 
         let user = HashMap::new();
         let env_lookup = |k: &str| {
-            if k == "TEST_API_KEY" { Some("env-var-value".to_string()) } else { None }
+            if k == "TEST_API_KEY" {
+                Some("env-var-value".to_string())
+            } else {
+                None
+            }
         };
         let resolved = resolve_config(&m, &user, env_lookup);
         assert_eq!(resolved.get("api_key"), Some(&"env-var-value".to_string()));
@@ -281,7 +307,10 @@ mod tests {
         let user = HashMap::new();
         let env_lookup = |_: &str| None;
         let resolved = resolve_config(&m, &user, env_lookup);
-        assert_eq!(resolved.get("api_key"), Some(&"env-default-value".to_string()));
+        assert_eq!(
+            resolved.get("api_key"),
+            Some(&"env-default-value".to_string())
+        );
     }
 
     #[test]
@@ -323,7 +352,7 @@ mod tests {
             hint: None,
             masked: true,
             required: true,
-            default: Some("field_default".into()),           // level 4
+            default: Some("field_default".into()), // level 4
             env_var: Some("STUI_TEST_FOUR_LEVELS_API_KEY".into()),
         };
         // Level 3: [env] manifest default
@@ -331,12 +360,15 @@ mod tests {
 
         // Level 1: user TUI settings
         let mut user = HashMap::new();
-        user.insert("plugins.tester.api_key".to_string(), "user_value".to_string());
+        user.insert(
+            "plugins.tester.api_key".to_string(),
+            "user_value".to_string(),
+        );
 
         // Level 2: actual env var (simulated via the closure)
         let env_lookup = |k: &str| {
             if k == "STUI_TEST_FOUR_LEVELS_API_KEY" {
-                Some("env_var_value".to_string())  // level 2
+                Some("env_var_value".to_string()) // level 2
             } else {
                 None
             }
@@ -378,7 +410,10 @@ mod tests {
                 hint: Some("set it".to_string()),
             },
         ));
-        assert!(matches!(store.status("tester"), Some(PluginStatus::NeedsConfig { .. })));
+        assert!(matches!(
+            store.status("tester"),
+            Some(PluginStatus::NeedsConfig { .. })
+        ));
         assert_eq!(store.list().count(), 1);
         assert!(store.remove("tester").is_some());
         assert!(store.status("tester").is_none());

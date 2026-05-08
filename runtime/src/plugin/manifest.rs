@@ -155,7 +155,8 @@ impl PluginMetaExt for PluginMeta {
     }
 
     fn plugin_type_or_default(&self) -> PluginType {
-        self.plugin_type_enum().unwrap_or(PluginType::MetadataProvider)
+        self.plugin_type_enum()
+            .unwrap_or(PluginType::MetadataProvider)
     }
 
     fn plugin_type_str(&self) -> String {
@@ -240,21 +241,45 @@ mod plugin_type_tests {
 
     #[test]
     fn plugin_type_parses_canonical_names() {
-        assert_eq!("metadata-provider".parse::<PluginType>().unwrap(), PluginType::MetadataProvider);
-        assert_eq!("stream-provider".parse::<PluginType>().unwrap(), PluginType::StreamProvider);
-        assert_eq!("subtitle-provider".parse::<PluginType>().unwrap(), PluginType::SubtitleProvider);
-        assert_eq!("resolver".parse::<PluginType>().unwrap(), PluginType::Resolver);
+        assert_eq!(
+            "metadata-provider".parse::<PluginType>().unwrap(),
+            PluginType::MetadataProvider
+        );
+        assert_eq!(
+            "stream-provider".parse::<PluginType>().unwrap(),
+            PluginType::StreamProvider
+        );
+        assert_eq!(
+            "subtitle-provider".parse::<PluginType>().unwrap(),
+            PluginType::SubtitleProvider
+        );
+        assert_eq!(
+            "resolver".parse::<PluginType>().unwrap(),
+            PluginType::Resolver
+        );
         assert_eq!("auth".parse::<PluginType>().unwrap(), PluginType::Auth);
-        assert_eq!("indexer".parse::<PluginType>().unwrap(), PluginType::Indexer);
+        assert_eq!(
+            "indexer".parse::<PluginType>().unwrap(),
+            PluginType::Indexer
+        );
     }
 
     #[test]
     fn plugin_type_parses_legacy_aliases() {
         // Legacy strings now collapse onto the canonical variants — same
         // wire-format compatibility, no orphan unit-variants in the enum.
-        assert_eq!("metadata".parse::<PluginType>().unwrap(), PluginType::MetadataProvider);
-        assert_eq!("provider".parse::<PluginType>().unwrap(), PluginType::MetadataProvider);
-        assert_eq!("subtitle".parse::<PluginType>().unwrap(), PluginType::SubtitleProvider);
+        assert_eq!(
+            "metadata".parse::<PluginType>().unwrap(),
+            PluginType::MetadataProvider
+        );
+        assert_eq!(
+            "provider".parse::<PluginType>().unwrap(),
+            PluginType::MetadataProvider
+        );
+        assert_eq!(
+            "subtitle".parse::<PluginType>().unwrap(),
+            PluginType::SubtitleProvider
+        );
     }
 
     #[test]

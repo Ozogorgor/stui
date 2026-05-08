@@ -33,7 +33,7 @@ func TestCacheKey_PreservesWhitelistedExtensions(t *testing.T) {
 		{"https://a/poster.webp", ".webp"},
 		{"https://a/poster.gif", ".gif"},
 		{"https://a/poster.BMP", ".jpg"}, // non-whitelisted → fallback
-		{"https://a/poster", ".jpg"},      // no extension → fallback
+		{"https://a/poster", ".jpg"},     // no extension → fallback
 	}
 	for _, tc := range tests {
 		got := filepath.Ext(CacheKey(tc.url))

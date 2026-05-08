@@ -35,5 +35,7 @@ pub async fn run_rank_streams(req: RankStreamsRequest) -> Response {
         })
         .collect();
 
-    Response::RankStreams(RankStreamsResponse { ranked: ranked_wire })
+    Response::RankStreams(RankStreamsResponse {
+        ranked: ranked_wire,
+    })
 }

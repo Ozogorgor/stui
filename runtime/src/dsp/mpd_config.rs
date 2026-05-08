@@ -40,7 +40,11 @@ pub fn fifo_stanza(fifo_path: &str, sample_rate: u32) -> String {
 /// Returns 0 if no closing brace is found (malformed config).
 fn find_block_end(body: &str) -> usize {
     #[derive(PartialEq)]
-    enum State { Normal, InString, InComment }
+    enum State {
+        Normal,
+        InString,
+        InComment,
+    }
 
     let mut state = State::Normal;
     let mut depth = 1usize;
@@ -131,7 +135,11 @@ pub fn conf_has_stui_output(mpd_conf: &str) -> bool {
 /// Uses a single file handle for both the read and the write to eliminate the
 /// TOCTOU window that would exist if we read with one handle and opened a second
 /// for appending.
-pub fn ensure_mpd_conf(conf_path: &Path, fifo_path: &str, sample_rate: u32) -> std::io::Result<bool> {
+pub fn ensure_mpd_conf(
+    conf_path: &Path,
+    fifo_path: &str,
+    sample_rate: u32,
+) -> std::io::Result<bool> {
     use std::io::{Read, Write};
     let mut file = std::fs::OpenOptions::new()
         .read(true)
@@ -193,8 +201,7 @@ pub fn parse_fifo_sample_rate(conf_path: &Path) -> Option<u32> {
 /// Try to locate the user's `mpd.conf` by checking common paths.
 pub fn find_mpd_conf() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let xdg_config = std::env::var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|_| format!("{home}/.config"));
+    let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
 
     let candidates = [
         PathBuf::from(&xdg_config).join("mpd/mpd.conf"),

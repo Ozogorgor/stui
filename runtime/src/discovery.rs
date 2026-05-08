@@ -67,7 +67,11 @@ impl Discovery {
         engine: Arc<Engine>,
         toast_tx: broadcast::Sender<PluginToast>,
     ) -> Self {
-        Self { plugin_dir, engine, toast_tx }
+        Self {
+            plugin_dir,
+            engine,
+            toast_tx,
+        }
     }
 
     /// Subscribe to plugin toast notifications.
@@ -150,17 +154,17 @@ impl Discovery {
         // notify requires a sync callback; we bridge to async via an mpsc channel
         let (tx, mut rx) = tokio::sync::mpsc::channel::<notify::Result<Event>>(64);
 
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(
-            move |res: notify::Result<Event>| {
+        let mut watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| {
                 let _ = tx.blocking_send(res);
-            }
-        )?;
+            })?;
 
         watcher.watch(&self.plugin_dir, RecursiveMode::NonRecursive)?;
         info!(dir = %self.plugin_dir.display(), "plugin hot-reload watcher active");
 
         // Track which dirs we've already processed to avoid duplicate loads
-        let mut seen: HashSet<PathBuf> = self.collect_plugin_dirs()
+        let mut seen: HashSet<PathBuf> = self
+            .collect_plugin_dirs()
             .unwrap_or_default()
             .into_iter()
             .collect();
@@ -220,7 +224,8 @@ impl Discovery {
             Err(e) => {
                 warn!(dir = %dir.display(), error = %e, "hot-load failed: invalid manifest");
                 let _ = self.toast_tx.send(PluginToast {
-                    plugin_name: dir.file_name()
+                    plugin_name: dir
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),

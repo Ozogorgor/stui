@@ -12,8 +12,8 @@ import (
 
 	"github.com/stui/stui/internal/ipc"
 	"github.com/stui/stui/internal/ui/components"
-	"github.com/stui/stui/internal/ui/screens/catalogbrowser"
 	"github.com/stui/stui/internal/ui/screen"
+	"github.com/stui/stui/internal/ui/screens/catalogbrowser"
 )
 
 // MusicBrowseScreen shows the music catalog with plugin-backed search.
@@ -24,7 +24,7 @@ import (
 // same way Movies/Series do.
 type MusicBrowseScreen struct {
 	Dims
-	client    *ipc.Client
+	client   *ipc.Client
 	catalog  []ipc.CatalogEntry
 	cursor   GridCursor
 	source   *catalogbrowser.PluginDataSource

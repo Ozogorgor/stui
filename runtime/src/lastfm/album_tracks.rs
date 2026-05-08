@@ -36,7 +36,11 @@ pub async fn fetch(artist: &str, album: &str) -> Result<Vec<LastfmAlbumTrackWire
     // its cache_get("__env:…") shim.
     let key = Secrets::load()
         .lastfm_api_key()
-        .or_else(|| std::env::var("LASTFM_API_KEY").ok().filter(|s| !s.is_empty()))
+        .or_else(|| {
+            std::env::var("LASTFM_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
         .ok_or_else(|| anyhow!("LASTFM_API_KEY not set in secrets.env or environment"))?;
 
     let url = format!(
@@ -96,15 +100,18 @@ pub async fn fetch(artist: &str, album: &str) -> Result<Vec<LastfmAlbumTrackWire
 
 #[derive(Debug, Deserialize)]
 struct Envelope {
-    #[serde(default)] album: Option<AlbumInfo>,
+    #[serde(default)]
+    album: Option<AlbumInfo>,
     /// On error, last.fm returns `{ error: <int>, message: "<text>" }`
     /// at the top level instead of `album`.
-    #[serde(default)] message: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AlbumInfo {
-    #[serde(default)] tracks: Option<TracksWrap>,
+    #[serde(default)]
+    tracks: Option<TracksWrap>,
 }
 
 /// last.fm wraps the array in a `track` field (singular), so we
@@ -123,12 +130,11 @@ where
 {
     let v = serde_json::Value::deserialize(deserializer)?;
     match v {
-        serde_json::Value::Array(_) => {
-            serde_json::from_value(v).map(Some).map_err(serde::de::Error::custom)
-        }
+        serde_json::Value::Array(_) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
         serde_json::Value::Object(_) => {
-            let one: RawTrack =
-                serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+            let one: RawTrack = serde_json::from_value(v).map_err(serde::de::Error::custom)?;
             Ok(Some(vec![one]))
         }
         serde_json::Value::Null => Ok(None),
@@ -138,13 +144,17 @@ where
 
 #[derive(Debug, Deserialize)]
 struct RawTrack {
-    #[serde(default)] name: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
     /// last.fm returns duration as a JSON *number* (seconds) for
     /// album.getInfo, but a *string* in some other endpoints. Accept
     /// either to avoid serde rejecting the whole envelope.
-    #[serde(default)] duration: Option<DurationField>,
-    #[serde(default)] mbid: Option<String>,
-    #[serde(default, rename = "@attr")] attr: Option<TrackAttr>,
+    #[serde(default)]
+    duration: Option<DurationField>,
+    #[serde(default)]
+    mbid: Option<String>,
+    #[serde(default, rename = "@attr")]
+    attr: Option<TrackAttr>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,5 +176,6 @@ impl DurationField {
 
 #[derive(Debug, Deserialize)]
 struct TrackAttr {
-    #[serde(default)] rank: Option<u32>,
+    #[serde(default)]
+    rank: Option<u32>,
 }

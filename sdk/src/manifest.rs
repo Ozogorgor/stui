@@ -33,6 +33,11 @@ use crate::kinds::EntryKind;
 ///
 /// - **Typed table**: `[capabilities.catalog]` with `kinds = [...]`
 ///   Used in Chunk 7 migrations; enables scoped dispatch.
+// `Typed` variant is intentionally larger than `Enabled(bool)` —
+// boxing it would force every match arm in the runtime to indirect
+// through the box for each field access, and the enum is only ever
+// held by reference in practice. The size disparity is acceptable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum CatalogCapability {

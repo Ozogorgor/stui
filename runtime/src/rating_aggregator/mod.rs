@@ -48,11 +48,7 @@ impl RatingAggregatorClient {
     /// IMDb id. `kind` is `"movie"` or `"series"` per the addon's manifest.
     /// Returns `None` when the addon has no entry for this id (no streams
     /// in the response) — distinct from network errors which propagate up.
-    pub async fn fetch(
-        &self,
-        imdb_id: &str,
-        kind: &str,
-    ) -> Result<Option<RatingsAggregatorBlock>> {
+    pub async fn fetch(&self, imdb_id: &str, kind: &str) -> Result<Option<RatingsAggregatorBlock>> {
         let url = format!("{BASE_URL}/stream/{kind}/{imdb_id}.json");
         let resp = self
             .http

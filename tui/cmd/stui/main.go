@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -184,7 +185,10 @@ func main() {
 	// Catch SIGTERM/SIGHUP (WM window close, kill, etc.) and stop MPD
 	// playback before dying. Uses a raw TCP connection to MPD — faster and
 	// more reliable than routing through the IPC client during shutdown.
-	mpdAddr := fmt.Sprintf("%s:%d", cfg.MPD.Host, cfg.MPD.Port)
+	// Use JoinHostPort so IPv6 hosts get bracketed correctly
+	// (`[::1]:6600` vs the broken `::1:6600`). go vet flags the
+	// `%s:%d` shortcut for that reason.
+	mpdAddr := net.JoinHostPort(cfg.MPD.Host, strconv.Itoa(cfg.MPD.Port))
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {

@@ -79,18 +79,26 @@ async fn resolve_wasm(
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
-    Ok(StreamResult { stream_url, quality, subtitles })
+    Ok(StreamResult {
+        stream_url,
+        quality,
+        subtitles,
+    })
 }
 
 // ── Native / gRPC stubs ───────────────────────────────────────────────────────
 
 async fn resolve_native(ctx: &SandboxCtx, _entry_id: &str) -> Result<StreamResult> {
-    anyhow::bail!("Native resolver not yet supported (plugin: '{}')", ctx.plugin_name)
+    anyhow::bail!(
+        "Native resolver not yet supported (plugin: '{}')",
+        ctx.plugin_name
+    )
 }
 
 async fn resolve_grpc(ctx: &SandboxCtx, addr: &str, _entry_id: &str) -> Result<StreamResult> {
     anyhow::bail!(
         "gRPC resolver not yet implemented for '{}' at {}",
-        ctx.plugin_name, addr
+        ctx.plugin_name,
+        addr
     )
 }

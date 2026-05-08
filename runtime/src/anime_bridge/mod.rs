@@ -17,9 +17,9 @@
 //! Cold start always works (bundled snapshot serves immediately).
 //! Refresh happens out-of-band and never blocks search.
 
-pub mod fetch;     // Stub created in this task; populated in Task 3
-pub mod index;
-pub mod enrich;    // Stub created in this task; populated in Task 5
+pub mod enrich;
+pub mod fetch; // Stub created in this task; populated in Task 3
+pub mod index; // Stub created in this task; populated in Task 5
 
 use std::io::Read as _;
 use std::sync::Arc;
@@ -86,27 +86,39 @@ impl AnimeBridge {
     }
 
     pub fn lookup_by_mal(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_mal.get(id).cloned()
     }
     pub fn lookup_by_anilist(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_anilist.get(id).cloned()
     }
     pub fn lookup_by_kitsu(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_kitsu.get(id).cloned()
     }
     pub fn lookup_by_imdb(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_imdb.get(id).cloned()
     }
     pub fn lookup_by_tmdb(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_tmdb.get(id).cloned()
     }
     pub fn lookup_by_tvdb(&self, id: &str) -> Option<Arc<AnimeRecord>> {
-        if id.is_empty() { return None; }
+        if id.is_empty() {
+            return None;
+        }
         self.current().by_tvdb.get(id).cloned()
     }
 }
@@ -124,7 +136,10 @@ mod tests {
         // canonical in cross-mapping datasets.)
         let bridge = AnimeBridge::new();
         let r = bridge.lookup_by_mal("1");
-        assert!(r.is_some(), "bundled snapshot should index mal=1 (Cowboy Bebop)");
+        assert!(
+            r.is_some(),
+            "bundled snapshot should index mal=1 (Cowboy Bebop)"
+        );
         let r = r.unwrap();
         assert_eq!(r.imdb_id.as_deref(), Some("tt0213338"));
     }

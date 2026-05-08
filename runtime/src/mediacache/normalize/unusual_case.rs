@@ -13,7 +13,9 @@
 /// token only) and should be left alone by the title-case pass.
 pub fn is_unusual_case(s: &str) -> bool {
     let trimmed = s.trim();
-    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) { return false; }
+    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
+        return false;
+    }
 
     let mut has_upper = false;
     let mut has_lower = false;
@@ -22,19 +24,29 @@ pub fn is_unusual_case(s: &str) -> bool {
     let mut last_was_alpha = false;
 
     for ch in trimmed.chars() {
-        if ch.is_ascii_uppercase() { has_upper = true; last_was_alpha = true; }
-        else if ch.is_ascii_lowercase() { has_lower = true; last_was_alpha = true; }
-        else if ch.is_ascii_digit() {
-            if last_was_alpha { has_digit_in_letters = true; }
+        if ch.is_ascii_uppercase() {
+            has_upper = true;
+            last_was_alpha = true;
+        } else if ch.is_ascii_lowercase() {
+            has_lower = true;
+            last_was_alpha = true;
+        } else if ch.is_ascii_digit() {
+            if last_was_alpha {
+                has_digit_in_letters = true;
+            }
             last_was_alpha = false;
         } else {
-            if ch == '/' || ch == '-' || ch == '.' || ch == '!' { has_separator = true; }
+            if ch == '/' || ch == '-' || ch == '.' || ch == '!' {
+                has_separator = true;
+            }
             last_was_alpha = false;
         }
     }
 
     // Digits embedded mid-word: always stylized (deadmau5, 3OH!3).
-    if has_digit_in_letters { return true; }
+    if has_digit_in_letters {
+        return true;
+    }
 
     // All-uppercase single token with a non-alpha separator, length >= 2: AC/DC, MGMT-Z.
     let alpha_count = trimmed.chars().filter(|c| c.is_ascii_alphabetic()).count();
@@ -56,17 +68,56 @@ pub fn is_unusual_case(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test] fn acdc() { assert!(is_unusual_case("AC/DC")); }
-    #[test] fn mgmt() { assert!(is_unusual_case("MGMT")); }
-    #[test] fn deadmau5() { assert!(is_unusual_case("deadmau5")); }
-    #[test] fn threeohthree() { assert!(is_unusual_case("3OH!3")); }
-    #[test] fn empty() { assert!(!is_unusual_case("")); }
-    #[test] fn whitespace() { assert!(!is_unusual_case("   ")); }
-    #[test] fn all_lower() { assert!(!is_unusual_case("the beatles")); }
-    #[test] fn title_case() { assert!(!is_unusual_case("The Beatles")); }
-    #[test] fn sentence_case() { assert!(!is_unusual_case("Pink floyd")); }
-    #[test] fn two_letter_caps() { assert!(!is_unusual_case("UK")); }
-    #[test] fn mixed_with_apostrophe() { assert!(!is_unusual_case("don't stop")); }
-    #[test] fn multi_word_screaming_caps_ignored() { assert!(!is_unusual_case("DARK SIDE OF THE MOON")); }
-    #[test] fn single_token_screaming() { assert!(is_unusual_case("GENESIS")); }
+    #[test]
+    fn acdc() {
+        assert!(is_unusual_case("AC/DC"));
+    }
+    #[test]
+    fn mgmt() {
+        assert!(is_unusual_case("MGMT"));
+    }
+    #[test]
+    fn deadmau5() {
+        assert!(is_unusual_case("deadmau5"));
+    }
+    #[test]
+    fn threeohthree() {
+        assert!(is_unusual_case("3OH!3"));
+    }
+    #[test]
+    fn empty() {
+        assert!(!is_unusual_case(""));
+    }
+    #[test]
+    fn whitespace() {
+        assert!(!is_unusual_case("   "));
+    }
+    #[test]
+    fn all_lower() {
+        assert!(!is_unusual_case("the beatles"));
+    }
+    #[test]
+    fn title_case() {
+        assert!(!is_unusual_case("The Beatles"));
+    }
+    #[test]
+    fn sentence_case() {
+        assert!(!is_unusual_case("Pink floyd"));
+    }
+    #[test]
+    fn two_letter_caps() {
+        assert!(!is_unusual_case("UK"));
+    }
+    #[test]
+    fn mixed_with_apostrophe() {
+        assert!(!is_unusual_case("don't stop"));
+    }
+    #[test]
+    fn multi_word_screaming_caps_ignored() {
+        assert!(!is_unusual_case("DARK SIDE OF THE MOON"));
+    }
+    #[test]
+    fn single_token_screaming() {
+        assert!(is_unusual_case("GENESIS"));
+    }
 }

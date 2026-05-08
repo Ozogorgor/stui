@@ -27,12 +27,12 @@
 //! translator is protocol-agnostic — it only cares about staging path → organized
 //! path translation, applying media-type-aware folder rules.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -58,20 +58,21 @@ impl DownloadTranslator {
     pub async fn init(&self) -> io::Result<()> {
         if self.persist_path.exists() {
             match fs::read_to_string(&self.persist_path) {
-                Ok(data) => {
-                    match serde_json::from_str::<PersistedState>(&data) {
-                        Ok(state) => {
-                            let mut sessions = self.sessions.write().await;
-                            for (gid, session) in state.sessions {
-                                sessions.insert(gid, session);
-                            }
-                            info!(count = sessions.len(), "loaded download translations from disk");
+                Ok(data) => match serde_json::from_str::<PersistedState>(&data) {
+                    Ok(state) => {
+                        let mut sessions = self.sessions.write().await;
+                        for (gid, session) in state.sessions {
+                            sessions.insert(gid, session);
                         }
-                        Err(e) => {
-                            warn!(err = %e, "failed to parse persisted translations, starting fresh");
-                        }
+                        info!(
+                            count = sessions.len(),
+                            "loaded download translations from disk"
+                        );
                     }
-                }
+                    Err(e) => {
+                        warn!(err = %e, "failed to parse persisted translations, starting fresh");
+                    }
+                },
                 Err(e) => {
                     warn!(err = %e, "failed to read persisted translations");
                 }
@@ -147,16 +148,15 @@ impl DownloadTranslator {
 
         if let Some(session) = sessions.remove(gid) {
             // Optionally delete the staging directory
-            if session.cleanup_on_remove
-                && session.staging_dir.exists() {
-                    debug!(gid = %gid, path = %session.staging_dir.display(), "cleaning up staging directory");
-                    // Don't delete if files are still being organized
-                    if session.status == SessionStatus::OrganizeFailed {
-                        warn!(gid = %gid, "skipping cleanup due to previous organize failure");
-                    } else {
-                        fs::remove_dir_all(&session.staging_dir).ok();
-                    }
+            if session.cleanup_on_remove && session.staging_dir.exists() {
+                debug!(gid = %gid, path = %session.staging_dir.display(), "cleaning up staging directory");
+                // Don't delete if files are still being organized
+                if session.status == SessionStatus::OrganizeFailed {
+                    warn!(gid = %gid, "skipping cleanup due to previous organize failure");
+                } else {
+                    fs::remove_dir_all(&session.staging_dir).ok();
                 }
+            }
         }
 
         drop(sessions);
@@ -166,7 +166,8 @@ impl DownloadTranslator {
     /// Get all active sessions.
     pub async fn get_active_sessions(&self) -> Vec<DownloadSession> {
         let sessions = self.sessions.read().await;
-        sessions.values()
+        sessions
+            .values()
             .filter(|s| s.status == SessionStatus::Active)
             .cloned()
             .collect()
@@ -175,7 +176,8 @@ impl DownloadTranslator {
     /// Get the organized path for a staged file.
     pub async fn get_organized_path(&self, gid: &str, original_filename: &str) -> Option<PathBuf> {
         let sessions = self.sessions.read().await;
-        sessions.get(gid)
+        sessions
+            .get(gid)
             .and_then(|s| s.file_mappings.get(original_filename).cloned())
     }
 
@@ -237,10 +239,15 @@ impl DownloadTranslator {
         use std::path::Component;
 
         let target_parts: Vec<_> = target.components().collect();
-        let link_parts: Vec<_> = link.parent().unwrap_or(Path::new(".")).components().collect();
+        let link_parts: Vec<_> = link
+            .parent()
+            .unwrap_or(Path::new("."))
+            .components()
+            .collect();
 
         // Find common prefix
-        let common = target_parts.iter()
+        let common = target_parts
+            .iter()
             .zip(link_parts.iter())
             .take_while(|(a, b)| a == b)
             .count();
@@ -254,7 +261,9 @@ impl DownloadTranslator {
 
         // Add remaining parts from target
         for part in target_parts.iter().skip(common) {
-            if let Component::Normal(s) = part { result.push(s) }
+            if let Component::Normal(s) = part {
+                result.push(s)
+            }
         }
 
         result
@@ -392,7 +401,10 @@ mod tests {
             Some(2024),
         );
 
-        session.add_file("Dune.Part.Two.2024.1080p.mkv", "Dune.Part.Two.2024.1080p.mkv");
+        session.add_file(
+            "Dune.Part.Two.2024.1080p.mkv",
+            "Dune.Part.Two.2024.1080p.mkv",
+        );
         session.add_file("Dune.Part.Two.2024.eng.srt", "Dune.Part.Two.2024.eng.srt");
 
         assert_eq!(session.file_mappings.len(), 2);

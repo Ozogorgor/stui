@@ -21,12 +21,12 @@ use crate::plugin::PluginCapability;
 /// One subtitle candidate from a single plugin.
 #[derive(Debug, Clone)]
 pub struct SubtitleCandidate {
-    pub plugin_id:   String,
+    pub plugin_id: String,
     pub plugin_name: String,
-    pub entry:       AbiPluginEntry,
+    pub entry: AbiPluginEntry,
     /// Best-effort language extraction, BCP-47 or ISO 639-1/2/3.
     /// None if the plugin didn't surface language info in the entry.
-    pub language:    Option<String>,
+    pub language: Option<String>,
 }
 
 /// Fan subtitle search across every enabled Subtitles-capability plugin.
@@ -65,19 +65,21 @@ pub async fn fetch_subtitles(
     let mut set: JoinSet<(String, String, Option<Vec<AbiPluginEntry>>)> = JoinSet::new();
     for (plugin_id, plugin_name) in providers {
         let req = AbiSearchRequest {
-            query:           query_owned.clone(),
+            query: query_owned.clone(),
             scope,
-            page:            0,
-            limit:           20,
+            page: 0,
+            limit: 20,
             per_scope_limit: Some(20),
-            locale:          Some(locale_owned.clone()),
+            locale: Some(locale_owned.clone()),
         };
         let engine_c = engine.clone();
         set.spawn(async move {
             let entries = match tokio::time::timeout(
                 Duration::from_secs(10),
                 call_plugin_search(&engine_c, &plugin_id, req),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(items)) => Some(items),
                 Ok(Err(e)) => {
                     warn!(plugin = %plugin_id, err = %e,
@@ -99,14 +101,16 @@ pub async fn fetch_subtitles(
 
     let mut candidates: Vec<SubtitleCandidate> = Vec::new();
     while let Some(Ok((plugin_id, plugin_name, maybe_entries))) = set.join_next().await {
-        let Some(entries) = maybe_entries else { continue };
+        let Some(entries) = maybe_entries else {
+            continue;
+        };
         for entry in entries {
             let lang = extract_language(&entry);
             candidates.push(SubtitleCandidate {
-                plugin_id:   plugin_id.clone(),
+                plugin_id: plugin_id.clone(),
                 plugin_name: plugin_name.clone(),
                 entry,
-                language:    lang,
+                language: lang,
             });
         }
     }
@@ -114,13 +118,17 @@ pub async fn fetch_subtitles(
     // Filter: keep only candidates whose language matches. If nothing
     // matches, keep everything (unknown-language candidates are better than
     // no candidates — caller decides whether to use them).
-    let (matching, unknown): (Vec<_>, Vec<_>) = candidates
-        .into_iter()
-        .partition(|c| c.language
+    let (matching, unknown): (Vec<_>, Vec<_>) = candidates.into_iter().partition(|c| {
+        c.language
             .as_ref()
             .map(|l| normalize_language(l) == normalized_lang)
-            .unwrap_or(false));
-    let mut candidates = if !matching.is_empty() { matching } else { unknown };
+            .unwrap_or(false)
+    });
+    let mut candidates = if !matching.is_empty() {
+        matching
+    } else {
+        unknown
+    };
 
     // Sort: imdb_id match first, then description richness.
     candidates.sort_by(|a, b| {
@@ -172,19 +180,21 @@ pub async fn call_plugin_resolve(
         }
     };
     let sup = sup.ok_or_else(|| format!("plugin '{plugin_id}' has no WASM supervisor"))?;
-    let req = crate::abi::types::ResolveRequest { entry_id: entry_id.to_string() };
+    let req = crate::abi::types::ResolveRequest {
+        entry_id: entry_id.to_string(),
+    };
     sup.resolve(&req).await.map_err(|e| e.to_string())
 }
 
 fn kind_to_scope(kind: EntryKind) -> SearchScope {
     match kind {
-        EntryKind::Movie                        => SearchScope::Movie,
-        EntryKind::Series | EntryKind::Episode  => SearchScope::Series,
+        EntryKind::Movie => SearchScope::Movie,
+        EntryKind::Series | EntryKind::Episode => SearchScope::Series,
         // Music kinds are nonsensical for subtitles — plugins will
         // UNSUPPORTED_SCOPE and return empty. Callers typically won't
         // reach this branch since kind is derived from the play request's
         // media tab.
-        _                                       => SearchScope::Movie,
+        _ => SearchScope::Movie,
     }
 }
 
@@ -192,19 +202,19 @@ fn kind_to_scope(kind: EntryKind) -> SearchScope {
 fn normalize_language(lang: &str) -> String {
     let l = lang.trim().to_lowercase();
     match l.as_str() {
-        "eng" | "english"            => "en".into(),
-        "spa" | "es" | "spanish"     => "es".into(),
-        "fre" | "fra" | "french"     => "fr".into(),
-        "ger" | "deu" | "german"     => "de".into(),
-        "ita" | "italian"            => "it".into(),
-        "por" | "portuguese"         => "pt".into(),
-        "rus" | "russian"            => "ru".into(),
-        "jpn" | "japanese"           => "ja".into(),
-        "kor" | "korean"             => "ko".into(),
-        "chi" | "zho" | "chinese"    => "zh".into(),
-        "ara" | "arabic"             => "ar".into(),
-        _ if l.len() > 3             => l,
-        _                            => l,
+        "eng" | "english" => "en".into(),
+        "spa" | "es" | "spanish" => "es".into(),
+        "fre" | "fra" | "french" => "fr".into(),
+        "ger" | "deu" | "german" => "de".into(),
+        "ita" | "italian" => "it".into(),
+        "por" | "portuguese" => "pt".into(),
+        "rus" | "russian" => "ru".into(),
+        "jpn" | "japanese" => "ja".into(),
+        "kor" | "korean" => "ko".into(),
+        "chi" | "zho" | "chinese" => "zh".into(),
+        "ara" | "arabic" => "ar".into(),
+        _ if l.len() > 3 => l,
+        _ => l,
     }
 }
 
@@ -219,9 +229,19 @@ fn extract_language(entry: &AbiPluginEntry) -> Option<String> {
         entry.title.to_lowercase(),
         entry.description.as_deref().unwrap_or("").to_lowercase(),
     );
-    for token in ["english", "spanish", "french", "german", "italian",
-                  "portuguese", "russian", "japanese", "korean", "chinese",
-                  "arabic"] {
+    for token in [
+        "english",
+        "spanish",
+        "french",
+        "german",
+        "italian",
+        "portuguese",
+        "russian",
+        "japanese",
+        "korean",
+        "chinese",
+        "arabic",
+    ] {
         if haystack.contains(token) {
             return Some(normalize_language(token));
         }

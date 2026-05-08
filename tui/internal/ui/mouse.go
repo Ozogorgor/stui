@@ -21,8 +21,8 @@ import (
 
 // lastClick tracks the last click position and time for double-click detection.
 var lastClick struct {
-	x, y    int
-	time    time.Time
+	x, y int
+	time time.Time
 }
 
 const doubleClickThreshold = 300 * time.Millisecond
@@ -125,31 +125,31 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			contentStartY := topBarY + topBarTotalRows + 1
 			relY := y - contentStartY
 			cardX := x - 2 // MainCardStyle: margin(1) + border(1), cards start here
-			
+
 			// If click is within valid grid area, update cursor.
 			if relY >= 0 && cardX >= 0 {
 				// Get actual card dimensions from components (same as grid rendering)
 				rowH := components.CardTotalRows
 				cols := components.CardColumns
 				cardW := components.CardWidth(m.innerWidth())
-				
+
 				// Calculate grid position from click coordinates.
 				row := relY / rowH
 				col := cardX / cardW
-				
+
 				// Calculate cursor index from row/col.
 				idx := row*cols + col
 				entries := m.currentGridEntries()
 				if idx >= 0 && idx < len(entries) {
 					// Check for double-click (same position within threshold)
-					isDoubleClick := (x == lastClick.x && y == lastClick.y) && 
+					isDoubleClick := (x == lastClick.x && y == lastClick.y) &&
 						time.Since(lastClick.time) < doubleClickThreshold
 					lastClick.x = x
 					lastClick.y = y
 					lastClick.time = time.Now()
-					
+
 					m.gridCursor = screens.GridCursor{Row: row, Col: col}
-					
+
 					// Double-click opens detail (same as Enter)
 					if isDoubleClick {
 						return m, m.openDetail(entries[idx])

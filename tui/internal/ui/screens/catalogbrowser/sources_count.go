@@ -27,12 +27,12 @@ type SourcesCountResolver struct {
 	resolver       SourcesResolver
 	hoverThreshold time.Duration
 
-	mu          sync.Mutex
-	counts      map[string]int       // entry id → resolved count
-	inflight    map[string]bool      // entry ids currently being resolved
-	currentID   string               // entry id currently under cursor
-	currentSince time.Time           // when the cursor entered currentID
-	fired       bool                 // whether dwell threshold has fired for currentID
+	mu           sync.Mutex
+	counts       map[string]int  // entry id → resolved count
+	inflight     map[string]bool // entry ids currently being resolved
+	currentID    string          // entry id currently under cursor
+	currentSince time.Time       // when the cursor entered currentID
+	fired        bool            // whether dwell threshold has fired for currentID
 }
 
 // SourcesCountUpdatedMsg is posted when a resolution completes (success or

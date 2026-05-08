@@ -162,7 +162,9 @@ pub async fn download_and_install(entry: &RegistryEntry, plugin_dir: &Path) -> R
         if actual_hex != expected_hex {
             bail!(
                 "checksum mismatch for {}: expected sha256:{}, got sha256:{}",
-                entry.name, expected_hex, actual_hex
+                entry.name,
+                expected_hex,
+                actual_hex
             );
         }
         info!(name = %entry.name, "checksum verified");
@@ -182,15 +184,13 @@ pub async fn download_and_install(entry: &RegistryEntry, plugin_dir: &Path) -> R
 
     // Extraction is CPU-bound; run in a blocking thread pool.
     let bytes_clone = bytes.clone();
-    let dest_clone   = dest.clone();
-    let name         = entry.name.clone();
+    let dest_clone = dest.clone();
+    let name = entry.name.clone();
 
-    tokio::task::spawn_blocking(move || {
-        extract_tgz(&bytes_clone, &dest_clone, &name)
-    })
-    .await
-    .with_context(|| "spawn_blocking for extraction panicked")?
-    .with_context(|| format!("extract {}", entry.name))?;
+    tokio::task::spawn_blocking(move || extract_tgz(&bytes_clone, &dest_clone, &name))
+        .await
+        .with_context(|| "spawn_blocking for extraction panicked")?
+        .with_context(|| format!("extract {}", entry.name))?;
 
     info!(name = %entry.name, dir = %dest.display(), "plugin installed");
     Ok(dest)
@@ -206,7 +206,7 @@ fn extract_tgz(bytes: &[u8], dest_dir: &Path, plugin_name: &str) -> Result<()> {
     use std::path::Component;
     use tar::Archive;
 
-    let gz     = GzDecoder::new(std::io::Cursor::new(bytes));
+    let gz = GzDecoder::new(std::io::Cursor::new(bytes));
     let mut ar = Archive::new(gz);
 
     // Canonicalise dest_dir so we can detect path traversal attempts.
@@ -216,8 +216,8 @@ fn extract_tgz(bytes: &[u8], dest_dir: &Path, plugin_name: &str) -> Result<()> {
         .unwrap_or_else(|_| dest_dir.to_path_buf());
 
     for entry in ar.entries().context("iterate tar entries")? {
-        let mut entry  = entry.context("read tar entry")?;
-        let raw_path   = entry.path().context("entry path")?.into_owned();
+        let mut entry = entry.context("read tar entry")?;
+        let raw_path = entry.path().context("entry path")?.into_owned();
 
         // Strip a leading component that is a normal dir segment or a CurDir —
         // common in tarballs produced by `tar czf name-ver.tar.gz name-ver/`.
@@ -267,9 +267,9 @@ fn extract_tgz(bytes: &[u8], dest_dir: &Path, plugin_name: &str) -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dirs for {}", parent.display()))?;
         }
-        entry.unpack(&target).with_context(|| {
-            format!("unpack {} to {}", rel.display(), target.display())
-        })?;
+        entry
+            .unpack(&target)
+            .with_context(|| format!("unpack {} to {}", rel.display(), target.display()))?;
     }
 
     Ok(())

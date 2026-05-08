@@ -51,12 +51,12 @@ import (
 type libDialogCtx int
 
 const (
-	libDialogEnter      libDialogCtx = iota // Track Enter — Add / Replace / Cancel
-	libDialogRightClick                     // Track right-click — Add / Replace / Add to Playlist / Create Playlist / Cancel
-	libDialogArtist                         // Artist Enter or right-click — Browse / Add all / Replace with all / Cancel
-	libDialogAlbum                          // Album Enter or right-click — Browse / Add / Replace / Add to Playlist / Normalize / Cancel
-	libDialogNormalizeScope                 // Scope picker: This album / This artist / Whole library / Cancel
-	libDialogNormalizeConfirm               // Preview confirm: Apply / Cancel
+	libDialogEnter            libDialogCtx = iota // Track Enter — Add / Replace / Cancel
+	libDialogRightClick                           // Track right-click — Add / Replace / Add to Playlist / Create Playlist / Cancel
+	libDialogArtist                               // Artist Enter or right-click — Browse / Add all / Replace with all / Cancel
+	libDialogAlbum                                // Album Enter or right-click — Browse / Add / Replace / Add to Playlist / Normalize / Cancel
+	libDialogNormalizeScope                       // Scope picker: This album / This artist / Whole library / Cancel
+	libDialogNormalizeConfirm                     // Preview confirm: Apply / Cancel
 )
 
 // MusicLibraryScreen is the Artist→Album→Track browser with an optional
@@ -1421,4 +1421,3 @@ var yearRegex = regexp.MustCompile(`(?:19|20)\d{2}`)
 func extractYear(s string) string {
 	return yearRegex.FindString(s)
 }
-

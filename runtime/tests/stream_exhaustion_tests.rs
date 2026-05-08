@@ -201,7 +201,9 @@ fn test_exhaustion_after_multiple_failures() {
         entry_id: "tt1234567".into(),
     };
     assert!(!exhausted.is_recoverable());
-    assert!(exhausted.user_message().contains("No working streams found"));
+    assert!(exhausted
+        .user_message()
+        .contains("No working streams found"));
 }
 
 #[test]

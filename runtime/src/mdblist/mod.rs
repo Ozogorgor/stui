@@ -86,7 +86,10 @@ impl MdblistClient {
     /// `username/list-slug` form (e.g. `"snoak/latest-movies-digital-release"`).
     /// Returns the bucket selected by `kind`; the other bucket is dropped.
     pub async fn fetch_list(&self, slug: &str, kind: ListKind) -> Result<Vec<MdblistItem>> {
-        let url = format!("{BASE_URL}/lists/{slug}/items?apikey={key}", key = &self.api_key);
+        let url = format!(
+            "{BASE_URL}/lists/{slug}/items?apikey={key}",
+            key = &self.api_key
+        );
         let resp = self
             .http
             .get(&url)
@@ -94,10 +97,7 @@ impl MdblistClient {
             .await
             .with_context(|| format!("mdblist: fetch list {slug}"))?;
         let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .context("mdblist: read response body")?;
+        let body = resp.text().await.context("mdblist: read response body")?;
         if !status.is_success() {
             return Err(anyhow!(
                 "mdblist: list {slug} returned HTTP {status} — {body}",

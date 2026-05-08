@@ -61,11 +61,17 @@ impl SqliteBackend {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
     }
 
     fn init_schema(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         conn.execute(
             "CREATE TABLE IF NOT EXISTS watch_history (
                 id          TEXT PRIMARY KEY,
@@ -93,7 +99,11 @@ impl SqliteBackend {
     }
 
     fn upsert(&self, entry: &WatchHistoryEntry) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         conn.execute(
             "INSERT INTO watch_history 
              (id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path)
@@ -131,7 +141,11 @@ impl SqliteBackend {
     }
 
     fn get(&self, id: &str) -> Result<Option<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history WHERE id = ?1",
@@ -145,16 +159,21 @@ impl SqliteBackend {
     }
 
     fn remove(&self, id: &str) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
-        let affected = conn.execute(
-            "DELETE FROM watch_history WHERE id = ?1",
-            params![id],
-        )?;
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
+        let affected = conn.execute("DELETE FROM watch_history WHERE id = ?1", params![id])?;
         Ok(affected > 0)
     }
 
     fn mark_completed(&self, id: &str, last_watched: i64) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "UPDATE watch_history SET completed = 1, last_watched = ?2 WHERE id = ?1",
             params![id, last_watched],
@@ -174,7 +193,11 @@ impl SqliteBackend {
         } else {
             0
         };
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "UPDATE watch_history
              SET position = ?2, duration = ?3, completed = ?4, last_watched = ?5
@@ -185,7 +208,11 @@ impl SqliteBackend {
     }
 
     fn update_file_path(&self, id: &str, file_path: &str) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let affected = conn.execute(
             "UPDATE watch_history SET file_path = ?2 WHERE id = ?1",
             params![id, file_path],
@@ -194,7 +221,11 @@ impl SqliteBackend {
     }
 
     fn in_progress(&self) -> Result<Vec<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history
@@ -209,7 +240,11 @@ impl SqliteBackend {
     }
 
     fn in_progress_for_tab(&self, tab: &str) -> Result<Vec<WatchHistoryEntry>, rusqlite::Error> {
-        let conn = self.conn.as_ref().lock().expect("watchhistory db mutex poisoned");
+        let conn = self
+            .conn
+            .as_ref()
+            .lock()
+            .expect("watchhistory db mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, year, tab, provider, imdb_id, position, duration, completed, last_watched, season, episode, file_path
              FROM watch_history
@@ -253,9 +288,13 @@ pub struct WatchHistoryStore {
 impl WatchHistoryStore {
     pub fn new(path: PathBuf) -> Self {
         let backend = SqliteBackend::new(&path).expect("Failed to open watch history database");
-        backend.init_schema().expect("Failed to initialize watch history schema");
+        backend
+            .init_schema()
+            .expect("Failed to initialize watch history schema");
         info!(path = %path.display(), "watch history store initialized (SQLite)");
-        Self { backend: Arc::new(backend) }
+        Self {
+            backend: Arc::new(backend),
+        }
     }
 
     pub async fn upsert(&self, mut entry: WatchHistoryEntry) {
@@ -267,7 +306,7 @@ impl WatchHistoryStore {
 
         let backend = self.backend.clone();
         let entry_clone = entry.clone();
-        
+
         tokio::task::spawn_blocking(move || {
             if let Err(e) = backend.upsert(&entry_clone) {
                 warn!(err = %e, id = %entry_clone.id, "failed to upsert watch history entry");
@@ -280,19 +319,17 @@ impl WatchHistoryStore {
     pub async fn get(&self, id: &str) -> Option<WatchHistoryEntry> {
         let backend = self.backend.clone();
         let id_owned = id.to_string();
-        
-        tokio::task::spawn_blocking(move || {
-            backend.get(&id_owned).ok().flatten()
-        })
-        .await
-        .ok()
-        .flatten()
+
+        tokio::task::spawn_blocking(move || backend.get(&id_owned).ok().flatten())
+            .await
+            .ok()
+            .flatten()
     }
 
     pub async fn remove(&self, id: &str) {
         let backend = self.backend.clone();
         let id_owned = id.to_string();
-        
+
         tokio::task::spawn_blocking(move || {
             if let Err(e) = backend.remove(&id_owned) {
                 warn!(err = %e, id = %id_owned, "failed to remove watch history entry");
@@ -310,7 +347,7 @@ impl WatchHistoryStore {
 
         let backend = self.backend.clone();
         let id_owned = id.to_string();
-        
+
         tokio::task::spawn_blocking(move || {
             if let Err(e) = backend.mark_completed(&id_owned, now) {
                 warn!(err = %e, id = %id_owned, "failed to mark watch history entry completed");
@@ -329,12 +366,12 @@ impl WatchHistoryStore {
         let backend = self.backend.clone();
         let id_owned = id.to_string();
         let id_for_warning = id_owned.clone();
-        
+
         let result = tokio::task::spawn_blocking(move || {
             backend.update_position(&id_owned, position, duration, now)
         })
         .await;
-        
+
         match result {
             Ok(Ok(found)) => found,
             Ok(Err(e)) => {
@@ -354,10 +391,9 @@ impl WatchHistoryStore {
         let path_owned = file_path.to_string();
         let id_for_warning = id_owned.clone();
 
-        let result = tokio::task::spawn_blocking(move || {
-            backend.update_file_path(&id_owned, &path_owned)
-        })
-        .await;
+        let result =
+            tokio::task::spawn_blocking(move || backend.update_file_path(&id_owned, &path_owned))
+                .await;
 
         match result {
             Ok(Ok(found)) => found,
@@ -375,19 +411,17 @@ impl WatchHistoryStore {
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn in_progress(&self) -> Vec<WatchHistoryEntry> {
         let backend = self.backend.clone();
-        
-        tokio::task::spawn_blocking(move || {
-            backend.in_progress().unwrap_or_default()
-        })
-        .await
-        .unwrap_or_default()
+
+        tokio::task::spawn_blocking(move || backend.in_progress().unwrap_or_default())
+            .await
+            .unwrap_or_default()
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn in_progress_for_tab(&self, tab: &str) -> Vec<WatchHistoryEntry> {
         let backend = self.backend.clone();
         let tab_owned = tab.to_string();
-        
+
         tokio::task::spawn_blocking(move || {
             backend.in_progress_for_tab(&tab_owned).unwrap_or_default()
         })
@@ -411,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_and_get() {
         let store = create_test_store();
-        
+
         let entry = WatchHistoryEntry {
             id: "test-1".to_string(),
             title: "Test Movie".to_string(),
@@ -427,9 +461,9 @@ mod tests {
             episode: 0,
             file_path: None,
         };
-        
+
         store.upsert(entry).await;
-        
+
         let retrieved = store.get("test-1").await;
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -439,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_position() {
         let store = create_test_store();
-        
+
         let entry = WatchHistoryEntry {
             id: "test-2".to_string(),
             title: "Test Movie 2".to_string(),
@@ -455,21 +489,21 @@ mod tests {
             episode: 0,
             file_path: None,
         };
-        
+
         store.upsert(entry).await;
-        
+
         // Update position below threshold
         let found = store.update_position("test-2", 500.0, 1000.0).await;
         assert!(found);
-        
+
         // Verify not completed
         let retrieved = store.get("test-2").await.unwrap();
         assert!(!retrieved.completed);
-        
+
         // Update position above threshold (should mark completed)
         let found = store.update_position("test-2", 950.0, 1000.0).await;
         assert!(found);
-        
+
         // Verify completed
         let retrieved = store.get("test-2").await.unwrap();
         assert!(retrieved.completed);
@@ -478,7 +512,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove() {
         let store = create_test_store();
-        
+
         let entry = WatchHistoryEntry {
             id: "test-3".to_string(),
             title: "Test Movie 3".to_string(),
@@ -494,10 +528,10 @@ mod tests {
             episode: 0,
             file_path: None,
         };
-        
+
         store.upsert(entry).await;
         assert!(store.get("test-3").await.is_some());
-        
+
         store.remove("test-3").await;
         assert!(store.get("test-3").await.is_none());
     }
@@ -545,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn test_file_path_update() {
         let store = create_test_store();
-        
+
         let entry = WatchHistoryEntry {
             id: "test-filepath".to_string(),
             title: "Test File Path".to_string(),
@@ -561,13 +595,13 @@ mod tests {
             episode: 0,
             file_path: None,
         };
-        
+
         store.upsert(entry).await;
-        
+
         let file_path = "/home/user/Videos/Movies/2024 - Test/movie.mkv";
         let found = store.update_file_path("test-filepath", file_path).await;
         assert!(found);
-        
+
         let retrieved = store.get("test-filepath").await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().file_path, Some(file_path.to_string()));

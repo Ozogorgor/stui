@@ -369,7 +369,7 @@ fn bayesian_cap_for(source: &str) -> f64 {
     match source {
         "imdb" => 10_000.0,
         "tmdb" => 1_000.0,
-        _      => 1_000.0,
+        _ => 1_000.0,
     }
 }
 
@@ -569,11 +569,13 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
     //      (more populated fields → "Show: Season 2" as spine title).
     //   3. field_completeness_score DESC — fallback when mal_id is
     //      absent or equal. Reverse so higher completeness wins.
-    group.sort_by_key(|e| (
-        crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &key),
-        mal_id_sort_key(e),
-        std::cmp::Reverse(field_completeness_score(e)),
-    ));
+    group.sort_by_key(|e| {
+        (
+            crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &key),
+            mal_id_sort_key(e),
+            std::cmp::Reverse(field_completeness_score(e)),
+        )
+    });
     // group[0] is now the spine.
 
     let mut base = group.remove(0);
@@ -635,14 +637,30 @@ fn merge_group(mut group: Vec<CatalogEntry>) -> CatalogEntry {
 /// entries from the same provider — extremely rare).
 fn field_completeness_score(e: &CatalogEntry) -> usize {
     let mut score = 0;
-    if e.year.is_some()        { score += 1; }
-    if e.genre.is_some()       { score += 1; }
-    if e.rating.is_some()      { score += 1; }
-    if e.description.is_some() { score += 1; }
-    if e.poster_url.is_some()  { score += 1; }
-    if e.imdb_id.is_some()     { score += 2; }
-    if e.mal_id.is_some()      { score += 2; }
-    if e.tmdb_id.is_some()     { score += 1; }
+    if e.year.is_some() {
+        score += 1;
+    }
+    if e.genre.is_some() {
+        score += 1;
+    }
+    if e.rating.is_some() {
+        score += 1;
+    }
+    if e.description.is_some() {
+        score += 1;
+    }
+    if e.poster_url.is_some() {
+        score += 1;
+    }
+    if e.imdb_id.is_some() {
+        score += 2;
+    }
+    if e.mal_id.is_some() {
+        score += 2;
+    }
+    if e.tmdb_id.is_some() {
+        score += 1;
+    }
     score
 }
 
@@ -692,7 +710,9 @@ fn promote_rating_to_map(entry: &mut CatalogEntry) {
 /// per-source values.
 pub fn apply_weighted_rating(entry: &mut CatalogEntry) {
     let static_profile = weights_for(&entry.media_type, entry.genre.as_deref(), &entry.ratings);
-    let overrides = USER_RATING_WEIGHTS.read().unwrap_or_else(|e| e.into_inner());
+    let overrides = USER_RATING_WEIGHTS
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
     let merged = merge_weights(static_profile, &overrides);
 
     if !has_sufficient_sources(&entry.ratings, &merged, 1) {
@@ -725,7 +745,9 @@ fn shrink_ratings(
 ) -> HashMap<String, f64> {
     let mut out = ratings.clone();
     for w in weights {
-        let Some(&raw) = ratings.get(w.key) else { continue };
+        let Some(&raw) = ratings.get(w.key) else {
+            continue;
+        };
         let Some(&v) = votes.get(w.key) else { continue };
         if w.normalize <= 0.0 {
             continue;
@@ -802,8 +824,9 @@ fn merge_weights(
 /// static profile semantics. Wrapped in LazyLock because
 /// `HashMap::new()` isn't const-eligible; the lock initializes once
 /// on first read/write.
-pub static USER_RATING_WEIGHTS: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<String, f64>>> =
-    std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+pub static USER_RATING_WEIGHTS: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, f64>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
 
 /// Replace the in-process rating-weights overlay. Called once at
 /// runtime startup and again on any future config_update IPC.
@@ -1230,10 +1253,13 @@ mod tests {
         s2.genre = Some("Fantasy".to_string());
 
         let merged = CatalogAggregator::new().merge(vec![s2, s1]);
-        assert_eq!(merged.len(), 1, "two anilist cours with same tmdb_id should collapse");
         assert_eq!(
-            merged[0].title,
-            "Frieren: Beyond Journey's End",
+            merged.len(),
+            1,
+            "two anilist cours with same tmdb_id should collapse"
+        );
+        assert_eq!(
+            merged[0].title, "Frieren: Beyond Journey's End",
             "spine title should be the lowest-mal-id cour, not the latest cour with more fields",
         );
         // Lowest-mal-id wins as spine, but the bucket still records both
@@ -1261,13 +1287,17 @@ mod tests {
         kitsu.provider = "kitsu".to_string();
 
         let merged = CatalogAggregator::new().merge(vec![anilist, kitsu]);
-        assert_eq!(merged.len(), 1, "AniList and Kitsu with same MAL should collapse");
+        assert_eq!(
+            merged.len(),
+            1,
+            "AniList and Kitsu with same MAL should collapse"
+        );
     }
 
     #[test]
     fn test_merge_collapses_anime_and_western_tiers_via_bridge() {
-        use crate::anime_bridge::AnimeBridge;
         use crate::anime_bridge::enrich::enrich_entry;
+        use crate::anime_bridge::AnimeBridge;
         use crate::ipc::v1::MediaEntry;
 
         // Build MediaEntry-shaped inputs first so we can run bridge
@@ -1317,11 +1347,13 @@ mod tests {
             original_language: None,
         };
 
-        let merged = CatalogAggregator::new().merge(vec![
-            to_catalog(anilist_me),
-            to_catalog(omdb_me),
-        ]);
-        assert_eq!(merged.len(), 1, "AniList and OMDb should collapse via bridge");
+        let merged =
+            CatalogAggregator::new().merge(vec![to_catalog(anilist_me), to_catalog(omdb_me)]);
+        assert_eq!(
+            merged.len(),
+            1,
+            "AniList and OMDb should collapse via bridge"
+        );
         // `merge_group` joins all contributing providers into a comma list,
         // spine first → assert starts_with rather than exact match.
         assert!(
@@ -1333,8 +1365,8 @@ mod tests {
 
     #[test]
     fn test_merge_picks_anilist_over_tvdb_on_mal_key() {
-        use crate::anime_bridge::AnimeBridge;
         use crate::anime_bridge::enrich::enrich_entry;
+        use crate::anime_bridge::AnimeBridge;
         use crate::ipc::v1::MediaEntry;
 
         // Use Cowboy Bebop — same rationale as the search_scoped test:
@@ -1364,19 +1396,28 @@ mod tests {
         enrich_entry(&mut tvdb_me, &bridge);
 
         let to_catalog = |e: MediaEntry| CatalogEntry {
-            id: e.id, title: e.title, year: e.year,
-            genre: None, rating: None, description: None,
-            poster_url: None, poster_art: None,
-            provider: e.provider, tab: "series".into(), artist: None,
-            imdb_id: e.imdb_id, tmdb_id: e.tmdb_id, mal_id: e.mal_id,
+            id: e.id,
+            title: e.title,
+            year: e.year,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
+            provider: e.provider,
+            tab: "series".into(),
+            artist: None,
+            imdb_id: e.imdb_id,
+            tmdb_id: e.tmdb_id,
+            mal_id: e.mal_id,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
+            ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
+            original_language: None,
         };
 
-        let merged = CatalogAggregator::new().merge(vec![
-            to_catalog(anilist_me),
-            to_catalog(tvdb_me),
-        ]);
+        let merged =
+            CatalogAggregator::new().merge(vec![to_catalog(anilist_me), to_catalog(tvdb_me)]);
         assert_eq!(merged.len(), 1);
         // `merge_group` joins all contributing providers into a comma list,
         // spine first → assert starts_with rather than exact match.
@@ -1395,23 +1436,41 @@ mod tests {
             id: "tvdb-81189".into(),
             title: "Breaking Bad".into(),
             year: Some("2008".into()),
-            genre: None, rating: None, description: None,
-            poster_url: None, poster_art: None,
-            provider: "tvdb".into(), tab: "series".into(), artist: None,
-            imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
+            provider: "tvdb".into(),
+            tab: "series".into(),
+            artist: None,
+            imdb_id: Some("tt0903747".into()),
+            tmdb_id: None,
+            mal_id: None,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
+            ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
+            original_language: None,
         };
         let anilist = CatalogEntry {
             id: "anilist-X".into(),
             title: "Breaking Bad".into(),
             year: Some("2008".into()),
-            genre: None, rating: None, description: None,
-            poster_url: None, poster_art: None,
-            provider: "anilist".into(), tab: "series".into(), artist: None,
-            imdb_id: Some("tt0903747".into()), tmdb_id: None, mal_id: None,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
+            provider: "anilist".into(),
+            tab: "series".into(),
+            artist: None,
+            imdb_id: Some("tt0903747".into()),
+            tmdb_id: None,
+            mal_id: None,
             media_type: MediaType::default(),
-            ratings: HashMap::new(), rating_votes: HashMap::new(), original_language: None,
+            ratings: HashMap::new(),
+            rating_votes: HashMap::new(),
+            original_language: None,
         };
 
         let merged = CatalogAggregator::new().merge(vec![tvdb, anilist]);

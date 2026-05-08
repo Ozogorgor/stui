@@ -90,7 +90,11 @@ pub fn score_stream_policy(stream: &StreamInfoWire, policy: &RankingPolicy) -> (
                 .contains(&prefer_proto.to_lowercase())
         {
             let pts = 25;
-            add_reason(&mut reasons, pts, &format!("preferred protocol {}", prefer_proto));
+            add_reason(
+                &mut reasons,
+                pts,
+                &format!("preferred protocol {}", prefer_proto),
+            );
             total += pts;
         }
     }
@@ -234,7 +238,10 @@ mod tests {
         let streams = vec![clean, cam_stream];
 
         let ranked = rank_streams(streams, &policy);
-        assert!(!ranked[0].stream.name.contains("CAM"), "CAM stream should not rank first");
+        assert!(
+            !ranked[0].stream.name.contains("CAM"),
+            "CAM stream should not rank first"
+        );
         assert!(
             ranked[1].score < ranked[0].score,
             "avoided-label penalty must lower the score: got {} vs {}",

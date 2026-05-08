@@ -598,7 +598,10 @@ pub struct MusicNormalizeConfig {
 
 impl Default for MusicNormalizeConfig {
     fn default() -> Self {
-        Self { enabled: false, use_lookup: defaults::normalize_use_lookup() }
+        Self {
+            enabled: false,
+            use_lookup: defaults::normalize_use_lookup(),
+        }
     }
 }
 
@@ -655,8 +658,8 @@ impl Default for MetadataSources {
         MetadataSources {
             movies: defaults::metadata_sources_movies(),
             series: defaults::metadata_sources_series(),
-            anime:  defaults::metadata_sources_anime(),
-            music:  defaults::metadata_sources_music(),
+            anime: defaults::metadata_sources_anime(),
+            music: defaults::metadata_sources_music(),
             // Default-disable omdb for fresh installs — xmdb covers
             // IMDb id + IMDb rating + Metacritic, rt-provider covers
             // Rotten Tomatoes scores; OMDB has no unique data
@@ -666,8 +669,8 @@ impl Default for MetadataSources {
             // explicit user disabled lists).
             movies_disabled: vec!["omdb".to_string()],
             series_disabled: vec!["omdb".to_string()],
-            anime_disabled:  Vec::new(),
-            music_disabled:  Vec::new(),
+            anime_disabled: Vec::new(),
+            music_disabled: Vec::new(),
         }
     }
 }
@@ -736,7 +739,9 @@ pub struct CatalogConfig {
 
 impl Default for CatalogConfig {
     fn default() -> Self {
-        Self { anime_ratio: defaults::catalog_anime_ratio() }
+        Self {
+            anime_ratio: defaults::catalog_anime_ratio(),
+        }
     }
 }
 
@@ -867,17 +872,17 @@ mod defaults {
     pub fn rating_weights() -> std::collections::HashMap<String, f64> {
         [
             // Music sources
-            ("discogs",      1.0),
-            ("musicbrainz",  0.7),
-            ("lastfm",       0.5), // synthetic from listener count — useful but coarser
+            ("discogs", 1.0),
+            ("musicbrainz", 0.7),
+            ("lastfm", 0.5), // synthetic from listener count — useful but coarser
             // Movie/series sources (existing static profile keys)
-            ("imdb",         1.0),
-            ("tomatometer",  1.0),
-            ("metacritic",   1.0),
+            ("imdb", 1.0),
+            ("tomatometer", 1.0),
+            ("metacritic", 1.0),
             ("audience_score", 0.8),
-            ("tmdb",         0.7),
-            ("anilist",      0.0),
-            ("kitsu",        0.0),
+            ("tmdb", 0.7),
+            ("anilist", 0.0),
+            ("kitsu", 0.0),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v as f64))
@@ -1009,7 +1014,12 @@ mod defaults {
         vec!["tvdb".into(), "tmdb".into(), "omdb".into(), "fanart".into()]
     }
     pub(super) fn metadata_sources_anime() -> Vec<String> {
-        vec!["anilist".into(), "kitsu".into(), "tvdb".into(), "fanart".into()]
+        vec![
+            "anilist".into(),
+            "kitsu".into(),
+            "tvdb".into(),
+            "fanart".into(),
+        ]
     }
     pub(super) fn metadata_sources_music() -> Vec<String> {
         vec!["musicbrainz".into(), "discogs".into(), "lastfm".into()]
@@ -1117,12 +1127,16 @@ mod metadata_config_tests {
     #[test]
     fn metadata_sources_default_disables_omdb() {
         let m = MetadataSources::default();
-        assert!(m.movies_disabled.iter().any(|s| s == "omdb"),
-                "fresh-install movies_disabled should include omdb (rt-provider supersedes); got {:?}",
-                m.movies_disabled);
-        assert!(m.series_disabled.iter().any(|s| s == "omdb"),
-                "fresh-install series_disabled should include omdb; got {:?}",
-                m.series_disabled);
+        assert!(
+            m.movies_disabled.iter().any(|s| s == "omdb"),
+            "fresh-install movies_disabled should include omdb (rt-provider supersedes); got {:?}",
+            m.movies_disabled
+        );
+        assert!(
+            m.series_disabled.iter().any(|s| s == "omdb"),
+            "fresh-install series_disabled should include omdb; got {:?}",
+            m.series_disabled
+        );
     }
 
     #[test]
@@ -1130,8 +1144,8 @@ mod metadata_config_tests {
         let mc = MetadataConfig::default();
         assert_eq!(mc.sources.movies, vec!["tmdb", "omdb", "tvdb", "fanart"]);
         assert_eq!(mc.sources.series, vec!["tvdb", "tmdb", "omdb", "fanart"]);
-        assert_eq!(mc.sources.anime,  vec!["anilist", "kitsu", "tvdb", "fanart"]);
-        assert_eq!(mc.sources.music,  vec!["musicbrainz", "discogs", "lastfm"]);
+        assert_eq!(mc.sources.anime, vec!["anilist", "kitsu", "tvdb", "fanart"]);
+        assert_eq!(mc.sources.music, vec!["musicbrainz", "discogs", "lastfm"]);
     }
 
     #[test]

@@ -61,7 +61,10 @@ impl TraceEmitter {
     // ── Stage helpers ──────────────────────────────────────────────────────
 
     pub fn search(&self, n_providers: usize, elapsed_ms: u64) {
-        self.emit(&format!("search: {} providers ({}ms)", n_providers, elapsed_ms));
+        self.emit(&format!(
+            "search: {} providers ({}ms)",
+            n_providers, elapsed_ms
+        ));
     }
 
     pub fn resolve(&self, n_streams: usize) {
@@ -95,10 +98,15 @@ mod tests {
         struct BufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
         impl Write for BufWriter {
             fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("trace buffer mutex poisoned").extend_from_slice(data);
+                self.0
+                    .lock()
+                    .expect("trace buffer mutex poisoned")
+                    .extend_from_slice(data);
                 Ok(data.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
         let emitter = TraceEmitter::with_writer(Box::new(BufWriter(buf_clone)));
         (emitter, buf)
@@ -118,7 +126,11 @@ mod tests {
         emitter.rank(1, 0.82);
         emitter.fallback("timeout");
         emitter.provider_error("prov", "http 503");
-        assert_eq!(read_buf(&buf), "", "disabled emitter must produce no output");
+        assert_eq!(
+            read_buf(&buf),
+            "",
+            "disabled emitter must produce no output"
+        );
     }
 
     #[test]
@@ -158,7 +170,10 @@ mod tests {
         let (emitter, buf) = make_buf_emitter();
         emitter.enable();
         emitter.rank(4, 0.82);
-        assert_eq!(read_buf(&buf).trim(), "[trace] rank: picked #4 (score 0.82)");
+        assert_eq!(
+            read_buf(&buf).trim(),
+            "[trace] rank: picked #4 (score 0.82)"
+        );
     }
 
     #[test]
@@ -174,7 +189,10 @@ mod tests {
         let (emitter, buf) = make_buf_emitter();
         emitter.enable();
         emitter.provider_error("yts", "http 503");
-        assert_eq!(read_buf(&buf).trim(), "[trace] provider: yts failed (http 503)");
+        assert_eq!(
+            read_buf(&buf).trim(),
+            "[trace] provider: yts failed (http 503)"
+        );
     }
 
     #[test]
@@ -182,6 +200,9 @@ mod tests {
         let (emitter, buf) = make_buf_emitter();
         emitter.enable();
         emitter.fallback("no streams after bench");
-        assert_eq!(read_buf(&buf).trim(), "[trace] fallback: no streams after bench");
+        assert_eq!(
+            read_buf(&buf).trim(),
+            "[trace] fallback: no streams after bench"
+        );
     }
 }

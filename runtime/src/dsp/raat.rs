@@ -60,7 +60,10 @@ pub struct RaatProcessor {
 impl RaatProcessor {
     /// Create a new RAAT processor.
     /// Pass a shared `RoonClient` to enable endpoint discovery and connection.
-    pub fn new(config: Arc<RwLock<DspConfig>>, roon_client: Option<Arc<RoonClient>>) -> Result<Self, String> {
+    pub fn new(
+        config: Arc<RwLock<DspConfig>>,
+        roon_client: Option<Arc<RoonClient>>,
+    ) -> Result<Self, String> {
         let sample_rate = config.blocking_read().output_sample_rate;
         info!(sample_rate = sample_rate, "RAAT processor created");
         Ok(Self {
@@ -85,7 +88,10 @@ impl RaatProcessor {
             return Ok(vec![]);
         };
 
-        let servers = client.discover().await.map_err(|e: anyhow::Error| e.to_string())?;
+        let servers = client
+            .discover()
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
         info!(count = servers.len(), "RAAT endpoint discovery complete");
 
         Ok(servers.into_iter().map(server_to_endpoint).collect())
@@ -108,7 +114,10 @@ impl RaatProcessor {
             display_name: endpoint.name.clone(),
             token: endpoint.token.clone(),
         };
-        client.connect(&server).await.map_err(|e: anyhow::Error| e.to_string())?;
+        client
+            .connect(&server)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
 
         info!(endpoint = %endpoint.name, ip = %endpoint.ip_address, "connected to RAAT endpoint");
         self.endpoint = Some(endpoint);
@@ -123,10 +132,10 @@ impl RaatProcessor {
         }
 
         // In production: clean up connection, send disconnect message
-        
+
         self.active = false;
         self.endpoint = None;
-        
+
         info!("disconnected from RAAT endpoint");
 
         Ok(())
@@ -202,8 +211,7 @@ impl RaatEncoding {
 
 /// Roon/RAAT integration status.
 #[allow(dead_code)] // planned: Roon RAAT audio output, wired in when roon feature is enabled
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum RaatStatus {
     #[default]
     Disconnected,
@@ -213,7 +221,6 @@ pub enum RaatStatus {
     Streaming,
     Error,
 }
-
 
 #[cfg(test)]
 mod tests {

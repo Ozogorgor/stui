@@ -52,7 +52,7 @@ pub async fn run_get_provider_settings(
 ) -> Response {
     let registry = engine.registry().read().await;
     let config_snapshot = config.snapshot().await;
-    
+
     let providers: Vec<ProviderSchema> = registry
         .all_plugins()
         .filter(|p| {
@@ -61,7 +61,9 @@ pub async fn run_get_provider_settings(
         })
         .map(|plugin| {
             let plugin_name = &plugin.manifest.plugin.name;
-            let fields: Vec<ProviderField> = plugin.manifest.config_fields()
+            let fields: Vec<ProviderField> = plugin
+                .manifest
+                .config_fields()
                 .into_iter()
                 .map(|field| {
                     let full_key = field.full_key(plugin_name);
@@ -72,13 +74,17 @@ pub async fn run_get_provider_settings(
                         .and_then(|p| p.get(&field.key).cloned())
                         .or_else(|| {
                             // Check secrets / environment (e.g., TMDB_API_KEY for tmdb-provider)
-                            let env_key = format!("{}_{}", plugin_name.to_uppercase(), field.key.replace('-', "_"));
+                            let env_key = format!(
+                                "{}_{}",
+                                plugin_name.to_uppercase(),
+                                field.key.replace('-', "_")
+                            );
                             crate::config::secrets::env_lookup(&env_key)
                         })
                         .unwrap_or_default();
-                    
+
                     let configured = !value.is_empty();
-                    
+
                     ProviderField {
                         key: full_key,
                         label: field.label,
@@ -90,20 +96,25 @@ pub async fn run_get_provider_settings(
                     }
                 })
                 .collect();
-            
+
             let active = !fields.is_empty() && fields.iter().all(|f| !f.required || f.configured);
-            
+
             ProviderSchema {
                 id: plugin_name.clone(),
                 name: plugin.manifest.plugin.name.clone(),
-                description: plugin.manifest.plugin.description.clone().unwrap_or_default(),
+                description: plugin
+                    .manifest
+                    .plugin
+                    .description
+                    .clone()
+                    .unwrap_or_default(),
                 plugin_type: plugin.manifest.plugin.plugin_type_str(),
                 active,
                 fields,
             }
         })
         .collect();
-    
+
     Response::ProviderSettings(ProviderSettingsResponse { providers })
 }
 
@@ -119,7 +130,10 @@ pub async fn run_get_plugin_repos(config: &Arc<ConfigManager>) -> Response {
 ///
 /// The built-in repo is automatically preserved as the first entry.
 /// Change is persisted to `~/.stui/config/stui.toml` immediately.
-pub async fn run_set_plugin_repos(config: &Arc<ConfigManager>, r: SetPluginReposRequest) -> Response {
+pub async fn run_set_plugin_repos(
+    config: &Arc<ConfigManager>,
+    r: SetPluginReposRequest,
+) -> Response {
     match config.set_plugin_repos(r.repos).await {
         Ok(()) => {
             let repos = config.snapshot().await.plugin_repos;

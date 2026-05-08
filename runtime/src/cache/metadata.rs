@@ -24,15 +24,15 @@ pub use crate::ipc::v1::MetadataPayload;
 
 pub const CREDITS_TTL: Duration = Duration::from_secs(30 * 86_400);
 pub const ARTWORK_TTL: Duration = Duration::from_secs(30 * 86_400);
-pub const ENRICH_TTL:  Duration = Duration::from_secs( 7 * 86_400);
-pub const RELATED_TTL: Duration = Duration::from_secs( 3 * 86_400);
+pub const ENRICH_TTL: Duration = Duration::from_secs(7 * 86_400);
+pub const RELATED_TTL: Duration = Duration::from_secs(3 * 86_400);
 pub const RATINGS_AGGREGATOR_TTL: Duration = Duration::from_secs(86_400);
 
 fn ttl_for(verb: MetadataVerb) -> Duration {
     match verb {
         MetadataVerb::Credits => CREDITS_TTL,
         MetadataVerb::Artwork => ARTWORK_TTL,
-        MetadataVerb::Enrich  => ENRICH_TTL,
+        MetadataVerb::Enrich => ENRICH_TTL,
         MetadataVerb::Related => RELATED_TTL,
         MetadataVerb::RatingsAggregator => RATINGS_AGGREGATOR_TTL,
     }
@@ -107,7 +107,9 @@ impl MetadataCache {
 }
 
 impl Default for MetadataCache {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -117,22 +119,29 @@ mod tests {
     use std::time::Duration;
 
     fn k(verb: MetadataVerb, id: &str) -> MetadataCacheKey {
-        MetadataCacheKey { verb, id_source: IdSource::Imdb, id: id.into() }
+        MetadataCacheKey {
+            verb,
+            id_source: IdSource::Imdb,
+            id: id.into(),
+        }
     }
 
     #[tokio::test]
     async fn credits_insert_get_round_trip() {
         let c = MetadataCache::new();
         let payload = MetadataPayload::Empty;
-        c.insert(k(MetadataVerb::Credits, "tt1"), payload.clone()).await;
+        c.insert(k(MetadataVerb::Credits, "tt1"), payload.clone())
+            .await;
         assert_eq!(c.get(&k(MetadataVerb::Credits, "tt1")).await, Some(payload));
     }
 
     #[tokio::test]
     async fn distinct_verbs_distinct_slots() {
         let c = MetadataCache::new();
-        c.insert(k(MetadataVerb::Credits, "tt1"), MetadataPayload::Empty).await;
-        c.insert(k(MetadataVerb::Artwork, "tt1"), MetadataPayload::Empty).await;
+        c.insert(k(MetadataVerb::Credits, "tt1"), MetadataPayload::Empty)
+            .await;
+        c.insert(k(MetadataVerb::Artwork, "tt1"), MetadataPayload::Empty)
+            .await;
         c.evict_expired().await;
         assert!(c.get(&k(MetadataVerb::Credits, "tt1")).await.is_some());
         assert!(c.get(&k(MetadataVerb::Artwork, "tt1")).await.is_some());
@@ -141,7 +150,8 @@ mod tests {
     #[tokio::test]
     async fn expired_entry_not_served() {
         let c = MetadataCache::with_custom_ttl(Duration::from_millis(1));
-        c.insert(k(MetadataVerb::Enrich, "tt1"), MetadataPayload::Empty).await;
+        c.insert(k(MetadataVerb::Enrich, "tt1"), MetadataPayload::Empty)
+            .await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(c.get(&k(MetadataVerb::Enrich, "tt1")).await.is_none());
     }

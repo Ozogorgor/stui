@@ -141,11 +141,11 @@ func (s KeybindsEditorScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 }
 
 func (s KeybindsEditorScreen) View() tea.View {
-	accent  := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dim     := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	normal  := lipgloss.NewStyle().Foreground(theme.T.Text())
-	header  := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
-	custom  := lipgloss.NewStyle().Foreground(theme.T.Accent())
+	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
+	header := lipgloss.NewStyle().Foreground(theme.T.Text()).Bold(true)
+	custom := lipgloss.NewStyle().Foreground(theme.T.Accent())
 	capture := lipgloss.NewStyle().Foreground(theme.T.Yellow()).Bold(true)
 
 	var sb strings.Builder

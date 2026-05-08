@@ -26,8 +26,8 @@
 //! - `request_timeout_ms`: Timeout for individual RPC calls in milliseconds
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -70,12 +70,12 @@ pub struct SupervisorConfig {
 impl Default for SupervisorConfig {
     fn default() -> Self {
         SupervisorConfig {
-            max_restarts:      5,
+            max_restarts: 5,
             crash_window_secs: 60,
-            backoff_base_ms:   1_000,
-            backoff_max_ms:    60_000,
-            max_memory_mb:     Some(512),
-            cpu_nice_value:   0,
+            backoff_base_ms: 1_000,
+            backoff_max_ms: 60_000,
+            max_memory_mb: Some(512),
+            cpu_nice_value: 0,
             request_timeout_ms: 30_000,
         }
     }
@@ -111,14 +111,14 @@ pub struct SupervisorStats {
 pub struct PluginSupervisor {
     /// Path to the plugin executable — used for respawns.
     pub bin: PathBuf,
-    config:  SupervisorConfig,
+    config: SupervisorConfig,
     /// The currently live process, or `None` while restarting.
     process: Arc<RwLock<Option<Arc<PluginProcess>>>>,
     /// Cached capability / handshake info from the last successful spawn.
     pub info: Arc<RwLock<PluginHandshake>>,
-    stats:    Arc<Mutex<SupervisorStats>>,
+    stats: Arc<Mutex<SupervisorStats>>,
     /// Set to `true` when the crash loop threshold is reached.
-    failed:   Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
 }
 
 #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
@@ -127,7 +127,7 @@ impl PluginSupervisor {
     #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
     pub async fn spawn(bin: PathBuf, config: SupervisorConfig) -> Result<Self> {
         let proc = PluginProcess::spawn(bin.clone()).await?;
-        
+
         // Apply CPU limit if configured; failure is non-fatal (plugin still starts).
         if config.cpu_nice_value > 0 {
             if let Some(pid) = proc.pid {
@@ -137,17 +137,20 @@ impl PluginSupervisor {
 
         let info = proc.info.clone();
 
-        let process  = Arc::new(RwLock::new(Some(Arc::new(proc))));
+        let process = Arc::new(RwLock::new(Some(Arc::new(proc))));
         let info_arc = Arc::new(RwLock::new(info));
-        let stats    = Arc::new(Mutex::new(SupervisorStats { is_alive: true, ..Default::default() }));
-        let failed   = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(Mutex::new(SupervisorStats {
+            is_alive: true,
+            ..Default::default()
+        }));
+        let failed = Arc::new(AtomicBool::new(false));
 
-        let s = PluginSupervisor { 
-            bin, 
-            config, 
-            process: Arc::clone(&process), 
-            info: Arc::clone(&info_arc), 
-            stats: Arc::clone(&stats), 
+        let s = PluginSupervisor {
+            bin,
+            config,
+            process: Arc::clone(&process),
+            info: Arc::clone(&info_arc),
+            stats: Arc::clone(&stats),
             failed: Arc::clone(&failed),
         };
 
@@ -186,11 +189,18 @@ impl PluginSupervisor {
 
     // ── Delegating RPC methods ────────────────────────────────────────────
 
-    pub async fn catalog_search(&self, query: &str, tab: &str, page: u32) -> Result<Vec<RpcMediaItem>> {
+    pub async fn catalog_search(
+        &self,
+        query: &str,
+        tab: &str,
+        page: u32,
+    ) -> Result<Vec<RpcMediaItem>> {
         let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
-        let result = timeout(timeout_duration, self.with_process(|p| async move { 
-            p.catalog_search(query, tab, page).await 
-        })).await;
+        let result = timeout(
+            timeout_duration,
+            self.with_process(|p| async move { p.catalog_search(query, tab, page).await }),
+        )
+        .await;
 
         match result {
             Ok(Ok(v)) => Ok(v),
@@ -198,16 +208,21 @@ impl PluginSupervisor {
             Err(_) => {
                 let mut s = self.stats.lock().await;
                 s.timeout_count += 1;
-                Err(anyhow::anyhow!("catalog_search timed out after {}ms", self.config.request_timeout_ms))
+                Err(anyhow::anyhow!(
+                    "catalog_search timed out after {}ms",
+                    self.config.request_timeout_ms
+                ))
             }
         }
     }
 
     pub async fn streams_resolve(&self, id: &str) -> Result<Vec<RpcStream>> {
         let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
-        let result = timeout(timeout_duration, self.with_process(|p| async move { 
-            p.streams_resolve(id).await 
-        })).await;
+        let result = timeout(
+            timeout_duration,
+            self.with_process(|p| async move { p.streams_resolve(id).await }),
+        )
+        .await;
 
         match result {
             Ok(Ok(v)) => Ok(v),
@@ -215,16 +230,21 @@ impl PluginSupervisor {
             Err(_) => {
                 let mut s = self.stats.lock().await;
                 s.timeout_count += 1;
-                Err(anyhow::anyhow!("streams_resolve timed out after {}ms", self.config.request_timeout_ms))
+                Err(anyhow::anyhow!(
+                    "streams_resolve timed out after {}ms",
+                    self.config.request_timeout_ms
+                ))
             }
         }
     }
 
     pub async fn subtitles_fetch(&self, id: &str) -> Result<Vec<RpcSubtitleTrack>> {
         let timeout_duration = Duration::from_millis(self.config.request_timeout_ms);
-        let result = timeout(timeout_duration, self.with_process(|p| async move { 
-            p.subtitles_fetch(id).await 
-        })).await;
+        let result = timeout(
+            timeout_duration,
+            self.with_process(|p| async move { p.subtitles_fetch(id).await }),
+        )
+        .await;
 
         match result {
             Ok(Ok(v)) => Ok(v),
@@ -232,7 +252,10 @@ impl PluginSupervisor {
             Err(_) => {
                 let mut s = self.stats.lock().await;
                 s.timeout_count += 1;
-                Err(anyhow::anyhow!("subtitles_fetch timed out after {}ms", self.config.request_timeout_ms))
+                Err(anyhow::anyhow!(
+                    "subtitles_fetch timed out after {}ms",
+                    self.config.request_timeout_ms
+                ))
             }
         }
     }
@@ -247,19 +270,19 @@ impl PluginSupervisor {
         let proc = self.process.read().await.as_ref().cloned();
         match proc {
             Some(p) => f(p).await,
-            None    => anyhow::bail!("plugin '{}' is restarting", self.bin.display()),
+            None => anyhow::bail!("plugin '{}' is restarting", self.bin.display()),
         }
     }
 
     /// Spawn the watchdog task that monitors the process for death and
     /// optionally for memory overuse.
     fn start_watchdog(&self) {
-        let process  = Arc::clone(&self.process);
+        let process = Arc::clone(&self.process);
         let info_arc = Arc::clone(&self.info);
-        let stats    = Arc::clone(&self.stats);
-        let failed   = Arc::clone(&self.failed);
-        let bin      = self.bin.clone();
-        let config   = self.config.clone();
+        let stats = Arc::clone(&self.stats);
+        let failed = Arc::clone(&self.failed);
+        let bin = self.bin.clone();
+        let config = self.config.clone();
 
         tokio::spawn(async move {
             // Track crash timestamps within the sliding window.
@@ -272,7 +295,7 @@ impl PluginSupervisor {
                     let guard = process.read().await;
                     match guard.as_ref() {
                         Some(p) => Arc::clone(&p.death_notify),
-                        None    => break, // supervisor shut down
+                        None => break, // supervisor shut down
                     }
                 };
 
@@ -296,7 +319,7 @@ impl PluginSupervisor {
                 {
                     let mut s = stats.lock().await;
                     s.crash_count += 1;
-                    s.is_alive     = false;
+                    s.is_alive = false;
                 }
 
                 if crash_times.len() > config.max_restarts as usize {
@@ -312,7 +335,11 @@ impl PluginSupervisor {
                     break;
                 }
 
-                let reason = if memory_killed { "memory limit exceeded" } else { "unexpected exit" };
+                let reason = if memory_killed {
+                    "memory limit exceeded"
+                } else {
+                    "unexpected exit"
+                };
                 warn!(plugin = %bin.display(), reason, backoff_ms, "plugin died — restarting");
 
                 // Clear the dead process slot while we respawn.
@@ -340,7 +367,7 @@ impl PluginSupervisor {
                         *info_arc.write().await = proc.info.clone();
                         let mut s = stats.lock().await;
                         s.restart_count += 1;
-                        s.is_alive       = true;
+                        s.is_alive = true;
                         *process.write().await = Some(Arc::new(proc));
                         // Reset backoff on a successful start.
                         backoff_ms = config.backoff_base_ms;
@@ -388,7 +415,10 @@ async fn poll_memory_loop(
                 }
 
                 if rss_mb > limit_mb {
-                    warn!(pid, rss_mb, limit_mb, "plugin exceeded memory limit — killing");
+                    warn!(
+                        pid,
+                        rss_mb, limit_mb, "plugin exceeded memory limit — killing"
+                    );
                     let _ = nix_kill(pid);
                     return true;
                 }
@@ -414,14 +444,20 @@ fn read_proc_rss_mb(pid: u32) -> Option<u64> {
 
 #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 #[cfg(not(target_os = "linux"))]
-fn read_proc_rss_mb(_pid: u32) -> Option<u64> { None }
+fn read_proc_rss_mb(_pid: u32) -> Option<u64> {
+    None
+}
 
 /// Send SIGKILL to a process by PID.
 #[allow(dead_code)] // planned: plugin RPC supervisor pub API, called via PluginRpcManager
 fn nix_kill(pid: u32) -> std::io::Result<()> {
     // Safety: we only send SIGKILL (9) which is always safe.
     let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-    if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 // ── Scheduling priority ────────────────────────────────────────────────────────
@@ -432,7 +468,7 @@ fn nix_kill(pid: u32) -> std::io::Result<()> {
 #[cfg(target_os = "linux")]
 fn apply_nice_priority(pid: u32, cpu_nice_value: u32) -> Result<()> {
     use std::process::Command;
-    
+
     if cpu_nice_value == 0 || cpu_nice_value > 100 {
         return Ok(());
     }

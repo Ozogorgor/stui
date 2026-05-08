@@ -75,7 +75,7 @@ func (s MusicBrowseScreen) RestoreView() MusicBrowseScreen {
 // from music_screen.go. Without these, the interface assertions in
 // MusicScreen.Apply* would silently degrade to no-ops at runtime.
 var (
-	_ Searchable                        = MusicBrowseScreen{}
-	_ searchableBrowse                  = MusicBrowseScreen{}
-	_ catalogbrowser.PluginIPCClient    = (*ipc.Client)(nil) // sanity: ipc.Client satisfies the source's client interface
+	_ Searchable                     = MusicBrowseScreen{}
+	_ searchableBrowse               = MusicBrowseScreen{}
+	_ catalogbrowser.PluginIPCClient = (*ipc.Client)(nil) // sanity: ipc.Client satisfies the source's client interface
 )

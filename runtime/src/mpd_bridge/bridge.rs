@@ -21,22 +21,24 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+use super::client::MpdConnection;
 use crate::config::types::{MpdConfig, MusicNormalizeConfig};
 use crate::ipc::v1::TagWriteScope;
 use crate::ipc::{
-    MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire,
-    MpdSavedPlaylistWire, MpdSongWire,
+    MpdAlbumWire, MpdArtistWire, MpdDirEntryWire, MpdQueueTrackWire, MpdSavedPlaylistWire,
+    MpdSongWire,
 };
 use crate::mediacache::normalize::year::extract_year;
 use crate::mediacache::normalize::{self, store as norm_store, NormalizationConfig, RawTags};
-use super::client::MpdConnection;
 
 /// Escape a string for use inside an MPD quoted argument (`"..."`).
 pub(super) fn quote_mpd(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for ch in s.chars() {
-        if ch == '\\' || ch == '"' { out.push('\\'); }
+        if ch == '\\' || ch == '"' {
+            out.push('\\');
+        }
         out.push(ch);
     }
     out.push('"');
@@ -72,34 +74,34 @@ fn default_entry() -> MpdDirEntryWire {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MpdOutput {
-    pub id:      u32,
-    pub name:    String,
-    pub plugin:  String,
+    pub id: u32,
+    pub name: String,
+    pub plugin: String,
     pub enabled: bool,
 }
 
 /// Pushed to the TUI on every player/mixer/options change.
 #[derive(Serialize)]
 struct MpdStatusWire<'a> {
-    r#type:        &'static str,
-    state:         &'a str,             // "play" | "pause" | "stop"
-    song_title:    Option<&'a str>,
-    song_artist:   Option<&'a str>,
-    song_album:    Option<&'a str>,
-    elapsed:       f64,
-    duration:      f64,
-    volume:        u32,                 // 0–100
-    bitrate:       Option<u32>,         // kbps
-    audio_format:  Option<&'a str>,     // "192000:24:2"
-    replay_gain:   &'a str,
-    crossfade:     u32,
-    consume:       bool,
-    random:        bool,
-    repeat:        bool,
-    single:        bool,
-    queue_length:  u32,
-    song_pos:      i32,
-    song_id:       i32,
+    r#type: &'static str,
+    state: &'a str, // "play" | "pause" | "stop"
+    song_title: Option<&'a str>,
+    song_artist: Option<&'a str>,
+    song_album: Option<&'a str>,
+    elapsed: f64,
+    duration: f64,
+    volume: u32,                   // 0–100
+    bitrate: Option<u32>,          // kbps
+    audio_format: Option<&'a str>, // "192000:24:2"
+    replay_gain: &'a str,
+    crossfade: u32,
+    consume: bool,
+    random: bool,
+    repeat: bool,
+    single: bool,
+    queue_length: u32,
+    song_pos: i32,
+    song_id: i32,
 }
 
 // ── MpdBridge ─────────────────────────────────────────────────────────────────
@@ -108,7 +110,7 @@ struct MpdStatusWire<'a> {
 #[allow(clippy::type_complexity)]
 pub struct MpdBridge {
     pub(super) config: MpdConfig,
-    pub(super) conn:   Arc<Mutex<Option<MpdConnection>>>,
+    pub(super) conn: Arc<Mutex<Option<MpdConnection>>>,
     ipc_tx: tokio::sync::mpsc::Sender<String>,
     normalize_cfg: MusicNormalizeConfig,
 }
@@ -145,12 +147,11 @@ impl MpdBridge {
     /// Get the duration of the current song in seconds, or 0.0 if unavailable.
     pub async fn current_song_duration(&self) -> f64 {
         match self.cmd_with_kv("currentsong").await {
-            Ok(kv) => {
-                kv.get("duration")
-                    .or_else(|| kv.get("Time"))
-                    .and_then(|v| v.parse::<f64>().ok())
-                    .unwrap_or(0.0)
-            }
+            Ok(kv) => kv
+                .get("duration")
+                .or_else(|| kv.get("Time"))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0),
             Err(_) => 0.0,
         }
     }
@@ -169,7 +170,10 @@ impl MpdBridge {
     }
 
     /// Execute a command and return key-value response.
-    pub async fn cmd_with_kv(&self, cmd: &str) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn cmd_with_kv(
+        &self,
+        cmd: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
         let mut guard = self.conn.lock().await;
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         match conn.command_kv(cmd).await {
@@ -182,48 +186,100 @@ impl MpdBridge {
         }
     }
 
-    pub async fn pause(&self)         -> Result<()> { self.cmd("pause 1").await }
-    pub async fn resume(&self)        -> Result<()> { self.cmd("pause 0").await }
-    pub async fn toggle_pause(&self)  -> Result<()> {
+    pub async fn pause(&self) -> Result<()> {
+        self.cmd("pause 1").await
+    }
+    pub async fn resume(&self) -> Result<()> {
+        self.cmd("pause 0").await
+    }
+    pub async fn toggle_pause(&self) -> Result<()> {
         info!("mpd: toggle_pause called");
         let mut guard = self.conn.lock().await;
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let status = match conn.command_kv("status").await {
             Ok(s) => s,
-            Err(e) => { warn!("mpd: toggle_pause status failed: {e}"); *guard = None; return Err(e); }
+            Err(e) => {
+                warn!("mpd: toggle_pause status failed: {e}");
+                *guard = None;
+                return Err(e);
+            }
         };
         let state = status.get("state").map(|s| s.as_str()).unwrap_or("unknown");
-        let cmd = if state == "play" { "pause 1" } else { "pause 0" };
+        let cmd = if state == "play" {
+            "pause 1"
+        } else {
+            "pause 0"
+        };
         info!(state, cmd, "mpd: toggle_pause sending");
         match conn.run_command(cmd).await {
-            Ok(()) => { info!("mpd: toggle_pause success"); Ok(()) },
-            Err(e) => { warn!("mpd: toggle_pause cmd failed: {e}"); *guard = None; Err(e) }
+            Ok(()) => {
+                info!("mpd: toggle_pause success");
+                Ok(())
+            }
+            Err(e) => {
+                warn!("mpd: toggle_pause cmd failed: {e}");
+                *guard = None;
+                Err(e)
+            }
         }
     }
-    pub async fn stop(&self)          -> Result<()> { self.cmd("stop").await }
-    pub async fn next(&self)          -> Result<()> { self.cmd("next").await }
-    pub async fn previous(&self)      -> Result<()> { self.cmd("previous").await }
-    pub async fn clear(&self)         -> Result<()> { self.cmd("clear").await }
-    pub async fn shuffle(&self)       -> Result<()> { self.cmd("shuffle").await }
-    pub async fn add(&self, uri: &str) -> Result<()> { self.cmd(&format!("add {}", quote_mpd(uri))).await }
-    pub async fn remove_id(&self, id: u32) -> Result<()> { self.cmd(&format!("deleteid {id}")).await }
-    pub async fn play_id(&self, id: u32) -> Result<()> { self.cmd(&format!("playid {id}")).await }
+    pub async fn stop(&self) -> Result<()> {
+        self.cmd("stop").await
+    }
+    pub async fn next(&self) -> Result<()> {
+        self.cmd("next").await
+    }
+    pub async fn previous(&self) -> Result<()> {
+        self.cmd("previous").await
+    }
+    pub async fn clear(&self) -> Result<()> {
+        self.cmd("clear").await
+    }
+    pub async fn shuffle(&self) -> Result<()> {
+        self.cmd("shuffle").await
+    }
+    pub async fn add(&self, uri: &str) -> Result<()> {
+        self.cmd(&format!("add {}", quote_mpd(uri))).await
+    }
+    pub async fn remove_id(&self, id: u32) -> Result<()> {
+        self.cmd(&format!("deleteid {id}")).await
+    }
+    pub async fn play_id(&self, id: u32) -> Result<()> {
+        self.cmd(&format!("playid {id}")).await
+    }
     pub async fn toggle_repeat(&self) -> Result<()> {
-        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let status = {
+            let mut g = self.conn.lock().await;
+            let c = Self::get_or_connect(&mut g, &self.config).await?;
+            c.command_kv("status").await?
+        };
         let on = status.get("repeat").map(|v| v == "1").unwrap_or(false);
-        self.cmd(&format!("repeat {}", if on { 0 } else { 1 })).await
+        self.cmd(&format!("repeat {}", if on { 0 } else { 1 }))
+            .await
     }
     pub async fn toggle_single(&self) -> Result<()> {
-        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let status = {
+            let mut g = self.conn.lock().await;
+            let c = Self::get_or_connect(&mut g, &self.config).await?;
+            c.command_kv("status").await?
+        };
         let on = status.get("single").map(|v| v == "1").unwrap_or(false);
-        self.cmd(&format!("single {}", if on { 0 } else { 1 })).await
+        self.cmd(&format!("single {}", if on { 0 } else { 1 }))
+            .await
     }
     pub async fn toggle_random(&self) -> Result<()> {
-        let status = { let mut g = self.conn.lock().await; let c = Self::get_or_connect(&mut g, &self.config).await?; c.command_kv("status").await? };
+        let status = {
+            let mut g = self.conn.lock().await;
+            let c = Self::get_or_connect(&mut g, &self.config).await?;
+            c.command_kv("status").await?
+        };
         let on = status.get("random").map(|v| v == "1").unwrap_or(false);
-        self.cmd(&format!("random {}", if on { 0 } else { 1 })).await
+        self.cmd(&format!("random {}", if on { 0 } else { 1 }))
+            .await
     }
-    pub async fn seek_id(&self, id: u32, time: f64) -> Result<()> { self.cmd(&format!("seekid {id} {time:.1}")).await }
+    pub async fn seek_id(&self, id: u32, time: f64) -> Result<()> {
+        self.cmd(&format!("seekid {id} {time:.1}")).await
+    }
 
     pub async fn seek(&self, secs: f64) -> Result<()> {
         self.cmd(&format!("seekcur {secs:.3}")).await
@@ -261,7 +317,8 @@ impl MpdBridge {
     }
 
     pub async fn set_consume(&self, enabled: bool) -> Result<()> {
-        self.cmd(&format!("consume {}", if enabled { 1 } else { 0 })).await
+        self.cmd(&format!("consume {}", if enabled { 1 } else { 0 }))
+            .await
     }
 
     pub async fn toggle_output(&self, id: u32) -> Result<()> {
@@ -284,7 +341,10 @@ impl MpdBridge {
     /// `mpd.conf` (see [`crate::dsp::mpd_config::ensure_mpd_conf`]).
     pub async fn ensure_dsp_output_enabled(&self) -> Result<bool> {
         let outputs = self.outputs().await?;
-        let Some(out) = outputs.iter().find(|o| o.name == crate::dsp::mpd_config::FIFO_OUTPUT_NAME) else {
+        let Some(out) = outputs
+            .iter()
+            .find(|o| o.name == crate::dsp::mpd_config::FIFO_OUTPUT_NAME)
+        else {
             return Ok(false);
         };
         if !out.enabled {
@@ -299,14 +359,17 @@ impl MpdBridge {
         let mut guard = self.conn.lock().await;
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = conn.command_records("outputs", "outputid").await?;
-        Ok(records.into_iter().filter_map(|r| {
-            Some(MpdOutput {
-                id:      r.get("outputid")?.parse().ok()?,
-                name:    r.get("outputname").cloned().unwrap_or_default(),
-                plugin:  r.get("plugin").cloned().unwrap_or_default(),
-                enabled: r.get("outputenabled").map(|v| v == "1").unwrap_or(false),
+        Ok(records
+            .into_iter()
+            .filter_map(|r| {
+                Some(MpdOutput {
+                    id: r.get("outputid")?.parse().ok()?,
+                    name: r.get("outputname").cloned().unwrap_or_default(),
+                    plugin: r.get("plugin").cloned().unwrap_or_default(),
+                    enabled: r.get("outputenabled").map(|v| v == "1").unwrap_or(false),
+                })
             })
-        }).collect())
+            .collect())
     }
 
     // ── Library / browse queries ──────────────────────────────────────────
@@ -317,17 +380,23 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = match conn.command_records("playlistinfo", "file").await {
             Ok(r) => r,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
-        Ok(records.into_iter().map(|r| MpdQueueTrackWire {
-            id:       parse_u32(r.get("Id")),
-            pos:      parse_u32(r.get("Pos")),
-            title:    str_or(r.get("Title")),
-            artist:   str_or(r.get("Artist")),
-            album:    str_or(r.get("Album")),
-            duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
-            file:     str_or(r.get("file")),
-        }).collect())
+        Ok(records
+            .into_iter()
+            .map(|r| MpdQueueTrackWire {
+                id: parse_u32(r.get("Id")),
+                pos: parse_u32(r.get("Pos")),
+                title: str_or(r.get("Title")),
+                artist: str_or(r.get("Artist")),
+                album: str_or(r.get("Album")),
+                duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+                file: str_or(r.get("file")),
+            })
+            .collect())
     }
 
     /// `list artist` — every distinct artist in the MPD database.
@@ -336,12 +405,22 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = match conn.command_records("list artist", "Artist").await {
             Ok(r) => r,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
-        Ok(records.into_iter().filter_map(|r| {
-            let name = r.get("Artist")?.clone();
-            if name.is_empty() { None } else { Some(MpdArtistWire { name }) }
-        }).collect())
+        Ok(records
+            .into_iter()
+            .filter_map(|r| {
+                let name = r.get("Artist")?.clone();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(MpdArtistWire { name })
+                }
+            })
+            .collect())
     }
 
     /// `list album artist "X" group date` — albums by `artist` with release year.
@@ -370,7 +449,10 @@ impl MpdBridge {
             let conn = Self::get_or_connect(&mut guard, &self.config).await?;
             match conn.command_records(&cmd, "Album").await {
                 Ok(r) => r,
-                Err(e) => { *guard = None; return Err(e); }
+                Err(e) => {
+                    *guard = None;
+                    return Err(e);
+                }
             }
         };
 
@@ -390,15 +472,25 @@ impl MpdBridge {
         // the dedup key (so the empty-Date release stays distinct from
         // any release whose Date is populated).
         let mut out: Vec<MpdAlbumWire> = Vec::new();
-        let mut seen: std::collections::HashSet<(String, String, String)> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
         for r in records {
-            let Some(title) = r.get("Album").cloned() else { continue };
-            if title.is_empty() { continue; }
-            let entry_artist = r.get("Artist").cloned().unwrap_or_else(|| artist.to_string());
+            let Some(title) = r.get("Album").cloned() else {
+                continue;
+            };
+            if title.is_empty() {
+                continue;
+            }
+            let entry_artist = r
+                .get("Artist")
+                .cloned()
+                .unwrap_or_else(|| artist.to_string());
             let raw_date = str_or(r.get("Date"));
             let mut year = extract_year(&raw_date);
             if year.is_empty() {
-                year = self.fetch_originaldate_year(&title, &entry_artist).await
+                year = self
+                    .fetch_originaldate_year(&title, &entry_artist)
+                    .await
                     .unwrap_or_default();
             }
             info!(
@@ -467,7 +559,10 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let pairs = match conn.command_kv_ordered(&cmd).await {
             Ok(p) => p,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
         for (key, value) in pairs {
             // MPD spells the tag "OriginalDate" in responses; accept any
@@ -487,11 +582,20 @@ impl MpdBridge {
     /// remasters / reissues that share Album+Artist tags don't collide. The
     /// value must be the raw MPD `Date:` string (e.g. "1996-11-01"); the TUI
     /// gets it from `MpdAlbumWire.date` on the matching list_albums row.
-    pub async fn list_songs(&self, artist: &str, album: &str, date: &str) -> Result<Vec<MpdSongWire>> {
+    pub async fn list_songs(
+        &self,
+        artist: &str,
+        album: &str,
+        date: &str,
+    ) -> Result<Vec<MpdSongWire>> {
         let mut cmd = if artist.is_empty() {
             format!("find album {}", quote_mpd(album))
         } else {
-            format!("find album {} artist {}", quote_mpd(album), quote_mpd(artist))
+            format!(
+                "find album {} artist {}",
+                quote_mpd(album),
+                quote_mpd(artist)
+            )
         };
         if !date.is_empty() {
             cmd.push_str(&format!(" date {}", quote_mpd(date)));
@@ -500,28 +604,37 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = match conn.command_records(&cmd, "file").await {
             Ok(r) => r,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
-        Ok(records.into_iter().filter_map(|r| {
-            let file = r.get("file")?.clone();
-            let mut song = MpdSongWire {
-                title:    str_or(r.get("Title")),
-                artist:   str_or(r.get("Artist")),
-                album:    str_or(r.get("Album")),
-                duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
-                file,
-                raw_artist: String::new(),
-                raw_album: String::new(),
-                raw_title: String::new(),
-            };
-            apply_song_normalize(
-                &self.normalize_cfg,
-                &mut song.artist, &mut song.raw_artist,
-                &mut song.album,  &mut song.raw_album,
-                &mut song.title,  &mut song.raw_title,
-            );
-            Some(song)
-        }).collect())
+        Ok(records
+            .into_iter()
+            .filter_map(|r| {
+                let file = r.get("file")?.clone();
+                let mut song = MpdSongWire {
+                    title: str_or(r.get("Title")),
+                    artist: str_or(r.get("Artist")),
+                    album: str_or(r.get("Album")),
+                    duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+                    file,
+                    raw_artist: String::new(),
+                    raw_album: String::new(),
+                    raw_title: String::new(),
+                };
+                apply_song_normalize(
+                    &self.normalize_cfg,
+                    &mut song.artist,
+                    &mut song.raw_artist,
+                    &mut song.album,
+                    &mut song.raw_album,
+                    &mut song.title,
+                    &mut song.raw_title,
+                );
+                Some(song)
+            })
+            .collect())
     }
 
     /// Gather (absolute_path, RawTags) for every file in a tag-write scope.
@@ -533,8 +646,16 @@ impl MpdBridge {
         music_dir: &std::path::Path,
     ) -> Result<Vec<(std::path::PathBuf, RawTags)>> {
         let cmd = match scope {
-            TagWriteScope::Album { artist, album, date } => {
-                let mut c = format!("find album {} artist {}", quote_mpd(album), quote_mpd(artist));
+            TagWriteScope::Album {
+                artist,
+                album,
+                date,
+            } => {
+                let mut c = format!(
+                    "find album {} artist {}",
+                    quote_mpd(album),
+                    quote_mpd(artist)
+                );
                 if !date.is_empty() {
                     c.push_str(&format!(" date {}", quote_mpd(date)));
                 }
@@ -551,7 +672,10 @@ impl MpdBridge {
             let conn = Self::get_or_connect(&mut guard, &self.config).await?;
             match conn.command_kv_ordered(&cmd).await {
                 Ok(p) => p,
-                Err(e) => { *guard = None; return Err(e); }
+                Err(e) => {
+                    *guard = None;
+                    return Err(e);
+                }
             }
         };
 
@@ -559,11 +683,15 @@ impl MpdBridge {
         let mut cur: Option<(std::path::PathBuf, RawTags)> = None;
         for (k, v) in pairs {
             if k == "file" {
-                if let Some(done) = cur.take() { out.push(done); }
+                if let Some(done) = cur.take() {
+                    out.push(done);
+                }
                 cur = Some((music_dir.join(v.trim()), RawTags::default()));
                 continue;
             }
-            let Some((_, raw)) = cur.as_mut() else { continue };
+            let Some((_, raw)) = cur.as_mut() else {
+                continue;
+            };
             match k.as_str() {
                 "Artist" => raw.artist = v,
                 "AlbumArtist" => raw.album_artist = v,
@@ -576,7 +704,9 @@ impl MpdBridge {
                 _ => {}
             }
         }
-        if let Some(done) = cur { out.push(done); }
+        if let Some(done) = cur {
+            out.push(done);
+        }
         Ok(out)
     }
 
@@ -594,7 +724,10 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let pairs = match conn.command_kv_ordered(&cmd).await {
             Ok(p) => p,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
 
         // Walk the ordered kv stream.  A record starts on any of: `directory`,
@@ -608,9 +741,12 @@ impl MpdBridge {
             if let Some(mut entry) = cur.take() {
                 apply_song_normalize(
                     &normalize_cfg,
-                    &mut entry.artist, &mut entry.raw_artist,
-                    &mut entry.album,  &mut entry.raw_album,
-                    &mut entry.title,  &mut entry.raw_title,
+                    &mut entry.artist,
+                    &mut entry.raw_artist,
+                    &mut entry.album,
+                    &mut entry.raw_album,
+                    &mut entry.title,
+                    &mut entry.raw_title,
                 );
                 out.push(entry);
             }
@@ -650,10 +786,10 @@ impl MpdBridge {
                 _ => {
                     if let Some(ref mut entry) = current {
                         match k.as_str() {
-                            "Title"    => entry.title  = v,
-                            "Artist"   => entry.artist = v,
-                            "Album"    => entry.album  = v,
-                            "Time"     => entry.duration = v.parse().unwrap_or(0.0),
+                            "Title" => entry.title = v,
+                            "Artist" => entry.artist = v,
+                            "Album" => entry.album = v,
+                            "Time" => entry.duration = v.parse().unwrap_or(0.0),
                             "duration" => entry.duration = v.parse().unwrap_or(0.0),
                             _ => {}
                         }
@@ -671,15 +807,21 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = match conn.command_records("listplaylists", "playlist").await {
             Ok(r) => r,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
-        Ok(records.into_iter().filter_map(|r| {
-            let name = r.get("playlist")?.clone();
-            Some(MpdSavedPlaylistWire {
-                name,
-                modified: str_or(r.get("Last-Modified")),
+        Ok(records
+            .into_iter()
+            .filter_map(|r| {
+                let name = r.get("playlist")?.clone();
+                Some(MpdSavedPlaylistWire {
+                    name,
+                    modified: str_or(r.get("Last-Modified")),
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// `listplaylistinfo NAME` — tracks inside a saved playlist.
@@ -689,28 +831,37 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         let records = match conn.command_records(&cmd, "file").await {
             Ok(r) => r,
-            Err(e) => { *guard = None; return Err(e); }
+            Err(e) => {
+                *guard = None;
+                return Err(e);
+            }
         };
-        Ok(records.into_iter().filter_map(|r| {
-            let file = r.get("file")?.clone();
-            let mut song = MpdSongWire {
-                title:    str_or(r.get("Title")),
-                artist:   str_or(r.get("Artist")),
-                album:    str_or(r.get("Album")),
-                duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
-                file,
-                raw_artist: String::new(),
-                raw_album: String::new(),
-                raw_title: String::new(),
-            };
-            apply_song_normalize(
-                &self.normalize_cfg,
-                &mut song.artist, &mut song.raw_artist,
-                &mut song.album,  &mut song.raw_album,
-                &mut song.title,  &mut song.raw_title,
-            );
-            Some(song)
-        }).collect())
+        Ok(records
+            .into_iter()
+            .filter_map(|r| {
+                let file = r.get("file")?.clone();
+                let mut song = MpdSongWire {
+                    title: str_or(r.get("Title")),
+                    artist: str_or(r.get("Artist")),
+                    album: str_or(r.get("Album")),
+                    duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
+                    file,
+                    raw_artist: String::new(),
+                    raw_album: String::new(),
+                    raw_title: String::new(),
+                };
+                apply_song_normalize(
+                    &self.normalize_cfg,
+                    &mut song.artist,
+                    &mut song.raw_artist,
+                    &mut song.album,
+                    &mut song.raw_album,
+                    &mut song.title,
+                    &mut song.raw_title,
+                );
+                Some(song)
+            })
+            .collect())
     }
 
     /// Trigger MPD's `update` rescan, optionally scoped to a subpath within
@@ -721,7 +872,10 @@ impl MpdBridge {
         let conn = Self::get_or_connect(&mut guard, &self.config).await?;
         match conn.update_library(subpath).await {
             Ok(job) => Ok(job),
-            Err(e) => { *guard = None; Err(e) }
+            Err(e) => {
+                *guard = None;
+                Err(e)
+            }
         }
     }
 
@@ -753,12 +907,18 @@ impl MpdBridge {
     /// Add a single track to a saved playlist. Creates the playlist if it
     /// doesn't exist (MPD auto-creates on first `playlistadd`).
     pub async fn add_to_playlist(&self, name: &str, uri: &str) -> Result<()> {
-        self.cmd(&format!("playlistadd {} {}", quote_mpd(name), quote_mpd(uri))).await
+        self.cmd(&format!(
+            "playlistadd {} {}",
+            quote_mpd(name),
+            quote_mpd(uri)
+        ))
+        .await
     }
 
     /// Remove a track from a saved playlist by 0-based position.
     pub async fn remove_from_playlist(&self, name: &str, pos: u32) -> Result<()> {
-        self.cmd(&format!("playlistdelete {} {}", quote_mpd(name), pos)).await
+        self.cmd(&format!("playlistdelete {} {}", quote_mpd(name), pos))
+            .await
     }
 
     /// Create a new playlist with the given tracks. Clears any existing
@@ -766,7 +926,12 @@ impl MpdBridge {
     pub async fn create_playlist(&self, name: &str, uris: &[String]) -> Result<()> {
         let _ = self.cmd(&format!("rm {}", quote_mpd(name))).await;
         for uri in uris {
-            self.cmd(&format!("playlistadd {} {}", quote_mpd(name), quote_mpd(uri))).await?;
+            self.cmd(&format!(
+                "playlistadd {} {}",
+                quote_mpd(name),
+                quote_mpd(uri)
+            ))
+            .await?;
         }
         Ok(())
     }
@@ -797,17 +962,18 @@ impl MpdBridge {
     }
 
     pub(super) async fn get_or_connect<'a>(
-        slot:   &'a mut Option<MpdConnection>,
+        slot: &'a mut Option<MpdConnection>,
         config: &MpdConfig,
     ) -> Result<&'a mut MpdConnection> {
         if slot.is_none() {
-            *slot = Some(MpdConnection::connect(
-                &config.host,
-                config.port,
-                config.password.as_deref(),
-            ).await?);
+            *slot = Some(
+                MpdConnection::connect(&config.host, config.port, config.password.as_deref())
+                    .await?,
+            );
         }
-        Ok(slot.as_mut().expect("mpd_bridge: connection slot populated above"))
+        Ok(slot
+            .as_mut()
+            .expect("mpd_bridge: connection slot populated above"))
     }
 
     /// Background task: maintain an idle connection and push `mpd_status`
@@ -834,25 +1000,21 @@ async fn run_idle_loop(
     config: &MpdConfig,
     ipc_tx: &tokio::sync::mpsc::Sender<String>,
 ) -> Result<()> {
-    let mut conn = MpdConnection::connect(
-        &config.host,
-        config.port,
-        config.password.as_deref(),
-    ).await?;
+    let mut conn =
+        MpdConnection::connect(&config.host, config.port, config.password.as_deref()).await?;
 
     info!(host = %config.host, port = config.port, "mpd idle loop connected");
 
     // A second connection for fetching status while idle is blocked.
-    let mut status_conn = MpdConnection::connect(
-        &config.host,
-        config.port,
-        config.password.as_deref(),
-    ).await?;
+    let mut status_conn =
+        MpdConnection::connect(&config.host, config.port, config.password.as_deref()).await?;
 
     let mut last_state: Option<String> = None;
 
     loop {
-        let changed = conn.idle(&["player", "mixer", "options", "playlist"]).await?;
+        let changed = conn
+            .idle(&["player", "mixer", "options", "playlist"])
+            .await?;
 
         // If the queue changed, push a dedicated event so the TUI refreshes.
         if changed.iter().any(|s| s == "playlist") {
@@ -862,31 +1024,60 @@ async fn run_idle_loop(
         }
 
         // Something changed — fetch current state and push to TUI.
-        let status  = status_conn.command_kv("status").await?;
+        let status = status_conn.command_kv("status").await?;
         let current = status_conn.command_kv("currentsong").await?;
 
-        let state    = status.get("state").map(|s| s.to_string()).unwrap_or_else(|| "stop".to_string());
-        let elapsed  = status.get("elapsed").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-        let duration = status.get("duration").and_then(|v| v.parse::<f64>().ok())
-            .or_else(|| status.get("time").and_then(|t| {
-                t.split(':').nth(1).and_then(|s| s.parse::<f64>().ok())
-            })).unwrap_or(0.0);
-        let volume       = status.get("volume").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let bitrate      = status.get("bitrate").and_then(|v| v.parse::<u32>().ok());
+        let state = status
+            .get("state")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "stop".to_string());
+        let elapsed = status
+            .get("elapsed")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let duration = status
+            .get("duration")
+            .and_then(|v| v.parse::<f64>().ok())
+            .or_else(|| {
+                status
+                    .get("time")
+                    .and_then(|t| t.split(':').nth(1).and_then(|s| s.parse::<f64>().ok()))
+            })
+            .unwrap_or(0.0);
+        let volume = status
+            .get("volume")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        let bitrate = status.get("bitrate").and_then(|v| v.parse::<u32>().ok());
         let audio_format = status.get("audio").map(String::as_str);
-        let replay_gain  = status.get("replay_gain_mode").map(String::as_str).unwrap_or("off");
-        let crossfade    = status.get("xfade").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let song_pos     = status.get("song").and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1);
-        let song_id      = status.get("songid").and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-        let consume      = status.get("consume").map(|v| v == "1").unwrap_or(false);
-        let random       = status.get("random").map(|v| v == "1").unwrap_or(false);
-        let repeat       = status.get("repeat").map(|v| v == "1").unwrap_or(false);
-        let single       = status.get("single").map(|v| v == "1").unwrap_or(false);
-        let queue_length = status.get("playlistlength").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+        let replay_gain = status
+            .get("replay_gain_mode")
+            .map(String::as_str)
+            .unwrap_or("off");
+        let crossfade = status
+            .get("xfade")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        let song_pos = status
+            .get("song")
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(-1);
+        let song_id = status
+            .get("songid")
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(0);
+        let consume = status.get("consume").map(|v| v == "1").unwrap_or(false);
+        let random = status.get("random").map(|v| v == "1").unwrap_or(false);
+        let repeat = status.get("repeat").map(|v| v == "1").unwrap_or(false);
+        let single = status.get("single").map(|v| v == "1").unwrap_or(false);
+        let queue_length = status
+            .get("playlistlength")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
 
-        let song_title  = current.get("Title").map(String::as_str);
+        let song_title = current.get("Title").map(String::as_str);
         let song_artist = current.get("Artist").map(String::as_str);
-        let song_album  = current.get("Album").map(String::as_str);
+        let song_album = current.get("Album").map(String::as_str);
 
         // Detect play -> stop transition to emit player_ended.
         // Note: This is a best-effort heuristic; MPD doesn't distinguish EOF from
@@ -897,7 +1088,8 @@ async fn run_idle_loop(
                     "type": "player_ended",
                     "reason": "stopped",
                     "error": ""
-                })).unwrap_or_default();
+                }))
+                .unwrap_or_default();
                 let _ = ipc_tx.send(ended).await;
             }
         }
@@ -936,11 +1128,16 @@ async fn run_idle_loop(
 /// changes a field. No-op when `cfg.enabled == false`.
 fn apply_song_normalize(
     cfg: &MusicNormalizeConfig,
-    artist: &mut String, raw_artist: &mut String,
-    album: &mut String, raw_album: &mut String,
-    title: &mut String, raw_title: &mut String,
+    artist: &mut String,
+    raw_artist: &mut String,
+    album: &mut String,
+    raw_album: &mut String,
+    title: &mut String,
+    raw_title: &mut String,
 ) {
-    if !cfg.enabled { return; }
+    if !cfg.enabled {
+        return;
+    }
     let exceptions = norm_store::global().map(|s| s.get()).unwrap_or_default();
     let raw = RawTags {
         artist: artist.clone(),
@@ -954,7 +1151,16 @@ fn apply_song_normalize(
         exceptions: &exceptions,
     };
     let n = normalize::normalize(&raw, &nc, None);
-    if n.artist != *artist { *raw_artist = artist.clone(); *artist = n.artist; }
-    if n.album != *album   { *raw_album  = album.clone();  *album  = n.album; }
-    if n.title != *title   { *raw_title  = title.clone();  *title  = n.title; }
+    if n.artist != *artist {
+        *raw_artist = artist.clone();
+        *artist = n.artist;
+    }
+    if n.album != *album {
+        *raw_album = album.clone();
+        *album = n.album;
+    }
+    if n.title != *title {
+        *raw_title = title.clone();
+        *title = n.title;
+    }
 }

@@ -28,7 +28,7 @@ type Pool struct {
 	cancel   context.CancelFunc // aborts all in-flight HTTP requests; used by resetPoolForTest
 	queue    chan string
 	refresh  chan struct{}
-	inFlight sync.Map     // url -> struct{}
+	inFlight sync.Map // url -> struct{}
 	client   *http.Client
 	wg       sync.WaitGroup // counts URLs accepted into the queue; wg.Wait() guarantees all submitted-and-accepted downloads have completed
 	gwg      sync.WaitGroup // tracks worker + debouncer goroutine lifetimes; used by resetPoolForTest
@@ -256,7 +256,7 @@ func (e *httpErr) Error() string { return http.StatusText(e.status) }
 // package on Bubbletea. Callers adapt at their call site with a small
 // shim, e.g.:
 //
-//     return func() tea.Msg { return poster.PollRefresh()() }
+//	return func() tea.Msg { return poster.PollRefresh()() }
 //
 // or an equivalent named helper function.
 func PollRefresh() func() any {

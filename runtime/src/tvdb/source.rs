@@ -266,7 +266,10 @@ async fn resolve_tvdb_id(
     }
 
     // Try imdb.
-    let imdb = external_ids.get("imdb").cloned().or_else(|| imdb_id.clone());
+    let imdb = external_ids
+        .get("imdb")
+        .cloned()
+        .or_else(|| imdb_id.clone());
     if let Some(imdb) = imdb {
         if let Ok(Some(tvdb)) = client.resolve_remote_id("imdb", &imdb).await {
             return tvdb.parse::<u64>().ok();
@@ -417,7 +420,10 @@ mod tests {
         assert_eq!(r.entry.season_count, Some(3));
         // …but the specials presence is surfaced separately so the
         // TUI can render a "Specials" row after the canonical seasons.
-        assert!(r.entry.has_specials, "season 0 in default order → has_specials=true");
+        assert!(
+            r.entry.has_specials,
+            "season 0 in default order → has_specials=true"
+        );
     }
 
     #[test]

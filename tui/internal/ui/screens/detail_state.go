@@ -162,7 +162,7 @@ type DetailState struct {
 	// field) so a timeout on episode N doesn't keep showing as the
 	// "current" error while the user navigates to episode M and a
 	// fresh request is in flight.
-	EpisodeStreamsError  map[EpisodeStreamsKey]string
+	EpisodeStreamsError map[EpisodeStreamsKey]string
 
 	// Playback — non-empty while mpv is running for this entry
 	NowPlaying *components.NowPlayingState

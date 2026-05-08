@@ -32,8 +32,8 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use super::supervisor::{PluginSupervisor, SupervisorConfig};
 use super::protocol::{RpcMediaItem, RpcStream};
+use super::supervisor::{PluginSupervisor, SupervisorConfig};
 use crate::catalog::CatalogEntry;
 use crate::ipc::{MediaTab, SubtitleTrack};
 use crate::providers::Stream;
@@ -45,7 +45,7 @@ type PluginSupervisorList = Arc<RwLock<Vec<Arc<PluginSupervisor>>>>;
 #[allow(dead_code)] // planned: plugin RPC manager pub API, wired into Engine
 pub struct PluginRpcManager {
     plugins: PluginSupervisorList,
-    config:  SupervisorConfig,
+    config: SupervisorConfig,
 }
 
 #[allow(dead_code)] // planned: plugin RPC pub API, will be wired into Engine when plugin-rpc feature is used
@@ -53,7 +53,7 @@ impl PluginRpcManager {
     pub fn new() -> Self {
         PluginRpcManager {
             plugins: Arc::new(RwLock::new(vec![])),
-            config:  SupervisorConfig::default(),
+            config: SupervisorConfig::default(),
         }
     }
 
@@ -82,7 +82,9 @@ impl PluginRpcManager {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
 
             match self.load_from_dir(&path).await {
                 Ok(sup) => {
@@ -134,7 +136,9 @@ impl PluginRpcManager {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(rd) = std::fs::read_dir(dir) {
                 for entry in rd.flatten() {
-                    let Ok(meta) = entry.metadata() else { continue; };
+                    let Ok(meta) = entry.metadata() else {
+                        continue;
+                    };
                     if meta.permissions().mode() & 0o111 != 0 && meta.is_file() {
                         return Ok(entry.path());
                     }
@@ -148,22 +152,20 @@ impl PluginRpcManager {
 
     /// Fan out a search query to all plugins with the `catalog` capability.
     /// Results are merged and returned in arrival order.
-    pub async fn search(
-        &self,
-        tab: &MediaTab,
-        query: &str,
-        page: u32,
-    ) -> Vec<CatalogEntry> {
+    pub async fn search(&self, tab: &MediaTab, query: &str, page: u32) -> Vec<CatalogEntry> {
         let tab_str = format!("{tab:?}").to_lowercase();
-        let plugins  = self.plugins_with_cap("catalog").await;
+        let plugins = self.plugins_with_cap("catalog").await;
         let mut results = vec![];
 
-        let handles: Vec<_> = plugins.iter().map(|p| {
-            let p = Arc::clone(p);
-            let q = query.to_string();
-            let t = tab_str.clone();
-            tokio::spawn(async move { p.catalog_search(&q, &t, page).await })
-        }).collect();
+        let handles: Vec<_> = plugins
+            .iter()
+            .map(|p| {
+                let p = Arc::clone(p);
+                let q = query.to_string();
+                let t = tab_str.clone();
+                tokio::spawn(async move { p.catalog_search(&q, &t, page).await })
+            })
+            .collect();
 
         for handle in handles {
             match handle.await {
@@ -173,7 +175,7 @@ impl PluginRpcManager {
                     }
                 }
                 Ok(Err(e)) => warn!("rpc search error: {e}"),
-                Err(e)     => warn!("rpc search task panicked: {e}"),
+                Err(e) => warn!("rpc search task panicked: {e}"),
             }
         }
 
@@ -185,11 +187,14 @@ impl PluginRpcManager {
         let plugins = self.plugins_with_cap("streams").await;
         let mut results = vec![];
 
-        let handles: Vec<_> = plugins.iter().map(|p| {
-            let p  = Arc::clone(p);
-            let id = id.to_string();
-            tokio::spawn(async move { p.streams_resolve(&id).await })
-        }).collect();
+        let handles: Vec<_> = plugins
+            .iter()
+            .map(|p| {
+                let p = Arc::clone(p);
+                let id = id.to_string();
+                tokio::spawn(async move { p.streams_resolve(&id).await })
+            })
+            .collect();
 
         for handle in handles {
             match handle.await {
@@ -199,7 +204,7 @@ impl PluginRpcManager {
                     }
                 }
                 Ok(Err(e)) => warn!("rpc streams error: {e}"),
-                Err(e)     => warn!("rpc streams task panicked: {e}"),
+                Err(e) => warn!("rpc streams task panicked: {e}"),
             }
         }
 
@@ -211,11 +216,14 @@ impl PluginRpcManager {
         let plugins = self.plugins_with_cap("subtitles").await;
         let mut results = vec![];
 
-        let handles: Vec<_> = plugins.iter().map(|p| {
-            let p  = Arc::clone(p);
-            let id = id.to_string();
-            tokio::spawn(async move { p.subtitles_fetch(&id).await })
-        }).collect();
+        let handles: Vec<_> = plugins
+            .iter()
+            .map(|p| {
+                let p = Arc::clone(p);
+                let id = id.to_string();
+                tokio::spawn(async move { p.subtitles_fetch(&id).await })
+            })
+            .collect();
 
         for handle in handles {
             match handle.await {
@@ -223,13 +231,13 @@ impl PluginRpcManager {
                     for t in tracks {
                         results.push(SubtitleTrack {
                             language: t.language,
-                            url:      t.url,
-                            format:   t.format,
+                            url: t.url,
+                            format: t.format,
                         });
                     }
                 }
                 Ok(Err(e)) => warn!("rpc subtitles error: {e}"),
-                Err(e)     => warn!("rpc subtitles task panicked: {e}"),
+                Err(e) => warn!("rpc subtitles task panicked: {e}"),
             }
         }
 
@@ -271,7 +279,9 @@ impl PluginRpcManager {
 }
 
 impl Default for PluginRpcManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Type conversions ──────────────────────────────────────────────────────────
@@ -280,22 +290,22 @@ impl Default for PluginRpcManager {
 fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
     use crate::ipc::MediaType;
     CatalogEntry {
-        id:          item.id,
-        title:       item.title,
-        year:        item.year,
-        genre:       item.genre,
-        rating:      item.rating,
+        id: item.id,
+        title: item.title,
+        year: item.year,
+        genre: item.genre,
+        rating: item.rating,
         description: item.description,
-        poster_url:  item.poster_url,
-        poster_art:  None,
-        provider:    "rpc-plugin".to_string(),
-        tab:         format!("{tab:?}").to_lowercase(),
-        artist:      None, // RPC plugin protocol has no artist field today.
-        imdb_id:     None,
-        tmdb_id:     None,
-        mal_id:      None,
-        media_type:  MediaType::Movie,
-        ratings:     std::collections::HashMap::new(),
+        poster_url: item.poster_url,
+        poster_art: None,
+        provider: "rpc-plugin".to_string(),
+        tab: format!("{tab:?}").to_lowercase(),
+        artist: None, // RPC plugin protocol has no artist field today.
+        imdb_id: None,
+        tmdb_id: None,
+        mal_id: None,
+        media_type: MediaType::Movie,
+        ratings: std::collections::HashMap::new(),
         rating_votes: std::collections::HashMap::new(),
         original_language: None,
     }
@@ -305,12 +315,14 @@ fn rpc_item_to_catalog(item: RpcMediaItem, tab: &MediaTab) -> CatalogEntry {
 fn rpc_stream_to_stream(s: RpcStream) -> Stream {
     use crate::providers::StreamQuality;
 
-    let quality = s.quality.as_deref()
+    let quality = s
+        .quality
+        .as_deref()
         .map(StreamQuality::from_label)
         .unwrap_or(StreamQuality::Unknown);
 
     let codec = s.codec.clone();
-    let hdr   = s.hdr.clone().unwrap_or_default();
+    let hdr = s.hdr.clone().unwrap_or_default();
 
     let protocol = if s.url.starts_with("magnet:") {
         Some("magnet".to_string())
@@ -323,22 +335,22 @@ fn rpc_stream_to_stream(s: RpcStream) -> Stream {
     };
 
     Stream {
-        id:             s.url.clone(),
-        name:           s.name,
-        url:            s.url,
-        mime:           None,
+        id: s.url.clone(),
+        name: s.name,
+        url: s.url,
+        mime: None,
         quality,
-        provider:       "rpc-plugin".to_string(),
+        provider: "rpc-plugin".to_string(),
         protocol,
-        seeders:        s.seeders,
-        bitrate_kbps:   s.bitrate_kbps,
+        seeders: s.seeders,
+        bitrate_kbps: s.bitrate_kbps,
         codec,
-        resolution:     s.resolution,
+        resolution: s.resolution,
         hdr,
-        size_bytes:     s.size_bytes,
-        latency_ms:     None,
-        speed_mbps:     None,
+        size_bytes: s.size_bytes,
+        latency_ms: None,
+        speed_mbps: None,
         audio_channels: s.audio_channels,
-        language:       s.language,
+        language: s.language,
     }
 }

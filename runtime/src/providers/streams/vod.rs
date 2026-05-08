@@ -19,18 +19,26 @@ use crate::providers::{Provider, Stream};
 pub struct VodProvider;
 
 impl VodProvider {
-    pub fn new() -> Self { VodProvider }
+    pub fn new() -> Self {
+        VodProvider
+    }
 }
 
 impl Default for VodProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Provider for VodProvider {
-    fn name(&self) -> &str { "vod" }
+    fn name(&self) -> &str {
+        "vod"
+    }
 
-    fn has_streams(&self) -> bool { false } // stub — no streams yet
+    fn has_streams(&self) -> bool {
+        false
+    } // stub — no streams yet
 
     async fn fetch_trending(&self, _tab: &MediaTab, _page: u32) -> Result<Vec<CatalogEntry>> {
         Ok(vec![])

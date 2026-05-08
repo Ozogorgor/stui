@@ -41,11 +41,11 @@ impl DispatchMap {
 
 fn scope_of(k: EntryKind) -> SearchScope {
     match k {
-        EntryKind::Artist  => SearchScope::Artist,
-        EntryKind::Album   => SearchScope::Album,
-        EntryKind::Track   => SearchScope::Track,
-        EntryKind::Movie   => SearchScope::Movie,
-        EntryKind::Series  => SearchScope::Series,
+        EntryKind::Artist => SearchScope::Artist,
+        EntryKind::Album => SearchScope::Album,
+        EntryKind::Track => SearchScope::Track,
+        EntryKind::Movie => SearchScope::Movie,
+        EntryKind::Series => SearchScope::Series,
         EntryKind::Episode => SearchScope::Episode,
     }
 }
@@ -55,21 +55,30 @@ mod tests {
     use super::*;
 
     fn info(id: &str, kinds: &[EntryKind]) -> PluginEntryInfo {
-        PluginEntryInfo { id: id.into(), kinds: kinds.to_vec() }
+        PluginEntryInfo {
+            id: id.into(),
+            kinds: kinds.to_vec(),
+        }
     }
 
     #[test]
     fn groups_by_scope_preserving_order() {
         let plugins = vec![
-            info("discogs", &[EntryKind::Artist, EntryKind::Album, EntryKind::Track]),
-            info("tmdb",    &[EntryKind::Movie, EntryKind::Series]),
-            info("lastfm",  &[EntryKind::Artist, EntryKind::Track]),
+            info(
+                "discogs",
+                &[EntryKind::Artist, EntryKind::Album, EntryKind::Track],
+            ),
+            info("tmdb", &[EntryKind::Movie, EntryKind::Series]),
+            info("lastfm", &[EntryKind::Artist, EntryKind::Track]),
         ];
         let m = DispatchMap::build(&plugins);
-        assert_eq!(m.plugins_for(SearchScope::Artist), vec!["discogs", "lastfm"]);
-        assert_eq!(m.plugins_for(SearchScope::Track),  vec!["discogs", "lastfm"]);
-        assert_eq!(m.plugins_for(SearchScope::Album),  vec!["discogs"]);
-        assert_eq!(m.plugins_for(SearchScope::Movie),  vec!["tmdb"]);
+        assert_eq!(
+            m.plugins_for(SearchScope::Artist),
+            vec!["discogs", "lastfm"]
+        );
+        assert_eq!(m.plugins_for(SearchScope::Track), vec!["discogs", "lastfm"]);
+        assert_eq!(m.plugins_for(SearchScope::Album), vec!["discogs"]);
+        assert_eq!(m.plugins_for(SearchScope::Movie), vec!["tmdb"]);
         assert!(m.plugins_for(SearchScope::Episode).is_empty());
     }
 
@@ -77,8 +86,14 @@ mod tests {
     fn plugin_with_empty_kinds_excluded_from_every_scope() {
         let plugins = vec![info("legacy-bool", &[])];
         let m = DispatchMap::build(&plugins);
-        for s in [SearchScope::Artist, SearchScope::Album, SearchScope::Track,
-                  SearchScope::Movie, SearchScope::Series, SearchScope::Episode] {
+        for s in [
+            SearchScope::Artist,
+            SearchScope::Album,
+            SearchScope::Track,
+            SearchScope::Movie,
+            SearchScope::Series,
+            SearchScope::Episode,
+        ] {
             assert!(m.plugins_for(s).is_empty());
             assert!(m.is_empty_for(s));
         }

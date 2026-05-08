@@ -49,15 +49,31 @@ pub use v1::sanitize_secrets;
 
 #[allow(unused_imports)]
 pub use v1::{
+    ActionATagsApplyRequest,
+    ActionATagsApplyResponse,
+    ActionATagsCancelRequest,
+    ActionATagsCancelResponse,
+    ActionATagsPreviewRequest,
+    ActionATagsPreviewResponse,
+    ArtworkIpcRequest,
+    ArtworkIpcResponse,
+    CatalogStaleEvent,
+    CatalogStaleMsg,
     ClearMediaCacheRequest,
+    CreditsIpcRequest,
+    CreditsIpcResponse,
     DetailEntry,
-    GetAlbumArtRequest,
-    GetAlbumArtResponse,
-
     DspStatusResponse,
+    EnrichIpcRequest,
+    EnrichIpcResponse,
+    EpisodeEntryWire,
+    EpisodesLoadedResponse,
     ErrorCode,
 
     ErrorResponse,
+
+    GetAlbumArtRequest,
+    GetAlbumArtResponse,
 
     GetMediaCacheAllRequest,
     GetMediaCacheStatsRequest,
@@ -69,14 +85,22 @@ pub use v1::{
     GetWatchHistoryInProgressRequest,
     // Out-of-band events
     GridUpdateEvent,
-    CatalogStaleEvent,
     // Backward-compat aliases
     GridUpdateMsg,
-    CatalogStaleMsg,
     // Registry types
     InstallPluginRequest,
+    // Lastfm direct-fetch types
+    LastfmAlbumTrackWire,
+    LastfmAlbumTracksRequest,
+    LastfmAlbumTracksResponse,
     LoadConvolutionFilterRequest,
     LoadPluginRequest,
+    // Plugin verb IPC types
+    LookupIpcRequest,
+    LookupIpcResponse,
+    // Tag normalization
+    MarkTagExceptionRequest,
+    MarkTagExceptionResponse,
     MarkWatchHistoryCompletedRequest,
     MediaCacheAllResponse,
     MediaCacheClearResponse,
@@ -86,13 +110,11 @@ pub use v1::{
     MediaTab,
     // Domain types
     MediaType,
-    EpisodeEntryWire,
-    EpisodesLoadedResponse,
+    MetadataPluginsForKindRequest,
+    MetadataPluginsForKindResponse,
+
     MetadataRequest,
     MetadataResponse,
-    // MPD output types
-    MpdOutputInfo,
-    MpdOutputsResponse,
     // MPD library / browse types
     MpdAlbumWire,
     MpdArtistWire,
@@ -107,16 +129,12 @@ pub use v1::{
     MpdGetQueueResponse,
     MpdListRequest,
     MpdListResponse,
+    // MPD output types
+    MpdOutputInfo,
+    MpdOutputsResponse,
     MpdQueueTrackWire,
     MpdSavedPlaylistWire,
     MpdSongWire,
-    // Lastfm direct-fetch types
-    LastfmAlbumTrackWire,
-    LastfmAlbumTracksRequest,
-    LastfmAlbumTracksResponse,
-    MetadataPluginsForKindRequest,
-    MetadataPluginsForKindResponse,
-
     PlayRequest,
     // New typed command types
     PlayerCmd,
@@ -125,6 +143,7 @@ pub use v1::{
 
     PlayerProgressEvent,
     PlayerStartedEvent,
+    PluginEnabledResponse,
     PluginInfo,
     PluginInstalledResponse,
 
@@ -135,8 +154,6 @@ pub use v1::{
     PluginStatus,
     PluginToastEvent,
     PluginUnloadedResponse,
-    PluginEnabledResponse,
-    SetPluginEnabledRequest,
     // Provider settings schema
     ProviderField,
     ProviderSchema,
@@ -148,6 +165,8 @@ pub use v1::{
     RankedStreamWire,
     RegistryEntryWire,
     RegistryIndexResponse,
+    RelatedIpcRequest,
+    RelatedIpcResponse,
     RemoveWatchHistoryEntryRequest,
     // Requests
     Request,
@@ -161,6 +180,7 @@ pub use v1::{
 
     // DSP types
     SetDspConfigRequest,
+    SetPluginEnabledRequest,
     // Plugin repo types
     SetPluginReposRequest,
     // Storage paths types
@@ -175,6 +195,9 @@ pub use v1::{
     StreamsPartialWire,
     StreamsResponse,
     SubtitleTrack,
+    TagDiffRowWire,
+    TagWriteScope,
+
     UnloadPluginRequest,
 
     UpdateWatchHistoryPositionRequest,
@@ -185,28 +208,4 @@ pub use v1::{
     WatchHistoryPositionUpdateResponse,
     WatchHistoryRemoveResponse,
     WatchHistoryUpsertResponse,
-
-    // Tag normalization
-    MarkTagExceptionRequest,
-    MarkTagExceptionResponse,
-    ActionATagsPreviewRequest,
-    ActionATagsPreviewResponse,
-    ActionATagsApplyRequest,
-    ActionATagsApplyResponse,
-    ActionATagsCancelRequest,
-    ActionATagsCancelResponse,
-    TagDiffRowWire,
-    TagWriteScope,
-
-    // Plugin verb IPC types
-    LookupIpcRequest,
-    LookupIpcResponse,
-    EnrichIpcRequest,
-    EnrichIpcResponse,
-    ArtworkIpcRequest,
-    ArtworkIpcResponse,
-    CreditsIpcRequest,
-    CreditsIpcResponse,
-    RelatedIpcRequest,
-    RelatedIpcResponse,
 };

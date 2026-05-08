@@ -103,14 +103,13 @@ type PluginManagerScreen struct {
 	// prompt resolver (y/n/esc) instead of normal navigation. One
 	// prompt at a time — installed-tab actions (unload/update) are
 	// the only callers today.
-	confirmPrompt string             // text shown to the user
+	confirmPrompt string // text shown to the user
 	confirmAction func() (screen.Screen, tea.Cmd)
 
 	// Pending action menu (Enter on installed row). When non-zero
 	// length, key input picks one of these options.
 	pendingMenu    []pmMenuOption
 	pendingMenuIdx int
-
 
 	// Spinners
 	pluginsSpinner  components.Spinner
@@ -716,7 +715,6 @@ func (m *PluginManagerScreen) renderDialog() string {
 	}
 	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, box)
 }
-
 
 func (m *PluginManagerScreen) viewAvailable() string {
 	var sb strings.Builder

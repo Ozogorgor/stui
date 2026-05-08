@@ -27,7 +27,10 @@ impl PluginSupervisor {
     /// unlimited.
     pub fn new(wasm: Arc<WasmSupervisor>, rate_limit: Option<&RateLimit>) -> Self {
         let bucket = rate_limit.map(|rl| TokenBucket::new(rl.rps, rl.burst));
-        Self { wasm, rate_limit: bucket }
+        Self {
+            wasm,
+            rate_limit: bucket,
+        }
     }
 
     /// Acquire a rate-limit token (if configured) before returning. The caller

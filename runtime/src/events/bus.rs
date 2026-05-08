@@ -45,7 +45,9 @@ impl EventBus {
     /// Create a bus with a custom channel capacity.
     pub fn with_capacity(cap: usize) -> Self {
         let (sender, _) = broadcast::channel(cap);
-        EventBus { sender: Arc::new(sender) }
+        EventBus {
+            sender: Arc::new(sender),
+        }
     }
 
     /// Emit an event to all current subscribers.
@@ -90,7 +92,9 @@ impl EventBus {
 }
 
 impl Default for EventBus {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Convenience: watch a single event type ────────────────────────────────────
@@ -113,7 +117,11 @@ impl EventBus {
         let handle = tokio::spawn(async move {
             loop {
                 match rx.recv().await {
-                    Ok(RuntimeEvent::PlaybackStarted { title, url, duration }) => {
+                    Ok(RuntimeEvent::PlaybackStarted {
+                        title,
+                        url,
+                        duration,
+                    }) => {
                         handler(title, url, duration);
                     }
                     Err(broadcast::error::RecvError::Closed) => break,

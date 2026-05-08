@@ -73,20 +73,35 @@ fn expand_path(raw: &str) -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     let expanded = raw
         .replace("~", &home.to_string_lossy())
-        .replace("$XDG_MUSIC_DIR", &dirs::audio_dir()
-            .unwrap_or_else(|| home.join("Music"))
-            .to_string_lossy())
-        .replace("$XDG_CONFIG_HOME", &dirs::config_dir()
-            .unwrap_or_else(|| home.join(".config"))
-            .to_string_lossy())
-        .replace("$XDG_DATA_HOME", &dirs::data_local_dir()
-            .unwrap_or_else(|| home.join(".local").join("share"))
-            .to_string_lossy())
-        .replace("$XDG_CACHE_HOME", &dirs::cache_dir()
-            .unwrap_or_else(|| home.join(".cache"))
-            .to_string_lossy())
-        .replace("$XDG_RUNTIME_DIR", &std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() })));
+        .replace(
+            "$XDG_MUSIC_DIR",
+            &dirs::audio_dir()
+                .unwrap_or_else(|| home.join("Music"))
+                .to_string_lossy(),
+        )
+        .replace(
+            "$XDG_CONFIG_HOME",
+            &dirs::config_dir()
+                .unwrap_or_else(|| home.join(".config"))
+                .to_string_lossy(),
+        )
+        .replace(
+            "$XDG_DATA_HOME",
+            &dirs::data_local_dir()
+                .unwrap_or_else(|| home.join(".local").join("share"))
+                .to_string_lossy(),
+        )
+        .replace(
+            "$XDG_CACHE_HOME",
+            &dirs::cache_dir()
+                .unwrap_or_else(|| home.join(".cache"))
+                .to_string_lossy(),
+        )
+        .replace(
+            "$XDG_RUNTIME_DIR",
+            &std::env::var("XDG_RUNTIME_DIR")
+                .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() })),
+        );
     PathBuf::from(expanded)
 }
 
@@ -105,14 +120,20 @@ mod tests {
     #[test]
     fn extract_with_tabs() {
         assert_eq!(
-            extract_directive("playlist_directory\t\t\"~/.config/mpd/playlists\"", "playlist_directory"),
+            extract_directive(
+                "playlist_directory\t\t\"~/.config/mpd/playlists\"",
+                "playlist_directory"
+            ),
             Some("~/.config/mpd/playlists".to_string()),
         );
     }
 
     #[test]
     fn extract_wrong_directive() {
-        assert_eq!(extract_directive(r#"music_directory "~/Music""#, "playlist_directory"), None);
+        assert_eq!(
+            extract_directive(r#"music_directory "~/Music""#, "playlist_directory"),
+            None
+        );
     }
 
     #[test]

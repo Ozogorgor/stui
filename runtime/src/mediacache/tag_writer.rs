@@ -142,10 +142,7 @@ fn write_backup_once(
     }
 }
 
-pub fn write_normalized(
-    path: &Path,
-    n: &NormalizedTags,
-) -> Result<WriteReport, TagWriteError> {
+pub fn write_normalized(path: &Path, n: &NormalizedTags) -> Result<WriteReport, TagWriteError> {
     let original = read_original(path)?;
     let (wrote_backup, backup_location) =
         write_backup_once(path, &original).map_err(|_| TagWriteError::BackupFailed)?;

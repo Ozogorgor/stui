@@ -350,31 +350,59 @@ pub enum PlayerCmd {
 
     // ── MPD playlist commands ─────────────────────────────────────────────
     /// Save the current queue as a named playlist.
-    MpdPlaylistSave { name: String },
+    MpdPlaylistSave {
+        name: String,
+    },
     /// Load a saved playlist into the queue (clear + load).
-    MpdPlaylistLoad { name: String },
+    MpdPlaylistLoad {
+        name: String,
+    },
     /// Append a saved playlist to the end of the queue.
-    MpdPlaylistAppend { name: String },
+    MpdPlaylistAppend {
+        name: String,
+    },
     /// Delete a saved playlist.
-    MpdPlaylistDelete { name: String },
+    MpdPlaylistDelete {
+        name: String,
+    },
     /// Add a track (by URI) to a saved playlist.
-    MpdPlaylistAddTrack { name: String, uri: String },
+    MpdPlaylistAddTrack {
+        name: String,
+        uri: String,
+    },
     /// Create a new empty playlist (clears if exists), then add URIs.
-    MpdPlaylistCreate { name: String, uris: Vec<String> },
+    MpdPlaylistCreate {
+        name: String,
+        uris: Vec<String>,
+    },
     /// Remove a track from a saved playlist by position (0-based).
-    MpdPlaylistRemoveTrack { name: String, pos: u32 },
+    MpdPlaylistRemoveTrack {
+        name: String,
+        pos: u32,
+    },
 
     // ── MPD queue manipulation ────────────────────────────────────────────
     /// Add a URI to the MPD queue.
-    MpdAdd { uri: String },
+    MpdAdd {
+        uri: String,
+    },
     /// Remove a track from the queue by its MPD song ID.
-    MpdRemove { id: u32 },
+    MpdRemove {
+        id: u32,
+    },
     /// Start playback of a specific track by its MPD song ID.
-    MpdPlayId { id: u32 },
+    MpdPlayId {
+        id: u32,
+    },
     /// Set MPD volume (0–100).
-    MpdSetVolume { volume: u32 },
+    MpdSetVolume {
+        volume: u32,
+    },
     /// Seek to a position within a track by song ID.
-    MpdSeek { id: u32, time: f64 },
+    MpdSeek {
+        id: u32,
+        time: f64,
+    },
     /// Toggle MPD play/pause.
     MpdTogglePause,
     /// Stop MPD playback.
@@ -799,15 +827,15 @@ pub struct StreamsResponse {
 pub struct StreamsPartialWire {
     pub entry_id: String,
     /// 1-based season number, 0 if N/A (movies).
-    pub season:   u32,
+    pub season: u32,
     /// 1-based episode number, 0 if N/A (movies).
-    pub episode:  u32,
+    pub episode: u32,
     /// Plugin id of the provider this batch came from
     /// (`torrentio-provider`, `jackett-provider`, …). Mostly for
     /// diagnostics — the user-visible per-stream provider label is
     /// inside each `StreamInfoWire.provider`.
     pub provider: String,
-    pub streams:  Vec<StreamInfoWire>,
+    pub streams: Vec<StreamInfoWire>,
 }
 
 /// Sent once after all providers have either returned partials or hit
@@ -816,12 +844,12 @@ pub struct StreamsPartialWire {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamsCompleteWire {
     pub entry_id: String,
-    pub season:   u32,
-    pub episode:  u32,
+    pub season: u32,
+    pub episode: u32,
     /// Optional last-resort error string when no provider returned
     /// any results. The TUI shows this in the streams column instead
     /// of the "no streams found" placeholder.
-    pub error:    Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1043,7 +1071,9 @@ pub struct MpdDirEntryWire {
     pub raw_title: String,
 }
 
-fn is_zero_f64(v: &f64) -> bool { *v == 0.0 }
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
 
 /// A saved MPD playlist descriptor (name + last-modified timestamp).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1222,7 +1252,7 @@ pub struct GetAlbumArtResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarkTagExceptionRequest {
     pub id: String,
-    pub field: String,     // "artist" | "album_artist" | "album" | "title" | "genre"
+    pub field: String, // "artist" | "album_artist" | "album" | "title" | "genre"
     pub raw_value: String,
 }
 
@@ -1235,8 +1265,14 @@ pub struct ActionATagsPreviewRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TagWriteScope {
-    Album { artist: String, album: String, date: String },
-    Artist { artist: String },
+    Album {
+        artist: String,
+        album: String,
+        date: String,
+    },
+    Artist {
+        artist: String,
+    },
     Library,
 }
 
@@ -1806,7 +1842,9 @@ pub struct PluginInfo {
     pub author: String,
 }
 
-fn pluginfo_default_enabled() -> bool { true }
+fn pluginfo_default_enabled() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -2150,8 +2188,8 @@ pub fn sanitize_secrets(msg: &str) -> String {
         // Try to match each key prefix at position i. We require a
         // word-boundary char before the key (or start-of-string) so
         // `apikey=` doesn't false-match inside `notapikey=...`.
-        let boundary_ok = i == 0
-            || !matches!(bytes[i - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_');
+        let boundary_ok =
+            i == 0 || !matches!(bytes[i - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_');
         let mut matched_key: Option<&str> = None;
         if boundary_ok {
             for k in KEYS {
@@ -2207,10 +2245,7 @@ mod sanitize_tests {
 
     #[test]
     fn does_not_match_within_word() {
-        assert_eq!(
-            sanitize_secrets("notapikey=visible"),
-            "notapikey=visible"
-        );
+        assert_eq!(sanitize_secrets("notapikey=visible"), "notapikey=visible");
     }
 
     #[test]
@@ -2323,9 +2358,18 @@ mod search_request_tests {
 
     #[test]
     fn mpd_scope_snake_case() {
-        assert_eq!(serde_json::to_string(&MpdScope::Artist).unwrap(), "\"artist\"");
-        assert_eq!(serde_json::to_string(&MpdScope::Album).unwrap(), "\"album\"");
-        assert_eq!(serde_json::to_string(&MpdScope::Track).unwrap(), "\"track\"");
+        assert_eq!(
+            serde_json::to_string(&MpdScope::Artist).unwrap(),
+            "\"artist\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MpdScope::Album).unwrap(),
+            "\"album\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MpdScope::Track).unwrap(),
+            "\"track\""
+        );
     }
 }
 

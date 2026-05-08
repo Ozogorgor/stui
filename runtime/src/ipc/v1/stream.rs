@@ -69,7 +69,7 @@ pub async fn emit(tx: &EventSender, event: Event) {
 #[cfg(test)]
 mod stream_tests {
     use super::*;
-    use crate::ipc::v1::{ScopeResultsMsg, MediaTab, MediaType};
+    use crate::ipc::v1::{MediaTab, MediaType, ScopeResultsMsg};
     use stui_plugin_sdk::SearchScope;
 
     /// Build a minimal `ScopeResultsMsg` for tests — avoids repeating all fields.
@@ -126,7 +126,7 @@ mod stream_tests {
     async fn emit_on_closed_channel_does_not_panic() {
         let (tx, rx) = mpsc::channel::<String>(1);
         drop(rx); // close the receiver
-        // Must not panic; warning is logged internally
+                  // Must not panic; warning is logged internally
         emit(&tx, Event::ScopeResults(minimal_scope_msg(99))).await;
     }
 }

@@ -37,18 +37,18 @@
 //!   → Go TUI renders HUD
 //! ```
 
-pub mod state;
-pub mod commands;
-pub mod mpv;
 pub mod bridge;
+pub mod commands;
 pub mod manager;
+pub mod mpv;
+pub mod state;
 
-#[allow(unused_imports)]
-pub use state::PlaybackState;
+pub use bridge::PlayerBridge;
 #[allow(unused_imports)]
 pub use commands::PlayerCommand;
 #[allow(unused_imports)]
-pub use mpv::{MpvPlayer, PlayerStartedEvent};
-pub use bridge::PlayerBridge;
+pub use manager::{PlaybackRecord, PlayerManager, QueueEntry};
 #[allow(unused_imports)]
-pub use manager::{PlayerManager, QueueEntry, PlaybackRecord};
+pub use mpv::{MpvPlayer, PlayerStartedEvent};
+#[allow(unused_imports)]
+pub use state::PlaybackState;

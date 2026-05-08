@@ -17,16 +17,22 @@ use std::time::SystemTime;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct FileShape {
-    #[serde(default)] artist: FieldList,
-    #[serde(default)] album_artist: FieldList,
-    #[serde(default)] album: FieldList,
-    #[serde(default)] title: FieldList,
-    #[serde(default)] genre: FieldList,
+    #[serde(default)]
+    artist: FieldList,
+    #[serde(default)]
+    album_artist: FieldList,
+    #[serde(default)]
+    album: FieldList,
+    #[serde(default)]
+    title: FieldList,
+    #[serde(default)]
+    genre: FieldList,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct FieldList {
-    #[serde(default)] values: Vec<String>,
+    #[serde(default)]
+    values: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -66,7 +72,9 @@ fn parse_file(bytes: &[u8]) -> FileShape {
     toml::from_str::<FileShape>(s).unwrap_or_default()
 }
 
-fn read_if_exists(path: &Path) -> Option<Vec<u8>> { fs::read(path).ok() }
+fn read_if_exists(path: &Path) -> Option<Vec<u8>> {
+    fs::read(path).ok()
+}
 
 pub fn merge(bundled: Option<&[u8]>, user: Option<&[u8]>) -> ExceptionList {
     let b = bundled.map(parse_file).unwrap_or_default();
@@ -86,11 +94,16 @@ pub fn merge(bundled: Option<&[u8]>, user: Option<&[u8]>) -> ExceptionList {
         genre: lower(&b.genre.values),
         content_hash,
     };
-    out.artist.extend(u.artist.values.iter().map(|s| s.to_lowercase()));
-    out.album_artist.extend(u.album_artist.values.iter().map(|s| s.to_lowercase()));
-    out.album.extend(u.album.values.iter().map(|s| s.to_lowercase()));
-    out.title.extend(u.title.values.iter().map(|s| s.to_lowercase()));
-    out.genre.extend(u.genre.values.iter().map(|s| s.to_lowercase()));
+    out.artist
+        .extend(u.artist.values.iter().map(|s| s.to_lowercase()));
+    out.album_artist
+        .extend(u.album_artist.values.iter().map(|s| s.to_lowercase()));
+    out.album
+        .extend(u.album.values.iter().map(|s| s.to_lowercase()));
+    out.title
+        .extend(u.title.values.iter().map(|s| s.to_lowercase()));
+    out.genre
+        .extend(u.genre.values.iter().map(|s| s.to_lowercase()));
     out
 }
 
@@ -112,15 +125,20 @@ struct Cached {
 impl ExceptionStore {
     pub fn new(bundled_path: PathBuf, user_path: PathBuf) -> Self {
         Self {
-            bundled_path, user_path,
+            bundled_path,
+            user_path,
             state: RwLock::new(Cached::default()),
             reload_lock: Mutex::new(()),
         }
     }
 
     pub fn get(&self) -> ExceptionList {
-        let b_mt = fs::metadata(&self.bundled_path).and_then(|m| m.modified()).ok();
-        let u_mt = fs::metadata(&self.user_path).and_then(|m| m.modified()).ok();
+        let b_mt = fs::metadata(&self.bundled_path)
+            .and_then(|m| m.modified())
+            .ok();
+        let u_mt = fs::metadata(&self.user_path)
+            .and_then(|m| m.modified())
+            .ok();
         {
             let st = self.state.read().unwrap();
             if st.initialized && st.bundled_mtime == b_mt && st.user_mtime == u_mt {
@@ -145,12 +163,19 @@ impl ExceptionStore {
         list
     }
 
-    pub fn add_user_exception(&self, field: ExceptionField, raw_value: &str) -> std::io::Result<bool> {
+    pub fn add_user_exception(
+        &self,
+        field: ExceptionField,
+        raw_value: &str,
+    ) -> std::io::Result<bool> {
         let value = raw_value.trim();
-        if value.is_empty() { return Ok(false); }
+        if value.is_empty() {
+            return Ok(false);
+        }
 
         let _g = self.reload_lock.lock().unwrap();
-        let mut file: FileShape = fs::read(&self.user_path).ok()
+        let mut file: FileShape = fs::read(&self.user_path)
+            .ok()
             .and_then(|b| toml::from_str(std::str::from_utf8(&b).unwrap_or("")).ok())
             .unwrap_or_default();
 
@@ -161,10 +186,14 @@ impl ExceptionStore {
             ExceptionField::Title => &mut file.title.values,
             ExceptionField::Genre => &mut file.genre.values,
         };
-        if list.iter().any(|v| v.eq_ignore_ascii_case(value)) { return Ok(false); }
+        if list.iter().any(|v| v.eq_ignore_ascii_case(value)) {
+            return Ok(false);
+        }
         list.push(value.to_string());
 
-        if let Some(parent) = self.user_path.parent() { let _ = fs::create_dir_all(parent); }
+        if let Some(parent) = self.user_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
         let serialized = toml::to_string_pretty(&file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         fs::write(&self.user_path, serialized)?;
@@ -176,7 +205,13 @@ impl ExceptionStore {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ExceptionField { Artist, AlbumArtist, Album, Title, Genre }
+pub enum ExceptionField {
+    Artist,
+    AlbumArtist,
+    Album,
+    Title,
+    Genre,
+}
 
 impl ExceptionField {
     pub fn from_str(s: &str) -> Option<Self> {
@@ -233,8 +268,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let user_path = dir.path().join("exceptions.toml");
         let store = ExceptionStore::new(PathBuf::from("/nonexistent"), user_path.clone());
-        assert!(store.add_user_exception(ExceptionField::Artist, "deadmau5").unwrap());
-        assert!(!store.add_user_exception(ExceptionField::Artist, "deadmau5").unwrap());
+        assert!(store
+            .add_user_exception(ExceptionField::Artist, "deadmau5")
+            .unwrap());
+        assert!(!store
+            .add_user_exception(ExceptionField::Artist, "deadmau5")
+            .unwrap());
         let list = store.get();
         assert!(list.is_artist_protected("DEADMAU5"));
     }
@@ -246,6 +285,8 @@ mod tests {
             PathBuf::from("/nonexistent"),
             dir.path().join("exceptions.toml"),
         );
-        assert!(!store.add_user_exception(ExceptionField::Artist, "   ").unwrap());
+        assert!(!store
+            .add_user_exception(ExceptionField::Artist, "   ")
+            .unwrap());
     }
 }

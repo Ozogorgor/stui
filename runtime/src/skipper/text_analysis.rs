@@ -35,56 +35,64 @@ pub struct TextPatterns {
 /// Extract subtitles from video and detect skip segment hints.
 pub async fn extract_text_hints(url: &str, duration: f64) -> Option<TextPatterns> {
     let deadline = Duration::from_secs(60);
-    
+
     let task = async {
         // Try to extract subtitles using ffmpeg's subtitle stream detection
         // First, check what subtitle streams exist
         let probe_args = vec![
             "-hide_banner".into(),
-            "-i".into(), url.to_string(),
-            "-f".into(), "null".into(),
+            "-i".into(),
+            url.to_string(),
+            "-f".into(),
+            "null".into(),
             "-".into(),
         ];
-        
+
         let probe_output = match Command::new("ffmpeg")
             .args(&probe_args)
-            .kill_on_drop(true)  // Ensure process is killed on timeout
+            .kill_on_drop(true) // Ensure process is killed on timeout
             .output()
             .await
         {
             Ok(o) => o,
-            Err(e) => { debug!(error = %e, "failed to spawn ffmpeg for subtitle detection"); return None; }
+            Err(e) => {
+                debug!(error = %e, "failed to spawn ffmpeg for subtitle detection");
+                return None;
+            }
         };
-        
+
         let stderr = String::from_utf8_lossy(&probe_output.stderr);
-        
+
         if !probe_output.status.success() {
             debug!(status = ?probe_output.status, stderr = %stderr, "ffmpeg subtitle probe failed");
             return None;
         }
-        
+
         // Check if there are subtitle streams
         let has_subs = stderr.contains("Stream #") && stderr.contains("Subtitle");
-        
+
         if !has_subs {
             return None;
         }
-        
+
         // Use ffprobe to extract subtitle cues
         // We'll parse the metadata for timing patterns
         // For now, return a basic pattern set based on common structures
         // A full implementation would use ffmpeg's subtitles filter
-        
+
         // Common patterns that suggest recaps/previews in subtitle text
         // This is a simplified version - full implementation would extract actual text
         let patterns = detect_common_patterns(&stderr, duration);
         Some(patterns)
     };
-    
+
     match timeout(deadline, task).await {
         Ok(Some(p)) => Some(p),
         Ok(None) => None,
-        Err(_) => { warn!(url, "subtitle extraction timed out"); None }
+        Err(_) => {
+            warn!(url, "subtitle extraction timed out");
+            None
+        }
     }
 }
 
@@ -92,14 +100,14 @@ pub async fn extract_text_hints(url: &str, duration: f64) -> Option<TextPatterns
 /// This is a simplified version - detects timing patterns rather than actual text.
 fn detect_common_patterns(_stderr: &str, duration: f64) -> TextPatterns {
     let mut patterns = TextPatterns::default();
-    
+
     // Heuristic: look for timing patterns that suggest recaps/credits
     // In practice, we'd extract actual subtitle text, but this gives hints
-    
+
     // Intros typically: 0-5 seconds (no specific pattern in metadata)
     // Recaps typically: 5-60 seconds before intro
     // Credits typically: last 30-120 seconds
-    
+
     // Credits hint: look for long duration content at the end
     // Store as ABSOLUTE timestamp (seconds into video where credits start)
     // refine_boundaries will convert to from-end for comparison
@@ -110,14 +118,14 @@ fn detect_common_patterns(_stderr: &str, duration: f64) -> TextPatterns {
     } else if duration > 120.0 {
         patterns.credits_hint = Some(duration - 60.0);
     }
-    
+
     // Intro hint: first significant segment
     patterns.intro_hint = Some(0.0);
-    
+
     // For recaps: shows with recaps usually have them 10-60 seconds in
     // Placeholder removed - real impl would find actual recaps
     // Without real detection, don't push placeholder values
-    
+
     patterns
 }
 
@@ -135,7 +143,7 @@ pub fn refine_boundaries(
     if segment_start > segment_end {
         return (segment_end, segment_start);
     }
-    
+
     match segment_type {
         "intro" => {
             // If we have a recap hint, intro likely starts after it
@@ -171,7 +179,7 @@ pub fn refine_boundaries(
         }
         _ => {}
     }
-    
+
     (segment_start, segment_end)
 }
 
@@ -185,7 +193,7 @@ pub fn validate_with_patterns(
     duration: f64,
 ) -> f64 {
     let mut score: f64 = 0.5;
-    
+
     match segment_type {
         "intro" => {
             // Check if segment is near the beginning (expected for intro)
@@ -216,7 +224,7 @@ pub fn validate_with_patterns(
         }
         _ => {}
     }
-    
+
     let final_score: f64 = score.min(1.0_f64);
     final_score
 }
@@ -278,6 +286,9 @@ mod tests {
         let patterns = TextPatterns::default();
         let score = validate_with_patterns(&patterns, 100.0, 200.0, "intro", 1800.0);
         // segment_start=100.0 < 120.0 triggers the near-beginning bonus (+0.2), so score = 0.5 + 0.2 = 0.7
-        assert_eq!(score, 0.7, "score with empty patterns and near-beginning intro should be 0.7");
+        assert_eq!(
+            score, 0.7,
+            "score with empty patterns and near-beginning intro should be 0.7"
+        );
     }
 }

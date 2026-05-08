@@ -2,12 +2,12 @@
 
 pub mod download_translator;
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -77,7 +77,13 @@ impl MediaStorage {
     }
 
     /// Returns the season folder path: `base/Series/{year} - {title}/Season {n} - {name}/
-    pub fn season_folder(&self, show_title: &str, year: Option<u32>, season: u32, season_name: Option<&str>) -> PathBuf {
+    pub fn season_folder(
+        &self,
+        show_title: &str,
+        year: Option<u32>,
+        season: u32,
+        season_name: Option<&str>,
+    ) -> PathBuf {
         let base = self.series_folder(show_title, year);
         let season_dir = format_season_dir(season, season_name);
         base.join(season_dir)
@@ -105,7 +111,13 @@ impl MediaStorage {
     }
 
     /// Returns the season folder path for anime.
-    pub fn anime_season_folder(&self, title: &str, year: Option<u32>, season: u32, season_name: Option<&str>) -> PathBuf {
+    pub fn anime_season_folder(
+        &self,
+        title: &str,
+        year: Option<u32>,
+        season: u32,
+        season_name: Option<&str>,
+    ) -> PathBuf {
         let base = self.anime_folder(title, year);
         let season_dir = format_season_dir(season, season_name);
         base.join(season_dir)
@@ -199,11 +211,7 @@ impl MediaStorage {
     }
 
     /// Returns the full file path for a podcast episode.
-    pub fn podcast_episode_path(
-        &self,
-        podcast: &str,
-        filename: &str,
-    ) -> PathBuf {
+    pub fn podcast_episode_path(&self, podcast: &str, filename: &str) -> PathBuf {
         let folder = self.podcast_folder(podcast);
         folder.join(sanitize_filename(filename))
     }
@@ -213,7 +221,10 @@ impl MediaStorage {
     /// Returns the subtitle file path in the same folder as the media.
     pub fn subtitle_path(media_path: &Path, language: Option<&str>, extension: &str) -> PathBuf {
         let parent = media_path.parent().unwrap_or(media_path);
-        let stem = media_path.file_stem().and_then(|s| s.to_str()).unwrap_or("subtitle");
+        let stem = media_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("subtitle");
         let ext = extension.trim_start_matches('.');
 
         let filename = match language {
@@ -247,7 +258,8 @@ impl MediaStorage {
     /// Get the original path for an organized path (reverse lookup).
     pub async fn get_original_path(&self, organized: &PathBuf) -> Option<PathBuf> {
         let translator = self.path_translator.read().await;
-        translator.iter()
+        translator
+            .iter()
             .find(|(_, v)| *v == organized)
             .map(|(k, _)| k.clone())
     }
@@ -298,14 +310,25 @@ impl MediaStorage {
     }
 
     /// Ensures the season folder for a series exists.
-    pub fn ensure_season_folder(&self, show_title: &str, year: Option<u32>, season: u32, season_name: Option<&str>) -> io::Result<PathBuf> {
+    pub fn ensure_season_folder(
+        &self,
+        show_title: &str,
+        year: Option<u32>,
+        season: u32,
+        season_name: Option<&str>,
+    ) -> io::Result<PathBuf> {
         let path = self.season_folder(show_title, year, season, season_name);
         Self::ensure_folder(&path)?;
         Ok(path)
     }
 
     /// Ensures the album folder for music exists.
-    pub fn ensure_album_folder(&self, artist: &str, album: &str, year: Option<u32>) -> io::Result<PathBuf> {
+    pub fn ensure_album_folder(
+        &self,
+        artist: &str,
+        album: &str,
+        year: Option<u32>,
+    ) -> io::Result<PathBuf> {
         let path = self.album_folder(artist, album, year);
         Self::ensure_folder(&path)?;
         // Also create Album Art subfolder
@@ -461,7 +484,14 @@ mod tests {
     #[test]
     fn test_track_path() {
         let storage = test_storage();
-        let path = storage.track_path("Pink Floyd", "Dark Side of the Moon", Some(1973), Some(1), "Speak to Me", "flac");
+        let path = storage.track_path(
+            "Pink Floyd",
+            "Dark Side of the Moon",
+            Some(1973),
+            Some(1),
+            "Speak to Me",
+            "flac",
+        );
         assert_eq!(
             path.to_str().unwrap(),
             "/home/user/Music/Pink Floyd/1973 - Dark Side of the Moon/01 - Speak to Me.flac"
@@ -492,7 +522,10 @@ mod tests {
     fn test_subtitle_path() {
         let media = PathBuf::from("/videos/Movies/2024 - Dune/video.mp4");
         let sub = MediaStorage::subtitle_path(&media, Some("eng"), "srt");
-        assert_eq!(sub.to_str().unwrap(), "/videos/Movies/2024 - Dune/video.eng.srt");
+        assert_eq!(
+            sub.to_str().unwrap(),
+            "/videos/Movies/2024 - Dune/video.eng.srt"
+        );
     }
 
     #[test]
