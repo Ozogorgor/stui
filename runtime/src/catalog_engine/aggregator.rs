@@ -273,34 +273,34 @@ const WEIGHTS_HORROR: &[RatingWeight] = &[
 
 #[allow(dead_code)] // pub API: used by CatalogEngine and engine/mod.rs
 const WEIGHTS_MUSIC: &[RatingWeight] = &[
+    // AOTY critic: curated reviewers, RT-tier signal for music.
     RatingWeight {
-        key: "tomatometer",
+        key: "aoty_critic",
+        weight: 0.30,
+        normalize: 10.0, // 0-100 → 0-10
+    },
+    // AOTY user: large public sample, vote counts trigger Bayesian shrinkage.
+    RatingWeight {
+        key: "aoty_user",
         weight: 0.20,
-        normalize: 10.0,
+        normalize: 10.0, // 0-100 → 0-10
     },
+    // Discogs: collector community ratings (0-5 native).
     RatingWeight {
-        key: "imdb",
+        key: "discogs",
+        weight: 0.20,
+        normalize: 0.5, // 0-5 → 0-10
+    },
+    // Last.fm: popularity/engagement, not quality (0-10 native).
+    RatingWeight {
+        key: "lastfm",
         weight: 0.20,
         normalize: 1.0,
     },
+    // MusicBrainz: weak quality signal (0-10 native).
     RatingWeight {
-        key: "audience_score",
-        weight: 0.35,
-        normalize: 10.0,
-    },
-    RatingWeight {
-        key: "tmdb",
-        weight: 0.25,
-        normalize: 1.0,
-    },
-    RatingWeight {
-        key: "anilist",
-        weight: 0.00,
-        normalize: 1.0,
-    },
-    RatingWeight {
-        key: "kitsu",
-        weight: 0.00,
+        key: "musicbrainz",
+        weight: 0.10,
         normalize: 1.0,
     },
 ];

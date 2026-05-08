@@ -7,23 +7,12 @@
 use serde::{Deserialize, Serialize};
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    error_codes, http_post_json,
-    id_sources, normalize_crew_role,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
-    CastMember, CastRole,
-    CatalogPlugin,
-    CreditsRequest, CreditsResponse,
-    CrewMember,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    EpisodeWire, EpisodesRequest, EpisodesResponse,
-    InitContext,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    RelatedRequest, RelatedResponse, RelationKind,
+    error_codes, http_post_json, id_sources, normalize_crew_role, parse_manifest, plugin_error,
+    plugin_info, stui_export_catalog_plugin, ArtworkRequest, ArtworkResponse, ArtworkSize,
+    ArtworkVariant, CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse,
+    CrewMember, EnrichRequest, EnrichResponse, EntryKind, EpisodeWire, EpisodesRequest,
+    EpisodesResponse, InitContext, LookupRequest, LookupResponse, Plugin, PluginEntry, PluginError,
+    PluginInitError, PluginManifest, PluginResult, RelatedRequest, RelatedResponse, RelationKind,
     SearchRequest, SearchResponse, SearchScope,
 };
 
@@ -44,11 +33,15 @@ impl AnilistPlugin {
 }
 
 impl Default for AnilistPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for AnilistPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> {
         // AniList's public GraphQL endpoint needs no key; init is a no-op.
@@ -63,10 +56,10 @@ fn classify_http_err(err: &str) -> PluginError {
         if let Some((code_str, body)) = rest.split_once(": ") {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
-                    404       => error_codes::UNKNOWN_ID,
-                    429       => error_codes::RATE_LIMITED,
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
                     500..=599 => error_codes::TRANSIENT,
-                    _         => error_codes::REMOTE_ERROR,
+                    _ => error_codes::REMOTE_ERROR,
                 };
                 return PluginError {
                     code: code.to_string(),
@@ -92,8 +85,8 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
 }
 
 fn gql(query: &'static str, variables: serde_json::Value) -> Result<String, PluginError> {
-    let body = serde_json::to_string(&GraphQLRequest { query, variables })
-        .map_err(|e| PluginError {
+    let body =
+        serde_json::to_string(&GraphQLRequest { query, variables }).map_err(|e| PluginError {
             code: error_codes::PARSE_ERROR.to_string(),
             message: format!("gql request encode: {e}"),
         })?;
@@ -104,7 +97,7 @@ fn gql(query: &'static str, variables: serde_json::Value) -> Result<String, Plug
 /// `format: MOVIE`; Series scope queries `format_in: [TV, TV_SHORT, ONA, OVA]`.
 fn scope_to_format_filter(scope: SearchScope) -> Result<(&'static str, bool), PluginError> {
     match scope {
-        SearchScope::Movie  => Ok(("MOVIE", false)),
+        SearchScope::Movie => Ok(("MOVIE", false)),
         SearchScope::Series => Ok(("[TV, TV_SHORT, ONA, OVA]", true)),
         _ => Err(PluginError {
             code: error_codes::UNSUPPORTED_SCOPE.to_string(),
@@ -118,7 +111,7 @@ fn scope_to_format_filter(scope: SearchScope) -> Result<(&'static str, bool), Pl
 impl CatalogPlugin for AnilistPlugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
         let entry_kind = match req.scope {
-            SearchScope::Movie  => EntryKind::Movie,
+            SearchScope::Movie => EntryKind::Movie,
             SearchScope::Series => EntryKind::Series,
             _ => {
                 return PluginResult::err(
@@ -133,8 +126,12 @@ impl CatalogPlugin for AnilistPlugin {
         };
 
         let query_str = req.query.trim();
-        let page    = req.page.max(1) as i32;
-        let per_page = if req.limit == 0 { 20 } else { req.limit.min(50) as i32 };
+        let page = req.page.max(1) as i32;
+        let per_page = if req.limit == 0 {
+            20
+        } else {
+            req.limit.min(50) as i32
+        };
 
         // Both trending and search share the Page wrapper; the only difference
         // is the media(...) argument set. We build the arg fragment here so the
@@ -162,7 +159,12 @@ impl CatalogPlugin for AnilistPlugin {
             )
         };
 
-        plugin_info!("anilist: search '{}' (scope={:?}, page={})", query_str, req.scope, page);
+        plugin_info!(
+            "anilist: search '{}' (scope={:?}, page={})",
+            query_str,
+            req.scope,
+            page
+        );
 
         let raw = match gql(Box::leak(query_template.into_boxed_str()), variables) {
             Ok(b) => b,
@@ -173,14 +175,20 @@ impl CatalogPlugin for AnilistPlugin {
             Err(e) => return PluginResult::Err(e),
         };
         if let Some(errors) = gql_resp.errors {
-            let msg = errors.first().map(|e| e.message.clone()).unwrap_or_default();
+            let msg = errors
+                .first()
+                .map(|e| e.message.clone())
+                .unwrap_or_default();
             return PluginResult::err(error_codes::REMOTE_ERROR, &format!("anilist: {msg}"));
         }
         let Some(data) = gql_resp.data else {
             return PluginResult::err(error_codes::REMOTE_ERROR, "anilist: empty data payload");
         };
 
-        let items: Vec<PluginEntry> = data.page.media.into_iter()
+        let items: Vec<PluginEntry> = data
+            .page
+            .media
+            .into_iter()
             .map(|m| m.into_entry(entry_kind))
             .collect();
         let total = data.page.page_info.total.unwrap_or(items.len() as u32);
@@ -190,33 +198,39 @@ impl CatalogPlugin for AnilistPlugin {
     fn lookup(&self, req: LookupRequest) -> PluginResult<LookupResponse> {
         let entry_kind = match req.kind {
             EntryKind::Movie => EntryKind::Movie,
-            _                => EntryKind::Series,
+            _ => EntryKind::Series,
         };
         let (variables, query) = match req.id_source.as_str() {
             id_sources::ANILIST => {
                 let id: i64 = match req.id.parse() {
                     Ok(n) => n,
-                    Err(_) => return PluginResult::err(
-                        error_codes::UNKNOWN_ID,
-                        format!("anilist id must be numeric, got: {}", req.id),
-                    ),
+                    Err(_) => {
+                        return PluginResult::err(
+                            error_codes::UNKNOWN_ID,
+                            format!("anilist id must be numeric, got: {}", req.id),
+                        )
+                    }
                 };
                 (serde_json::json!({ "id": id }), LOOKUP_BY_ID_QUERY)
             }
             id_sources::MYANIMELIST => {
                 let id: i64 = match req.id.parse() {
                     Ok(n) => n,
-                    Err(_) => return PluginResult::err(
-                        error_codes::UNKNOWN_ID,
-                        format!("myanimelist id must be numeric, got: {}", req.id),
-                    ),
+                    Err(_) => {
+                        return PluginResult::err(
+                            error_codes::UNKNOWN_ID,
+                            format!("myanimelist id must be numeric, got: {}", req.id),
+                        )
+                    }
                 };
                 (serde_json::json!({ "idMal": id }), LOOKUP_BY_MAL_QUERY)
             }
-            other => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("unsupported id_source: {other}"),
-            ),
+            other => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("unsupported id_source: {other}"),
+                )
+            }
         };
 
         let raw = match gql(query, variables) {
@@ -277,20 +291,26 @@ impl CatalogPlugin for AnilistPlugin {
                 force_refresh: false,
             };
             return match self.lookup(lookup_req) {
-                PluginResult::Ok(r) => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 1.0 }),
+                PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
+                    entry: r.entry,
+                    confidence: 1.0,
+                }),
                 PluginResult::Err(e) => PluginResult::Err(e),
             };
         }
 
         let title = req.partial.title.trim();
         if title.is_empty() {
-            return PluginResult::err(error_codes::INVALID_REQUEST, "enrich: partial.title is empty");
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "enrich: partial.title is empty",
+            );
         }
         let search_req = SearchRequest {
             query: title.to_string(),
             scope: match req.partial.kind {
                 EntryKind::Movie => SearchScope::Movie,
-                _                => SearchScope::Series,
+                _ => SearchScope::Series,
             },
             page: 1,
             limit: 5,
@@ -303,8 +323,11 @@ impl CatalogPlugin for AnilistPlugin {
         };
 
         // Best-match: prefer equal-year hits over pure title-similarity.
-        let best = results.into_iter()
-            .max_by(|a, b| match_score(&req.partial, a).partial_cmp(&match_score(&req.partial, b)).unwrap_or(std::cmp::Ordering::Equal));
+        let best = results.into_iter().max_by(|a, b| {
+            match_score(&req.partial, a)
+                .partial_cmp(&match_score(&req.partial, b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         match best {
             Some(entry) => {
                 let confidence = match_score(&req.partial, &entry);
@@ -337,16 +360,44 @@ impl CatalogPlugin for AnilistPlugin {
         // cover image sizes (medium ~230×323, large ~460×645, extraLarge ~920×1290).
         let mut variants = Vec::new();
         if let Some(url) = media.external_ids.get("anilist_cover_medium") {
-            variants.push(ArtworkVariant { size: ArtworkSize::Thumbnail, url: url.clone(), mime: guess_mime(url), width: Some(230), height: Some(323) });
+            variants.push(ArtworkVariant {
+                size: ArtworkSize::Thumbnail,
+                url: url.clone(),
+                mime: guess_mime(url),
+                width: Some(230),
+                height: Some(323),
+            });
         }
-        if let Some(url) = media.external_ids.get("anilist_cover_large").or(media.poster_url.as_ref()) {
-            variants.push(ArtworkVariant { size: ArtworkSize::Standard, url: url.clone(), mime: guess_mime(url), width: Some(460), height: Some(645) });
+        if let Some(url) = media
+            .external_ids
+            .get("anilist_cover_large")
+            .or(media.poster_url.as_ref())
+        {
+            variants.push(ArtworkVariant {
+                size: ArtworkSize::Standard,
+                url: url.clone(),
+                mime: guess_mime(url),
+                width: Some(460),
+                height: Some(645),
+            });
         }
         if let Some(url) = media.external_ids.get("anilist_cover_extra_large") {
-            variants.push(ArtworkVariant { size: ArtworkSize::HiRes, url: url.clone(), mime: guess_mime(url), width: Some(920), height: Some(1290) });
+            variants.push(ArtworkVariant {
+                size: ArtworkSize::HiRes,
+                url: url.clone(),
+                mime: guess_mime(url),
+                width: Some(920),
+                height: Some(1290),
+            });
         }
         if let Some(url) = media.external_ids.get("anilist_banner") {
-            variants.push(ArtworkVariant { size: ArtworkSize::HiRes, url: url.clone(), mime: guess_mime(url), width: None, height: None });
+            variants.push(ArtworkVariant {
+                size: ArtworkSize::HiRes,
+                url: url.clone(),
+                mime: guess_mime(url),
+                width: None,
+                height: None,
+            });
         }
 
         // If requester asked for a specific size, surface matching variants first.
@@ -360,15 +411,20 @@ impl CatalogPlugin for AnilistPlugin {
         if req.id_source != id_sources::ANILIST {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("anilist credits only supports anilist id_source, got: {}", req.id_source),
+                format!(
+                    "anilist credits only supports anilist id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         let id: i64 = match req.id.parse() {
             Ok(n) => n,
-            Err(_) => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("anilist id must be numeric, got: {}", req.id),
-            ),
+            Err(_) => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("anilist id must be numeric, got: {}", req.id),
+                )
+            }
         };
         let raw = match gql(CREDITS_QUERY, serde_json::json!({ "id": id })) {
             Ok(b) => b,
@@ -391,17 +447,20 @@ impl CatalogPlugin for AnilistPlugin {
             .into_iter()
             .filter_map(|edge| {
                 let character_name = edge.node.name.and_then(|n| n.full);
-                let voice_actor = edge.voice_actors.into_iter().find_map(|va| va.name.and_then(|n| n.full));
+                let voice_actor = edge
+                    .voice_actors
+                    .into_iter()
+                    .find_map(|va| va.name.and_then(|n| n.full));
                 voice_actor.map(|name| CastMember {
                     name,
                     role: CastRole::Actor,
                     character: character_name,
                     instrument: None,
                     billing_order: edge.role.as_deref().and_then(|r| match r {
-                        "MAIN"       => Some(1),
+                        "MAIN" => Some(1),
                         "SUPPORTING" => Some(2),
                         "BACKGROUND" => Some(3),
-                        _            => None,
+                        _ => None,
                     }),
                     external_ids: Default::default(),
                 })
@@ -419,7 +478,11 @@ impl CatalogPlugin for AnilistPlugin {
                 Some(CrewMember {
                     name,
                     role: normalize_crew_role(&role_str),
-                    department: if role_str.is_empty() { None } else { Some(role_str) },
+                    department: if role_str.is_empty() {
+                        None
+                    } else {
+                        Some(role_str)
+                    },
                     external_ids: Default::default(),
                 })
             })
@@ -432,7 +495,10 @@ impl CatalogPlugin for AnilistPlugin {
         if req.id_source != id_sources::ANILIST {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("anilist related only supports anilist id_source, got: {}", req.id_source),
+                format!(
+                    "anilist related only supports anilist id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         // Map RelationKind → AniList recs/relations:
@@ -441,20 +507,24 @@ impl CatalogPlugin for AnilistPlugin {
         //  - SameStudio etc  → unsupported on AniList
         let (use_recs, wanted_relation_types): (bool, &[&str]) = match req.relation {
             RelationKind::Similar | RelationKind::Any => (true, &[]),
-            RelationKind::Sequel                      => (false, &["SEQUEL"]),
-            RelationKind::Compilation                 => (false, &["SIDE_STORY", "PARENT"]),
-            _ => return PluginResult::err(
-                error_codes::UNSUPPORTED_SCOPE,
-                format!("anilist does not surface {:?} relations", req.relation),
-            ),
+            RelationKind::Sequel => (false, &["SEQUEL"]),
+            RelationKind::Compilation => (false, &["SIDE_STORY", "PARENT"]),
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNSUPPORTED_SCOPE,
+                    format!("anilist does not surface {:?} relations", req.relation),
+                )
+            }
         };
 
         let id: i64 = match req.id.parse() {
             Ok(n) => n,
-            Err(_) => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("anilist id must be numeric, got: {}", req.id),
-            ),
+            Err(_) => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("anilist id must be numeric, got: {}", req.id),
+                )
+            }
         };
         let raw = match gql(RELATED_QUERY, serde_json::json!({ "id": id })) {
             Ok(b) => b,
@@ -468,9 +538,14 @@ impl CatalogPlugin for AnilistPlugin {
             return PluginResult::err(error_codes::UNKNOWN_ID, "anilist related: media not found");
         };
 
-        let limit = if req.limit == 0 { 20 } else { req.limit as usize };
+        let limit = if req.limit == 0 {
+            20
+        } else {
+            req.limit as usize
+        };
         let items: Vec<PluginEntry> = if use_recs {
-            media.recommendations
+            media
+                .recommendations
                 .map(|r| r.edges)
                 .unwrap_or_default()
                 .into_iter()
@@ -479,11 +554,14 @@ impl CatalogPlugin for AnilistPlugin {
                 .map(|m| m.into_entry(EntryKind::Series))
                 .collect()
         } else {
-            media.relations
+            media
+                .relations
                 .map(|r| r.edges)
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|edge| wanted_relation_types.contains(&edge.relation_type.as_deref().unwrap_or("")))
+                .filter(|edge| {
+                    wanted_relation_types.contains(&edge.relation_type.as_deref().unwrap_or(""))
+                })
                 .filter_map(|e| e.node)
                 .take(limit)
                 .map(|m| m.into_entry(EntryKind::Series))
@@ -496,7 +574,10 @@ impl CatalogPlugin for AnilistPlugin {
         if req.id_source != id_sources::ANILIST {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("anilist episodes only supports anilist id_source, got: {}", req.id_source),
+                format!(
+                    "anilist episodes only supports anilist id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         // Each cour is its own AniList Media id (the chain-walk in `lookup`
@@ -506,10 +587,12 @@ impl CatalogPlugin for AnilistPlugin {
         // TUI's grouping stays correct if the caller chose otherwise.
         let id: i64 = match req.series_id.parse() {
             Ok(n) => n,
-            Err(_) => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("anilist id must be numeric, got: {}", req.series_id),
-            ),
+            Err(_) => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("anilist id must be numeric, got: {}", req.series_id),
+                )
+            }
         };
         plugin_info!("anilist: episodes id={} season={}", id, req.season);
 
@@ -604,9 +687,13 @@ fn match_score(partial: &PluginEntry, candidate: &PluginEntry) -> f32 {
 
 fn guess_mime(url: &str) -> String {
     let lower = url.to_lowercase();
-    if lower.ends_with(".png") { "image/png".into() }
-    else if lower.ends_with(".webp") { "image/webp".into() }
-    else { "image/jpeg".into() }
+    if lower.ends_with(".png") {
+        "image/png".into()
+    } else if lower.ends_with(".webp") {
+        "image/webp".into()
+    } else {
+        "image/jpeg".into()
+    }
 }
 
 // ── GraphQL query strings ─────────────────────────────────────────────────────
@@ -988,16 +1075,22 @@ struct MediaStub {
 
 #[derive(Debug, Deserialize, Default)]
 struct AnimeTitle {
-    #[serde(default)] romaji:  Option<String>,
-    #[serde(default)] english: Option<String>,
-    #[serde(default)] native:  Option<String>,
+    #[serde(default)]
+    romaji: Option<String>,
+    #[serde(default)]
+    english: Option<String>,
+    #[serde(default)]
+    native: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct CoverImage {
-    #[serde(default)] medium:      Option<String>,
-    #[serde(default)] large:       Option<String>,
-    #[serde(rename = "extraLarge", default)] extra_large: Option<String>,
+    #[serde(default)]
+    medium: Option<String>,
+    #[serde(default)]
+    large: Option<String>,
+    #[serde(rename = "extraLarge", default)]
+    extra_large: Option<String>,
 }
 
 fn pick_title(t: AnimeTitle) -> String {
@@ -1047,16 +1140,20 @@ fn walk_chain(anchor_id: u64, anchor_relations: Option<&RelationConnection>) -> 
     let mut prefix: Vec<u64> = Vec::new();
     let mut current_relations: Option<RelationConnection> =
         anchor_relations.map(|r| RelationConnection {
-            edges: r.edges.iter().map(|e| RelationEdge {
-                relation_type: e.relation_type.clone(),
-                node: e.node.as_ref().map(|n| MediaStub {
-                    id: n.id,
-                    id_mal: n.id_mal,
-                    title: AnimeTitle::default(),
-                    season_year: n.season_year,
-                    cover_image: None,
-                }),
-            }).collect(),
+            edges: r
+                .edges
+                .iter()
+                .map(|e| RelationEdge {
+                    relation_type: e.relation_type.clone(),
+                    node: e.node.as_ref().map(|n| MediaStub {
+                        id: n.id,
+                        id_mal: n.id_mal,
+                        title: AnimeTitle::default(),
+                        season_year: n.season_year,
+                        cover_image: None,
+                    }),
+                })
+                .collect(),
         });
     let mut hops = 0;
     while let Some(prev_id) = first_relation_id(current_relations.as_ref(), "PREQUEL") {
@@ -1076,16 +1173,20 @@ fn walk_chain(anchor_id: u64, anchor_relations: Option<&RelationConnection>) -> 
     let mut suffix: Vec<u64> = Vec::new();
     // Restart from anchor's relations (we may have mutated current_relations above).
     current_relations = anchor_relations.map(|r| RelationConnection {
-        edges: r.edges.iter().map(|e| RelationEdge {
-            relation_type: e.relation_type.clone(),
-            node: e.node.as_ref().map(|n| MediaStub {
-                id: n.id,
-                id_mal: n.id_mal,
-                title: AnimeTitle::default(),
-                season_year: n.season_year,
-                cover_image: None,
-            }),
-        }).collect(),
+        edges: r
+            .edges
+            .iter()
+            .map(|e| RelationEdge {
+                relation_type: e.relation_type.clone(),
+                node: e.node.as_ref().map(|n| MediaStub {
+                    id: n.id,
+                    id_mal: n.id_mal,
+                    title: AnimeTitle::default(),
+                    season_year: n.season_year,
+                    cover_image: None,
+                }),
+            })
+            .collect(),
     });
     hops = 0;
     while let Some(next_id) = first_relation_id(current_relations.as_ref(), "SEQUEL") {
@@ -1131,20 +1232,43 @@ impl Media {
             // trailing "(Source: …)" attribution even when `asHtml: false`
             // is requested. Strip them through the SDK helper so the TUI
             // gets readable text.
-            description: self.description.as_deref().map(stui_plugin_sdk::clean_description),
+            description: self
+                .description
+                .as_deref()
+                .map(stui_plugin_sdk::clean_description),
             duration: self.duration,
-            genre: if self.genres.is_empty() { None } else { Some(self.genres.join(", ")) },
+            genre: if self.genres.is_empty() {
+                None
+            } else {
+                Some(self.genres.join(", "))
+            },
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::ANILIST.to_string(), self.id.to_string());
+        entry
+            .external_ids
+            .insert(id_sources::ANILIST.to_string(), self.id.to_string());
         if let Some(mal) = self.id_mal {
-            entry.external_ids.insert(id_sources::MYANIMELIST.to_string(), mal.to_string());
+            entry
+                .external_ids
+                .insert(id_sources::MYANIMELIST.to_string(), mal.to_string());
         }
         if let Some(ci) = self.cover_image {
-            entry.poster_url = ci.large.clone().or(ci.extra_large.clone()).or(ci.medium.clone());
-            if let Some(m) = ci.medium       { entry.external_ids.insert("anilist_cover_medium".into(), m); }
-            if let Some(l) = ci.large        { entry.external_ids.insert("anilist_cover_large".into(), l); }
-            if let Some(xl) = ci.extra_large { entry.external_ids.insert("anilist_cover_extra_large".into(), xl); }
+            entry.poster_url = ci
+                .large
+                .clone()
+                .or(ci.extra_large.clone())
+                .or(ci.medium.clone());
+            if let Some(m) = ci.medium {
+                entry.external_ids.insert("anilist_cover_medium".into(), m);
+            }
+            if let Some(l) = ci.large {
+                entry.external_ids.insert("anilist_cover_large".into(), l);
+            }
+            if let Some(xl) = ci.extra_large {
+                entry
+                    .external_ids
+                    .insert("anilist_cover_extra_large".into(), xl);
+            }
         }
         if let Some(b) = self.banner_image {
             entry.external_ids.insert("anilist_banner".into(), b);
@@ -1163,9 +1287,13 @@ impl MediaStub {
             year: self.season_year,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::ANILIST.to_string(), self.id.to_string());
+        entry
+            .external_ids
+            .insert(id_sources::ANILIST.to_string(), self.id.to_string());
         if let Some(mal) = self.id_mal {
-            entry.external_ids.insert(id_sources::MYANIMELIST.to_string(), mal.to_string());
+            entry
+                .external_ids
+                .insert(id_sources::MYANIMELIST.to_string(), mal.to_string());
         }
         if let Some(ci) = self.cover_image {
             entry.poster_url = ci.large.or(ci.extra_large);
@@ -1222,7 +1350,10 @@ mod tests {
     #[test]
     fn page_query_wraps_media_in_page_node_with_pagination_vars() {
         let q = build_page_query("type: ANIME, format: MOVIE");
-        assert!(q.contains("Page(page: $page, perPage: $perPage)"), "missing Page wrapper: {q}");
+        assert!(
+            q.contains("Page(page: $page, perPage: $perPage)"),
+            "missing Page wrapper: {q}"
+        );
         assert!(q.contains("media(type: ANIME, format: MOVIE)"));
         assert!(q.contains("pageInfo"));
     }
@@ -1236,13 +1367,21 @@ mod tests {
 
     #[test]
     fn pick_title_prefers_english_over_romaji() {
-        let t = AnimeTitle { english: Some("Attack on Titan".into()), romaji: Some("Shingeki no Kyojin".into()), native: None };
+        let t = AnimeTitle {
+            english: Some("Attack on Titan".into()),
+            romaji: Some("Shingeki no Kyojin".into()),
+            native: None,
+        };
         assert_eq!(pick_title(t), "Attack on Titan");
     }
 
     #[test]
     fn pick_title_falls_back_to_romaji_then_native() {
-        let t = AnimeTitle { english: None, romaji: Some("Romaji".into()), native: Some("Native".into()) };
+        let t = AnimeTitle {
+            english: None,
+            romaji: Some("Romaji".into()),
+            native: Some("Native".into()),
+        };
         assert_eq!(pick_title(t), "Romaji");
     }
 
@@ -1251,14 +1390,22 @@ mod tests {
         let m = Media {
             id: 16498,
             id_mal: Some(16498),
-            title: AnimeTitle { romaji: Some("SnK".into()), english: Some("AoT".into()), native: None },
+            title: AnimeTitle {
+                romaji: Some("SnK".into()),
+                english: Some("AoT".into()),
+                native: None,
+            },
             season_year: Some(2013),
             average_score: Some(86.0),
             episodes: Some(25),
             duration: Some(24),
             format: Some("TV".into()),
             description: Some("desc".into()),
-            cover_image: Some(CoverImage { medium: Some("m.jpg".into()), large: Some("l.jpg".into()), extra_large: Some("xl.jpg".into()) }),
+            cover_image: Some(CoverImage {
+                medium: Some("m.jpg".into()),
+                large: Some("l.jpg".into()),
+                extra_large: Some("xl.jpg".into()),
+            }),
             banner_image: Some("b.jpg".into()),
             genres: vec!["Action".into(), "Drama".into()],
             relations: None,
@@ -1269,16 +1416,36 @@ mod tests {
         assert_eq!(e.year, Some(2013));
         assert_eq!(e.rating, Some(8.6));
         assert_eq!(e.poster_url.as_deref(), Some("l.jpg"));
-        assert_eq!(e.external_ids.get(id_sources::ANILIST).map(String::as_str), Some("16498"));
-        assert_eq!(e.external_ids.get(id_sources::MYANIMELIST).map(String::as_str), Some("16498"));
+        assert_eq!(
+            e.external_ids.get(id_sources::ANILIST).map(String::as_str),
+            Some("16498")
+        );
+        assert_eq!(
+            e.external_ids
+                .get(id_sources::MYANIMELIST)
+                .map(String::as_str),
+            Some("16498")
+        );
         assert_eq!(e.genre.as_deref(), Some("Action, Drama"));
     }
 
     #[test]
     fn match_score_prefers_exact_title_plus_year() {
-        let p = PluginEntry { title: "Inception".into(), year: Some(2010), ..Default::default() };
-        let exact = PluginEntry { title: "Inception".into(), year: Some(2010), ..Default::default() };
-        let close = PluginEntry { title: "Inception II".into(), year: Some(2010), ..Default::default() };
+        let p = PluginEntry {
+            title: "Inception".into(),
+            year: Some(2010),
+            ..Default::default()
+        };
+        let exact = PluginEntry {
+            title: "Inception".into(),
+            year: Some(2010),
+            ..Default::default()
+        };
+        let close = PluginEntry {
+            title: "Inception II".into(),
+            year: Some(2010),
+            ..Default::default()
+        };
         assert!(match_score(&p, &exact) > match_score(&p, &close));
     }
 
@@ -1295,9 +1462,15 @@ mod tests {
         let payload = EpisodesPayload {
             episodes: Some(3),
             streaming_episodes: Some(vec![
-                StreamingEpisode { title: Some("To You, in 2000 Years".into()) },
-                StreamingEpisode { title: Some("That Day".into()) },
-                StreamingEpisode { title: Some("A Dim Light Amid Despair".into()) },
+                StreamingEpisode {
+                    title: Some("To You, in 2000 Years".into()),
+                },
+                StreamingEpisode {
+                    title: Some("That Day".into()),
+                },
+                StreamingEpisode {
+                    title: Some("A Dim Light Amid Despair".into()),
+                },
             ]),
         };
         let eps = build_episodes("16498", 1, payload);
@@ -1313,8 +1486,12 @@ mod tests {
         let payload = EpisodesPayload {
             episodes: Some(5),
             streaming_episodes: Some(vec![
-                StreamingEpisode { title: Some("Pilot".into()) },
-                StreamingEpisode { title: Some("Take Two".into()) },
+                StreamingEpisode {
+                    title: Some("Pilot".into()),
+                },
+                StreamingEpisode {
+                    title: Some("Take Two".into()),
+                },
             ]),
         };
         let eps = build_episodes("99", 1, payload);
@@ -1330,7 +1507,9 @@ mod tests {
         let payload = EpisodesPayload {
             episodes: Some(2),
             streaming_episodes: Some(vec![
-                StreamingEpisode { title: Some("   ".into()) },
+                StreamingEpisode {
+                    title: Some("   ".into()),
+                },
                 StreamingEpisode { title: None },
             ]),
         };
@@ -1352,7 +1531,10 @@ mod tests {
 
     #[test]
     fn build_episodes_returns_empty_when_no_signal() {
-        let payload = EpisodesPayload { episodes: None, streaming_episodes: None };
+        let payload = EpisodesPayload {
+            episodes: None,
+            streaming_episodes: None,
+        };
         assert!(build_episodes("1", 1, payload).is_empty());
     }
 
@@ -1361,8 +1543,12 @@ mod tests {
         let payload = EpisodesPayload {
             episodes: None,
             streaming_episodes: Some(vec![
-                StreamingEpisode { title: Some("A".into()) },
-                StreamingEpisode { title: Some("B".into()) },
+                StreamingEpisode {
+                    title: Some("A".into()),
+                },
+                StreamingEpisode {
+                    title: Some("B".into()),
+                },
             ]),
         };
         let eps = build_episodes("1", 1, payload);

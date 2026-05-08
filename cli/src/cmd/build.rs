@@ -74,10 +74,7 @@ pub fn run(release: bool) -> Result<()> {
 /// Return the expected `.wasm` artifact path by reading `package.name` from the
 /// plugin's own `Cargo.toml`.  The crate name is derived by replacing `-` with
 /// `_` (cargo's standard library-name mangling).
-fn wasm_artifact_path(
-    plugin_dir: &std::path::Path,
-    profile: &str,
-) -> Option<std::path::PathBuf> {
+fn wasm_artifact_path(plugin_dir: &std::path::Path, profile: &str) -> Option<std::path::PathBuf> {
     let cargo_text = std::fs::read_to_string(plugin_dir.join("Cargo.toml")).ok()?;
     let parsed: toml::Value = toml::from_str(&cargo_text).ok()?;
     let package_name = parsed
@@ -106,14 +103,40 @@ fn declared_stubs(manifest: &stui_plugin_sdk::PluginManifest) -> Vec<&'static st
     use stui_plugin_sdk::CatalogCapability;
 
     let mut stubs = Vec::new();
-    if let CatalogCapability::Typed { lookup, enrich, artwork, credits, related, .. } =
-        &manifest.capabilities.catalog
+    if let CatalogCapability::Typed {
+        lookup,
+        enrich,
+        artwork,
+        credits,
+        related,
+        ..
+    } = &manifest.capabilities.catalog
     {
-        if let Some(l) = lookup  { if l.is_stub() { stubs.push("lookup");  } }
-        if let Some(e) = enrich  { if e.is_stub() { stubs.push("enrich");  } }
-        if let Some(a) = artwork { if a.is_stub() { stubs.push("artwork"); } }
-        if let Some(c) = credits { if c.is_stub() { stubs.push("credits"); } }
-        if let Some(r) = related { if r.is_stub() { stubs.push("related"); } }
+        if let Some(l) = lookup {
+            if l.is_stub() {
+                stubs.push("lookup");
+            }
+        }
+        if let Some(e) = enrich {
+            if e.is_stub() {
+                stubs.push("enrich");
+            }
+        }
+        if let Some(a) = artwork {
+            if a.is_stub() {
+                stubs.push("artwork");
+            }
+        }
+        if let Some(c) = credits {
+            if c.is_stub() {
+                stubs.push("credits");
+            }
+        }
+        if let Some(r) = related {
+            if r.is_stub() {
+                stubs.push("related");
+            }
+        }
     }
     stubs
 }

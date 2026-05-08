@@ -46,8 +46,7 @@ pub fn run() -> Result<()> {
         anyhow::bail!("no plugin.toml in current directory");
     }
 
-    let manifest_text =
-        std::fs::read_to_string(&manifest_path).context("read plugin.toml")?;
+    let manifest_text = std::fs::read_to_string(&manifest_path).context("read plugin.toml")?;
     let manifest: stui_plugin_sdk::PluginManifest = toml::from_str(&manifest_text)
         .context("plugin.toml is not valid TOML against PluginManifest schema")?;
 

@@ -15,25 +15,15 @@
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    error_codes, http_get,
-    id_sources, normalize_crew_role,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
-    CastMember, CastRole,
-    CatalogPlugin,
-    CreditsRequest, CreditsResponse,
-    CrewMember,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    InitContext,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse, SearchScope,
+    error_codes, http_get, id_sources, normalize_crew_role, parse_manifest, plugin_error,
+    plugin_info, stui_export_catalog_plugin, ArtworkRequest, ArtworkResponse, ArtworkSize,
+    ArtworkVariant, CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse,
+    CrewMember, EnrichRequest, EnrichResponse, EntryKind, InitContext, LookupRequest,
+    LookupResponse, Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest,
+    PluginResult, SearchRequest, SearchResponse, SearchScope,
 };
 
-const WS_BASE:       &str = "https://musicbrainz.org/ws/2";
+const WS_BASE: &str = "https://musicbrainz.org/ws/2";
 const COVER_ART_BASE: &str = "https://coverartarchive.org";
 
 /// Project User-Agent per MB's terms of use. Not yet threaded through —
@@ -60,11 +50,15 @@ impl MusicbrainzPlugin {
 }
 
 impl Default for MusicbrainzPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for MusicbrainzPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> {
         // MusicBrainz's public API needs no key; init is a no-op.
@@ -79,34 +73,43 @@ fn classify_http_err(err: &str) -> PluginError {
         if let Some((code_str, body)) = rest.split_once(": ") {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
-                    404       => error_codes::UNKNOWN_ID,
-                    429       => error_codes::RATE_LIMITED,
-                    503       => error_codes::RATE_LIMITED,  // MB serves 503 on over-limit
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
+                    503 => error_codes::RATE_LIMITED, // MB serves 503 on over-limit
                     500..=599 => error_codes::TRANSIENT,
-                    _         => error_codes::REMOTE_ERROR,
+                    _ => error_codes::REMOTE_ERROR,
                 };
-                return PluginError { code: code.to_string(), message: format!("MB HTTP {status}: {body}") };
+                return PluginError {
+                    code: code.to_string(),
+                    message: format!("MB HTTP {status}: {body}"),
+                };
             }
         }
     }
-    PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
+    PluginError {
+        code: error_codes::TRANSIENT.to_string(),
+        message: err.to_string(),
+    }
 }
 
 fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("musicbrainz: parse error: {}", e);
-        PluginError { code: error_codes::PARSE_ERROR.to_string(), message: format!("MB JSON parse failure: {e}") }
+        PluginError {
+            code: error_codes::PARSE_ERROR.to_string(),
+            message: format!("MB JSON parse failure: {e}"),
+        }
     })
 }
 
 /// Scope → (MB search endpoint, EntryKind) mapping.
 fn scope_endpoint(scope: SearchScope) -> Result<(&'static str, EntryKind), PluginError> {
     match scope {
-        SearchScope::Artist => Ok(("artist",       EntryKind::Artist)),
+        SearchScope::Artist => Ok(("artist", EntryKind::Artist)),
         // MB models "albums" as release-groups; that aggregates reissues /
         // regional pressings into one logical record.
-        SearchScope::Album  => Ok(("release-group", EntryKind::Album)),
-        SearchScope::Track  => Ok(("recording",    EntryKind::Track)),
+        SearchScope::Album => Ok(("release-group", EntryKind::Album)),
+        SearchScope::Track => Ok(("recording", EntryKind::Track)),
         _ => Err(PluginError {
             code: error_codes::UNSUPPORTED_SCOPE.to_string(),
             message: "musicbrainz only supports artist, album, and track scopes".to_string(),
@@ -125,10 +128,17 @@ impl CatalogPlugin for MusicbrainzPlugin {
         let query = req.query.trim();
         if query.is_empty() {
             // MB has no "trending" — empty query yields zero results.
-            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+            return PluginResult::ok(SearchResponse {
+                items: vec![],
+                total: 0,
+            });
         }
 
-        let limit  = if req.limit == 0 { 20 } else { req.limit.min(100) };
+        let limit = if req.limit == 0 {
+            20
+        } else {
+            req.limit.min(100)
+        };
         let offset = req.page.saturating_sub(1).saturating_mul(limit);
 
         let url = format!(
@@ -155,13 +165,28 @@ impl CatalogPlugin for MusicbrainzPlugin {
         if req.id_source != id_sources::MUSICBRAINZ {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("mb lookup only supports musicbrainz id_source, got: {}", req.id_source),
+                format!(
+                    "mb lookup only supports musicbrainz id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         let (path, entry_kind, inc) = match req.kind {
-            EntryKind::Artist => (format!("/artist/{}", urlencoding::encode(&req.id)),          EntryKind::Artist, "aliases+tags"),
-            EntryKind::Album  => (format!("/release-group/{}", urlencoding::encode(&req.id)),   EntryKind::Album,  "artists+releases+tags"),
-            EntryKind::Track  => (format!("/recording/{}", urlencoding::encode(&req.id)),       EntryKind::Track,  "artists+releases+tags"),
+            EntryKind::Artist => (
+                format!("/artist/{}", urlencoding::encode(&req.id)),
+                EntryKind::Artist,
+                "aliases+tags",
+            ),
+            EntryKind::Album => (
+                format!("/release-group/{}", urlencoding::encode(&req.id)),
+                EntryKind::Album,
+                "artists+releases+tags",
+            ),
+            EntryKind::Track => (
+                format!("/recording/{}", urlencoding::encode(&req.id)),
+                EntryKind::Track,
+                "artists+releases+tags",
+            ),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -205,14 +230,20 @@ impl CatalogPlugin for MusicbrainzPlugin {
                 force_refresh: false,
             };
             return match self.lookup(lookup_req) {
-                PluginResult::Ok(r)  => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 1.0 }),
+                PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
+                    entry: r.entry,
+                    confidence: 1.0,
+                }),
                 PluginResult::Err(e) => PluginResult::Err(e),
             };
         }
 
         let title = req.partial.title.trim();
         if title.is_empty() {
-            return PluginResult::err(error_codes::INVALID_REQUEST, "enrich: partial.title is empty");
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "enrich: partial.title is empty",
+            );
         }
 
         // Build a Lucene query combining title + artist hint when present. MB's
@@ -228,8 +259,8 @@ impl CatalogPlugin for MusicbrainzPlugin {
         }
         let scope = match req.partial.kind {
             EntryKind::Artist => SearchScope::Artist,
-            EntryKind::Album  => SearchScope::Album,
-            _                 => SearchScope::Track,
+            EntryKind::Album => SearchScope::Album,
+            _ => SearchScope::Track,
         };
         let search_req = SearchRequest {
             query: query_parts.join(" "),
@@ -240,12 +271,15 @@ impl CatalogPlugin for MusicbrainzPlugin {
             locale: None,
         };
         let results = match self.search(search_req) {
-            PluginResult::Ok(r)  => r.items,
+            PluginResult::Ok(r) => r.items,
             PluginResult::Err(e) => return PluginResult::Err(e),
         };
 
-        let best = results.into_iter()
-            .max_by(|a, b| enrich_score(&req.partial, a).partial_cmp(&enrich_score(&req.partial, b)).unwrap_or(std::cmp::Ordering::Equal));
+        let best = results.into_iter().max_by(|a, b| {
+            enrich_score(&req.partial, a)
+                .partial_cmp(&enrich_score(&req.partial, b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         match best {
             Some(entry) => {
                 let confidence = enrich_score(&req.partial, &entry);
@@ -292,11 +326,33 @@ impl CatalogPlugin for MusicbrainzPlugin {
         let mut variants = Vec::new();
         for img in caa.images.into_iter() {
             if let Some(thumbs) = img.thumbnails {
-                if let Some(url) = thumbs.small  { variants.push(ArtworkVariant { size: ArtworkSize::Thumbnail, url, mime: "image/jpeg".into(), width: Some(250), height: None }); }
-                if let Some(url) = thumbs.large  { variants.push(ArtworkVariant { size: ArtworkSize::Standard,  url, mime: "image/jpeg".into(), width: Some(500), height: None }); }
+                if let Some(url) = thumbs.small {
+                    variants.push(ArtworkVariant {
+                        size: ArtworkSize::Thumbnail,
+                        url,
+                        mime: "image/jpeg".into(),
+                        width: Some(250),
+                        height: None,
+                    });
+                }
+                if let Some(url) = thumbs.large {
+                    variants.push(ArtworkVariant {
+                        size: ArtworkSize::Standard,
+                        url,
+                        mime: "image/jpeg".into(),
+                        width: Some(500),
+                        height: None,
+                    });
+                }
             }
             if let Some(url) = img.image {
-                variants.push(ArtworkVariant { size: ArtworkSize::HiRes, url, mime: "image/jpeg".into(), width: None, height: None });
+                variants.push(ArtworkVariant {
+                    size: ArtworkSize::HiRes,
+                    url,
+                    mime: "image/jpeg".into(),
+                    width: None,
+                    height: None,
+                });
             }
         }
         if !matches!(req.size, ArtworkSize::Any) {
@@ -316,8 +372,14 @@ impl CatalogPlugin for MusicbrainzPlugin {
         // For album scope we walk all recordings in the release-group; for track,
         // we just query the recording and its artist-relationships.
         let (path, inc) = match req.kind {
-            EntryKind::Track => (format!("/recording/{}", urlencoding::encode(&req.id)),        "artist-credits+work-rels+artist-rels"),
-            EntryKind::Album => (format!("/release-group/{}", urlencoding::encode(&req.id)),    "artist-credits+artist-rels"),
+            EntryKind::Track => (
+                format!("/recording/{}", urlencoding::encode(&req.id)),
+                "artist-credits+work-rels+artist-rels",
+            ),
+            EntryKind::Album => (
+                format!("/release-group/{}", urlencoding::encode(&req.id)),
+                "artist-credits+artist-rels",
+            ),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -340,10 +402,17 @@ impl CatalogPlugin for MusicbrainzPlugin {
             Err(e) => return PluginResult::Err(e),
         };
 
-        let cast: Vec<CastMember> = payload.artist_credit.unwrap_or_default().into_iter()
+        let cast: Vec<CastMember> = payload
+            .artist_credit
+            .unwrap_or_default()
+            .into_iter()
             .filter_map(|ac| {
-                let name = ac.name.or_else(|| ac.artist.as_ref().map(|a| a.name.clone()))?;
-                if name.is_empty() { None } else {
+                let name = ac
+                    .name
+                    .or_else(|| ac.artist.as_ref().map(|a| a.name.clone()))?;
+                if name.is_empty() {
+                    None
+                } else {
                     let mut m = CastMember {
                         name,
                         role: CastRole::FeaturedArtist,
@@ -353,18 +422,24 @@ impl CatalogPlugin for MusicbrainzPlugin {
                         external_ids: Default::default(),
                     };
                     if let Some(a) = ac.artist {
-                        m.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), a.id);
+                        m.external_ids
+                            .insert(id_sources::MUSICBRAINZ.to_string(), a.id);
                     }
                     Some(m)
                 }
             })
             .collect();
 
-        let crew: Vec<CrewMember> = payload.relations.unwrap_or_default().into_iter()
+        let crew: Vec<CrewMember> = payload
+            .relations
+            .unwrap_or_default()
+            .into_iter()
             .filter_map(|rel| {
                 let role_str = rel.rel_type?;
                 let name = rel.artist.as_ref().map(|a| a.name.clone())?;
-                if name.is_empty() { return None; }
+                if name.is_empty() {
+                    return None;
+                }
                 let mut m = CrewMember {
                     name,
                     role: normalize_crew_role(&role_str),
@@ -372,7 +447,8 @@ impl CatalogPlugin for MusicbrainzPlugin {
                     external_ids: Default::default(),
                 };
                 if let Some(a) = rel.artist {
-                    m.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), a.id);
+                    m.external_ids
+                        .insert(id_sources::MUSICBRAINZ.to_string(), a.id);
                 }
                 Some(m)
             })
@@ -413,14 +489,26 @@ fn enrich_score(partial: &PluginEntry, candidate: &PluginEntry) -> f32 {
 /// Flatten MB's `artist-credit` array into a display name like
 /// `"Artist A feat. Artist B"`. MB sets `joinphrase` between credits.
 fn join_artist_credit(ac: &[ArtistCredit]) -> Option<String> {
-    if ac.is_empty() { return None; }
+    if ac.is_empty() {
+        return None;
+    }
     let mut out = String::new();
     for c in ac {
-        let name = c.name.clone().or_else(|| c.artist.as_ref().map(|a| a.name.clone())).unwrap_or_default();
+        let name = c
+            .name
+            .clone()
+            .or_else(|| c.artist.as_ref().map(|a| a.name.clone()))
+            .unwrap_or_default();
         out.push_str(&name);
-        if let Some(jp) = &c.joinphrase { out.push_str(jp); }
+        if let Some(jp) = &c.joinphrase {
+            out.push_str(jp);
+        }
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn first_year(date: Option<&str>) -> Option<u32> {
@@ -433,17 +521,26 @@ fn first_year(date: Option<&str>) -> Option<u32> {
 // top-level envelope. Each inner object varies.
 
 fn parse_artist_search(body: &str) -> Vec<ArtistHit> {
-    let env: ArtistSearchEnvelope = match parse_json(body) { Ok(e) => e, Err(_) => return Vec::new() };
+    let env: ArtistSearchEnvelope = match parse_json(body) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
     env.artists
 }
 
 fn parse_release_group_search(body: &str) -> Vec<ReleaseGroupHit> {
-    let env: ReleaseGroupSearchEnvelope = match parse_json(body) { Ok(e) => e, Err(_) => return Vec::new() };
+    let env: ReleaseGroupSearchEnvelope = match parse_json(body) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
     env.release_groups
 }
 
 fn parse_recording_search(body: &str) -> Vec<RecordingHit> {
-    let env: RecordingSearchEnvelope = match parse_json(body) { Ok(e) => e, Err(_) => return Vec::new() };
+    let env: RecordingSearchEnvelope = match parse_json(body) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
     env.recordings
 }
 
@@ -468,11 +565,16 @@ struct RecordingSearchEnvelope {
 #[derive(Debug, Deserialize, Clone)]
 struct ArtistHit {
     id: String,
-    #[serde(default)] name: String,
-    #[serde(rename = "sort-name", default)] _sort_name: Option<String>,
-    #[serde(default)] disambiguation: Option<String>,
-    #[serde(default)] country: Option<String>,
-    #[serde(default)] score: Option<u32>,
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "sort-name", default)]
+    _sort_name: Option<String>,
+    #[serde(default)]
+    disambiguation: Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    score: Option<u32>,
 }
 
 impl ArtistHit {
@@ -486,7 +588,9 @@ impl ArtistHit {
             description: self.disambiguation.or(self.country),
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.id);
+        entry
+            .external_ids
+            .insert(id_sources::MUSICBRAINZ.to_string(), self.id);
         let _ = self.score;
         entry
     }
@@ -495,11 +599,16 @@ impl ArtistHit {
 #[derive(Debug, Deserialize)]
 struct ReleaseGroupHit {
     id: String,
-    #[serde(default)] title: String,
-    #[serde(rename = "first-release-date", default)] first_release_date: Option<String>,
-    #[serde(rename = "artist-credit", default)] artist_credit: Vec<ArtistCredit>,
-    #[serde(rename = "primary-type", default)] primary_type: Option<String>,
-    #[serde(default)] disambiguation: Option<String>,
+    #[serde(default)]
+    title: String,
+    #[serde(rename = "first-release-date", default)]
+    first_release_date: Option<String>,
+    #[serde(rename = "artist-credit", default)]
+    artist_credit: Vec<ArtistCredit>,
+    #[serde(rename = "primary-type", default)]
+    primary_type: Option<String>,
+    #[serde(default)]
+    disambiguation: Option<String>,
 }
 
 impl ReleaseGroupHit {
@@ -527,7 +636,9 @@ impl ReleaseGroupHit {
             poster_url,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.id);
+        entry
+            .external_ids
+            .insert(id_sources::MUSICBRAINZ.to_string(), self.id);
         entry
     }
 }
@@ -535,16 +646,22 @@ impl ReleaseGroupHit {
 #[derive(Debug, Deserialize)]
 struct RecordingHit {
     id: String,
-    #[serde(default)] title: String,
-    #[serde(rename = "artist-credit", default)] artist_credit: Vec<ArtistCredit>,
-    #[serde(default)] length: Option<u32>,     // milliseconds
-    #[serde(default)] releases: Vec<ReleaseSummary>,
+    #[serde(default)]
+    title: String,
+    #[serde(rename = "artist-credit", default)]
+    artist_credit: Vec<ArtistCredit>,
+    #[serde(default)]
+    length: Option<u32>, // milliseconds
+    #[serde(default)]
+    releases: Vec<ReleaseSummary>,
 }
 
 impl RecordingHit {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let artist = join_artist_credit(&self.artist_credit);
-        let (album, year) = self.releases.first()
+        let (album, year) = self
+            .releases
+            .first()
             .map(|r| (Some(r.title.clone()), first_year(r.date.as_deref())))
             .unwrap_or((None, None));
         let duration_sec = self.length.map(|ms| ms / 1000);
@@ -559,28 +676,36 @@ impl RecordingHit {
             duration: duration_sec,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.id);
+        entry
+            .external_ids
+            .insert(id_sources::MUSICBRAINZ.to_string(), self.id);
         entry
     }
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct ReleaseSummary {
-    #[serde(default)] title: String,
-    #[serde(default)] date: Option<String>,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    date: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct ArtistCredit {
-    #[serde(default)] name: Option<String>,
-    #[serde(default)] joinphrase: Option<String>,
-    #[serde(default)] artist: Option<ArtistRef>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    joinphrase: Option<String>,
+    #[serde(default)]
+    artist: Option<ArtistRef>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 struct ArtistRef {
     id: String,
-    #[serde(default)] name: String,
+    #[serde(default)]
+    name: String,
 }
 
 // Lookup payloads reuse the hit shapes but add a few detail fields.
@@ -588,15 +713,20 @@ struct ArtistRef {
 #[derive(Debug, Deserialize)]
 struct ArtistDetail {
     id: String,
-    #[serde(default)] name: String,
-    #[serde(default)] disambiguation: Option<String>,
-    #[serde(default)] country: Option<String>,
-    #[serde(rename = "life-span", default)] life_span: Option<LifeSpan>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    disambiguation: Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(rename = "life-span", default)]
+    life_span: Option<LifeSpan>,
 }
 
 #[derive(Debug, Deserialize)]
 struct LifeSpan {
-    #[serde(default)] begin: Option<String>,
+    #[serde(default)]
+    begin: Option<String>,
 }
 
 impl ArtistDetail {
@@ -612,7 +742,9 @@ impl ArtistDetail {
             description: self.disambiguation.or(self.country),
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.id);
+        entry
+            .external_ids
+            .insert(id_sources::MUSICBRAINZ.to_string(), self.id);
         entry
     }
 }
@@ -620,12 +752,18 @@ impl ArtistDetail {
 #[derive(Debug, Deserialize)]
 struct ReleaseGroupDetail {
     id: String,
-    #[serde(default)] title: String,
-    #[serde(rename = "first-release-date", default)] first_release_date: Option<String>,
-    #[serde(rename = "artist-credit", default)] artist_credit: Vec<ArtistCredit>,
-    #[serde(rename = "primary-type", default)] primary_type: Option<String>,
-    #[serde(default)] disambiguation: Option<String>,
-    #[serde(default)] tags: Vec<Tag>,
+    #[serde(default)]
+    title: String,
+    #[serde(rename = "first-release-date", default)]
+    first_release_date: Option<String>,
+    #[serde(rename = "artist-credit", default)]
+    artist_credit: Vec<ArtistCredit>,
+    #[serde(rename = "primary-type", default)]
+    primary_type: Option<String>,
+    #[serde(default)]
+    disambiguation: Option<String>,
+    #[serde(default)]
+    tags: Vec<Tag>,
 }
 
 impl ReleaseGroupDetail {
@@ -639,7 +777,9 @@ impl ReleaseGroupDetail {
             disambiguation: self.disambiguation,
         };
         let mut entry = hit.into_entry(EntryKind::Album);
-        let tag_list: Vec<String> = self.tags.into_iter()
+        let tag_list: Vec<String> = self
+            .tags
+            .into_iter()
             .filter(|t| t.count.unwrap_or(0) > 0)
             .map(|t| t.name)
             .take(5)
@@ -648,7 +788,7 @@ impl ReleaseGroupDetail {
             // Append tag list to existing genre (primary-type).
             entry.genre = Some(match entry.genre {
                 Some(g) => format!("{g} ({})", tag_list.join(", ")),
-                None    => tag_list.join(", "),
+                None => tag_list.join(", "),
             });
         }
         entry
@@ -658,11 +798,16 @@ impl ReleaseGroupDetail {
 #[derive(Debug, Deserialize)]
 struct RecordingDetail {
     id: String,
-    #[serde(default)] title: String,
-    #[serde(rename = "artist-credit", default)] artist_credit: Vec<ArtistCredit>,
-    #[serde(default)] length: Option<u32>,
-    #[serde(default)] releases: Vec<ReleaseSummary>,
-    #[serde(default)] disambiguation: Option<String>,
+    #[serde(default)]
+    title: String,
+    #[serde(rename = "artist-credit", default)]
+    artist_credit: Vec<ArtistCredit>,
+    #[serde(default)]
+    length: Option<u32>,
+    #[serde(default)]
+    releases: Vec<ReleaseSummary>,
+    #[serde(default)]
+    disambiguation: Option<String>,
 }
 
 impl RecordingDetail {
@@ -682,8 +827,10 @@ impl RecordingDetail {
 
 #[derive(Debug, Deserialize)]
 struct Tag {
-    #[serde(default)] name: String,
-    #[serde(default)] count: Option<u32>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    count: Option<u32>,
 }
 
 // Credits-payload shape covers both `/recording/{id}?inc=...` and
@@ -699,8 +846,10 @@ struct CreditsPayload {
 
 #[derive(Debug, Deserialize)]
 struct Relation {
-    #[serde(rename = "type", default)] rel_type: Option<String>,
-    #[serde(default)] artist: Option<ArtistRef>,
+    #[serde(rename = "type", default)]
+    rel_type: Option<String>,
+    #[serde(default)]
+    artist: Option<ArtistRef>,
 }
 
 // Cover Art Archive envelope.
@@ -713,14 +862,18 @@ struct CoverArtArchive {
 
 #[derive(Debug, Deserialize)]
 struct CoverArtImage {
-    #[serde(default)] image: Option<String>,
-    #[serde(default)] thumbnails: Option<CoverThumbnails>,
+    #[serde(default)]
+    image: Option<String>,
+    #[serde(default)]
+    thumbnails: Option<CoverThumbnails>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CoverThumbnails {
-    #[serde(default)] small: Option<String>,
-    #[serde(default)] large: Option<String>,
+    #[serde(default)]
+    small: Option<String>,
+    #[serde(default)]
+    large: Option<String>,
 }
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
@@ -752,8 +905,11 @@ mod tests {
     #[test]
     fn scope_mapping_covers_artist_album_track() {
         assert_eq!(scope_endpoint(SearchScope::Artist).unwrap().0, "artist");
-        assert_eq!(scope_endpoint(SearchScope::Album ).unwrap().0, "release-group");
-        assert_eq!(scope_endpoint(SearchScope::Track ).unwrap().0, "recording");
+        assert_eq!(
+            scope_endpoint(SearchScope::Album).unwrap().0,
+            "release-group"
+        );
+        assert_eq!(scope_endpoint(SearchScope::Track).unwrap().0, "recording");
     }
 
     #[test]
@@ -763,19 +919,30 @@ mod tests {
 
     #[test]
     fn first_year_handles_mb_date_variants() {
-        assert_eq!(first_year(Some("1998")),       Some(1998));
+        assert_eq!(first_year(Some("1998")), Some(1998));
         assert_eq!(first_year(Some("1998-04-03")), Some(1998));
-        assert_eq!(first_year(Some("")),           None);
-        assert_eq!(first_year(None),               None);
+        assert_eq!(first_year(Some("")), None);
+        assert_eq!(first_year(None), None);
     }
 
     #[test]
     fn join_artist_credit_uses_joinphrase_between_names() {
         let ac = vec![
-            ArtistCredit { name: Some("Queen".into()),     joinphrase: Some(" feat. ".into()), artist: None },
-            ArtistCredit { name: Some("David Bowie".into()), joinphrase: None, artist: None },
+            ArtistCredit {
+                name: Some("Queen".into()),
+                joinphrase: Some(" feat. ".into()),
+                artist: None,
+            },
+            ArtistCredit {
+                name: Some("David Bowie".into()),
+                joinphrase: None,
+                artist: None,
+            },
         ];
-        assert_eq!(join_artist_credit(&ac).as_deref(), Some("Queen feat. David Bowie"));
+        assert_eq!(
+            join_artist_credit(&ac).as_deref(),
+            Some("Queen feat. David Bowie")
+        );
     }
 
     #[test]
@@ -790,7 +957,12 @@ mod tests {
         };
         let e = h.into_entry(EntryKind::Artist);
         assert_eq!(e.description.as_deref(), Some("IS"));
-        assert_eq!(e.external_ids.get(id_sources::MUSICBRAINZ).map(String::as_str), Some("abc"));
+        assert_eq!(
+            e.external_ids
+                .get(id_sources::MUSICBRAINZ)
+                .map(String::as_str),
+            Some("abc")
+        );
     }
 
     #[test]
@@ -799,7 +971,11 @@ mod tests {
             id: "rg-id".into(),
             title: "OK Computer".into(),
             first_release_date: Some("1997-05-21".into()),
-            artist_credit: vec![ArtistCredit { name: Some("Radiohead".into()), joinphrase: None, artist: None }],
+            artist_credit: vec![ArtistCredit {
+                name: Some("Radiohead".into()),
+                joinphrase: None,
+                artist: None,
+            }],
             primary_type: Some("Album".into()),
             disambiguation: None,
         };
@@ -815,9 +991,16 @@ mod tests {
         let r = RecordingHit {
             id: "rec-id".into(),
             title: "Karma Police".into(),
-            artist_credit: vec![ArtistCredit { name: Some("Radiohead".into()), joinphrase: None, artist: None }],
+            artist_credit: vec![ArtistCredit {
+                name: Some("Radiohead".into()),
+                joinphrase: None,
+                artist: None,
+            }],
             length: Some(261000),
-            releases: vec![ReleaseSummary { title: "OK Computer".into(), date: Some("1997-05-21".into()) }],
+            releases: vec![ReleaseSummary {
+                title: "OK Computer".into(),
+                date: Some("1997-05-21".into()),
+            }],
         };
         let e = r.into_entry(EntryKind::Track);
         assert_eq!(e.duration, Some(261));
@@ -827,9 +1010,13 @@ mod tests {
 
     #[test]
     fn enrich_score_rewards_full_match() {
-        let mut partial = PluginEntry { title: "Karma Police".into(), kind: EntryKind::Track, ..Default::default() };
+        let mut partial = PluginEntry {
+            title: "Karma Police".into(),
+            kind: EntryKind::Track,
+            ..Default::default()
+        };
         partial.artist_name = Some("Radiohead".into());
-        partial.album_name  = Some("OK Computer".into());
+        partial.album_name = Some("OK Computer".into());
         let mut full = partial.clone();
         full.id = "candidate-1".into();
         let mut partial_match = partial.clone();

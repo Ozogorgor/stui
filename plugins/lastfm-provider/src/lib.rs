@@ -13,15 +13,9 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, error_codes, http_get, id_sources,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    CatalogPlugin,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    InitContext,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
+    cache_get, error_codes, http_get, id_sources, parse_manifest, plugin_error, plugin_info,
+    stui_export_catalog_plugin, CatalogPlugin, EnrichRequest, EnrichResponse, EntryKind,
+    InitContext, Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
     SearchRequest, SearchResponse, SearchScope,
 };
 
@@ -38,7 +32,10 @@ impl LastfmPlugin {
     pub fn new() -> Self {
         let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
-        Self { manifest, api_key: OnceLock::new() }
+        Self {
+            manifest,
+            api_key: OnceLock::new(),
+        }
     }
 
     #[cfg(test)]
@@ -64,14 +61,22 @@ impl LastfmPlugin {
 }
 
 impl Default for LastfmPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for LastfmPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
-        let key = ctx.config.get("api_key").and_then(|v| v.as_str()).map(str::to_string)
+        let key = ctx
+            .config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
             .or_else(|| ctx.env.get("LASTFM_API_KEY").cloned())
             .unwrap_or_default();
         if key.is_empty() {
@@ -93,16 +98,22 @@ fn classify_http_err(err: &str) -> PluginError {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
                     401 | 403 => error_codes::INVALID_REQUEST,
-                    404       => error_codes::UNKNOWN_ID,
-                    429       => error_codes::RATE_LIMITED,
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
                     500..=599 => error_codes::TRANSIENT,
-                    _         => error_codes::REMOTE_ERROR,
+                    _ => error_codes::REMOTE_ERROR,
                 };
-                return PluginError { code: code.to_string(), message: format!("lastfm HTTP {status}: {body}") };
+                return PluginError {
+                    code: code.to_string(),
+                    message: format!("lastfm HTTP {status}: {body}"),
+                };
             }
         }
     }
-    PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
+    PluginError {
+        code: error_codes::TRANSIENT.to_string(),
+        message: err.to_string(),
+    }
 }
 
 /// Last.fm error-envelope shape: `{"error": N, "message": "..."}`. When
@@ -139,7 +150,12 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
 fn pick_image(images: Vec<Image>) -> Option<String> {
     // Prefer extralarge → large → mega → anything non-empty.
     for want in ["extralarge", "large", "mega"] {
-        if let Some(u) = images.iter().find(|i| i.size == want).map(|i| i.text.clone()).filter(|s| !s.is_empty()) {
+        if let Some(u) = images
+            .iter()
+            .find(|i| i.size == want)
+            .map(|i| i.text.clone())
+            .filter(|s| !s.is_empty())
+        {
             return Some(u);
         }
     }
@@ -156,7 +172,11 @@ fn format_stats(listeners: Option<&str>, playcount: Option<&str>) -> Option<Stri
     if let Some(v) = playcount.filter(|s| !s.is_empty()) {
         parts.push(format!("{} plays", thousands(v)));
     }
-    if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
 }
 
 fn thousands(raw: &str) -> String {
@@ -183,8 +203,8 @@ impl CatalogPlugin for LastfmPlugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
         let entry_kind = match req.scope {
             SearchScope::Artist => EntryKind::Artist,
-            SearchScope::Album  => EntryKind::Album,
-            SearchScope::Track  => EntryKind::Track,
+            SearchScope::Album => EntryKind::Album,
+            SearchScope::Track => EntryKind::Track,
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -198,7 +218,11 @@ impl CatalogPlugin for LastfmPlugin {
         };
 
         let query = req.query.trim();
-        let limit = if req.limit == 0 { 20 } else { req.limit.min(50) as usize };
+        let limit = if req.limit == 0 {
+            20
+        } else {
+            req.limit.min(50) as usize
+        };
 
         // Default-state Album browse (no query) needs special handling:
         // Last.fm has no chart.gettopalbums endpoint, so we aggregate
@@ -207,12 +231,8 @@ impl CatalogPlugin for LastfmPlugin {
         // future genre-filter dropdown lands — that just routes a single
         // user-selected tag through the same per-tag fetch.
         if matches!(req.scope, SearchScope::Album) && query.is_empty() {
-            let items = aggregate_top_albums_by_tags(
-                &api_key,
-                AGGREGATE_SEED_TAGS,
-                limit,
-                entry_kind,
-            );
+            let items =
+                aggregate_top_albums_by_tags(&api_key, AGGREGATE_SEED_TAGS, limit, entry_kind);
             let total = items.len() as u32;
             return PluginResult::ok(SearchResponse { items, total });
         }
@@ -221,26 +241,30 @@ impl CatalogPlugin for LastfmPlugin {
             // Artist + Track charts still use the chart.* endpoints.
             let method = match req.scope {
                 SearchScope::Artist => "chart.gettopartists",
-                _                   => "chart.gettoptracks",
+                _ => "chart.gettoptracks",
             };
             format!("{API_BASE}?method={method}&api_key={api_key}&format=json&limit={limit}")
         } else {
             let method = match req.scope {
                 SearchScope::Artist => "artist.search",
-                SearchScope::Album  => "album.search",
-                _                   => "track.search",
+                SearchScope::Album => "album.search",
+                _ => "track.search",
             };
             let param = match req.scope {
                 SearchScope::Artist => "artist",
-                SearchScope::Album  => "album",
-                _                   => "track",
+                SearchScope::Album => "album",
+                _ => "track",
             };
             format!(
                 "{API_BASE}?method={method}&{param}={}&api_key={api_key}&format=json&limit={limit}",
                 urlencoding::encode(query),
             )
         };
-        plugin_info!("lastfm: search '{}' (scope={:?}, limit={limit})", query, req.scope);
+        plugin_info!(
+            "lastfm: search '{}' (scope={:?}, limit={limit})",
+            query,
+            req.scope
+        );
 
         let body = match http_get(&url) {
             Ok(b) => b,
@@ -249,12 +273,12 @@ impl CatalogPlugin for LastfmPlugin {
 
         // SearchScope::Album + empty query is handled by the early return above.
         let parsed: Result<Vec<PluginEntry>, PluginError> = match (req.scope, query.is_empty()) {
-            (SearchScope::Artist, true)  => parse_top_artists(&body),
+            (SearchScope::Artist, true) => parse_top_artists(&body),
             (SearchScope::Artist, false) => parse_artist_search(&body, entry_kind),
-            (SearchScope::Album,  false) => parse_album_search(&body, entry_kind),
-            (SearchScope::Track,  true)  => parse_top_tracks(&body, entry_kind),
-            (SearchScope::Track,  false) => parse_track_search(&body, entry_kind),
-            _                            => parse_top_tracks(&body, entry_kind),
+            (SearchScope::Album, false) => parse_album_search(&body, entry_kind),
+            (SearchScope::Track, true) => parse_top_tracks(&body, entry_kind),
+            (SearchScope::Track, false) => parse_track_search(&body, entry_kind),
+            _ => parse_top_tracks(&body, entry_kind),
         };
         let items = match parsed {
             Ok(v) => v,
@@ -267,7 +291,10 @@ impl CatalogPlugin for LastfmPlugin {
     fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
         let title = req.partial.title.trim();
         if title.is_empty() {
-            return PluginResult::err(error_codes::INVALID_REQUEST, "enrich: partial.title is empty");
+            return PluginResult::err(
+                error_codes::INVALID_REQUEST,
+                "enrich: partial.title is empty",
+            );
         }
 
         // Album fast path: when we have both album title and artist
@@ -277,7 +304,10 @@ impl CatalogPlugin for LastfmPlugin {
         // last.fm has no actual rating field — see
         // synth_rating_from_listeners for the formula.
         if matches!(req.partial.kind, EntryKind::Album) {
-            if let Some(artist) = req.partial.artist_name.as_deref()
+            if let Some(artist) = req
+                .partial
+                .artist_name
+                .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
@@ -289,8 +319,8 @@ impl CatalogPlugin for LastfmPlugin {
         // fan out a search and pick the highest-confidence match.
         let scope = match req.partial.kind {
             EntryKind::Artist => SearchScope::Artist,
-            EntryKind::Album  => SearchScope::Album,
-            _                 => SearchScope::Track,
+            EntryKind::Album => SearchScope::Album,
+            _ => SearchScope::Track,
         };
         let search_req = SearchRequest {
             query: title.to_string(),
@@ -301,12 +331,15 @@ impl CatalogPlugin for LastfmPlugin {
             locale: None,
         };
         let candidates = match self.search(search_req) {
-            PluginResult::Ok(r)  => r.items,
+            PluginResult::Ok(r) => r.items,
             PluginResult::Err(e) => return PluginResult::Err(e),
         };
 
-        let best = candidates.into_iter()
-            .max_by(|a, b| enrich_score(&req.partial, a).partial_cmp(&enrich_score(&req.partial, b)).unwrap_or(std::cmp::Ordering::Equal));
+        let best = candidates.into_iter().max_by(|a, b| {
+            enrich_score(&req.partial, a)
+                .partial_cmp(&enrich_score(&req.partial, b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         match best {
             Some(entry) => {
                 let confidence = enrich_score(&req.partial, &entry);
@@ -339,7 +372,11 @@ impl LastfmPlugin {
             a  = urlencoding::encode(artist),
             al = urlencoding::encode(album),
         );
-        plugin_info!("lastfm: album.getInfo artist='{}' album='{}'", artist, album);
+        plugin_info!(
+            "lastfm: album.getInfo artist='{}' album='{}'",
+            artist,
+            album
+        );
 
         let body = match http_get(&url) {
             Ok(b) => b,
@@ -351,13 +388,19 @@ impl LastfmPlugin {
         };
         let info = match resp.album {
             Some(a) => a,
-            None => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("lastfm: album.getInfo returned no album for '{album}' / '{artist}'"),
-            ),
+            None => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("lastfm: album.getInfo returned no album for '{album}' / '{artist}'"),
+                )
+            }
         };
 
-        let listeners = info.listeners.as_deref().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let listeners = info
+            .listeners
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
         let rating = if listeners > 0 {
             Some(synth_rating_from_listeners(listeners))
         } else {
@@ -369,30 +412,33 @@ impl LastfmPlugin {
         // pick the first tag that passes pick_genre_tag's heuristic
         // filter. If none qualify we leave genre empty rather than
         // surface a star-rating string as the card's genre badge.
-        let genre = info.tags
-            .as_ref()
-            .and_then(|t| pick_genre_tag(&t.tag));
-        let description = info.wiki
+        let genre = info.tags.as_ref().and_then(|t| pick_genre_tag(&t.tag));
+        let description = info
+            .wiki
             .as_ref()
             .and_then(|w| w.summary.clone())
             .filter(|s| !s.is_empty())
             // last.fm's wiki.summary trails with a "Read more on Last.fm"
             // link tag — strip it for cleaner card text.
             .map(|s| s.split("<a href=").next().unwrap_or(&s).trim().to_string());
-        let poster_url = info.image
-            .as_ref()
-            .and_then(|imgs| imgs.iter().rev().find_map(|i| {
-                if i.text.is_empty() { None } else { Some(i.text.clone()) }
-            }));
+        let poster_url = info.image.as_ref().and_then(|imgs| {
+            imgs.iter().rev().find_map(|i| {
+                if i.text.is_empty() {
+                    None
+                } else {
+                    Some(i.text.clone())
+                }
+            })
+        });
 
         let mut entry = PluginEntry {
-            id:           format!("lastfm-album-{}-{}", artist, album),
-            kind:         EntryKind::Album,
-            source:       "lastfm".to_string(),
-            title:        info.name.unwrap_or_else(|| album.to_string()),
-            year:         None,
-            artist_name:  Some(info.artist.unwrap_or_else(|| artist.to_string())),
-            album_name:   Some(album.to_string()),
+            id: format!("lastfm-album-{}-{}", artist, album),
+            kind: EntryKind::Album,
+            source: "lastfm".to_string(),
+            title: info.name.unwrap_or_else(|| album.to_string()),
+            year: None,
+            artist_name: Some(info.artist.unwrap_or_else(|| artist.to_string())),
+            album_name: Some(album.to_string()),
             genre,
             description,
             poster_url,
@@ -400,7 +446,9 @@ impl LastfmPlugin {
             ..Default::default()
         };
         if let Some(mbid) = info.mbid.filter(|s| !s.is_empty()) {
-            entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), mbid);
+            entry
+                .external_ids
+                .insert(id_sources::MUSICBRAINZ.to_string(), mbid);
         }
 
         // Confidence is high when we have a populated rating signal
@@ -464,11 +512,20 @@ fn is_genre_like(tag: &str) -> bool {
     // Star ratings: "5 stars", "four stars", "5/5", "10/10".
     if lower.contains("star") {
         let rest = lower.replace("star", "").replace("s", "");
-        if rest.trim().is_empty() || rest.trim().chars().all(|c| c.is_ascii_digit() || c.is_whitespace()) {
+        if rest.trim().is_empty()
+            || rest
+                .trim()
+                .chars()
+                .all(|c| c.is_ascii_digit() || c.is_whitespace())
+        {
             return false;
         }
     }
-    if lower.contains('/') && lower.chars().all(|c| c.is_ascii_digit() || c == '/' || c.is_whitespace()) {
+    if lower.contains('/')
+        && lower
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '/' || c.is_whitespace())
+    {
         return false;
     }
 
@@ -493,21 +550,66 @@ fn is_genre_like(tag: &str) -> bool {
     // matched as the entire trimmed tag (lowercased) since these
     // appear standalone, not embedded in compound genre names.
     const PERSONAL_TAGS: &[&str] = &[
-        "favorite", "favorites", "favourite", "favourites",
-        "love", "loved", "love it", "loves",
-        "best", "best of", "best ever", "best albums",
-        "great", "good", "cool", "amazing", "awesome",
-        "perfect", "epic", "masterpiece", "classic",
-        "underrated", "overrated", "must hear",
-        "owned", "own", "have", "i own this",
-        "wishlist", "want", "to listen", "to listen to",
-        "to buy", "checked", "heard", "listened",
-        "my albums", "my favorites", "my favourites", "my collection",
-        "albums i own", "albums i love",
-        "seen live", "seen-live", "concert", "live",
-        "vinyl", "cd", "cassette", "tape",
-        "english", "spanish", "french", "german", "italian", "japanese",
-        "male vocalists", "female vocalists", "male vocalist", "female vocalist",
+        "favorite",
+        "favorites",
+        "favourite",
+        "favourites",
+        "love",
+        "loved",
+        "love it",
+        "loves",
+        "best",
+        "best of",
+        "best ever",
+        "best albums",
+        "great",
+        "good",
+        "cool",
+        "amazing",
+        "awesome",
+        "perfect",
+        "epic",
+        "masterpiece",
+        "classic",
+        "underrated",
+        "overrated",
+        "must hear",
+        "owned",
+        "own",
+        "have",
+        "i own this",
+        "wishlist",
+        "want",
+        "to listen",
+        "to listen to",
+        "to buy",
+        "checked",
+        "heard",
+        "listened",
+        "my albums",
+        "my favorites",
+        "my favourites",
+        "my collection",
+        "albums i own",
+        "albums i love",
+        "seen live",
+        "seen-live",
+        "concert",
+        "live",
+        "vinyl",
+        "cd",
+        "cassette",
+        "tape",
+        "english",
+        "spanish",
+        "french",
+        "german",
+        "italian",
+        "japanese",
+        "male vocalists",
+        "female vocalists",
+        "male vocalist",
+        "female vocalist",
         "albums",
     ];
     if PERSONAL_TAGS.iter().any(|p| *p == lower) {
@@ -527,33 +629,44 @@ struct AlbumInfoEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct AlbumInfo {
-    #[serde(default)] name:      Option<String>,
-    #[serde(default)] artist:    Option<String>,
-    #[serde(default)] mbid:      Option<String>,
-    #[serde(default)] listeners: Option<String>,
-    #[serde(default)] image:     Option<Vec<AlbumImage>>,
-    #[serde(default)] tags:      Option<AlbumTags>,
-    #[serde(default)] wiki:      Option<AlbumWiki>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    artist: Option<String>,
+    #[serde(default)]
+    mbid: Option<String>,
+    #[serde(default)]
+    listeners: Option<String>,
+    #[serde(default)]
+    image: Option<Vec<AlbumImage>>,
+    #[serde(default)]
+    tags: Option<AlbumTags>,
+    #[serde(default)]
+    wiki: Option<AlbumWiki>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AlbumImage {
-    #[serde(rename = "#text", default)] text: String,
+    #[serde(rename = "#text", default)]
+    text: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct AlbumTags {
-    #[serde(default)] tag: Vec<AlbumTag>,
+    #[serde(default)]
+    tag: Vec<AlbumTag>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AlbumTag {
-    #[serde(default)] name: String,
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct AlbumWiki {
-    #[serde(default)] summary: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
 }
 
 /// Enrich-confidence heuristic [0.0, 1.0]:
@@ -582,9 +695,7 @@ fn enrich_score(partial: &PluginEntry, candidate: &PluginEntry) -> f32 {
 /// the future genre-filter dropdown lands, a user-selected tag bypasses
 /// this list and queries `tag.gettopalbums` for that one tag. The list
 /// is intentionally short to keep the worst-case HTTP fan-out small.
-const AGGREGATE_SEED_TAGS: &[&str] = &[
-    "rock", "pop", "indie", "electronic", "hip-hop",
-];
+const AGGREGATE_SEED_TAGS: &[&str] = &["rock", "pop", "indie", "electronic", "hip-hop"];
 
 /// Fan out `tag.gettopalbums` across `tags`, merge results, dedup by
 /// `(artist, title)` (preserves the input order so seed-tag priority is
@@ -621,7 +732,7 @@ fn aggregate_top_albums_by_tags(
         for e in entries {
             let key = match (&e.artist_name, &e.album_name) {
                 (Some(a), Some(t)) => format!("{}|{}", a.to_lowercase(), t.to_lowercase()),
-                _                  => e.title.to_lowercase(),
+                _ => e.title.to_lowercase(),
             };
             if seen.insert(key) {
                 out.push(e);
@@ -635,63 +746,116 @@ fn aggregate_top_albums_by_tags(
 
 fn parse_track_search(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: TrackSearchResponse = parse_json(body)?;
-    Ok(resp.results.trackmatches.track.into_iter().filter_map(|t| t.into_entry(kind)).collect())
+    Ok(resp
+        .results
+        .trackmatches
+        .track
+        .into_iter()
+        .filter_map(|t| t.into_entry(kind))
+        .collect())
 }
 
 fn parse_top_tracks(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: ChartResponse = parse_json(body)?;
-    Ok(resp.tracks.track.into_iter().filter_map(|t| t.into_entry(kind)).collect())
+    Ok(resp
+        .tracks
+        .track
+        .into_iter()
+        .filter_map(|t| t.into_entry(kind))
+        .collect())
 }
 
 fn parse_artist_search(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: ArtistSearchResponse = parse_json(body)?;
-    Ok(resp.results.artistmatches.artist.into_iter().filter_map(|a| a.into_entry(kind)).collect())
+    Ok(resp
+        .results
+        .artistmatches
+        .artist
+        .into_iter()
+        .filter_map(|a| a.into_entry(kind))
+        .collect())
 }
 
 fn parse_album_search(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: AlbumSearchResponse = parse_json(body)?;
-    Ok(resp.results.albummatches.album.into_iter().filter_map(|a| a.into_entry(kind)).collect())
+    Ok(resp
+        .results
+        .albummatches
+        .album
+        .into_iter()
+        .filter_map(|a| a.into_entry(kind))
+        .collect())
 }
 
 fn parse_top_artists(body: &str) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: TopArtistsResponse = parse_json(body)?;
-    Ok(resp.artists.artist.into_iter().filter_map(|a| a.into_entry(EntryKind::Artist)).collect())
+    Ok(resp
+        .artists
+        .artist
+        .into_iter()
+        .filter_map(|a| a.into_entry(EntryKind::Artist))
+        .collect())
 }
 
 fn parse_tag_top_albums(body: &str, kind: EntryKind) -> Result<Vec<PluginEntry>, PluginError> {
     let resp: TagTopAlbumsResponse = parse_json(body)?;
-    Ok(resp.albums.album.into_iter().filter_map(|a| a.into_entry(kind)).collect())
+    Ok(resp
+        .albums
+        .album
+        .into_iter()
+        .filter_map(|a| a.into_entry(kind))
+        .collect())
 }
 
 // ── API types ─────────────────────────────────────────────────────────────────
 
 // Track search: results.trackmatches.track[]
 #[derive(Debug, Deserialize)]
-struct TrackSearchResponse { results: TrackSearchResults }
+struct TrackSearchResponse {
+    results: TrackSearchResults,
+}
 #[derive(Debug, Deserialize)]
-struct TrackSearchResults { trackmatches: TrackMatches }
+struct TrackSearchResults {
+    trackmatches: TrackMatches,
+}
 #[derive(Debug, Deserialize)]
-struct TrackMatches { #[serde(default)] track: Vec<Track> }
+struct TrackMatches {
+    #[serde(default)]
+    track: Vec<Track>,
+}
 
 #[derive(Debug, Deserialize)]
 struct Track {
-    #[serde(default)] name: String,
-    #[serde(default)] artist: String,
-    #[serde(default)] album: Option<String>,
-    #[serde(default)] image: Vec<Image>,
-    #[serde(default)] listeners: Option<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    artist: String,
+    #[serde(default)]
+    album: Option<String>,
+    #[serde(default)]
+    image: Vec<Image>,
+    #[serde(default)]
+    listeners: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Image {
-    #[serde(rename = "#text", default)] text: String,
-    #[serde(default)] size: String,
+    #[serde(rename = "#text", default)]
+    text: String,
+    #[serde(default)]
+    size: String,
 }
 
 impl Track {
     fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
-        if self.name.is_empty() { return None; }
-        let desc = format_description(&self.artist, self.album.as_deref(), format_stats(self.listeners.as_deref(), None).as_deref());
+        if self.name.is_empty() {
+            return None;
+        }
+        let desc = format_description(
+            &self.artist,
+            self.album.as_deref(),
+            format_stats(self.listeners.as_deref(), None).as_deref(),
+        );
         Some(PluginEntry {
             id: make_id(&self.artist, &self.name),
             kind,
@@ -708,28 +872,42 @@ impl Track {
 
 // Chart (top-tracks): tracks.track[]
 #[derive(Debug, Deserialize)]
-struct ChartResponse { tracks: ChartTracks }
+struct ChartResponse {
+    tracks: ChartTracks,
+}
 #[derive(Debug, Deserialize)]
-struct ChartTracks { #[serde(default)] track: Vec<ChartTrack> }
+struct ChartTracks {
+    #[serde(default)]
+    track: Vec<ChartTrack>,
+}
 
 #[derive(Debug, Deserialize)]
 struct ChartTrack {
-    #[serde(default)] name: String,
-    #[serde(default)] artist: ChartArtistRef,
-    #[serde(default)] album: Option<String>,
-    #[serde(default)] image: Vec<Image>,
-    #[serde(default)] listeners: Option<String>,
-    #[serde(default)] playcount: Option<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    artist: ChartArtistRef,
+    #[serde(default)]
+    album: Option<String>,
+    #[serde(default)]
+    image: Vec<Image>,
+    #[serde(default)]
+    listeners: Option<String>,
+    #[serde(default)]
+    playcount: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct ChartArtistRef {
-    #[serde(default)] name: String,
+    #[serde(default)]
+    name: String,
 }
 
 impl ChartTrack {
     fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
-        if self.name.is_empty() { return None; }
+        if self.name.is_empty() {
+            return None;
+        }
         let desc = format_description(
             &self.artist.name,
             self.album.as_deref(),
@@ -751,23 +929,36 @@ impl ChartTrack {
 
 // Artist search: results.artistmatches.artist[]
 #[derive(Debug, Deserialize)]
-struct ArtistSearchResponse { results: ArtistSearchResults }
+struct ArtistSearchResponse {
+    results: ArtistSearchResults,
+}
 #[derive(Debug, Deserialize)]
-struct ArtistSearchResults { artistmatches: ArtistMatches }
+struct ArtistSearchResults {
+    artistmatches: ArtistMatches,
+}
 #[derive(Debug, Deserialize)]
-struct ArtistMatches { #[serde(default)] artist: Vec<Artist> }
+struct ArtistMatches {
+    #[serde(default)]
+    artist: Vec<Artist>,
+}
 
 #[derive(Debug, Deserialize)]
 struct Artist {
-    #[serde(default)] name: String,
-    #[serde(default)] image: Vec<Image>,
-    #[serde(default)] listeners: Option<String>,
-    #[serde(default)] playcount: Option<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    image: Vec<Image>,
+    #[serde(default)]
+    listeners: Option<String>,
+    #[serde(default)]
+    playcount: Option<String>,
 }
 
 impl Artist {
     fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
-        if self.name.is_empty() { return None; }
+        if self.name.is_empty() {
+            return None;
+        }
         let desc = format_stats(self.listeners.as_deref(), self.playcount.as_deref());
         Some(PluginEntry {
             id: format!("lastfm-artist-{}", slugify(&self.name)),
@@ -784,23 +975,39 @@ impl Artist {
 
 // Album search: results.albummatches.album[]
 #[derive(Debug, Deserialize)]
-struct AlbumSearchResponse { results: AlbumSearchResults }
+struct AlbumSearchResponse {
+    results: AlbumSearchResults,
+}
 #[derive(Debug, Deserialize)]
-struct AlbumSearchResults { albummatches: AlbumMatches }
+struct AlbumSearchResults {
+    albummatches: AlbumMatches,
+}
 #[derive(Debug, Deserialize)]
-struct AlbumMatches { #[serde(default)] album: Vec<Album> }
+struct AlbumMatches {
+    #[serde(default)]
+    album: Vec<Album>,
+}
 
 #[derive(Debug, Deserialize)]
 struct Album {
-    #[serde(default)] name: String,
-    #[serde(default)] artist: String,
-    #[serde(default)] image: Vec<Image>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    artist: String,
+    #[serde(default)]
+    image: Vec<Image>,
 }
 
 impl Album {
     fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
-        if self.name.is_empty() { return None; }
-        let desc = if self.artist.is_empty() { None } else { Some(format!("by {}", self.artist)) };
+        if self.name.is_empty() {
+            return None;
+        }
+        let desc = if self.artist.is_empty() {
+            None
+        } else {
+            Some(format!("by {}", self.artist))
+        };
         Some(PluginEntry {
             id: make_id(&self.artist, &self.name),
             kind,
@@ -817,34 +1024,55 @@ impl Album {
 
 // Charts: top artists wraps as artists.artist[]
 #[derive(Debug, Deserialize)]
-struct TopArtistsResponse { artists: TopArtistsWrap }
+struct TopArtistsResponse {
+    artists: TopArtistsWrap,
+}
 #[derive(Debug, Deserialize)]
-struct TopArtistsWrap { #[serde(default)] artist: Vec<Artist> }
+struct TopArtistsWrap {
+    #[serde(default)]
+    artist: Vec<Artist>,
+}
 
 // tag.gettopalbums: {"albums": {"album": [{"name", "artist": {"name"}, "image": [...], "mbid"}]}}
 #[derive(Debug, Deserialize)]
-struct TagTopAlbumsResponse { albums: TagTopAlbumsWrap }
+struct TagTopAlbumsResponse {
+    albums: TagTopAlbumsWrap,
+}
 #[derive(Debug, Deserialize)]
-struct TagTopAlbumsWrap { #[serde(default)] album: Vec<TagAlbum> }
+struct TagTopAlbumsWrap {
+    #[serde(default)]
+    album: Vec<TagAlbum>,
+}
 
 #[derive(Debug, Deserialize)]
 struct TagAlbum {
-    #[serde(default)] name: String,
-    #[serde(default)] artist: TagAlbumArtist,
-    #[serde(default)] image: Vec<Image>,
-    #[serde(default)] mbid: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    artist: TagAlbumArtist,
+    #[serde(default)]
+    image: Vec<Image>,
+    #[serde(default)]
+    mbid: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct TagAlbumArtist {
-    #[serde(default)] name: String,
+    #[serde(default)]
+    name: String,
 }
 
 impl TagAlbum {
     fn into_entry(self, kind: EntryKind) -> Option<PluginEntry> {
-        if self.name.is_empty() { return None; }
+        if self.name.is_empty() {
+            return None;
+        }
         let artist = self.artist.name;
-        let desc = if artist.is_empty() { None } else { Some(format!("by {artist}")) };
+        let desc = if artist.is_empty() {
+            None
+        } else {
+            Some(format!("by {artist}"))
+        };
         // Lastfm's image URLs are usually populated for albums. When
         // they're not (rare), fall back to Cover Art Archive via the
         // release-group MBID. CAA 404s gracefully if no art exists.
@@ -867,7 +1095,9 @@ impl TagAlbum {
             ..Default::default()
         };
         if !self.mbid.is_empty() {
-            entry.external_ids.insert(id_sources::MUSICBRAINZ.to_string(), self.mbid);
+            entry
+                .external_ids
+                .insert(id_sources::MUSICBRAINZ.to_string(), self.mbid);
         }
         Some(entry)
     }
@@ -876,7 +1106,11 @@ impl TagAlbum {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn opt_non_empty(s: String) -> Option<String> {
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn make_id(artist: &str, title: &str) -> String {
@@ -891,10 +1125,20 @@ fn slugify(s: &str) -> String {
 /// individual part may be absent.
 fn format_description(artist: &str, album: Option<&str>, stats: Option<&str>) -> Option<String> {
     let mut parts = Vec::<String>::new();
-    if !artist.is_empty()       { parts.push(format!("by {artist}")); }
-    if let Some(a) = album.filter(|a| !a.is_empty()) { parts.push(format!("from {a}")); }
-    if let Some(s) = stats      { parts.push(s.to_string()); }
-    if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+    if !artist.is_empty() {
+        parts.push(format!("by {artist}"));
+    }
+    if let Some(a) = album.filter(|a| !a.is_empty()) {
+        parts.push(format!("from {a}"));
+    }
+    if let Some(s) = stats {
+        parts.push(s.to_string());
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
 }
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
@@ -925,10 +1169,10 @@ mod tests {
 
     #[test]
     fn thousands_formats_large_numbers() {
-        assert_eq!(thousands("1234567"),  "1,234,567");
-        assert_eq!(thousands("999"),      "999");
-        assert_eq!(thousands("1000"),     "1,000");
-        assert_eq!(thousands("abc"),      "abc");  // non-numeric passes through unchanged
+        assert_eq!(thousands("1234567"), "1,234,567");
+        assert_eq!(thousands("999"), "999");
+        assert_eq!(thousands("1000"), "1,000");
+        assert_eq!(thousands("abc"), "abc"); // non-numeric passes through unchanged
     }
 
     #[test]
@@ -946,9 +1190,18 @@ mod tests {
     #[test]
     fn pick_image_prefers_extralarge() {
         let imgs = vec![
-            Image { text: "small.jpg".into(),       size: "small".into() },
-            Image { text: "large.jpg".into(),       size: "large".into() },
-            Image { text: "extralarge.jpg".into(),  size: "extralarge".into() },
+            Image {
+                text: "small.jpg".into(),
+                size: "small".into(),
+            },
+            Image {
+                text: "large.jpg".into(),
+                size: "large".into(),
+            },
+            Image {
+                text: "extralarge.jpg".into(),
+                size: "extralarge".into(),
+            },
         ];
         assert_eq!(pick_image(imgs).as_deref(), Some("extralarge.jpg"));
     }
@@ -962,15 +1215,24 @@ mod tests {
             name: "Dreams".into(),
             artist: "Fleetwood Mac".into(),
             album: Some("Rumours".into()),
-            image: vec![Image { text: "cover.jpg".into(), size: "large".into() }],
+            image: vec![Image {
+                text: "cover.jpg".into(),
+                size: "large".into(),
+            }],
             listeners: Some("1234567".into()),
         };
         let e = t.into_entry(EntryKind::Track).unwrap();
-        assert_eq!(e.genre, None,
-            "listeners must not leak into genre (was the old bug)");
+        assert_eq!(
+            e.genre, None,
+            "listeners must not leak into genre (was the old bug)"
+        );
         assert_eq!(e.artist_name.as_deref(), Some("Fleetwood Mac"));
         assert_eq!(e.album_name.as_deref(), Some("Rumours"));
-        assert!(e.description.as_deref().unwrap_or_default().contains("listeners"));
+        assert!(e
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .contains("listeners"));
     }
 
     #[test]
@@ -979,7 +1241,9 @@ mod tests {
         // though the struct had an `album: Option<String>` field).
         let ct = ChartTrack {
             name: "Track".into(),
-            artist: ChartArtistRef { name: "Artist".into() },
+            artist: ChartArtistRef {
+                name: "Artist".into(),
+            },
             album: Some("Rumours".into()),
             image: vec![],
             listeners: None,
@@ -991,11 +1255,20 @@ mod tests {
 
     #[test]
     fn enrich_score_rewards_title_plus_artist_match() {
-        let mut p = PluginEntry { title: "Dreams".into(), ..Default::default() };
+        let mut p = PluginEntry {
+            title: "Dreams".into(),
+            ..Default::default()
+        };
         p.artist_name = Some("Fleetwood Mac".into());
-        let mut exact = PluginEntry { title: "Dreams".into(), ..Default::default() };
+        let mut exact = PluginEntry {
+            title: "Dreams".into(),
+            ..Default::default()
+        };
         exact.artist_name = Some("Fleetwood Mac".into());
-        let mut other = PluginEntry { title: "Dreams".into(), ..Default::default() };
+        let mut other = PluginEntry {
+            title: "Dreams".into(),
+            ..Default::default()
+        };
         other.artist_name = Some("The Cranberries".into());
         assert!(enrich_score(&p, &exact) > enrich_score(&p, &other));
     }

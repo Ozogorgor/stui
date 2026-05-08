@@ -156,7 +156,21 @@ async fn enrich_one(engine: &Engine, plugins: &[String], mut entry: CatalogEntry
             }
         })
         .collect();
-    let results = futures::future::join_all(futs).await;
+    let mut results = futures::future::join_all(futs).await;
+
+    // Priority-order merge: scalar fields (year, genre, description)
+    // are "first non-empty wins" so the iteration order *is* the
+    // tie-breaker. Sort responses by per-plugin trust so the same
+    // album always gets the same genre/year/description regardless
+    // of which provider's HTTP latency happened to be lowest. Lower
+    // = higher priority. Unlisted providers fall to the back.
+    results.sort_by_key(|(name, _)| match name.as_str() {
+        "albumoftheyear" => 0, // curated single-genre, no tag noise
+        "discogs" => 1,        // genres + styles, well-vetted
+        "musicbrainz" => 2,    // primary_type when set
+        "lastfm" => 3,         // tag-cloud derived, often noisy
+        _ => 99,
+    });
 
     let mut got_any_rating = false;
     for (plugin, res) in results {
@@ -198,9 +212,11 @@ fn merge_plugin_response(
             debug!(album = %entry.title, plugin = %plugin, year = y, "music_enrich: year");
         }
     }
-    // Genre — first non-empty wins. lastfm's tag-derived genre has
-    // the highest coverage; MB's primary_type is more authoritative
-    // when present.
+    // Genre — first non-empty wins. Caller sorts responses by
+    // priority (aoty > discogs > musicbrainz > lastfm) so this
+    // amounts to "best available source's genre". AOTY has a
+    // curated single-genre taxonomy without the "album"/"favorite"
+    // tag-cloud noise that lastfm can leak.
     if entry.genre.is_none() {
         if let Some(g) = p.genre.clone() {
             entry.genre = Some(g);

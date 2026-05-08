@@ -24,24 +24,13 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, cache_set, error_codes, http_get, log_url,
-    id_sources, normalize_crew_role,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
-    CastMember, CastRole,
-    CatalogPlugin,
-    CreditsRequest, CreditsResponse,
-    CrewMember,
-    EnrichRequest, EnrichResponse,
-    EpisodeWire, EpisodesRequest, EpisodesResponse,
-    EntryKind,
-    InitContext,
-    LookupRequest, LookupResponse,
+    cache_get, cache_set, error_codes, http_get, id_sources, log_url, normalize_crew_role,
+    parse_manifest, plugin_error, plugin_info, stui_export_catalog_plugin, ArtworkRequest,
+    ArtworkResponse, ArtworkSize, ArtworkVariant, CastMember, CastRole, CatalogPlugin,
+    CreditsRequest, CreditsResponse, CrewMember, EnrichRequest, EnrichResponse, EntryKind,
+    EpisodeWire, EpisodesRequest, EpisodesResponse, InitContext, LookupRequest, LookupResponse,
     Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    RelatedRequest, RelatedResponse, RelationKind,
-    SearchRequest, SearchResponse, SearchScope,
+    RelatedRequest, RelatedResponse, RelationKind, SearchRequest, SearchResponse, SearchScope,
 };
 
 const BASE_URL: &str = "https://api.themoviedb.org/3";
@@ -320,8 +309,7 @@ struct TvDetail {
 }
 
 /// Bundle path & query parameters for the `append_to_response` super-call.
-const BUNDLE_APPEND: &str =
-    "append_to_response=external_ids,images,credits,recommendations";
+const BUNDLE_APPEND: &str = "append_to_response=external_ids,images,credits,recommendations";
 
 /// Cache key for the persistent bundle response. Keyed on (kind_path, id) so
 /// movies and series with overlapping numeric ids don't trample each other.
@@ -453,10 +441,7 @@ impl MovieItem {
             source: "tmdb".to_string(),
             title: self.title,
             year: year_from_date(self.release_date.as_deref()),
-            genre: self
-                .genre_ids
-                .first()
-                .map(|&g| genre_name(g).to_string()),
+            genre: self.genre_ids.first().map(|&g| genre_name(g).to_string()),
             rating: nonzero_rating(self.vote_average),
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
@@ -475,10 +460,7 @@ impl TvItem {
             source: "tmdb".to_string(),
             title: self.name,
             year: year_from_date(self.first_air_date.as_deref()),
-            genre: self
-                .genre_ids
-                .first()
-                .map(|&g| genre_name(g).to_string()),
+            genre: self.genre_ids.first().map(|&g| genre_name(g).to_string()),
             rating: nonzero_rating(self.vote_average),
             description: self.overview,
             poster_url: poster_url(self.poster_path.as_deref(), DEFAULT_POSTER_SIZE),
@@ -522,10 +504,7 @@ impl MovieDetail {
 impl TvDetail {
     fn into_entry(self) -> PluginEntry {
         let mut external = HashMap::new();
-        let ext_imdb = self
-            .external_ids
-            .as_ref()
-            .and_then(|x| x.imdb_id.clone());
+        let ext_imdb = self.external_ids.as_ref().and_then(|x| x.imdb_id.clone());
         if let Some(i) = ext_imdb.as_ref() {
             external.insert(id_sources::IMDB.to_string(), i.clone());
         }
@@ -584,11 +563,7 @@ impl CatalogPlugin for TmdbPlugin {
                 SearchScope::Movie => "/trending/movie/week",
                 _ => "/trending/tv/week",
             };
-            build_url(
-                trending,
-                &format!("page={}", req.page.max(1)),
-                &api_key,
-            )
+            build_url(trending, &format!("page={}", req.page.max(1)), &api_key)
         } else {
             let q = format!(
                 "query={}&page={}",
@@ -712,7 +687,8 @@ impl CatalogPlugin for TmdbPlugin {
                         .expect("guarded by is_empty check above")
                         .into_entry(EntryKind::Movie);
                     e.imdb_id = Some(req.id.clone());
-                    e.external_ids.insert(id_sources::IMDB.to_string(), req.id.clone());
+                    e.external_ids
+                        .insert(id_sources::IMDB.to_string(), req.id.clone());
                     e
                 } else if !found.tv_results.is_empty() {
                     let mut e = found
@@ -722,7 +698,8 @@ impl CatalogPlugin for TmdbPlugin {
                         .expect("guarded by is_empty check above")
                         .into_entry(EntryKind::Series);
                     e.imdb_id = Some(req.id.clone());
-                    e.external_ids.insert(id_sources::IMDB.to_string(), req.id.clone());
+                    e.external_ids
+                        .insert(id_sources::IMDB.to_string(), req.id.clone());
                     e
                 } else {
                     return PluginResult::err(
@@ -808,10 +785,7 @@ impl CatalogPlugin for TmdbPlugin {
                 );
             }
         };
-        let mut query = format!(
-            "query={}&page=1&language=en-US",
-            urlencoding::encode(title)
-        );
+        let mut query = format!("query={}&page=1&language=en-US", urlencoding::encode(title));
         if let Some(y) = req.partial.year {
             // TMDB uses different param names per endpoint.
             let year_param = if entry_kind == EntryKind::Movie {
@@ -833,13 +807,23 @@ impl CatalogPlugin for TmdbPlugin {
                 Ok(p) => p,
                 Err(e) => return PluginResult::Err(e),
             };
-            paged.results.into_iter().take(10).map(|m| m.into_entry(entry_kind)).collect()
+            paged
+                .results
+                .into_iter()
+                .take(10)
+                .map(|m| m.into_entry(entry_kind))
+                .collect()
         } else {
             let paged: PagedResponse<TvItem> = match parse_json(&search_body) {
                 Ok(p) => p,
                 Err(e) => return PluginResult::Err(e),
             };
-            paged.results.into_iter().take(10).map(|t| t.into_entry(entry_kind)).collect()
+            paged
+                .results
+                .into_iter()
+                .take(10)
+                .map(|t| t.into_entry(entry_kind))
+                .collect()
         };
 
         let (best, confidence) = pick_best_match(&req.partial, &search_items);
@@ -916,7 +900,11 @@ impl CatalogPlugin for TmdbPlugin {
         // per poster; for `Any`, emit all three sizes per poster. Backdrops
         // are used as a fallback if no posters exist.
         let wanted_sizes: &[ArtworkSize] = match req.size {
-            ArtworkSize::Any => &[ArtworkSize::Thumbnail, ArtworkSize::Standard, ArtworkSize::HiRes],
+            ArtworkSize::Any => &[
+                ArtworkSize::Thumbnail,
+                ArtworkSize::Standard,
+                ArtworkSize::HiRes,
+            ],
             _ => std::slice::from_ref(&req.size),
         };
 
@@ -1034,7 +1022,11 @@ impl CatalogPlugin for TmdbPlugin {
             Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
-        let limit = if req.limit == 0 { 20 } else { req.limit as usize };
+        let limit = if req.limit == 0 {
+            20
+        } else {
+            req.limit as usize
+        };
         let items: Vec<PluginEntry> = if entry_kind == EntryKind::Movie {
             match parse_json::<MovieDetail>(&body) {
                 Ok(d) => d
@@ -1067,7 +1059,10 @@ impl CatalogPlugin for TmdbPlugin {
         if req.id_source != id_sources::TMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("tmdb episodes only supports tmdb id_source, got: {}", req.id_source),
+                format!(
+                    "tmdb episodes only supports tmdb id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         let api_key = match self.api_key() {
@@ -1093,13 +1088,12 @@ impl CatalogPlugin for TmdbPlugin {
             .map(|ep| {
                 // TMDB exposes a per-episode id; `<series>:s<S>e<E>` is a
                 // stable fallback used only if the id is missing.
-                let entry_id = ep
-                    .id
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| format!(
+                let entry_id = ep.id.map(|n| n.to_string()).unwrap_or_else(|| {
+                    format!(
                         "{}:s{}e{}",
                         req.series_id, ep.season_number, ep.episode_number
-                    ));
+                    )
+                });
                 EpisodeWire {
                     season: ep.season_number,
                     episode: ep.episode_number,
@@ -1360,8 +1354,16 @@ mod tests {
             ..Default::default()
         };
         let items = vec![
-            PluginEntry { title: "Random".into(), year: Some(1999), ..Default::default() },
-            PluginEntry { title: "Ran".into(), year: Some(1985), ..Default::default() },
+            PluginEntry {
+                title: "Random".into(),
+                year: Some(1999),
+                ..Default::default()
+            },
+            PluginEntry {
+                title: "Ran".into(),
+                year: Some(1985),
+                ..Default::default()
+            },
         ];
         let (idx, conf) = pick_best_match(&partial, &items);
         assert_eq!(idx, Some(1));
@@ -1376,9 +1378,10 @@ mod tests {
             kind: EntryKind::Movie,
             ..Default::default()
         };
-        let items = vec![
-            PluginEntry { title: "Totally Different".into(), ..Default::default() },
-        ];
+        let items = vec![PluginEntry {
+            title: "Totally Different".into(),
+            ..Default::default()
+        }];
         let (idx, conf) = pick_best_match(&partial, &items);
         assert_eq!(idx, Some(0));
         assert!((conf - 0.5).abs() < 0.01);
@@ -1403,7 +1406,10 @@ mod tests {
             id: 42,
             title: "HHGTTG".into(),
             release_date: Some("2005-04-28".into()),
-            genres: vec![Genre { id: 35, name: "Comedy".into() }],
+            genres: vec![Genre {
+                id: 35,
+                name: "Comedy".into(),
+            }],
             vote_average: 6.8,
             vote_count: 0,
             overview: None,
@@ -1419,7 +1425,10 @@ mod tests {
             recommendations: None,
         };
         let e = d.into_entry();
-        assert_eq!(e.external_ids.get("imdb").map(String::as_str), Some("tt0371724"));
+        assert_eq!(
+            e.external_ids.get("imdb").map(String::as_str),
+            Some("tt0371724")
+        );
         assert_eq!(e.imdb_id.as_deref(), Some("tt0371724"));
         assert_eq!(e.duration, Some(109));
         assert_eq!(e.genre.as_deref(), Some("Comedy"));

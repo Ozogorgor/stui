@@ -17,28 +17,20 @@
 
 use std::sync::OnceLock;
 
-use stui_plugin_sdk::{
-    err_not_implemented,
-    error_codes,
-    http_request, HttpRequest,
-    parse_manifest,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    BulkEnrichEntry, BulkEnrichRequest, BulkEnrichResponse,
-    CatalogPlugin, EnrichRequest, EnrichResponse,
-    EntryKind,
-    InitContext,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse,
-    StreamProvider,
-};
 use serde::{Deserialize, Serialize};
+use stui_plugin_sdk::{
+    err_not_implemented, error_codes, http_request, parse_manifest, plugin_error, plugin_info,
+    stui_export_catalog_plugin, BulkEnrichEntry, BulkEnrichRequest, BulkEnrichResponse,
+    CatalogPlugin, EnrichRequest, EnrichResponse, EntryKind, HttpRequest, InitContext, Plugin,
+    PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult, SearchRequest,
+    SearchResponse, StreamProvider,
+};
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
 
 pub struct RtProvider {
     manifest: PluginManifest,
-    api_key:  OnceLock<String>,
+    api_key: OnceLock<String>,
     base_url: OnceLock<String>,
 }
 
@@ -50,7 +42,7 @@ impl RtProvider {
             .expect("plugin.toml failed to parse at compile time");
         Self {
             manifest,
-            api_key:  OnceLock::new(),
+            api_key: OnceLock::new(),
             base_url: OnceLock::new(),
         }
     }
@@ -127,8 +119,8 @@ impl RtProvider {
     fn fetch_batch(&self, imdb_ids: &[String]) -> Result<Vec<RtBatchEvent>, PluginError> {
         let api_key = self.api_key()?.to_string();
         let url = format!("{}/api/v1/movies/batch", self.base_url());
-        let body_payload = serde_json::to_string(&BatchRequestBody { imdb_ids })
-            .map_err(|e| PluginError {
+        let body_payload =
+            serde_json::to_string(&BatchRequestBody { imdb_ids }).map_err(|e| PluginError {
                 code: error_codes::PARSE_ERROR.to_string(),
                 message: format!("rt-api: serialize batch body: {e}"),
             })?;
@@ -152,13 +144,17 @@ impl RtProvider {
 }
 
 impl Default for RtProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Plugin impl ───────────────────────────────────────────────────────────────
 
 impl Plugin for RtProvider {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
         // Resolve API key.
@@ -205,7 +201,10 @@ impl CatalogPlugin for RtProvider {
 
     fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
         // Resolve imdb_id from the partial entry.
-        let imdb = req.partial.imdb_id.clone()
+        let imdb = req
+            .partial
+            .imdb_id
+            .clone()
             .or_else(|| req.partial.external_ids.get("imdb").cloned())
             .filter(|s| !s.is_empty());
         let Some(imdb_id) = imdb else {
@@ -226,7 +225,9 @@ impl CatalogPlugin for RtProvider {
         // match input order.
         let mut imdb_ids: Vec<String> = Vec::with_capacity(req.partials.len());
         for partial in &req.partials {
-            if let Some(imdb) = partial.imdb_id.clone()
+            if let Some(imdb) = partial
+                .imdb_id
+                .clone()
                 .or_else(|| partial.external_ids.get("imdb").cloned())
                 .filter(|s| !s.is_empty())
             {
@@ -252,24 +253,39 @@ impl CatalogPlugin for RtProvider {
                             RtBatchEvent::Movie(detail) => {
                                 let id = detail.imdb_id.clone();
                                 let resp = project_movie(detail);
-                                by_imdb.insert(id.clone(), BulkEnrichEntry {
-                                    id,
-                                    result: PluginResult::ok(resp),
-                                });
+                                by_imdb.insert(
+                                    id.clone(),
+                                    BulkEnrichEntry {
+                                        id,
+                                        result: PluginResult::ok(resp),
+                                    },
+                                );
                             }
-                            RtBatchEvent::Error { imdb_id, error, message } => {
+                            RtBatchEvent::Error {
+                                imdb_id,
+                                error,
+                                message,
+                            } => {
                                 let code = match error.as_str() {
-                                    "not_found"     => error_codes::UNKNOWN_ID,
+                                    "not_found" => error_codes::UNKNOWN_ID,
                                     "scrape_failed" => error_codes::TRANSIENT,
-                                    "invalid_id"    => error_codes::INVALID_REQUEST,
-                                    _               => error_codes::REMOTE_ERROR,
+                                    "invalid_id" => error_codes::INVALID_REQUEST,
+                                    _ => error_codes::REMOTE_ERROR,
                                 };
-                                by_imdb.insert(imdb_id.clone(), BulkEnrichEntry {
-                                    id: imdb_id,
-                                    result: PluginResult::err(code, message),
-                                });
+                                by_imdb.insert(
+                                    imdb_id.clone(),
+                                    BulkEnrichEntry {
+                                        id: imdb_id,
+                                        result: PluginResult::err(code, message),
+                                    },
+                                );
                             }
-                            RtBatchEvent::Done { total, cached, fetched, errors } => {
+                            RtBatchEvent::Done {
+                                total,
+                                cached,
+                                fetched,
+                                errors,
+                            } => {
                                 plugin_info!(
                                     "rt-provider: batch done total={} cached={} fetched={} errors={}",
                                     total, cached, fetched, errors,
@@ -283,10 +299,13 @@ impl CatalogPlugin for RtProvider {
                     // an Err per id in this chunk so the orchestrator
                     // sees the failures at per-entry granularity.
                     for id in &chunk_vec {
-                        by_imdb.insert(id.clone(), BulkEnrichEntry {
-                            id: id.clone(),
-                            result: PluginResult::err(e.code.clone(), e.message.clone()),
-                        });
+                        by_imdb.insert(
+                            id.clone(),
+                            BulkEnrichEntry {
+                                id: id.clone(),
+                                result: PluginResult::err(e.code.clone(), e.message.clone()),
+                            },
+                        );
                     }
                 }
             }
@@ -294,16 +313,23 @@ impl CatalogPlugin for RtProvider {
 
         // Emit entries in input order. For input partials missing an
         // imdb_id, emit an UNKNOWN_ID error.
-        let entries: Vec<BulkEnrichEntry> = req.partials.into_iter()
+        let entries: Vec<BulkEnrichEntry> = req
+            .partials
+            .into_iter()
             .map(|partial| {
                 let id = partial.id.clone();
-                if let Some(imdb) = partial.imdb_id.as_deref()
+                if let Some(imdb) = partial
+                    .imdb_id
+                    .as_deref()
                     .or_else(|| partial.external_ids.get("imdb").map(String::as_str))
                     .filter(|s| !s.is_empty())
                 {
                     if let Some(entry) = by_imdb.remove(imdb) {
                         // Stamp the input-side id (might differ from imdb).
-                        BulkEnrichEntry { id, result: entry.result }
+                        BulkEnrichEntry {
+                            id,
+                            result: entry.result,
+                        }
                     } else {
                         // imdb id was sent but no event came back.
                         BulkEnrichEntry {
@@ -342,12 +368,18 @@ stui_export_catalog_plugin!(RtProvider);
 
 #[derive(Debug, Clone, Deserialize)]
 struct RtMovieDetail {
-    #[serde(rename = "imdbId")]   imdb_id: String,
-    #[serde(rename = "rtUrl")]    rt_url:  String,
-    #[serde(default)]             title:   String,
-    #[serde(default)]             year:    Option<u32>,
-    #[serde(rename = "criticScore",   default)] critic_score:   Option<u32>,
-    #[serde(rename = "audienceScore", default)] audience_score: Option<u32>,
+    #[serde(rename = "imdbId")]
+    imdb_id: String,
+    #[serde(rename = "rtUrl")]
+    rt_url: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    year: Option<u32>,
+    #[serde(rename = "criticScore", default)]
+    critic_score: Option<u32>,
+    #[serde(rename = "audienceScore", default)]
+    audience_score: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -359,23 +391,39 @@ struct BatchRequestBody<'a> {
 #[derive(Debug)]
 enum RtBatchEvent {
     Movie(RtMovieDetail),
-    Error { imdb_id: String, error: String, message: String },
-    Done { total: u32, cached: u32, fetched: u32, errors: u32 },
+    Error {
+        imdb_id: String,
+        error: String,
+        message: String,
+    },
+    Done {
+        total: u32,
+        cached: u32,
+        fetched: u32,
+        errors: u32,
+    },
 }
 
 #[derive(Debug, Deserialize)]
 struct BatchErrorBody {
-    #[serde(rename = "imdbId")]  imdb_id: String,
-    #[serde(default)]            error:   String,
-    #[serde(default)]            message: String,
+    #[serde(rename = "imdbId")]
+    imdb_id: String,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct BatchDoneBody {
-    #[serde(default)] total:   u32,
-    #[serde(default)] cached:  u32,
-    #[serde(default)] fetched: u32,
-    #[serde(default)] errors:  u32,
+    #[serde(default)]
+    total: u32,
+    #[serde(default)]
+    cached: u32,
+    #[serde(default)]
+    fetched: u32,
+    #[serde(default)]
+    errors: u32,
 }
 
 // ── Chunking constant ─────────────────────────────────────────────────────────
@@ -390,7 +438,9 @@ fn parse_rt_slug(url: &str) -> Option<String> {
     let path_start = url.find("rottentomatoes.com/")?;
     let after = &url[path_start + "rottentomatoes.com/".len()..];
     let trimmed = after.trim_end_matches('/');
-    if trimmed.is_empty() { return None; }
+    if trimmed.is_empty() {
+        return None;
+    }
     let slug_end = trimmed.find(['?', '#']).unwrap_or(trimmed.len());
     let slug = &trimmed[..slug_end];
     if slug.starts_with("m/") || slug.starts_with("tv/") {
@@ -402,9 +452,13 @@ fn parse_rt_slug(url: &str) -> Option<String> {
 
 /// Infer EntryKind from RT URL path prefix.
 fn kind_from_rt_url(url: &str) -> Option<EntryKind> {
-    if url.contains("/m/") { Some(EntryKind::Movie) }
-    else if url.contains("/tv/") { Some(EntryKind::Series) }
-    else { None }
+    if url.contains("/m/") {
+        Some(EntryKind::Movie)
+    } else if url.contains("/tv/") {
+        Some(EntryKind::Series)
+    } else {
+        None
+    }
 }
 
 /// Build the EnrichResponse from an RT detail payload. Empty/null
@@ -422,17 +476,24 @@ fn project_movie(detail: RtMovieDetail) -> EnrichResponse {
     let mut entry = PluginEntry {
         id: detail.imdb_id.clone(),
         kind,
-        title: String::new(),  // RT title unreliable for TV; skip
+        title: String::new(), // RT title unreliable for TV; skip
         source: "rottentomatoes".to_string(),
         imdb_id: Some(detail.imdb_id.clone()),
         ratings,
         ..Default::default()
     };
-    entry.external_ids.insert("imdb".to_string(), detail.imdb_id);
+    entry
+        .external_ids
+        .insert("imdb".to_string(), detail.imdb_id);
     if let Some(slug) = parse_rt_slug(&detail.rt_url) {
-        entry.external_ids.insert("rottentomatoes".to_string(), slug);
+        entry
+            .external_ids
+            .insert("rottentomatoes".to_string(), slug);
     }
-    EnrichResponse { entry, confidence: 1.0 }
+    EnrichResponse {
+        entry,
+        confidence: 1.0,
+    }
 }
 
 /// Map an HTTP response status to a `PluginError`. Success returns Ok.
@@ -470,7 +531,9 @@ fn parse_sse(body: &str) -> Vec<RtBatchEvent> {
     let mut out = Vec::new();
     for block in body.split("\n\n") {
         let trimmed = block.trim();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
 
         let mut event_name: Option<&str> = None;
         let mut data_payload: Option<&str> = None;
@@ -494,7 +557,7 @@ fn parse_sse(body: &str) -> Vec<RtBatchEvent> {
                 if let Ok(b) = serde_json::from_str::<BatchErrorBody>(data_payload) {
                     out.push(RtBatchEvent::Error {
                         imdb_id: b.imdb_id,
-                        error:   b.error,
+                        error: b.error,
                         message: b.message,
                     });
                 }
@@ -502,8 +565,10 @@ fn parse_sse(body: &str) -> Vec<RtBatchEvent> {
             "done" => {
                 if let Ok(b) = serde_json::from_str::<BatchDoneBody>(data_payload) {
                     out.push(RtBatchEvent::Done {
-                        total: b.total, cached: b.cached,
-                        fetched: b.fetched, errors: b.errors,
+                        total: b.total,
+                        cached: b.cached,
+                        fetched: b.fetched,
+                        errors: b.errors,
                     });
                 }
             }
@@ -581,9 +646,18 @@ mod tests {
 
     #[test]
     fn kind_from_rt_url_handles_movie_and_tv_paths() {
-        assert_eq!(kind_from_rt_url("https://www.rottentomatoes.com/m/x"), Some(EntryKind::Movie));
-        assert_eq!(kind_from_rt_url("https://www.rottentomatoes.com/tv/x"), Some(EntryKind::Series));
-        assert_eq!(kind_from_rt_url("https://www.rottentomatoes.com/foo/x"), None);
+        assert_eq!(
+            kind_from_rt_url("https://www.rottentomatoes.com/m/x"),
+            Some(EntryKind::Movie)
+        );
+        assert_eq!(
+            kind_from_rt_url("https://www.rottentomatoes.com/tv/x"),
+            Some(EntryKind::Series)
+        );
+        assert_eq!(
+            kind_from_rt_url("https://www.rottentomatoes.com/foo/x"),
+            None
+        );
     }
 
     #[test]
@@ -608,7 +682,10 @@ mod tests {
             e.external_ids.get("rottentomatoes").map(String::as_str),
             Some("m/shawshank_redemption"),
         );
-        assert_eq!(e.external_ids.get("imdb").map(String::as_str), Some("tt0111161"));
+        assert_eq!(
+            e.external_ids.get("imdb").map(String::as_str),
+            Some("tt0111161")
+        );
     }
 
     #[test]
@@ -630,7 +707,7 @@ mod tests {
         let d = RtMovieDetail {
             imdb_id: "tt0903747".into(),
             rt_url: "https://www.rottentomatoes.com/tv/breaking_bad".into(),
-            title: "".into(),  // RT TV pages return empty
+            title: "".into(), // RT TV pages return empty
             year: Some(2008),
             critic_score: Some(96),
             audience_score: Some(97),
@@ -639,7 +716,10 @@ mod tests {
         assert_eq!(resp.entry.kind, EntryKind::Series);
         assert_eq!(resp.entry.ratings.get("tomatometer").copied(), Some(96.0));
         assert_eq!(
-            resp.entry.external_ids.get("rottentomatoes").map(String::as_str),
+            resp.entry
+                .external_ids
+                .get("rottentomatoes")
+                .map(String::as_str),
             Some("tv/breaking_bad"),
         );
     }
@@ -690,13 +770,23 @@ mod tests {
         let body = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/batch_mixed.sse"
-        )).expect("captured fixture missing — run Chunk 1 Task 1.4 first");
+        ))
+        .expect("captured fixture missing — run Chunk 1 Task 1.4 first");
         let events = parse_sse(&body);
         // 2 movie + 1 error + 1 done = 4 events
         assert_eq!(events.len(), 4, "events: {:?}", events);
-        let movies = events.iter().filter(|e| matches!(e, RtBatchEvent::Movie(_))).count();
-        let errors = events.iter().filter(|e| matches!(e, RtBatchEvent::Error { .. })).count();
-        let dones  = events.iter().filter(|e| matches!(e, RtBatchEvent::Done { .. })).count();
+        let movies = events
+            .iter()
+            .filter(|e| matches!(e, RtBatchEvent::Movie(_)))
+            .count();
+        let errors = events
+            .iter()
+            .filter(|e| matches!(e, RtBatchEvent::Error { .. }))
+            .count();
+        let dones = events
+            .iter()
+            .filter(|e| matches!(e, RtBatchEvent::Done { .. }))
+            .count();
         assert_eq!(movies, 2);
         assert_eq!(errors, 1);
         assert_eq!(dones, 1);
@@ -725,11 +815,10 @@ mod tests {
         let body = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/single_movie_tt0111161.json"
-        )).expect("fixture missing — run Chunk 1 Task 1.4");
-        let _h = MockHost::new().with_fixture_response(
-            "https://test.example.com/api/v1/movie/tt0111161",
-            &body,
-        );
+        ))
+        .expect("fixture missing — run Chunk 1 Task 1.4");
+        let _h = MockHost::new()
+            .with_fixture_response("https://test.example.com/api/v1/movie/tt0111161", &body);
         let p = RtProvider::new_for_test("fake-key", "https://test.example.com");
         let req = EnrichRequest {
             partial: PluginEntry {
@@ -770,7 +859,7 @@ mod tests {
         };
         match p.enrich(req) {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
-            PluginResult::Ok(_)  => panic!("expected UNKNOWN_ID"),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID"),
         }
     }
 
@@ -783,20 +872,31 @@ mod tests {
         let sse = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/batch_mixed.sse"
-        )).expect("fixture missing — run Chunk 1 Task 1.4");
-        let _h = MockHost::new().with_fixture_response(
-            "https://test.example.com/api/v1/movies/batch",
-            &sse,
-        );
+        ))
+        .expect("fixture missing — run Chunk 1 Task 1.4");
+        let _h = MockHost::new()
+            .with_fixture_response("https://test.example.com/api/v1/movies/batch", &sse);
         let p = RtProvider::new_for_test("fake-key", "https://test.example.com");
         let req = BulkEnrichRequest {
             partials: vec![
-                PluginEntry { id: "1".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt0111161".into()), ..Default::default() },
-                PluginEntry { id: "2".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt0468569".into()), ..Default::default() },
-                PluginEntry { id: "3".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt9999999".into()), ..Default::default() },
+                PluginEntry {
+                    id: "1".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt0111161".into()),
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "2".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt0468569".into()),
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "3".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt9999999".into()),
+                    ..Default::default()
+                },
             ],
             prefer_id_source: None,
             force_refresh: false,
@@ -807,15 +907,20 @@ mod tests {
         };
         assert_eq!(resp.entries.len(), 3);
         // Two Ok (movie events), one Err (error event).
-        let oks = resp.entries.iter()
-            .filter(|e| matches!(e.result, PluginResult::Ok(_))).count();
-        let errs = resp.entries.iter()
-            .filter(|e| matches!(e.result, PluginResult::Err(_))).count();
+        let oks = resp
+            .entries
+            .iter()
+            .filter(|e| matches!(e.result, PluginResult::Ok(_)))
+            .count();
+        let errs = resp
+            .entries
+            .iter()
+            .filter(|e| matches!(e.result, PluginResult::Err(_)))
+            .count();
         assert_eq!(oks, 2);
         assert_eq!(errs, 1);
         // Verify the error is UNKNOWN_ID (rt-api `not_found` event).
-        let bad = resp.entries.iter()
-            .find(|e| e.id == "3").expect("entry 3");
+        let bad = resp.entries.iter().find(|e| e.id == "3").expect("entry 3");
         match &bad.result {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
             _ => panic!("entry 3 should be Err"),
@@ -832,26 +937,29 @@ mod tests {
         // errors — that's fine for this test, we only care about
         // the chunking behavior (HTTP call count).
         let sse = "event: done\ndata: {\"total\":0,\"cached\":0,\"fetched\":0,\"errors\":0}\n\n";
-        let _h = MockHost::new().with_fixture_response(
-            "https://test.example.com/api/v1/movies/batch",
-            sse,
-        );
+        let _h = MockHost::new()
+            .with_fixture_response("https://test.example.com/api/v1/movies/batch", sse);
         let p = RtProvider::new_for_test("fake-key", "https://test.example.com");
         // 75 ids → 2 chunks (50 + 25).
-        let partials: Vec<PluginEntry> = (0..75).map(|i| PluginEntry {
-            id: format!("e{i}"),
-            kind: EntryKind::Movie,
-            imdb_id: Some(format!("tt{i:07}")),
-            ..Default::default()
-        }).collect();
+        let partials: Vec<PluginEntry> = (0..75)
+            .map(|i| PluginEntry {
+                id: format!("e{i}"),
+                kind: EntryKind::Movie,
+                imdb_id: Some(format!("tt{i:07}")),
+                ..Default::default()
+            })
+            .collect();
         let req = BulkEnrichRequest {
             partials,
             prefer_id_source: None,
             force_refresh: false,
         };
         let _ = p.bulk_enrich(req);
-        assert_eq!(MockHost::http_call_count(), 2,
-                   "75 ids should result in 2 batch calls (50 + 25)");
+        assert_eq!(
+            MockHost::http_call_count(),
+            2,
+            "75 ids should result in 2 batch calls (50 + 25)"
+        );
     }
 
     #[test]
@@ -870,8 +978,11 @@ mod tests {
             _ => panic!("expected Ok"),
         };
         assert!(resp.entries.is_empty());
-        assert_eq!(MockHost::http_call_count(), 0,
-                   "empty input should make zero HTTP calls");
+        assert_eq!(
+            MockHost::http_call_count(),
+            0,
+            "empty input should make zero HTTP calls"
+        );
     }
 
     #[test]
@@ -881,10 +992,12 @@ mod tests {
         let _h = MockHost::new();
         let p = RtProvider::new_for_test("fake-key", "https://test.example.com");
         let req = BulkEnrichRequest {
-            partials: vec![
-                PluginEntry { id: "no-imdb".into(), kind: EntryKind::Movie,
-                              imdb_id: None, ..Default::default() },
-            ],
+            partials: vec![PluginEntry {
+                id: "no-imdb".into(),
+                kind: EntryKind::Movie,
+                imdb_id: None,
+                ..Default::default()
+            }],
             prefer_id_source: None,
             force_refresh: false,
         };
@@ -907,10 +1020,9 @@ mod tests {
     #[test]
     #[ignore]
     fn live_smoke_against_user_deployment() {
-        let key = std::env::var("RT_API_KEY")
-            .expect("source ~/.config/stui/secrets.env first");
-        let base = std::env::var("RT_API_BASE_URL")
-            .unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+        let key = std::env::var("RT_API_KEY").expect("source ~/.config/stui/secrets.env first");
+        let base =
+            std::env::var("RT_API_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
         // Direct reqwest-style call would require host-side reqwest in
         // dev-deps; simpler to use ureq blocking with http(s) feature.
         // For now, just exercise project_movie against a real captured

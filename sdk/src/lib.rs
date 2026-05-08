@@ -38,18 +38,15 @@
 
 // ── Modules ─────────────────────────────────────────────────────────────────
 
-pub mod kinds;
-pub mod id_sources;
-pub mod manifest;
 pub mod capabilities;
+pub mod id_sources;
+pub mod kinds;
+pub mod manifest;
 
 pub use manifest::{
-    PluginManifest, PluginMeta, AuthorMeta,
-    Capabilities, CatalogCapability,
-    VerbConfig, LookupConfig, ArtworkConfig,
-    NetworkPermission, Permissions,
-    RateLimit, SupervisorTuning, PluginConfigField,
-    ManifestValidationError,
+    ArtworkConfig, AuthorMeta, Capabilities, CatalogCapability, LookupConfig,
+    ManifestValidationError, NetworkPermission, Permissions, PluginConfigField, PluginManifest,
+    PluginMeta, RateLimit, SupervisorTuning, VerbConfig,
 };
 
 /// Parse a plugin's canonical `plugin.toml` text into a [`PluginManifest`].
@@ -69,23 +66,15 @@ pub fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
     toml::from_str(text).map_err(|e| e.to_string())
 }
 pub use capabilities::{
-    InitContext, InitRequest, InitResultEnvelope,
-    PluginLogger, DefaultPluginLogger, PluginInitError,
-    LookupRequest, LookupResponse,
-    EnrichRequest, EnrichResponse,
-    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
-    CreditsRequest, CreditsResponse,
-    CastMember, CastRole, CrewMember, CrewRole,
-    RelatedRequest, RelatedResponse, RelationKind,
-    EpisodesRequest, EpisodesResponse, EpisodeWire,
-    err_not_implemented, normalize_crew_role,
-    validate_manifest,
-    TrailersRequest, TrailersResponse, Trailer, TrailerKind,
-    ReleaseInfoRequest, ReleaseInfoResponse, ReleaseEntry, ReleaseKind,
-    KeywordsRequest, KeywordsResponse, Keyword,
-    BoxOfficeRequest, BoxOfficeResponse, MoneyAmount,
-    AlternativeTitlesRequest, AlternativeTitlesResponse, AlternativeTitle,
-    BulkEnrichRequest, BulkEnrichResponse, BulkEnrichEntry,
+    err_not_implemented, normalize_crew_role, validate_manifest, AlternativeTitle,
+    AlternativeTitlesRequest, AlternativeTitlesResponse, ArtworkRequest, ArtworkResponse,
+    ArtworkSize, ArtworkVariant, BoxOfficeRequest, BoxOfficeResponse, BulkEnrichEntry,
+    BulkEnrichRequest, BulkEnrichResponse, CastMember, CastRole, CreditsRequest, CreditsResponse,
+    CrewMember, CrewRole, DefaultPluginLogger, EnrichRequest, EnrichResponse, EpisodeWire,
+    EpisodesRequest, EpisodesResponse, InitContext, InitRequest, InitResultEnvelope, Keyword,
+    KeywordsRequest, KeywordsResponse, LookupRequest, LookupResponse, MoneyAmount, PluginInitError,
+    PluginLogger, RelatedRequest, RelatedResponse, RelationKind, ReleaseEntry, ReleaseInfoRequest,
+    ReleaseInfoResponse, ReleaseKind, Trailer, TrailerKind, TrailersRequest, TrailersResponse,
 };
 
 pub mod error_codes {
@@ -95,22 +84,22 @@ pub mod error_codes {
     //! the rest of the ABI.
 
     pub const UNSUPPORTED_SCOPE: &str = "unsupported_scope";
-    pub const INVALID_REQUEST:   &str = "invalid_request";
-    pub const NOT_IMPLEMENTED:   &str = "not_implemented";
-    pub const UNKNOWN_ID:        &str = "unknown_id";
-    pub const RATE_LIMITED:      &str = "rate_limited";
-    pub const TRANSIENT:         &str = "transient";
-    pub const REMOTE_ERROR:      &str = "remote_error";
-    pub const PARSE_ERROR:       &str = "parse_error";
+    pub const INVALID_REQUEST: &str = "invalid_request";
+    pub const NOT_IMPLEMENTED: &str = "not_implemented";
+    pub const UNKNOWN_ID: &str = "unknown_id";
+    pub const RATE_LIMITED: &str = "rate_limited";
+    pub const TRANSIENT: &str = "transient";
+    pub const REMOTE_ERROR: &str = "remote_error";
+    pub const PARSE_ERROR: &str = "parse_error";
 }
 
 // ── ABI types (re-exported for plugin authors) ────────────────────────────────
 
 pub const STUI_ABI_VERSION: i32 = 2;
 
+pub use kinds::{EntryKind, SearchScope};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-pub use kinds::{EntryKind, SearchScope};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
@@ -351,7 +340,6 @@ pub struct Stream {
     pub provider: String,
 
     // ── Quality metadata (all optional — plugins fill what they can) ──
-
     /// Resolution / quality bucket as a label. `"4K"`, `"2160p"`,
     /// `"1080p"`, `"720p"`, etc. Drives the ranker's quality score.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -370,7 +358,6 @@ pub struct Stream {
     pub hdr: bool,
 
     // ── Torrent-specific (None for direct streams) ────────────────────
-
     /// Seeder count from the torrent indexer. The ranker treats high
     /// seeders as a quality signal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -381,7 +368,6 @@ pub struct Stream {
     pub size_bytes: Option<u64>,
 
     // ── Audio / subtitle metadata ────────────────────────────────────
-
     /// ISO-639-1 audio language code. Used for "match my preferred
     /// audio language" filtering in the ranker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -488,8 +474,12 @@ pub trait StuiPlugin {
 /// [`Plugin::shutdown`] have default no-op implementations.
 pub trait Plugin {
     fn manifest(&self) -> &PluginManifest;
-    fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> { Ok(()) }
-    fn shutdown(&mut self) -> Result<(), PluginError> { Ok(()) }
+    fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> {
+        Ok(())
+    }
+    fn shutdown(&mut self) -> Result<(), PluginError> {
+        Ok(())
+    }
 }
 
 /// Metadata catalog capability. Plugins opt into this trait when they expose
@@ -498,18 +488,24 @@ pub trait Plugin {
 pub trait CatalogPlugin: Plugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse>;
 
-    fn lookup(&self, _req: LookupRequest) -> PluginResult<LookupResponse>
-        { err_not_implemented() }
-    fn enrich(&self, _req: EnrichRequest) -> PluginResult<EnrichResponse>
-        { err_not_implemented() }
-    fn get_artwork(&self, _req: ArtworkRequest) -> PluginResult<ArtworkResponse>
-        { err_not_implemented() }
-    fn get_credits(&self, _req: CreditsRequest) -> PluginResult<CreditsResponse>
-        { err_not_implemented() }
-    fn related(&self, _req: RelatedRequest) -> PluginResult<RelatedResponse>
-        { err_not_implemented() }
-    fn episodes(&self, _req: EpisodesRequest) -> PluginResult<EpisodesResponse>
-        { err_not_implemented() }
+    fn lookup(&self, _req: LookupRequest) -> PluginResult<LookupResponse> {
+        err_not_implemented()
+    }
+    fn enrich(&self, _req: EnrichRequest) -> PluginResult<EnrichResponse> {
+        err_not_implemented()
+    }
+    fn get_artwork(&self, _req: ArtworkRequest) -> PluginResult<ArtworkResponse> {
+        err_not_implemented()
+    }
+    fn get_credits(&self, _req: CreditsRequest) -> PluginResult<CreditsResponse> {
+        err_not_implemented()
+    }
+    fn related(&self, _req: RelatedRequest) -> PluginResult<RelatedResponse> {
+        err_not_implemented()
+    }
+    fn episodes(&self, _req: EpisodesRequest) -> PluginResult<EpisodesResponse> {
+        err_not_implemented()
+    }
 
     // ── New in ABI v2 ──
     fn get_trailers(&self, _req: TrailersRequest) -> PluginResult<TrailersResponse> {
@@ -524,7 +520,10 @@ pub trait CatalogPlugin: Plugin {
     fn get_box_office(&self, _req: BoxOfficeRequest) -> PluginResult<BoxOfficeResponse> {
         err_not_implemented()
     }
-    fn get_alternative_titles(&self, _req: AlternativeTitlesRequest) -> PluginResult<AlternativeTitlesResponse> {
+    fn get_alternative_titles(
+        &self,
+        _req: AlternativeTitlesRequest,
+    ) -> PluginResult<AlternativeTitlesResponse> {
         err_not_implemented()
     }
 
@@ -545,7 +544,9 @@ pub trait CatalogPlugin: Plugin {
         let mut entries = Vec::with_capacity(req.partials.len());
         let mut all_not_implemented = !req.partials.is_empty();
         for partial in req.partials {
-            let id = partial.imdb_id.clone()
+            let id = partial
+                .imdb_id
+                .clone()
                 .unwrap_or_else(|| partial.id.clone());
             let result = self.enrich(EnrichRequest {
                 partial,
@@ -628,7 +629,12 @@ macro_rules! plugin_debug { ($($t:tt)*) => { $crate::host_log(1, &format!($($t)*
 /// ```
 pub fn log_url(url: &str) -> String {
     const SENSITIVE: &[&str] = &[
-        "api_key", "apikey", "key", "token", "access_token", "secret",
+        "api_key",
+        "apikey",
+        "key",
+        "token",
+        "access_token",
+        "secret",
     ];
     let Some((base, query)) = url.split_once('?') else {
         return url.to_string();
@@ -636,7 +642,7 @@ pub fn log_url(url: &str) -> String {
     // Split off fragment so we reattach it at the end unchanged.
     let (query, fragment) = match query.split_once('#') {
         Some((q, f)) => (q, Some(f)),
-        None         => (query, None),
+        None => (query, None),
     };
     let scrubbed: Vec<String> = query
         .split('&')
@@ -650,7 +656,7 @@ pub fn log_url(url: &str) -> String {
     let joined = scrubbed.join("&");
     match fragment {
         Some(f) => format!("{base}?{joined}#{f}"),
-        None    => format!("{base}?{joined}"),
+        None => format!("{base}?{joined}"),
     }
 }
 
@@ -685,10 +691,7 @@ mod log_url_tests {
 
     #[test]
     fn case_insensitive_key_match() {
-        assert_eq!(
-            log_url("https://a?API_KEY=X"),
-            "https://a?API_KEY=***",
-        );
+        assert_eq!(log_url("https://a?API_KEY=X"), "https://a?API_KEY=***",);
     }
 
     #[test]
@@ -933,14 +936,18 @@ pub mod testing {
     pub struct MockHost;
 
     impl Default for MockHost {
-        fn default() -> Self { Self::new() }
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl MockHost {
         /// Build a fresh handle; existing fixtures in the thread-local are
         /// preserved. Call [`MockHost::reset`] first if you want a clean
         /// slate.
-        pub fn new() -> Self { MockHost }
+        pub fn new() -> Self {
+            MockHost
+        }
 
         /// Register a canned JSON response for a given URL (exact match).
         /// Returns `self` so calls can be chained.
@@ -958,11 +965,7 @@ pub mod testing {
         /// Pre-populate a cache entry accessible via [`crate::cache_get`] /
         /// [`crate::cache_set`] on non-WASM test paths.
         /// Returns `self` so calls can be chained.
-        pub fn with_cache_value(
-            self,
-            key: impl Into<String>,
-            value: impl Into<String>,
-        ) -> Self {
+        pub fn with_cache_value(self, key: impl Into<String>, value: impl Into<String>) -> Self {
             CACHE.with(|m| {
                 m.borrow_mut().insert(key.into(), value.into());
             });
@@ -1012,7 +1015,9 @@ mod mockhost_tests {
     use super::http_get;
     use super::testing::MockHost;
 
-    fn reset() { MockHost::reset(); }
+    fn reset() {
+        MockHost::reset();
+    }
 
     #[test]
     fn fixture_satisfies_http_get() {
@@ -1070,14 +1075,14 @@ mod mockhost_tests {
     #[test]
     fn mock_host_http_request_returns_fixture_with_status_200() {
         MockHost::reset();
-        let _h = MockHost::new().with_fixture_response(
-            "https://example.com/x", r#"{"k":"v"}"#);
+        let _h = MockHost::new().with_fixture_response("https://example.com/x", r#"{"k":"v"}"#);
         let resp = super::http_request(super::HttpRequest {
             method: "POST".into(),
             url: "https://example.com/x".into(),
             headers: vec![("X-Test".into(), "1".into())],
             body: Some(r#"{"in":1}"#.into()),
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(resp.status, 200);
         assert_eq!(resp.body, r#"{"k":"v"}"#);
     }
@@ -1090,16 +1095,18 @@ mod mockhost_tests {
             url: "https://nope/x".into(),
             headers: vec![],
             body: None,
-        }).unwrap_err();
-        assert!(err.contains("http_request only available in WASM context"),
-                "expected wasm-context error, got: {err}");
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("http_request only available in WASM context"),
+            "expected wasm-context error, got: {err}"
+        );
     }
 
     #[test]
     fn mock_host_http_post_json_returns_fixture() {
         MockHost::reset();
-        let _h = MockHost::new().with_fixture_response(
-            "https://example.com/x", "ok-body");
+        let _h = MockHost::new().with_fixture_response("https://example.com/x", "ok-body");
         let body = super::http_post_json("https://example.com/x", r#"{"in":1}"#).unwrap();
         assert_eq!(body, "ok-body");
     }
@@ -1129,7 +1136,9 @@ pub fn http_get_with_headers(url: &str, headers: &[(&str, &str)]) -> Result<Stri
     // request headers.
     let mut headers_json = String::from("{");
     for (i, (k, v)) in headers.iter().enumerate() {
-        if i > 0 { headers_json.push(','); }
+        if i > 0 {
+            headers_json.push(',');
+        }
         headers_json.push_str(&serde_json::to_string(k).unwrap_or_default());
         headers_json.push(':');
         headers_json.push_str(&serde_json::to_string(v).unwrap_or_default());
@@ -1269,7 +1278,9 @@ pub fn cache_set(key: &str, value: &str) {
 #[inline]
 pub fn now_unix() -> i64 {
     #[cfg(target_arch = "wasm32")]
-    unsafe { stui_now_unix() }
+    unsafe {
+        stui_now_unix()
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -1478,8 +1489,7 @@ pub fn http_request(req: HttpRequest) -> Result<HttpFullResponse, String> {
         let len = (packed & 0xFFFFFFFF) as usize;
         let json = unsafe { std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) }
             .map_err(|e| e.to_string())?;
-        let resp: HttpFullResponse =
-            serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let resp: HttpFullResponse = serde_json::from_str(json).map_err(|e| e.to_string())?;
         Ok(resp)
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -1662,12 +1672,10 @@ macro_rules! __catalog_abi_fn {
             let req: $req_ty = match serde_json::from_slice(input) {
                 Ok(r) => r,
                 Err(e) => {
-                    return $crate::__write_result(
-                        &$crate::PluginResult::<$resp_ty>::err(
-                            $crate::error_codes::PARSE_ERROR,
-                            e.to_string(),
-                        ),
-                    );
+                    return $crate::__write_result(&$crate::PluginResult::<$resp_ty>::err(
+                        $crate::error_codes::PARSE_ERROR,
+                        e.to_string(),
+                    ));
                 }
             };
             let borrow = $getter();
@@ -1715,8 +1723,7 @@ macro_rules! stui_export_plugin {
         //   host-side test infrastructure compiles and the static
         //   continues to satisfy the `Sync` bound.
         #[cfg(target_arch = "wasm32")]
-        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> =
-            $crate::WasmPluginCell::new();
+        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> = $crate::WasmPluginCell::new();
 
         #[cfg(not(target_arch = "wasm32"))]
         static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
@@ -1942,8 +1949,7 @@ macro_rules! stui_export_catalog_plugin {
         // "cannot recursively acquire mutex" message. Host builds keep the
         // mutex so the existing test infrastructure compiles.
         #[cfg(target_arch = "wasm32")]
-        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> =
-            $crate::WasmPluginCell::new();
+        static PLUGIN_INSTANCE: $crate::WasmPluginCell<$plugin_ty> = $crate::WasmPluginCell::new();
 
         #[cfg(not(target_arch = "wasm32"))]
         static PLUGIN_INSTANCE: std::sync::OnceLock<std::sync::Mutex<$plugin_ty>> =
@@ -1999,9 +2005,7 @@ macro_rules! stui_export_catalog_plugin {
         /// response into a `PluginStatus` (Loaded / NeedsConfig / Failed).
         #[no_mangle]
         pub extern "C" fn stui_init(ptr: i32, len: i32) -> i64 {
-            let input = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, len as usize)
-            };
+            let input = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
             let req: $crate::InitRequest = match serde_json::from_slice(input) {
                 Ok(r) => r,
                 Err(e) => {
@@ -2162,12 +2166,12 @@ macro_rules! stui_export_catalog_plugin {
             let req: $crate::FindStreamsRequest = match serde_json::from_slice(input) {
                 Ok(r) => r,
                 Err(e) => {
-                    return $crate::__write_result(
-                        &$crate::PluginResult::<$crate::FindStreamsResponse>::err(
-                            $crate::error_codes::PARSE_ERROR,
-                            e.to_string(),
-                        ),
-                    );
+                    return $crate::__write_result(&$crate::PluginResult::<
+                        $crate::FindStreamsResponse,
+                    >::err(
+                        $crate::error_codes::PARSE_ERROR,
+                        e.to_string(),
+                    ));
                 }
             };
             let borrow = get_plugin();
@@ -2218,13 +2222,11 @@ pub mod prelude {
     pub use crate::stui_export_plugin;
     pub use crate::url_encode;
     pub use crate::{plugin_debug, plugin_error, plugin_info, plugin_warn};
+    pub use crate::{FindStreamsRequest, FindStreamsResponse, Stream, StreamProvider};
     #[allow(deprecated)]
     pub use crate::{
         PluginEntry, PluginResult, PluginType, ResolveRequest, ResolveResponse, SearchRequest,
         SearchResponse, StuiPlugin, SubtitleTrack,
-    };
-    pub use crate::{
-        FindStreamsRequest, FindStreamsResponse, Stream, StreamProvider,
     };
 }
 
@@ -2239,11 +2241,16 @@ mod tests {
             manifest: PluginManifest,
         }
         impl Plugin for Stub {
-            fn manifest(&self) -> &PluginManifest { &self.manifest }
+            fn manifest(&self) -> &PluginManifest {
+                &self.manifest
+            }
         }
         impl CatalogPlugin for Stub {
             fn search(&self, _req: SearchRequest) -> PluginResult<SearchResponse> {
-                PluginResult::Ok(SearchResponse { items: vec![], total: 0 })
+                PluginResult::Ok(SearchResponse {
+                    items: vec![],
+                    total: 0,
+                })
             }
         }
         fn assert_plugin<T: Plugin>() {}
@@ -2258,13 +2265,20 @@ mod tests {
     /// the deprecated `StuiPlugin` impl.
     #[test]
     fn catalog_only_plugin_satisfies_bounds() {
-        struct TestStub { m: PluginManifest }
+        struct TestStub {
+            m: PluginManifest,
+        }
         impl Plugin for TestStub {
-            fn manifest(&self) -> &PluginManifest { &self.m }
+            fn manifest(&self) -> &PluginManifest {
+                &self.m
+            }
         }
         impl CatalogPlugin for TestStub {
             fn search(&self, _req: SearchRequest) -> PluginResult<SearchResponse> {
-                PluginResult::Ok(SearchResponse { items: vec![], total: 0 })
+                PluginResult::Ok(SearchResponse {
+                    items: vec![],
+                    total: 0,
+                })
             }
         }
         fn assert_catalog_only<T: CatalogPlugin>() {}
@@ -2443,7 +2457,10 @@ mod tests {
         e.countries = vec!["US".into()];
         let s = serde_json::to_string(&e).unwrap();
         let back: PluginEntry = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.original_title.as_deref(), Some("The Shawshank Redemption"));
+        assert_eq!(
+            back.original_title.as_deref(),
+            Some("The Shawshank Redemption")
+        );
         assert_eq!(back.certificate_country.as_deref(), Some("US"));
         assert_eq!(back.languages, vec!["en".to_string()]);
         assert_eq!(back.countries, vec!["US".to_string()]);
@@ -2471,8 +2488,14 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        assert!((n - host_now).abs() < 5, "now_unix drift > 5s: {n} vs {host_now}");
-        assert!(n > 1_700_000_000, "now_unix returned suspiciously small value: {n}");
+        assert!(
+            (n - host_now).abs() < 5,
+            "now_unix drift > 5s: {n} vs {host_now}"
+        );
+        assert!(
+            n > 1_700_000_000,
+            "now_unix returned suspiciously small value: {n}"
+        );
     }
 
     #[test]
@@ -2481,7 +2504,9 @@ mod tests {
 
         struct StubPlugin;
         impl Plugin for StubPlugin {
-            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+            fn manifest(&self) -> &PluginManifest {
+                unimplemented!()
+            }
         }
         impl CatalogPlugin for StubPlugin {
             fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
@@ -2498,10 +2523,18 @@ mod tests {
         let p = StubPlugin;
         let req = BulkEnrichRequest {
             partials: vec![
-                PluginEntry { id: "a".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt1".into()), ..Default::default() },
-                PluginEntry { id: "b".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt2".into()), ..Default::default() },
+                PluginEntry {
+                    id: "a".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt1".into()),
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "b".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt2".into()),
+                    ..Default::default()
+                },
             ],
             prefer_id_source: None,
             force_refresh: false,
@@ -2526,7 +2559,9 @@ mod tests {
 
         struct StubPlugin;
         impl Plugin for StubPlugin {
-            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+            fn manifest(&self) -> &PluginManifest {
+                unimplemented!()
+            }
         }
         impl CatalogPlugin for StubPlugin {
             fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
@@ -2537,9 +2572,21 @@ mod tests {
         let p = StubPlugin;
         let req = BulkEnrichRequest {
             partials: vec![
-                PluginEntry { id: "a".into(), kind: EntryKind::Movie, ..Default::default() },
-                PluginEntry { id: "b".into(), kind: EntryKind::Movie, ..Default::default() },
-                PluginEntry { id: "c".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry {
+                    id: "a".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "b".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "c".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
             ],
             prefer_id_source: None,
             force_refresh: false,
@@ -2556,7 +2603,9 @@ mod tests {
 
         struct StubPlugin;
         impl Plugin for StubPlugin {
-            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+            fn manifest(&self) -> &PluginManifest {
+                unimplemented!()
+            }
         }
         impl CatalogPlugin for StubPlugin {
             fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
@@ -2565,10 +2614,11 @@ mod tests {
             fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
                 match req.partial.id.as_str() {
                     "a" => PluginResult::ok(EnrichResponse {
-                        entry: req.partial, confidence: 1.0,
+                        entry: req.partial,
+                        confidence: 1.0,
                     }),
                     "b" => err_not_implemented(),
-                    _   => PluginResult::err(error_codes::TRANSIENT, "boom"),
+                    _ => PluginResult::err(error_codes::TRANSIENT, "boom"),
                 }
             }
         }
@@ -2576,16 +2626,31 @@ mod tests {
         let p = StubPlugin;
         let req = BulkEnrichRequest {
             partials: vec![
-                PluginEntry { id: "a".into(), kind: EntryKind::Movie, ..Default::default() },
-                PluginEntry { id: "b".into(), kind: EntryKind::Movie, ..Default::default() },
-                PluginEntry { id: "c".into(), kind: EntryKind::Movie, ..Default::default() },
+                PluginEntry {
+                    id: "a".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "b".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "c".into(),
+                    kind: EntryKind::Movie,
+                    ..Default::default()
+                },
             ],
             prefer_id_source: None,
             force_refresh: false,
         };
         let resp = match p.bulk_enrich(req) {
             PluginResult::Ok(r) => r,
-            PluginResult::Err(e) => panic!("partial-success should be top-level Ok, got Err {}: {}", e.code, e.message),
+            PluginResult::Err(e) => panic!(
+                "partial-success should be top-level Ok, got Err {}: {}",
+                e.code, e.message
+            ),
         };
         assert_eq!(resp.entries.len(), 3);
         assert!(matches!(resp.entries[0].result, PluginResult::Ok(_)));
@@ -2603,7 +2668,9 @@ mod tests {
     fn default_bulk_enrich_empty_input_returns_ok_empty() {
         struct StubPlugin;
         impl Plugin for StubPlugin {
-            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+            fn manifest(&self) -> &PluginManifest {
+                unimplemented!()
+            }
         }
         impl CatalogPlugin for StubPlugin {
             fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
@@ -2619,7 +2686,10 @@ mod tests {
         };
         let resp = match p.bulk_enrich(req) {
             PluginResult::Ok(r) => r,
-            PluginResult::Err(e) => panic!("empty input should be Ok(empty), got Err {}: {}", e.code, e.message),
+            PluginResult::Err(e) => panic!(
+                "empty input should be Ok(empty), got Err {}: {}",
+                e.code, e.message
+            ),
         };
         assert_eq!(resp.entries.len(), 0);
     }
@@ -2628,7 +2698,9 @@ mod tests {
     fn bulk_enrich_entry_id_uses_imdb_id_when_present() {
         struct StubPlugin;
         impl Plugin for StubPlugin {
-            fn manifest(&self) -> &PluginManifest { unimplemented!() }
+            fn manifest(&self) -> &PluginManifest {
+                unimplemented!()
+            }
         }
         impl CatalogPlugin for StubPlugin {
             fn search(&self, _: SearchRequest) -> PluginResult<SearchResponse> {
@@ -2636,7 +2708,8 @@ mod tests {
             }
             fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
                 PluginResult::ok(EnrichResponse {
-                    entry: req.partial, confidence: 1.0,
+                    entry: req.partial,
+                    confidence: 1.0,
                 })
             }
         }
@@ -2644,10 +2717,18 @@ mod tests {
         let p = StubPlugin;
         let req = BulkEnrichRequest {
             partials: vec![
-                PluginEntry { id: "xmdb-42".into(), kind: EntryKind::Movie,
-                              imdb_id: Some("tt1".into()), ..Default::default() },
-                PluginEntry { id: "xmdb-43".into(), kind: EntryKind::Movie,
-                              imdb_id: None, ..Default::default() },
+                PluginEntry {
+                    id: "xmdb-42".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: Some("tt1".into()),
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "xmdb-43".into(),
+                    kind: EntryKind::Movie,
+                    imdb_id: None,
+                    ..Default::default()
+                },
             ],
             prefer_id_source: None,
             force_refresh: false,
@@ -2660,4 +2741,3 @@ mod tests {
         assert_eq!(resp.entries[1].id, "xmdb-43");
     }
 }
-
