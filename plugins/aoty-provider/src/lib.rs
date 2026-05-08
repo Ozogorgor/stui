@@ -325,7 +325,7 @@ fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
     let mut ratings = std::collections::HashMap::new();
     let mut votes = std::collections::HashMap::new();
     if let Some(c) = resp.critic {
-        if let Some(s) = c.critic_score.filter(|v| *v > 0.0) {
+        if let Some(s) = c.critic_score.filter(|v| *v > 0.0 && *v <= 100.0) {
             ratings.insert("aoty_critic".to_string(), s);
         }
         if let Some(n) = c.review_count.filter(|v| *v > 0) {
@@ -333,7 +333,7 @@ fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
         }
     }
     if let Some(u) = resp.user {
-        if let Some(s) = u.user_score.filter(|v| *v > 0.0) {
+        if let Some(s) = u.user_score.filter(|v| *v > 0.0 && *v <= 100.0) {
             ratings.insert("aoty_user".to_string(), s);
         }
         if let Some(n) = u.rating_count.filter(|v| *v > 0) {
@@ -369,13 +369,13 @@ fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
 fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
     let mut ratings = std::collections::HashMap::new();
     let mut votes = std::collections::HashMap::new();
-    if let Some(s) = resp.critic_score.filter(|v| *v > 0.0) {
+    if let Some(s) = resp.critic_score.filter(|v| *v > 0.0 && *v <= 100.0) {
         ratings.insert("aoty_critic".to_string(), s);
     }
     if let Some(n) = resp.review_count.filter(|v| *v > 0) {
         votes.insert("aoty_critic".to_string(), n);
     }
-    if let Some(s) = resp.user_score.filter(|v| *v > 0.0) {
+    if let Some(s) = resp.user_score.filter(|v| *v > 0.0 && *v <= 100.0) {
         ratings.insert("aoty_user".to_string(), s);
     }
     if let Some(n) = resp.rating_count.filter(|v| *v > 0) {
@@ -590,6 +590,48 @@ mod tests {
             rating_count: None,
         };
         assert_eq!(project_album(resp_empty, mb).id, mb);
+    }
+
+    #[test]
+    fn project_drops_out_of_range_scores() {
+        // AOTY's contract is 0-100; anything above is malformed
+        // upstream and would skew the aggregator's weighted-median if
+        // we let it through. Drop, don't clamp — clamping silently
+        // masks the upstream bug.
+        let resp_artist = AotyArtistResponse {
+            artist_id: "x".into(),
+            critic: Some(NestedCritic {
+                critic_score: Some(150.0), // out-of-range
+                review_count: Some(5),
+            }),
+            user: Some(NestedUser {
+                user_score: Some(101.0), // out-of-range
+                rating_count: Some(5),
+            }),
+        };
+        let e = project_artist(resp_artist, "mb");
+        assert!(
+            e.ratings.get("aoty_critic").is_none(),
+            "out-of-range critic score should be dropped"
+        );
+        assert!(
+            e.ratings.get("aoty_user").is_none(),
+            "out-of-range user score should be dropped"
+        );
+
+        let resp_album = AotyAlbumResponse {
+            album_slug: Some("x".into()),
+            title: Some("X".into()),
+            artist: None,
+            genre: None,
+            critic_score: Some(150.0),
+            review_count: Some(1),
+            user_score: Some(101.0),
+            rating_count: Some(1),
+        };
+        let e = project_album(resp_album, "mb");
+        assert!(e.ratings.get("aoty_critic").is_none());
+        assert!(e.ratings.get("aoty_user").is_none());
     }
 
     #[test]
