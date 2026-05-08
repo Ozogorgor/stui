@@ -67,11 +67,19 @@ jobs:
       # so the build script panics with "pkg-config exited with status
       # code 1 — libpipewire-0.3 not found" before cargo even gets to
       # touch project source. Install them ahead of every cargo step.
+      # The runtime links system audio + DSP libs via *-sys build
+      # scripts (alsa, pipewire/spa). Ubuntu runners ship none of
+      # these by default. Bundle them all in one apt step so
+      # subsequent cargo invocations don't have to refetch the
+      # package index.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libpipewire-0.3-dev libspa-0.2-dev pkg-config
+            libasound2-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            pkg-config
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
@@ -173,11 +181,19 @@ jobs:
         with:
           toolchain: stable
 
+      # The runtime links system audio + DSP libs via *-sys build
+      # scripts (alsa, pipewire/spa). Ubuntu runners ship none of
+      # these by default. Bundle them all in one apt step so
+      # subsequent cargo invocations don't have to refetch the
+      # package index.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libpipewire-0.3-dev libspa-0.2-dev pkg-config
+            libasound2-dev \
+            libpipewire-0.3-dev \
+            libspa-0.2-dev \
+            pkg-config
 
       - name: Install Go
         uses: actions/setup-go@v5
