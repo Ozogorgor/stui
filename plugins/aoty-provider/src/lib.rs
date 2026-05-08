@@ -239,6 +239,12 @@ struct AotyAlbumResponse {
     #[serde(default)] album_slug:   Option<String>,
     #[serde(default)] title:        Option<String>,
     #[serde(default)] artist:       Option<String>,
+    /// Primary genre per AOTY's curated taxonomy (e.g. "Indie Pop",
+    /// "Hip Hop"). Single string, not a tag cloud — preferred over
+    /// Last.fm/MB tag-derived genres which leak labels like "album" /
+    /// "favorite" / personal-taxonomy noise. None when the album page
+    /// has no `<a href="/genre/...">` row.
+    #[serde(default)] genre:        Option<String>,
     #[serde(default)] critic_score: Option<f32>,
     #[serde(default)] review_count: Option<u32>,
     #[serde(default)] user_score:   Option<f32>,
@@ -343,11 +349,13 @@ fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
         votes.insert("aoty_user".to_string(), n);
     }
     let id = resp.album_slug.clone().unwrap_or_default();
+    let genre = resp.genre.filter(|s| !s.is_empty());
     let mut entry = PluginEntry {
         id,
         kind: EntryKind::Album,
         title: resp.title.unwrap_or_default(),
         source: "albumoftheyear".to_string(),
+        genre,
         ratings,
         rating_votes: votes,
         ..Default::default()
@@ -463,6 +471,7 @@ mod tests {
             album_slug: Some("2546-dom-family-of-love".into()),
             title:      Some("Family of Love".into()),
             artist:     Some("DOM".into()),
+            genre:      Some("Indie Pop".into()),
             critic_score: Some(73.0),
             review_count: Some(7),
             user_score:   Some(67.0),
@@ -471,6 +480,7 @@ mod tests {
         let e = project_album(resp, "mb-album-id");
         assert_eq!(e.kind, EntryKind::Album);
         assert_eq!(e.title, "Family of Love");
+        assert_eq!(e.genre.as_deref(), Some("Indie Pop"));
         assert_eq!(e.ratings.get("aoty_critic").copied(), Some(73.0));
         assert_eq!(e.ratings.get("aoty_user").copied(), Some(67.0));
         assert_eq!(e.rating_votes.get("aoty_critic").copied(), Some(7));
@@ -479,6 +489,22 @@ mod tests {
             e.external_ids.get("aoty_artist_name").map(String::as_str),
             Some("DOM"),
         );
+    }
+
+    #[test]
+    fn project_album_omits_empty_genre() {
+        let resp = AotyAlbumResponse {
+            album_slug: Some("x".into()),
+            title:      Some("X".into()),
+            artist:     None,
+            genre:      Some("".into()),
+            critic_score: Some(50.0),
+            review_count: Some(1),
+            user_score: None,
+            rating_count: None,
+        };
+        let e = project_album(resp, "mb");
+        assert!(e.genre.is_none(), "empty-string genre should be dropped");
     }
 
     #[test]
