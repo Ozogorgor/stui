@@ -28,7 +28,12 @@ env_var   = "AOTY_API_BASE_URL"
 default   = "https://album-of-the-year-api.vercel.app"
 
 [permissions]
-network = ["album-of-the-year-api.vercel.app"]
+# Hosts the plugin is allowed to reach. Default covers the canonical
+# Vercel deployment plus local self-host (loopback aliases). Users who
+# self-host the AOTY API at a custom domain must edit this list in
+# their installed `~/.stui/plugins/albumoftheyear/plugin.toml` — the
+# runtime sandbox enforces exact hostname matching, no wildcards.
+network = ["album-of-the-year-api.vercel.app", "localhost", "127.0.0.1"]
 
 [rate_limit]
 requests_per_second = 5

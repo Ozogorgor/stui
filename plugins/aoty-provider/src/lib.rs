@@ -319,8 +319,18 @@ fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
             votes.insert("aoty_user".to_string(), n);
         }
     }
+    // The API normally returns the AOTY slug as artist_id (e.g.
+    // `183-kanye-west`). Fall back to the MusicBrainz id when the
+    // upstream field is empty so we never emit `id = ""` — empty ids
+    // collide in the orchestrator's dedup map and silently lose
+    // entries during merge.
+    let id = if resp.artist_id.is_empty() {
+        mb_id.to_string()
+    } else {
+        resp.artist_id
+    };
     let mut entry = PluginEntry {
-        id: resp.artist_id,
+        id,
         kind: EntryKind::Artist,
         title: String::new(),  // AOTY artist endpoint doesn't surface display name
         source: "albumoftheyear".to_string(),
@@ -348,7 +358,14 @@ fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
     if let Some(n) = resp.rating_count.filter(|v| *v > 0) {
         votes.insert("aoty_user".to_string(), n);
     }
-    let id = resp.album_slug.clone().unwrap_or_default();
+    // Same id-fallback story as project_artist: empty ids collide on
+    // dedup and silently drop entries during merge. AOTY's album_slug
+    // is the canonical identifier when present; otherwise pin to
+    // mb_id so every entry has a stable, non-empty key.
+    let id = resp.album_slug
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| mb_id.to_string());
     let genre = resp.genre.filter(|s| !s.is_empty());
     let mut entry = PluginEntry {
         id,
@@ -489,6 +506,56 @@ mod tests {
             e.external_ids.get("aoty_artist_name").map(String::as_str),
             Some("DOM"),
         );
+    }
+
+    #[test]
+    fn project_artist_falls_back_to_mb_id_when_artist_id_empty() {
+        // Defensive: if the API ever returns an empty artist_id field
+        // (e.g. partial response on slug-resolution failure), we must
+        // not emit `id = ""` because empty keys collide in the
+        // orchestrator's dedup map.
+        let resp = AotyArtistResponse {
+            artist_id: String::new(),
+            critic: Some(NestedCritic {
+                critic_score: Some(73.0),
+                review_count: Some(376),
+            }),
+            user: None,
+        };
+        let mb = "164f0d73-1234-4e2c-8743-d77bf2191051";
+        let e = project_artist(resp, mb);
+        assert_eq!(e.id, mb);
+    }
+
+    #[test]
+    fn project_album_falls_back_to_mb_id_when_slug_missing_or_empty() {
+        // Same dedup-key concern as project_artist. Cover both the
+        // None and empty-string cases serde could produce.
+        let mb = "5d6e21e1-deb5-428e-bb42-c2a567f3619b";
+
+        let resp_none = AotyAlbumResponse {
+            album_slug: None,
+            title: Some("X".into()),
+            artist: None,
+            genre: None,
+            critic_score: Some(50.0),
+            review_count: Some(1),
+            user_score: None,
+            rating_count: None,
+        };
+        assert_eq!(project_album(resp_none, mb).id, mb);
+
+        let resp_empty = AotyAlbumResponse {
+            album_slug: Some(String::new()),
+            title: Some("X".into()),
+            artist: None,
+            genre: None,
+            critic_score: Some(50.0),
+            review_count: Some(1),
+            user_score: None,
+            rating_count: None,
+        };
+        assert_eq!(project_album(resp_empty, mb).id, mb);
     }
 
     #[test]
