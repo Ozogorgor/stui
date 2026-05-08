@@ -7,18 +7,10 @@
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, error_codes, http_get,
-    id_sources,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    CatalogPlugin,
-    EntryKind,
-    EpisodeWire, EpisodesRequest, EpisodesResponse,
-    InitContext,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse, SearchScope,
+    cache_get, error_codes, http_get, id_sources, parse_manifest, plugin_error, plugin_info,
+    stui_export_catalog_plugin, CatalogPlugin, EntryKind, EpisodeWire, EpisodesRequest,
+    EpisodesResponse, InitContext, LookupRequest, LookupResponse, Plugin, PluginEntry, PluginError,
+    PluginInitError, PluginManifest, PluginResult, SearchRequest, SearchResponse, SearchScope,
 };
 
 const API_BASE: &str = "https://kitsu.io/api/edge";
@@ -38,11 +30,15 @@ impl KitsuPlugin {
 }
 
 impl Default for KitsuPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for KitsuPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, _ctx: &InitContext) -> Result<(), PluginInitError> {
         // Kitsu's API is usable unauthenticated; the api_key is optional and
@@ -59,10 +55,10 @@ fn classify_http_err(err: &str) -> PluginError {
         if let Some((code_str, body)) = rest.split_once(": ") {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
-                    404       => error_codes::UNKNOWN_ID,
-                    429       => error_codes::RATE_LIMITED,
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
                     500..=599 => error_codes::TRANSIENT,
-                    _         => error_codes::REMOTE_ERROR,
+                    _ => error_codes::REMOTE_ERROR,
                 };
                 return PluginError {
                     code: code.to_string(),
@@ -71,13 +67,19 @@ fn classify_http_err(err: &str) -> PluginError {
             }
         }
     }
-    PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
+    PluginError {
+        code: error_codes::TRANSIENT.to_string(),
+        message: err.to_string(),
+    }
 }
 
 fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("kitsu: parse error: {}", e);
-        PluginError { code: error_codes::PARSE_ERROR.to_string(), message: format!("Kitsu JSON parse failure: {e}") }
+        PluginError {
+            code: error_codes::PARSE_ERROR.to_string(),
+            message: format!("Kitsu JSON parse failure: {e}"),
+        }
     })
 }
 
@@ -113,10 +115,15 @@ fn http_get_with_bearer(url: &str, token: &str) -> Result<String, String> {
     // helpers don't manually free either — the allocation is reclaimed on
     // the next `stui_alloc` cycle or when the module unloads.
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-    let json = std::str::from_utf8(slice).map(String::from).map_err(|e| e.to_string())?;
+    let json = std::str::from_utf8(slice)
+        .map(String::from)
+        .map_err(|e| e.to_string())?;
 
     #[derive(Deserialize)]
-    struct R { status: u16, body: String }
+    struct R {
+        status: u16,
+        body: String,
+    }
 
     let resp: R = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     if (200..300).contains(&resp.status) {
@@ -139,7 +146,7 @@ fn fetch(url: &str) -> Result<String, PluginError> {
 
     let raw = match api_key {
         Some(key) => http_get_with_bearer(url, &key),
-        None      => http_get(url),
+        None => http_get(url),
     };
     raw.map_err(|e| classify_http_err(&e))
 }
@@ -150,7 +157,7 @@ fn fetch(url: &str) -> Result<String, PluginError> {
 /// to post-filter the response.
 fn show_types_for_scope(scope: SearchScope) -> Result<&'static [&'static str], PluginError> {
     match scope {
-        SearchScope::Movie  => Ok(&["movie"]),
+        SearchScope::Movie => Ok(&["movie"]),
         SearchScope::Series => Ok(&["TV", "OVA", "ONA", "special"]),
         _ => Err(PluginError {
             code: error_codes::UNSUPPORTED_SCOPE.to_string(),
@@ -162,7 +169,7 @@ fn show_types_for_scope(scope: SearchScope) -> Result<&'static [&'static str], P
 fn show_type_matches(anime: &Anime, wanted: &[&str]) -> bool {
     match anime.attributes.show_type.as_deref() {
         Some(t) => wanted.iter().any(|w| w.eq_ignore_ascii_case(t)),
-        None    => true, // Kitsu sometimes omits show_type; keep rather than drop.
+        None => true, // Kitsu sometimes omits show_type; keep rather than drop.
     }
 }
 
@@ -171,7 +178,7 @@ fn show_type_matches(anime: &Anime, wanted: &[&str]) -> bool {
 impl CatalogPlugin for KitsuPlugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
         let entry_kind = match req.scope {
-            SearchScope::Movie  => EntryKind::Movie,
+            SearchScope::Movie => EntryKind::Movie,
             SearchScope::Series => EntryKind::Series,
             _ => {
                 return PluginResult::err(
@@ -186,9 +193,13 @@ impl CatalogPlugin for KitsuPlugin {
         };
 
         let query = req.query.trim();
-        let page     = req.page.max(1);
-        let per_page = if req.limit == 0 { 20 } else { req.limit.min(20).max(1) as u32 };
-        let offset   = (page - 1).saturating_mul(per_page);
+        let page = req.page.max(1);
+        let per_page = if req.limit == 0 {
+            20
+        } else {
+            req.limit.min(20).max(1) as u32
+        };
+        let offset = (page - 1).saturating_mul(per_page);
 
         let url = if query.is_empty() && page == 1 {
             // `/trending/anime` has no filter; we post-filter by show_type after.
@@ -206,7 +217,12 @@ impl CatalogPlugin for KitsuPlugin {
                 wanted_types.join(","),
             )
         };
-        plugin_info!("kitsu: search '{}' (scope={:?}, page={})", query, req.scope, page);
+        plugin_info!(
+            "kitsu: search '{}' (scope={:?}, page={})",
+            query,
+            req.scope,
+            page
+        );
 
         let body = match fetch(&url) {
             Ok(b) => b,
@@ -257,14 +273,17 @@ impl CatalogPlugin for KitsuPlugin {
                 a.into_entry(entry_kind, mal)
             })
             .collect();
-        let total = resp.meta.and_then(|m| m.count).unwrap_or(items.len() as u32);
+        let total = resp
+            .meta
+            .and_then(|m| m.count)
+            .unwrap_or(items.len() as u32);
         PluginResult::ok(SearchResponse { items, total })
     }
 
     fn lookup(&self, req: LookupRequest) -> PluginResult<LookupResponse> {
         let entry_kind = match req.kind {
             EntryKind::Movie => EntryKind::Movie,
-            _                => EntryKind::Series,
+            _ => EntryKind::Series,
         };
 
         let url = match req.id_source.as_str() {
@@ -280,10 +299,12 @@ impl CatalogPlugin for KitsuPlugin {
                     urlencoding::encode(&req.id),
                 )
             }
-            other => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("unsupported id_source: {other}"),
-            ),
+            other => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("unsupported id_source: {other}"),
+                )
+            }
         };
         plugin_info!("kitsu: lookup id_source={} id={}", req.id_source, req.id);
 
@@ -301,18 +322,28 @@ impl CatalogPlugin for KitsuPlugin {
         let anime = match (req.id_source.as_str(), shape) {
             (id_sources::KITSU, SingleOrManyResponse::One { data }) => data,
             (id_sources::KITSU, SingleOrManyResponse::Many { .. }) => {
-                return PluginResult::err(error_codes::REMOTE_ERROR, "kitsu: unexpected list shape for direct anime lookup");
+                return PluginResult::err(
+                    error_codes::REMOTE_ERROR,
+                    "kitsu: unexpected list shape for direct anime lookup",
+                );
             }
             (id_sources::MYANIMELIST, SingleOrManyResponse::Many { included, .. }) => {
                 match included.into_iter().find(|a| a.kind == "anime") {
                     Some(a) => a,
-                    None => return PluginResult::err(
-                        error_codes::UNKNOWN_ID,
-                        format!("kitsu: no anime for myanimelist id {}", req.id),
-                    ),
+                    None => {
+                        return PluginResult::err(
+                            error_codes::UNKNOWN_ID,
+                            format!("kitsu: no anime for myanimelist id {}", req.id),
+                        )
+                    }
                 }
             }
-            _ => return PluginResult::err(error_codes::UNKNOWN_ID, "kitsu: lookup returned no results"),
+            _ => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    "kitsu: lookup returned no results",
+                )
+            }
         };
         // Preserve the input MAL id when lookup was invoked with id_source=myanimelist.
         // The /mappings response carries the externalId we already used to query, so
@@ -322,14 +353,19 @@ impl CatalogPlugin for KitsuPlugin {
         } else {
             None
         };
-        PluginResult::ok(LookupResponse { entry: anime.into_entry(entry_kind, mal_for_entry) })
+        PluginResult::ok(LookupResponse {
+            entry: anime.into_entry(entry_kind, mal_for_entry),
+        })
     }
 
     fn episodes(&self, req: EpisodesRequest) -> PluginResult<EpisodesResponse> {
         if req.id_source != id_sources::KITSU {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("kitsu episodes only supports kitsu id_source, got: {}", req.id_source),
+                format!(
+                    "kitsu episodes only supports kitsu id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         if req.season < 1 {
@@ -453,7 +489,7 @@ struct AnimeResponse {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum SingleOrManyResponse<T, U> {
-    One  { data: T },
+    One { data: T },
     Many { data: Vec<U>, included: Vec<Anime> },
 }
 
@@ -520,18 +556,24 @@ struct MappingAttributes {
 struct AnimeAttributes {
     #[serde(rename = "canonicalTitle", default)]
     title: String,
-    #[serde(rename = "synopsis",  default)] synopsis:   Option<String>,
-    #[serde(rename = "averageRating", default)] rating: Option<String>,
-    #[serde(rename = "startDate", default)] start_date: Option<String>,
-    #[serde(rename = "episodeLength", default)] episode_length: Option<u32>,
-    #[serde(rename = "posterImage", default)] poster: Option<Image>,
-    #[serde(rename = "showType", default)]  show_type:  Option<String>,
+    #[serde(rename = "synopsis", default)]
+    synopsis: Option<String>,
+    #[serde(rename = "averageRating", default)]
+    rating: Option<String>,
+    #[serde(rename = "startDate", default)]
+    start_date: Option<String>,
+    #[serde(rename = "episodeLength", default)]
+    episode_length: Option<u32>,
+    #[serde(rename = "posterImage", default)]
+    poster: Option<Image>,
+    #[serde(rename = "showType", default)]
+    show_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Image {
-    small:    Option<String>,
-    large:    Option<String>,
+    small: Option<String>,
+    large: Option<String>,
     original: Option<String>,
 }
 
@@ -566,13 +608,19 @@ struct KitsuEpisodeAttributes {
 impl Anime {
     fn into_entry(self, kind: EntryKind, mal_id: Option<String>) -> PluginEntry {
         let attrs = self.attributes;
-        let year = attrs.start_date.as_deref()
+        let year = attrs
+            .start_date
+            .as_deref()
             .and_then(|d| d.split('-').next())
             .and_then(|y| y.parse::<u32>().ok());
-        let rating = attrs.rating.as_deref()
+        let rating = attrs
+            .rating
+            .as_deref()
             .and_then(|r| r.parse::<f32>().ok())
             .map(|r| r / 10.0);
-        let poster_url = attrs.poster.as_ref()
+        let poster_url = attrs
+            .poster
+            .as_ref()
             .and_then(|p| p.large.clone().or(p.original.clone()).or(p.small.clone()));
 
         let mut entry = PluginEntry {
@@ -586,14 +634,21 @@ impl Anime {
             // ship with `(Source: …)` attribution and stray HTML — apply
             // the same cleanup AniList uses so descriptions stay
             // consistent across providers.
-            description: attrs.synopsis.as_deref().map(stui_plugin_sdk::clean_description),
+            description: attrs
+                .synopsis
+                .as_deref()
+                .map(stui_plugin_sdk::clean_description),
             poster_url,
             duration: attrs.episode_length,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::KITSU.to_string(), self.id);
+        entry
+            .external_ids
+            .insert(id_sources::KITSU.to_string(), self.id);
         if let Some(mal) = mal_id.filter(|s| !s.is_empty()) {
-            entry.external_ids.insert(id_sources::MYANIMELIST.to_string(), mal);
+            entry
+                .external_ids
+                .insert(id_sources::MYANIMELIST.to_string(), mal);
         }
         entry
     }
@@ -667,10 +722,13 @@ mod tests {
         assert_eq!(e.source, "kitsu");
         assert_eq!(e.title, "Cowboy Bebop");
         assert_eq!(e.year, Some(1998));
-        assert_eq!(e.rating, Some(8.6));   // 86 / 10
+        assert_eq!(e.rating, Some(8.6)); // 86 / 10
         assert_eq!(e.duration, Some(24));
         assert_eq!(e.poster_url.as_deref(), Some("large.jpg"));
-        assert_eq!(e.external_ids.get(id_sources::KITSU).map(String::as_str), Some("1"));
+        assert_eq!(
+            e.external_ids.get(id_sources::KITSU).map(String::as_str),
+            Some("1")
+        );
     }
 
     fn make_anime(id: &str, title: &str, show_type: Option<String>) -> Anime {
@@ -696,12 +754,28 @@ mod tests {
         // wire types' non-Clone shape in the rest of the file), so we build
         // a fresh Vec for each call instead of cloning.
         let raw1 = vec![
-            ep("1", "S1E1", Some(1), Some(1), Some(1), Some("2013-04-07".into()), Some(24)),
+            ep(
+                "1",
+                "S1E1",
+                Some(1),
+                Some(1),
+                Some(1),
+                Some("2013-04-07".into()),
+                Some(24),
+            ),
             ep("2", "S1E2", Some(1), Some(2), Some(2), None, Some(24)),
             ep("3", "S2E1", Some(2), Some(26), Some(1), None, Some(24)),
         ];
         let raw2 = vec![
-            ep("1", "S1E1", Some(1), Some(1), Some(1), Some("2013-04-07".into()), Some(24)),
+            ep(
+                "1",
+                "S1E1",
+                Some(1),
+                Some(1),
+                Some(1),
+                Some("2013-04-07".into()),
+                Some(24),
+            ),
             ep("2", "S1E2", Some(1), Some(2), Some(2), None, Some(24)),
             ep("3", "S2E1", Some(2), Some(26), Some(1), None, Some(24)),
         ];
@@ -748,7 +822,15 @@ mod tests {
 
     #[test]
     fn build_episodes_propagates_airdate_and_runtime() {
-        let raw = vec![ep("1", "T", Some(1), Some(1), Some(1), Some("2024-01-01".into()), Some(23))];
+        let raw = vec![ep(
+            "1",
+            "T",
+            Some(1),
+            Some(1),
+            Some(1),
+            Some("2024-01-01".into()),
+            Some(23),
+        )];
         let eps = build_episodes(1, raw);
         assert_eq!(eps[0].air_date.as_deref(), Some("2024-01-01"));
         assert_eq!(eps[0].runtime_mins, Some(23));
@@ -1049,7 +1131,9 @@ mod tests {
         };
         let e = a.into_entry(EntryKind::Series, Some("12345".into()));
         assert_eq!(
-            e.external_ids.get(id_sources::MYANIMELIST).map(String::as_str),
+            e.external_ids
+                .get(id_sources::MYANIMELIST)
+                .map(String::as_str),
             Some("12345"),
         );
         assert_eq!(

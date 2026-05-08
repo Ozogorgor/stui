@@ -13,18 +13,10 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, error_codes, http_get,
-    id_sources,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    CatalogPlugin,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    InitContext,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse, SearchScope,
+    cache_get, error_codes, http_get, id_sources, parse_manifest, plugin_error, plugin_info,
+    stui_export_catalog_plugin, CatalogPlugin, EnrichRequest, EnrichResponse, EntryKind,
+    InitContext, LookupRequest, LookupResponse, Plugin, PluginEntry, PluginError, PluginInitError,
+    PluginManifest, PluginResult, SearchRequest, SearchResponse, SearchScope,
 };
 
 const API_BASE: &str = "https://api.discogs.com";
@@ -40,7 +32,10 @@ impl DiscogsPlugin {
     pub fn new() -> Self {
         let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
-        Self { manifest, api_key: OnceLock::new() }
+        Self {
+            manifest,
+            api_key: OnceLock::new(),
+        }
     }
 
     #[cfg(test)]
@@ -67,15 +62,23 @@ impl DiscogsPlugin {
 }
 
 impl Default for DiscogsPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for DiscogsPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
         // api_key is optional; absent → unauthenticated path is fine.
-        let key = ctx.config.get("api_key").and_then(|v| v.as_str()).map(str::to_string)
+        let key = ctx
+            .config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
             .or_else(|| ctx.env.get("DISCOGS_API_KEY").cloned())
             .unwrap_or_default();
         if !key.is_empty() {
@@ -93,22 +96,31 @@ fn classify_http_err(err: &str) -> PluginError {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
                     401 | 403 => error_codes::INVALID_REQUEST,
-                    404       => error_codes::UNKNOWN_ID,
-                    429       => error_codes::RATE_LIMITED,
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
                     500..=599 => error_codes::TRANSIENT,
-                    _         => error_codes::REMOTE_ERROR,
+                    _ => error_codes::REMOTE_ERROR,
                 };
-                return PluginError { code: code.to_string(), message: format!("Discogs HTTP {status}: {body}") };
+                return PluginError {
+                    code: code.to_string(),
+                    message: format!("Discogs HTTP {status}: {body}"),
+                };
             }
         }
     }
-    PluginError { code: error_codes::TRANSIENT.to_string(), message: err.to_string() }
+    PluginError {
+        code: error_codes::TRANSIENT.to_string(),
+        message: err.to_string(),
+    }
 }
 
 fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError> {
     serde_json::from_str(body).map_err(|e| {
         plugin_error!("discogs: parse error: {}", e);
-        PluginError { code: error_codes::PARSE_ERROR.to_string(), message: format!("Discogs JSON parse failure: {e}") }
+        PluginError {
+            code: error_codes::PARSE_ERROR.to_string(),
+            message: format!("Discogs JSON parse failure: {e}"),
+        }
     })
 }
 
@@ -117,7 +129,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
 fn auth_suffix_for(key: Option<&str>) -> String {
     match key.filter(|k| !k.is_empty()) {
         Some(k) => format!("&key={k}"),
-        None    => String::new(),
+        None => String::new(),
     }
 }
 
@@ -136,7 +148,13 @@ fn partition_genre_and_description(
     let genre = if combined_genres.is_empty() {
         None
     } else {
-        Some(combined_genres.into_iter().take(5).collect::<Vec<_>>().join(", "))
+        Some(
+            combined_genres
+                .into_iter()
+                .take(5)
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     };
 
     let mut desc_parts: Vec<String> = Vec::new();
@@ -151,7 +169,11 @@ fn partition_genre_and_description(
     if !label.is_empty() {
         desc_parts.push(format!("Label: {}", label.join(", ")));
     }
-    let description = if desc_parts.is_empty() { None } else { Some(desc_parts.join(" | ")) };
+    let description = if desc_parts.is_empty() {
+        None
+    } else {
+        Some(desc_parts.join(" | "))
+    };
     (genre, description)
 }
 
@@ -160,8 +182,8 @@ fn partition_genre_and_description(
 impl CatalogPlugin for DiscogsPlugin {
     fn search(&self, req: SearchRequest) -> PluginResult<SearchResponse> {
         let (search_type, entry_kind) = match req.scope {
-            SearchScope::Artist => ("artist",  EntryKind::Artist),
-            SearchScope::Album  => ("release", EntryKind::Album),
+            SearchScope::Artist => ("artist", EntryKind::Artist),
+            SearchScope::Album => ("release", EntryKind::Album),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -172,9 +194,13 @@ impl CatalogPlugin for DiscogsPlugin {
 
         let auth_suffix = auth_suffix_for(self.api_key());
 
-        let page     = req.page.max(1);
-        let per_page = if req.limit == 0 { 20 } else { req.limit.min(50) } as usize;
-        let query    = req.query.trim();
+        let page = req.page.max(1);
+        let per_page = if req.limit == 0 {
+            20
+        } else {
+            req.limit.min(50)
+        } as usize;
+        let query = req.query.trim();
 
         // Discogs has no meaningful "trending" surface — the closest API
         // (sort=date_added,desc) returns recently-cataloged releases, which
@@ -185,14 +211,20 @@ impl CatalogPlugin for DiscogsPlugin {
         // circuit to an empty result so discogs only contributes to
         // explicit user searches; the enrich path stays unaffected.
         if query.is_empty() {
-            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+            return PluginResult::ok(SearchResponse {
+                items: vec![],
+                total: 0,
+            });
         }
 
         let url = format!(
             "{API_BASE}/database/search?q={}&type={search_type}&page={page}&per_page={per_page}{auth_suffix}",
             urlencoding::encode(query),
         );
-        plugin_info!("discogs: search '{}' type={search_type} (page {page})", query);
+        plugin_info!(
+            "discogs: search '{}' type={search_type} (page {page})",
+            query
+        );
 
         let body = match http_get(&url) {
             Ok(b) => b,
@@ -203,12 +235,16 @@ impl CatalogPlugin for DiscogsPlugin {
             Err(e) => return PluginResult::Err(e),
         };
 
-        let items: Vec<PluginEntry> = resp.results.into_iter()
+        let items: Vec<PluginEntry> = resp
+            .results
+            .into_iter()
             .filter(|r| r.id > 0)
             .take(per_page)
             .map(|r| r.into_entry(entry_kind))
             .collect();
-        let total = resp.pagination.as_ref()
+        let total = resp
+            .pagination
+            .as_ref()
             .and_then(|p| p.items)
             .unwrap_or(items.len() as i32)
             .max(0) as u32;
@@ -225,8 +261,14 @@ impl CatalogPlugin for DiscogsPlugin {
         let auth_suffix = auth_suffix_for(self.api_key());
 
         let (path, entry_kind) = match req.kind {
-            EntryKind::Artist => (format!("/artists/{}", urlencoding::encode(&req.id)), EntryKind::Artist),
-            EntryKind::Album  => (format!("/releases/{}", urlencoding::encode(&req.id)), EntryKind::Album),
+            EntryKind::Artist => (
+                format!("/artists/{}", urlencoding::encode(&req.id)),
+                EntryKind::Artist,
+            ),
+            EntryKind::Album => (
+                format!("/releases/{}", urlencoding::encode(&req.id)),
+                EntryKind::Album,
+            ),
             _ => {
                 return PluginResult::err(
                     error_codes::UNSUPPORTED_SCOPE,
@@ -262,14 +304,17 @@ impl CatalogPlugin for DiscogsPlugin {
         // populated from the same /releases/{id} response.
         if let Some(discogs_id) = req.partial.external_ids.get(id_sources::DISCOGS).cloned() {
             let lookup_req = LookupRequest {
-                id:        discogs_id,
+                id: discogs_id,
                 id_source: id_sources::DISCOGS.to_string(),
-                kind:      req.partial.kind,
-                locale:    None,
+                kind: req.partial.kind,
+                locale: None,
                 force_refresh: false,
             };
             return match self.lookup(lookup_req) {
-                PluginResult::Ok(r)  => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 1.0 }),
+                PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
+                    entry: r.entry,
+                    confidence: 1.0,
+                }),
                 PluginResult::Err(e) => PluginResult::Err(e),
             };
         }
@@ -294,9 +339,15 @@ impl CatalogPlugin for DiscogsPlugin {
         // Compose "title artist" so Discogs's search ranking gives us a
         // tightly-matched release. Releases without an artist still get
         // a useful query (just the album title).
-        let query = match req.partial.artist_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let query = match req
+            .partial
+            .artist_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(artist) => format!("{title} {artist}"),
-            None         => title.to_string(),
+            None => title.to_string(),
         };
         let auth_suffix = auth_suffix_for(self.api_key());
         let search_url = format!(
@@ -306,19 +357,21 @@ impl CatalogPlugin for DiscogsPlugin {
         plugin_info!("discogs: enrich search '{}'", query);
 
         let body = match http_get(&search_url) {
-            Ok(b)  => b,
+            Ok(b) => b,
             Err(e) => return PluginResult::Err(classify_http_err(&e)),
         };
         let resp: SearchEnvelope = match parse_json(&body) {
-            Ok(r)  => r,
+            Ok(r) => r,
             Err(e) => return PluginResult::Err(e),
         };
         let hit = match resp.results.into_iter().find(|h| h.id > 0) {
             Some(h) => h,
-            None    => return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                format!("discogs: no release matched '{query}'"),
-            ),
+            None => {
+                return PluginResult::err(
+                    error_codes::UNKNOWN_ID,
+                    format!("discogs: no release matched '{query}'"),
+                )
+            }
         };
         // Hop into the per-release endpoint to pick up community.rating —
         // search hits don't include it. This is the second of the two
@@ -326,16 +379,19 @@ impl CatalogPlugin for DiscogsPlugin {
         // for the same album reuse the result via the runtime's HTTP
         // response cache.
         let lookup_req = LookupRequest {
-            id:        hit.id.to_string(),
+            id: hit.id.to_string(),
             id_source: id_sources::DISCOGS.to_string(),
-            kind:      EntryKind::Album,
-            locale:    None,
+            kind: EntryKind::Album,
+            locale: None,
             force_refresh: false,
         };
         match self.lookup(lookup_req) {
             // Title-search is less precise than direct id lookup, so
             // surface that in the confidence score.
-            PluginResult::Ok(r)  => PluginResult::ok(EnrichResponse { entry: r.entry, confidence: 0.7 }),
+            PluginResult::Ok(r) => PluginResult::ok(EnrichResponse {
+                entry: r.entry,
+                confidence: 0.7,
+            }),
             PluginResult::Err(e) => PluginResult::Err(e),
         }
     }
@@ -357,21 +413,30 @@ struct Pagination {
 
 #[derive(Debug, Deserialize)]
 struct SearchHit {
-    #[serde(default)] id: i64,
-    #[serde(default)] title: String,
+    #[serde(default)]
+    id: i64,
+    #[serde(default)]
+    title: String,
     /// Discogs's `/database/search` endpoint returns `year` as a JSON
     /// string (e.g. `"2024"`); the `/releases/{id}` detail endpoint
     /// returns it as a number. Accept either via `flexible_year` so
     /// both code paths share this struct.
     #[serde(default, deserialize_with = "flexible_year")]
     year: Option<i32>,
-    #[serde(default)] country: Option<String>,
-    #[serde(default)] format: Vec<String>,
-    #[serde(default)] label: Vec<String>,
-    #[serde(rename = "cover_image", default)] cover_image: Option<String>,
-    #[serde(rename = "thumb", default)]        thumb: Option<String>,
-    #[serde(default)] genre: Vec<String>,
-    #[serde(default)] style: Vec<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    format: Vec<String>,
+    #[serde(default)]
+    label: Vec<String>,
+    #[serde(rename = "cover_image", default)]
+    cover_image: Option<String>,
+    #[serde(rename = "thumb", default)]
+    thumb: Option<String>,
+    #[serde(default)]
+    genre: Vec<String>,
+    #[serde(default)]
+    style: Vec<String>,
 }
 
 /// Deserialize a year that Discogs may emit as either a JSON number
@@ -404,7 +469,9 @@ where
 
 impl SearchHit {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
-        let year = self.year.and_then(|y| if y > 0 { Some(y as u32) } else { None });
+        let year = self
+            .year
+            .and_then(|y| if y > 0 { Some(y as u32) } else { None });
         let (genre, description) = partition_genre_and_description(
             &self.genre,
             &self.style,
@@ -425,54 +492,90 @@ impl SearchHit {
             poster_url,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
+            .external_ids
+            .insert(id_sources::DISCOGS.to_string(), self.id.to_string());
         entry
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct ReleaseDetail {
-    #[serde(default)] id: i64,
-    #[serde(default)] title: String,
-    #[serde(default)] year: Option<i32>,
-    #[serde(default)] country: Option<String>,
-    #[serde(default)] genres: Vec<String>,
-    #[serde(default)] styles: Vec<String>,
-    #[serde(default)] formats: Vec<ReleaseFormat>,
-    #[serde(default)] labels:  Vec<ReleaseLabel>,
-    #[serde(default)] images:  Vec<ReleaseImage>,
-    #[serde(default)] notes:   Option<String>,
-    #[serde(default)] community: Option<ReleaseCommunity>,
+    #[serde(default)]
+    id: i64,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    year: Option<i32>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    genres: Vec<String>,
+    #[serde(default)]
+    styles: Vec<String>,
+    #[serde(default)]
+    formats: Vec<ReleaseFormat>,
+    #[serde(default)]
+    labels: Vec<ReleaseLabel>,
+    #[serde(default)]
+    images: Vec<ReleaseImage>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    community: Option<ReleaseCommunity>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct ReleaseCommunity {
-    #[serde(default)] rating: Option<ReleaseRating>,
+    #[serde(default)]
+    rating: Option<ReleaseRating>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct ReleaseRating {
-    #[serde(default)] average: f32,
-    #[serde(default)] count:   u32,
+    #[serde(default)]
+    average: f32,
+    #[serde(default)]
+    count: u32,
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct ReleaseFormat { #[serde(default)] name: String }
+struct ReleaseFormat {
+    #[serde(default)]
+    name: String,
+}
 
 #[derive(Debug, Deserialize, Default)]
-struct ReleaseLabel  { #[serde(default)] name: String }
+struct ReleaseLabel {
+    #[serde(default)]
+    name: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct ReleaseImage {
-    #[serde(rename = "uri",     default)] uri: Option<String>,
-    #[serde(rename = "uri150",  default)] uri150: Option<String>,
+    #[serde(rename = "uri", default)]
+    uri: Option<String>,
+    #[serde(rename = "uri150", default)]
+    uri150: Option<String>,
 }
 
 impl ReleaseDetail {
     fn into_entry(self) -> PluginEntry {
-        let year = self.year.and_then(|y| if y > 0 { Some(y as u32) } else { None });
-        let formats: Vec<String> = self.formats.into_iter().map(|f| f.name).filter(|s| !s.is_empty()).collect();
-        let labels:  Vec<String> = self.labels.into_iter().map(|l| l.name).filter(|s| !s.is_empty()).collect();
+        let year = self
+            .year
+            .and_then(|y| if y > 0 { Some(y as u32) } else { None });
+        let formats: Vec<String> = self
+            .formats
+            .into_iter()
+            .map(|f| f.name)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let labels: Vec<String> = self
+            .labels
+            .into_iter()
+            .map(|l| l.name)
+            .filter(|s| !s.is_empty())
+            .collect();
         let (genre, mut description) = partition_genre_and_description(
             &self.genres,
             &self.styles,
@@ -483,15 +586,19 @@ impl ReleaseDetail {
         if let Some(notes) = self.notes.filter(|n| !n.is_empty()) {
             description = match description {
                 Some(d) => Some(format!("{d}\n\n{notes}")),
-                None    => Some(notes),
+                None => Some(notes),
             };
         }
-        let poster_url = self.images.into_iter().find_map(|i| i.uri.clone().or(i.uri150.clone()));
+        let poster_url = self
+            .images
+            .into_iter()
+            .find_map(|i| i.uri.clone().or(i.uri150.clone()));
         // Discogs surfaces a community-aggregated rating on every release
         // (0-5 scale) plus the voter count. Skip ratings with zero votes
         // since the average is meaningless then; downstream UI treats a
         // None as "no rating" and hides the badge.
-        let rating = self.community
+        let rating = self
+            .community
             .and_then(|c| c.rating)
             .filter(|r| r.count > 0 && r.average > 0.0)
             .map(|r| r.average);
@@ -508,18 +615,25 @@ impl ReleaseDetail {
             poster_url,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
+            .external_ids
+            .insert(id_sources::DISCOGS.to_string(), self.id.to_string());
         entry
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct ArtistDetail {
-    #[serde(default)] id: i64,
-    #[serde(default)] name: String,
-    #[serde(default)] profile: Option<String>,
-    #[serde(default)] images: Vec<ReleaseImage>,
-    #[serde(default)] namevariations: Vec<String>,
+    #[serde(default)]
+    id: i64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    images: Vec<ReleaseImage>,
+    #[serde(default)]
+    namevariations: Vec<String>,
 }
 
 impl ArtistDetail {
@@ -541,7 +655,9 @@ impl ArtistDetail {
             poster_url,
             ..Default::default()
         };
-        entry.external_ids.insert(id_sources::DISCOGS.to_string(), self.id.to_string());
+        entry
+            .external_ids
+            .insert(id_sources::DISCOGS.to_string(), self.id.to_string());
         entry
     }
 }
@@ -598,13 +714,7 @@ mod tests {
 
     #[test]
     fn description_empty_when_no_physical_metadata() {
-        let (_g, d) = partition_genre_and_description(
-            &["Rock".to_string()],
-            &[],
-            &[],
-            None,
-            &[],
-        );
+        let (_g, d) = partition_genre_and_description(&["Rock".to_string()], &[], &[], None, &[]);
         assert_eq!(d, None);
     }
 
@@ -627,16 +737,29 @@ mod tests {
         assert_eq!(e.kind, EntryKind::Album);
         assert_eq!(e.year, Some(1997));
         assert_eq!(e.genre.as_deref(), Some("Rock, Alternative"));
-        assert_eq!(e.description.as_deref(), Some("CD | UK | Label: Parlophone"));
-        assert_eq!(e.external_ids.get(id_sources::DISCOGS).map(String::as_str), Some("12345"));
+        assert_eq!(
+            e.description.as_deref(),
+            Some("CD | UK | Label: Parlophone")
+        );
+        assert_eq!(
+            e.external_ids.get(id_sources::DISCOGS).map(String::as_str),
+            Some("12345")
+        );
     }
 
     #[test]
     fn invalid_years_rejected() {
         let hit = SearchHit {
-            id: 1, title: "x".into(), year: Some(0),
-            country: None, format: vec![], label: vec![],
-            cover_image: None, thumb: None, genre: vec![], style: vec![],
+            id: 1,
+            title: "x".into(),
+            year: Some(0),
+            country: None,
+            format: vec![],
+            label: vec![],
+            cover_image: None,
+            thumb: None,
+            genre: vec![],
+            style: vec![],
         };
         let e = hit.into_entry(EntryKind::Album);
         assert_eq!(e.year, None);
@@ -656,7 +779,7 @@ mod tests {
 
     #[test]
     fn auth_suffix_is_empty_when_key_absent() {
-        assert_eq!(auth_suffix_for(None),     "");
+        assert_eq!(auth_suffix_for(None), "");
         assert_eq!(auth_suffix_for(Some("")), "");
         assert_eq!(auth_suffix_for(Some("abc")), "&key=abc");
     }

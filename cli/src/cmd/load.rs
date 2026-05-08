@@ -28,16 +28,15 @@ enum EntrypointMode {
 }
 
 pub fn run(dir: PathBuf) -> Result<()> {
-    let dir = dir.canonicalize().with_context(|| {
-        format!("plugin directory not found: {}", dir.display())
-    })?;
+    let dir = dir
+        .canonicalize()
+        .with_context(|| format!("plugin directory not found: {}", dir.display()))?;
     let manifest_path = dir.join("plugin.toml");
     if !manifest_path.exists() {
         anyhow::bail!("no plugin.toml in {}", dir.display());
     }
 
-    let raw =
-        std::fs::read_to_string(&manifest_path).context("read plugin.toml")?;
+    let raw = std::fs::read_to_string(&manifest_path).context("read plugin.toml")?;
     let manifest: PluginManifest = toml::from_str(&raw)
         .context("plugin.toml is not valid TOML against PluginManifest schema")?;
 
@@ -60,10 +59,7 @@ pub fn run(dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn resolve_entrypoint(
-    dir: &Path,
-    manifest: &PluginManifest,
-) -> Result<(EntrypointMode, PathBuf)> {
+fn resolve_entrypoint(dir: &Path, manifest: &PluginManifest) -> Result<(EntrypointMode, PathBuf)> {
     let entry = &manifest.plugin.entrypoint;
     if entry.starts_with("grpc://") {
         return Ok((EntrypointMode::Grpc(entry.clone()), PathBuf::from(entry)));
@@ -71,10 +67,7 @@ fn resolve_entrypoint(
     let abs = dir.join(entry);
     let mode = if entry.ends_with(".wasm") {
         EntrypointMode::Wasm
-    } else if entry.ends_with(".so")
-        || entry.ends_with(".dylib")
-        || entry.ends_with(".dll")
-    {
+    } else if entry.ends_with(".so") || entry.ends_with(".dylib") || entry.ends_with(".dll") {
         EntrypointMode::NativeLib
     } else {
         anyhow::bail!(
@@ -85,15 +78,15 @@ fn resolve_entrypoint(
     Ok((mode, abs))
 }
 
-fn print_summary(
-    manifest: &PluginManifest,
-    mode: &EntrypointMode,
-    entrypoint: &Path,
-) {
+fn print_summary(manifest: &PluginManifest, mode: &EntrypointMode, entrypoint: &Path) {
     println!("Plugin loaded ✓");
     println!("  name        : {}", manifest.plugin.name);
     println!("  version     : {}", manifest.plugin.version);
-    println!("  entrypoint  : {} ({})", entrypoint.display(), describe_mode(mode));
+    println!(
+        "  entrypoint  : {} ({})",
+        entrypoint.display(),
+        describe_mode(mode)
+    );
     let cap = &manifest.capabilities;
     let mut decls = Vec::new();
     let catalog_active = match &cap.catalog {
@@ -110,7 +103,11 @@ fn print_summary(
     }
     println!(
         "  capabilities: {}",
-        if decls.is_empty() { "(none)".to_string() } else { decls.join(", ") },
+        if decls.is_empty() {
+            "(none)".to_string()
+        } else {
+            decls.join(", ")
+        },
     );
 }
 
@@ -204,7 +201,10 @@ kinds = ["movie"]
             true,
         );
         let err = run(dir.path().to_path_buf()).unwrap_err();
-        assert!(err.to_string().contains("manifest validation failed"), "{err}");
+        assert!(
+            err.to_string().contains("manifest validation failed"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -165,11 +165,11 @@ async fn enrich_one(engine: &Engine, plugins: &[String], mut entry: CatalogEntry
     // of which provider's HTTP latency happened to be lowest. Lower
     // = higher priority. Unlisted providers fall to the back.
     results.sort_by_key(|(name, _)| match name.as_str() {
-        "albumoftheyear" => 0,  // curated single-genre, no tag noise
-        "discogs"        => 1,  // genres + styles, well-vetted
-        "musicbrainz"    => 2,  // primary_type when set
-        "lastfm"         => 3,  // tag-cloud derived, often noisy
-        _                => 99,
+        "albumoftheyear" => 0, // curated single-genre, no tag noise
+        "discogs" => 1,        // genres + styles, well-vetted
+        "musicbrainz" => 2,    // primary_type when set
+        "lastfm" => 3,         // tag-cloud derived, often noisy
+        _ => 99,
     });
 
     let mut got_any_rating = false;

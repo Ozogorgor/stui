@@ -21,22 +21,16 @@ pub fn run(dev: bool) -> Result<()> {
         anyhow::bail!("no plugin.toml in current directory");
     }
 
-    let manifest: stui_plugin_sdk::PluginManifest = toml::from_str(
-        &std::fs::read_to_string(&manifest_path).context("read plugin.toml")?,
-    )
-    .context("parse plugin.toml")?;
+    let manifest: stui_plugin_sdk::PluginManifest =
+        toml::from_str(&std::fs::read_to_string(&manifest_path).context("read plugin.toml")?)
+            .context("parse plugin.toml")?;
 
     let name = &manifest.plugin.name;
 
     // Guard against empty / path-traversal names.
     // manifest.plugin.name should be kebab-case ASCII but we validate
     // defensively here rather than trusting the manifest.
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name == "."
-        || name == ".."
-    {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
         anyhow::bail!("invalid plugin.name in plugin.toml: {name:?}");
     }
 
@@ -78,8 +72,6 @@ pub fn run(dev: bool) -> Result<()> {
     anyhow::bail!("dev-mode symlink install is currently Unix-only");
 
     println!("Symlinked {} → {}", cwd.display(), target.display());
-    println!(
-        "Hot-reload watcher will pick it up within ~500ms (if the runtime is running)."
-    );
+    println!("Hot-reload watcher will pick it up within ~500ms (if the runtime is running).");
     Ok(())
 }

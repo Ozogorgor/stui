@@ -62,10 +62,18 @@ pub struct InitRequest {
 pub struct DefaultPluginLogger;
 
 impl PluginLogger for DefaultPluginLogger {
-    fn debug(&self, msg: &str) { crate::host_log(1, msg); }
-    fn info(&self, msg: &str)  { crate::host_log(2, msg); }
-    fn warn(&self, msg: &str)  { crate::host_log(3, msg); }
-    fn error(&self, msg: &str) { crate::host_log(4, msg); }
+    fn debug(&self, msg: &str) {
+        crate::host_log(1, msg);
+    }
+    fn info(&self, msg: &str) {
+        crate::host_log(2, msg);
+    }
+    fn warn(&self, msg: &str) {
+        crate::host_log(3, msg);
+    }
+    fn error(&self, msg: &str) {
+        crate::host_log(4, msg);
+    }
 }
 
 /// Logging surface exposed to plugins (backed by `stui_log` host import at runtime,
@@ -103,8 +111,8 @@ pub enum InitResultEnvelope {
 impl From<Result<(), PluginInitError>> for InitResultEnvelope {
     fn from(r: Result<(), PluginInitError>) -> Self {
         match r {
-            Ok(())  => Self::Ok,
-            Err(e)  => Self::Err(e),
+            Ok(()) => Self::Ok,
+            Err(e) => Self::Err(e),
         }
     }
 }
@@ -112,7 +120,7 @@ impl From<Result<(), PluginInitError>> for InitResultEnvelope {
 impl From<InitResultEnvelope> for Result<(), PluginInitError> {
     fn from(e: InitResultEnvelope) -> Self {
         match e {
-            InitResultEnvelope::Ok     => Ok(()),
+            InitResultEnvelope::Ok => Ok(()),
             InitResultEnvelope::Err(e) => Err(e),
         }
     }
@@ -595,10 +603,22 @@ mod tests {
 
     #[test]
     fn normalize_crew_role_common_aliases() {
-        assert!(matches!(normalize_crew_role("Director"), CrewRole::Director));
-        assert!(matches!(normalize_crew_role("director of photography"), CrewRole::Cinematographer));
-        assert!(matches!(normalize_crew_role("DOP"), CrewRole::Cinematographer));
-        assert!(matches!(normalize_crew_role("Original Music Composer"), CrewRole::Composer));
+        assert!(matches!(
+            normalize_crew_role("Director"),
+            CrewRole::Director
+        ));
+        assert!(matches!(
+            normalize_crew_role("director of photography"),
+            CrewRole::Cinematographer
+        ));
+        assert!(matches!(
+            normalize_crew_role("DOP"),
+            CrewRole::Cinematographer
+        ));
+        assert!(matches!(
+            normalize_crew_role("Original Music Composer"),
+            CrewRole::Composer
+        ));
     }
 
     #[test]
@@ -636,7 +656,10 @@ mod tests {
 
         let json = serde_json::to_string(&req).unwrap();
         let back: InitRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.env.get("TMDB_API_KEY").map(String::as_str), Some("secret"));
+        assert_eq!(
+            back.env.get("TMDB_API_KEY").map(String::as_str),
+            Some("secret")
+        );
         assert_eq!(
             back.config.get("api_key").and_then(|v| v.as_str()),
             Some("secret"),
@@ -659,7 +682,8 @@ mod tests {
         let e: InitResultEnvelope = Err::<(), _>(PluginInitError::MissingConfig {
             fields: vec!["api_key".into()],
             hint: None,
-        }).into();
+        })
+        .into();
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains("\"status\":\"err\""));
         let back: InitResultEnvelope = serde_json::from_str(&s).unwrap();
@@ -738,21 +762,39 @@ mod tests {
 
     #[test]
     fn normalize_anime_director_variants() {
-        assert_eq!(normalize_crew_role("animation director"), CrewRole::AnimationDirector);
-        assert_eq!(normalize_crew_role("Animation Director"), CrewRole::AnimationDirector);
-        assert_eq!(normalize_crew_role("anime director"),     CrewRole::AnimationDirector);
+        assert_eq!(
+            normalize_crew_role("animation director"),
+            CrewRole::AnimationDirector
+        );
+        assert_eq!(
+            normalize_crew_role("Animation Director"),
+            CrewRole::AnimationDirector
+        );
+        assert_eq!(
+            normalize_crew_role("anime director"),
+            CrewRole::AnimationDirector
+        );
     }
 
     #[test]
     fn normalize_lead_animator_variants() {
-        assert_eq!(normalize_crew_role("lead animator"),            CrewRole::LeadAnimator);
-        assert_eq!(normalize_crew_role("chief animation director"), CrewRole::LeadAnimator);
-        assert_eq!(normalize_crew_role("sakuga director"),          CrewRole::LeadAnimator);
+        assert_eq!(normalize_crew_role("lead animator"), CrewRole::LeadAnimator);
+        assert_eq!(
+            normalize_crew_role("chief animation director"),
+            CrewRole::LeadAnimator
+        );
+        assert_eq!(
+            normalize_crew_role("sakuga director"),
+            CrewRole::LeadAnimator
+        );
     }
 
     #[test]
     fn normalize_preserves_other_fallthrough() {
-        assert_eq!(normalize_crew_role("key animator"), CrewRole::Other("key animator".into()));
+        assert_eq!(
+            normalize_crew_role("key animator"),
+            CrewRole::Other("key animator".into())
+        );
     }
 
     #[test]
@@ -767,8 +809,11 @@ mod tests {
         let v = TrailerKind::Other("FanEdit".to_string());
         let s = serde_json::to_string(&v).unwrap();
         let back: TrailerKind = serde_json::from_str(&s).unwrap();
-        if let TrailerKind::Other(x) = back { assert_eq!(x, "FanEdit"); }
-        else { panic!("lost Other variant"); }
+        if let TrailerKind::Other(x) = back {
+            assert_eq!(x, "FanEdit");
+        } else {
+            panic!("lost Other variant");
+        }
     }
 
     #[test]
@@ -796,10 +841,11 @@ mod tests {
 
     #[test]
     fn release_kind_serializes_snake_case() {
-        assert_eq!(serde_json::to_string(&ReleaseKind::Theatrical).unwrap(),
-                   "\"theatrical\"");
-        assert_eq!(serde_json::to_string(&ReleaseKind::Tv).unwrap(),
-                   "\"tv\"");
+        assert_eq!(
+            serde_json::to_string(&ReleaseKind::Theatrical).unwrap(),
+            "\"theatrical\""
+        );
+        assert_eq!(serde_json::to_string(&ReleaseKind::Tv).unwrap(), "\"tv\"");
     }
 
     #[test]
@@ -846,7 +892,10 @@ mod tests {
 
     #[test]
     fn money_amount_round_trips() {
-        let m = MoneyAmount { amount: 25_000_000, currency: "USD".into() };
+        let m = MoneyAmount {
+            amount: 25_000_000,
+            currency: "USD".into(),
+        };
         let s = serde_json::to_string(&m).unwrap();
         let back: MoneyAmount = serde_json::from_str(&s).unwrap();
         assert_eq!(back.amount, 25_000_000);
@@ -856,10 +905,16 @@ mod tests {
     #[test]
     fn box_office_response_with_partial_fields() {
         let resp = BoxOfficeResponse {
-            budget: Some(MoneyAmount { amount: 25_000_000, currency: "USD".into() }),
+            budget: Some(MoneyAmount {
+                amount: 25_000_000,
+                currency: "USD".into(),
+            }),
             opening_weekend: None,
             gross_domestic: None,
-            gross_worldwide: Some(MoneyAmount { amount: 73_341_414, currency: "USD".into() }),
+            gross_worldwide: Some(MoneyAmount {
+                amount: 73_341_414,
+                currency: "USD".into(),
+            }),
         };
         let s = serde_json::to_string(&resp).unwrap();
         assert!(s.contains("budget"));
@@ -922,7 +977,8 @@ mod tests {
 
     #[test]
     fn related_request_force_refresh_defaults_false() {
-        let json = r#"{"id":"x","id_source":"imdb","kind":"movie","relation":"similar","limit":10}"#;
+        let json =
+            r#"{"id":"x","id_source":"imdb","kind":"movie","relation":"similar","limit":10}"#;
         let req: RelatedRequest = serde_json::from_str(json).unwrap();
         assert!(!req.force_refresh);
     }
@@ -983,8 +1039,7 @@ mod tests {
                 },
                 BulkEnrichEntry {
                     id: "tt9999999".into(),
-                    result: PluginResult::err(
-                        crate::error_codes::UNKNOWN_ID, "no such id"),
+                    result: PluginResult::err(crate::error_codes::UNKNOWN_ID, "no such id"),
                 },
             ],
         };

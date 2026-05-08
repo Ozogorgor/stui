@@ -189,11 +189,15 @@ pub struct LookupConfig {
 }
 
 impl LookupConfig {
-    pub fn is_stub(&self) -> bool { self.stub }
+    pub fn is_stub(&self) -> bool {
+        self.stub
+    }
 
     /// True if the lookup verb is actively enabled: not stubbed and declares
     /// at least one id-source to route on.
-    pub fn is_enabled(&self) -> bool { !self.stub && !self.id_sources.is_empty() }
+    pub fn is_enabled(&self) -> bool {
+        !self.stub && !self.id_sources.is_empty()
+    }
 }
 
 /// Artwork-verb config: declares supported `sizes`.
@@ -208,11 +212,15 @@ pub struct ArtworkConfig {
 }
 
 impl ArtworkConfig {
-    pub fn is_stub(&self) -> bool { self.stub }
+    pub fn is_stub(&self) -> bool {
+        self.stub
+    }
 
     /// True if the artwork verb is actively enabled: not stubbed and declares
     /// at least one supported size.
-    pub fn is_enabled(&self) -> bool { !self.stub && !self.sizes.is_empty() }
+    pub fn is_enabled(&self) -> bool {
+        !self.stub && !self.sizes.is_empty()
+    }
 }
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
@@ -384,7 +392,9 @@ pub struct PluginMeta {
     pub _abi_version: Option<u32>,
 }
 
-fn default_entrypoint() -> String { "plugin.wasm".to_string() }
+fn default_entrypoint() -> String {
+    "plugin.wasm".to_string()
+}
 
 // ── Permissions ───────────────────────────────────────────────────────────────
 
@@ -404,7 +414,9 @@ pub enum NetworkPermission {
 }
 
 impl Default for NetworkPermission {
-    fn default() -> Self { Self::Bool(false) }
+    fn default() -> Self {
+        Self::Bool(false)
+    }
 }
 
 impl NetworkPermission {
@@ -493,7 +505,9 @@ pub struct RateLimit {
 /// Default burst of 1 means a plugin declaring `rps = N` without a burst
 /// override only gets the steady-state N calls/sec — no "catch-up" bursting.
 /// Plugins that want burst capacity must declare `burst = N` explicitly.
-fn default_burst() -> u32 { 1 }
+fn default_burst() -> u32 {
+    1
+}
 
 // ── SupervisorTuning ──────────────────────────────────────────────────────────
 
@@ -553,12 +567,7 @@ pub fn validate(manifest: &PluginManifest) -> Result<(), ManifestValidationError
         }
     }
     // 4 & 5. If typed CatalogCapability is declared, enforce id_sources + search.
-    if let CatalogCapability::Typed {
-        lookup,
-        search,
-        ..
-    } = &manifest.capabilities.catalog
-    {
+    if let CatalogCapability::Typed { lookup, search, .. } = &manifest.capabilities.catalog {
         if let Some(lookup) = lookup {
             for source in &lookup.id_sources {
                 if !crate::id_sources::is_canonical(source) {
@@ -568,7 +577,9 @@ pub fn validate(manifest: &PluginManifest) -> Result<(), ManifestValidationError
         }
         // catalog.search must be declared true (required verb).
         if !search.unwrap_or(false) {
-            return Err(ManifestValidationError::MissingRequiredVerb("search".to_string()));
+            return Err(ManifestValidationError::MissingRequiredVerb(
+                "search".to_string(),
+            ));
         }
     }
     Ok(())
@@ -652,8 +663,7 @@ version = "0.1.0"
     fn all_real_plugin_manifests_parse() {
         use std::fs;
         // CARGO_MANIFEST_DIR points to sdk/, so ../plugins is the plugins dir
-        let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../plugins");
+        let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins");
         let entries = fs::read_dir(&plugins_dir)
             .unwrap_or_else(|e| panic!("plugins/ dir at {}: {e}", plugins_dir.display()));
         let mut checked = 0;
@@ -718,7 +728,10 @@ search = true
 "#;
         let m: PluginManifest = toml::from_str(toml_text).unwrap();
         let err = validate(&m).unwrap_err();
-        assert!(matches!(err, ManifestValidationError::LegacyField(_)), "got {err:?}");
+        assert!(
+            matches!(err, ManifestValidationError::LegacyField(_)),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -737,7 +750,10 @@ search = true
 "#;
         let m: PluginManifest = toml::from_str(toml_text).unwrap();
         let err = validate(&m).unwrap_err();
-        assert!(matches!(err, ManifestValidationError::LegacyField(ref s) if s.contains("network")), "got {err:?}");
+        assert!(
+            matches!(err, ManifestValidationError::LegacyField(ref s) if s.contains("network")),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -779,7 +795,10 @@ id_sources = ["not-a-real-id-source"]
 "#;
         let m: PluginManifest = toml::from_str(toml_text).unwrap();
         let err = validate(&m).unwrap_err();
-        assert!(matches!(err, ManifestValidationError::UnknownIdSource(_)), "got {err:?}");
+        assert!(
+            matches!(err, ManifestValidationError::UnknownIdSource(_)),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -867,21 +886,30 @@ mod verb_config_tests {
 
     #[test]
     fn verb_config_bool_true_not_stub() {
-        let vc: VerbConfig = toml::from_str("v = true").map(|t: toml::Table| t["v"].clone()).unwrap().try_into().unwrap();
+        let vc: VerbConfig = toml::from_str("v = true")
+            .map(|t: toml::Table| t["v"].clone())
+            .unwrap()
+            .try_into()
+            .unwrap();
         assert!(!vc.is_stub());
         assert!(vc.is_enabled());
     }
 
     #[test]
     fn verb_config_bool_false_not_stub_not_enabled() {
-        let vc: VerbConfig = toml::from_str("v = false").map(|t: toml::Table| t["v"].clone()).unwrap().try_into().unwrap();
+        let vc: VerbConfig = toml::from_str("v = false")
+            .map(|t: toml::Table| t["v"].clone())
+            .unwrap()
+            .try_into()
+            .unwrap();
         assert!(!vc.is_stub());
         assert!(!vc.is_enabled());
     }
 
     #[test]
     fn verb_config_stub_is_stub_and_enabled() {
-        let tbl: toml::Table = toml::from_str("[v]\nstub = true\nreason = \"upstream lacks it\"").unwrap();
+        let tbl: toml::Table =
+            toml::from_str("[v]\nstub = true\nreason = \"upstream lacks it\"").unwrap();
         let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
         assert!(vc.is_stub());
         assert!(vc.is_enabled());
@@ -909,7 +937,8 @@ mod verb_config_tests {
 
     #[test]
     fn lookup_config_is_stub_when_flagged() {
-        let lc: LookupConfig = toml::from_str("stub = true\nreason = \"upstream lacks it\"").unwrap();
+        let lc: LookupConfig =
+            toml::from_str("stub = true\nreason = \"upstream lacks it\"").unwrap();
         assert!(lc.is_stub());
     }
 
@@ -925,7 +954,8 @@ mod verb_config_tests {
         // selects the Stub variant (because the `stub` key is present), but
         // is_stub() still returns false because stub == false.
         // This is surprising but correct — documented here to prevent regressions.
-        let tbl: toml::Table = toml::from_str("[v]\nstub = false\nreason = \"legacy placeholder\"").unwrap();
+        let tbl: toml::Table =
+            toml::from_str("[v]\nstub = false\nreason = \"legacy placeholder\"").unwrap();
         let vc: VerbConfig = tbl["v"].clone().try_into().unwrap();
         // Sanity: the Stub variant was selected by the untagged deserializer.
         assert!(matches!(vc, VerbConfig::Stub { .. }));
@@ -947,9 +977,13 @@ search = true
 bulk_enrich = true
 "#;
         #[derive(serde::Deserialize)]
-        struct Wrapper { capabilities: Caps }
+        struct Wrapper {
+            capabilities: Caps,
+        }
         #[derive(serde::Deserialize)]
-        struct Caps { catalog: CatalogCapability }
+        struct Caps {
+            catalog: CatalogCapability,
+        }
         let parsed: Wrapper = toml::from_str(toml_text).unwrap();
         if let CatalogCapability::Typed { bulk_enrich, .. } = parsed.capabilities.catalog {
             assert!(bulk_enrich.is_some(), "bulk_enrich missing");
@@ -978,17 +1012,29 @@ box_office = true
 alternative_titles = true
 "#;
         #[derive(serde::Deserialize)]
-        struct Wrapper { capabilities: Caps }
+        struct Wrapper {
+            capabilities: Caps,
+        }
         #[derive(serde::Deserialize)]
-        struct Caps { catalog: CatalogCapability }
+        struct Caps {
+            catalog: CatalogCapability,
+        }
         let parsed: Wrapper = toml::from_str(toml_text).unwrap();
-        if let CatalogCapability::Typed { episodes, trailers, release_info,
-            keywords, box_office, alternative_titles, .. } = parsed.capabilities.catalog {
-            assert!(episodes.is_some(),           "episodes missing");
-            assert!(trailers.is_some(),           "trailers missing");
-            assert!(release_info.is_some(),       "release_info missing");
-            assert!(keywords.is_some(),           "keywords missing");
-            assert!(box_office.is_some(),         "box_office missing");
+        if let CatalogCapability::Typed {
+            episodes,
+            trailers,
+            release_info,
+            keywords,
+            box_office,
+            alternative_titles,
+            ..
+        } = parsed.capabilities.catalog
+        {
+            assert!(episodes.is_some(), "episodes missing");
+            assert!(trailers.is_some(), "trailers missing");
+            assert!(release_info.is_some(), "release_info missing");
+            assert!(keywords.is_some(), "keywords missing");
+            assert!(box_office.is_some(), "box_office missing");
             assert!(alternative_titles.is_some(), "alternative_titles missing");
         } else {
             panic!("expected Typed variant");

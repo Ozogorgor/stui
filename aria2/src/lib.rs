@@ -64,8 +64,8 @@ use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client as HttpClient;
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -111,10 +111,10 @@ pub struct Aria2Client {
 
 struct Inner {
     http_url: String,
-    ws_url:   String,
-    secret:   Option<String>,
-    http:     HttpClient,
-    seq:      AtomicU64,
+    ws_url: String,
+    secret: Option<String>,
+    http: HttpClient,
+    seq: AtomicU64,
     notif_tx: broadcast::Sender<Notification>,
 }
 
@@ -125,8 +125,11 @@ impl Aria2Client {
     /// `secret` is the `--rpc-secret` value (None if aria2 was started without one).
     ///
     /// Starts a background WebSocket listener for notifications immediately.
-    pub async fn connect(url: impl Into<String>, secret: impl Into<Option<String>>) -> Result<Self> {
-        let url    = url.into();
+    pub async fn connect(
+        url: impl Into<String>,
+        secret: impl Into<Option<String>>,
+    ) -> Result<Self> {
+        let url = url.into();
         let secret = secret.into();
 
         // Derive WebSocket URL from HTTP URL
@@ -151,8 +154,13 @@ impl Aria2Client {
         });
 
         // Verify connectivity
-        let client = Aria2Client { inner: Arc::clone(&inner) };
-        client.get_version().await.map_err(|_| Aria2Error::NotReachable { url })?;
+        let client = Aria2Client {
+            inner: Arc::clone(&inner),
+        };
+        client
+            .get_version()
+            .await
+            .map_err(|_| Aria2Error::NotReachable { url })?;
 
         // Spawn WebSocket notification listener
         let inner_ws = Arc::clone(&inner);
@@ -179,13 +187,10 @@ impl Aria2Client {
     ///
     /// Returns the GID of the new download.
     pub async fn add_uri(&self, uris: &[&str], opts: AddOptions) -> Result<Gid> {
-        let params = json!([
-            self.token_param(),
-            uris,
-            serde_json::to_value(&opts)?,
-        ]);
+        let params = json!([self.token_param(), uris, serde_json::to_value(&opts)?,]);
         let result = self.call("aria2.addUri", params).await?;
-        result.as_str()
+        result
+            .as_str()
             .map(|s| s.to_string())
             .ok_or(Aria2Error::UnexpectedResponse)
     }
@@ -199,11 +204,12 @@ impl Aria2Client {
         let params = json!([
             self.token_param(),
             b64,
-            [],   // uris (optional additional sources for the torrent)
+            [], // uris (optional additional sources for the torrent)
             serde_json::to_value(&opts)?,
         ]);
         let result = self.call("aria2.addTorrent", params).await?;
-        result.as_str()
+        result
+            .as_str()
             .map(|s| s.to_string())
             .ok_or(Aria2Error::UnexpectedResponse)
     }
@@ -240,21 +246,30 @@ impl Aria2Client {
     pub async fn pause(&self, gid: &str) -> Result<Gid> {
         let params = json!([self.token_param(), gid]);
         let result = self.call("aria2.pause", params).await?;
-        result.as_str().map(|s| s.to_string()).ok_or(Aria2Error::UnexpectedResponse)
+        result
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or(Aria2Error::UnexpectedResponse)
     }
 
     /// Resume a paused download.
     pub async fn unpause(&self, gid: &str) -> Result<Gid> {
         let params = json!([self.token_param(), gid]);
         let result = self.call("aria2.unpause", params).await?;
-        result.as_str().map(|s| s.to_string()).ok_or(Aria2Error::UnexpectedResponse)
+        result
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or(Aria2Error::UnexpectedResponse)
     }
 
     /// Remove a download (stops it if active).
     pub async fn remove(&self, gid: &str) -> Result<Gid> {
         let params = json!([self.token_param(), gid]);
         let result = self.call("aria2.remove", params).await?;
-        result.as_str().map(|s| s.to_string()).ok_or(Aria2Error::UnexpectedResponse)
+        result
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or(Aria2Error::UnexpectedResponse)
     }
 
     /// Change download options on the fly (e.g. speed limit).
@@ -296,9 +311,16 @@ impl Aria2Client {
     /// Fetch a .torrent file from a URL, then add it to aria2.
     /// Returns the GID.
     pub async fn add_torrent_url(&self, torrent_url: &str, dir: impl Into<String>) -> Result<Gid> {
-        let bytes = self.inner.http.get(torrent_url)
-            .send().await.map_err(Aria2Error::Http)?
-            .bytes().await.map_err(Aria2Error::Http)?;
+        let bytes = self
+            .inner
+            .http
+            .get(torrent_url)
+            .send()
+            .await
+            .map_err(Aria2Error::Http)?
+            .bytes()
+            .await
+            .map_err(Aria2Error::Http)?;
         self.add_torrent(&bytes, AddOptions::streaming(dir)).await
     }
 
@@ -323,7 +345,7 @@ impl Aria2Client {
     fn token_param(&self) -> serde_json::Value {
         match &self.inner.secret {
             Some(s) => json!(format!("token:{}", s)),
-            None    => json!(null),   // aria2 ignores null token
+            None => json!(null), // aria2 ignores null token
         }
     }
 
@@ -333,10 +355,8 @@ impl Aria2Client {
         // Filter out the null token if no secret is set — some aria2 versions
         // don't accept null in the params array.
         let params = if let Some(arr) = params.as_array() {
-            let filtered: Vec<serde_json::Value> = arr.iter()
-                .filter(|v| !v.is_null())
-                .cloned()
-                .collect();
+            let filtered: Vec<serde_json::Value> =
+                arr.iter().filter(|v| !v.is_null()).cloned().collect();
             serde_json::Value::Array(filtered)
         } else {
             params
@@ -344,14 +364,16 @@ impl Aria2Client {
 
         let req = RpcRequest {
             jsonrpc: "2.0",
-            id:      id.clone(),
+            id: id.clone(),
             method,
             params,
         };
 
         debug!("aria2 rpc → {method}");
 
-        let resp = self.inner.http
+        let resp = self
+            .inner
+            .http
             .post(&self.inner.http_url)
             .json(&req)
             .send()
@@ -362,7 +384,10 @@ impl Aria2Client {
             .map_err(Aria2Error::Http)?;
 
         if let Some(err) = resp.error {
-            return Err(Aria2Error::Rpc { code: err.code, message: err.message });
+            return Err(Aria2Error::Rpc {
+                code: err.code,
+                message: err.message,
+            });
         }
 
         resp.result.ok_or(Aria2Error::UnexpectedResponse)
@@ -412,11 +437,15 @@ fn handle_notification(inner: &Inner, text: &str) {
     // {"jsonrpc":"2.0","method":"aria2.onDownloadComplete","params":[{"gid":"abc123"}]}
     let resp: RpcResponse = match serde_json::from_str(text) {
         Ok(r) => r,
-        Err(e) => { debug!("aria2: unparseable notification: {e}"); return; }
+        Err(e) => {
+            debug!("aria2: unparseable notification: {e}");
+            return;
+        }
     };
 
     let Some(method) = resp.method else { return };
-    let gid = resp.params
+    let gid = resp
+        .params
         .as_ref()
         .and_then(|p| p.as_array())
         .and_then(|a| a.first())
@@ -425,7 +454,9 @@ fn handle_notification(inner: &Inner, text: &str) {
         .unwrap_or("")
         .to_string();
 
-    if gid.is_empty() { return; }
+    if gid.is_empty() {
+        return;
+    }
 
     let event = NotificationEvent::from_method(&method);
     debug!("aria2: notification {:?} gid={}", event, gid);
@@ -438,10 +469,10 @@ fn handle_notification(inner: &Inner, text: &str) {
 /// Configuration loaded from environment or stui config.
 #[derive(Debug, Clone)]
 pub struct Aria2Config {
-    pub url:    String,
+    pub url: String,
     pub secret: Option<String>,
     /// Default download directory
-    pub dir:    String,
+    pub dir: String,
 }
 
 impl Aria2Config {
@@ -451,8 +482,7 @@ impl Aria2Config {
             url: std::env::var("ARIA2_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:6800/jsonrpc".into()),
             secret: std::env::var("ARIA2_SECRET").ok().filter(|s| !s.is_empty()),
-            dir: std::env::var("ARIA2_DIR")
-                .unwrap_or_else(|_| format!("{home}/Downloads/stui")),
+            dir: std::env::var("ARIA2_DIR").unwrap_or_else(|_| format!("{home}/Downloads/stui")),
         }
     }
 

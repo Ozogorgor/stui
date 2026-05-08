@@ -30,26 +30,17 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, cache_set, error_codes, http_get,
-    id_sources, normalize_crew_role,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    AlternativeTitle, AlternativeTitlesRequest, AlternativeTitlesResponse,
-    ArtworkRequest, ArtworkResponse, ArtworkSize, ArtworkVariant,
-    BoxOfficeRequest, BoxOfficeResponse, MoneyAmount,
-    CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse, CrewMember,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    EpisodeWire, EpisodesRequest, EpisodesResponse,
-    InitContext,
-    Keyword, KeywordsRequest, KeywordsResponse,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    RelatedRequest, RelatedResponse, RelationKind,
-    ReleaseEntry, ReleaseInfoRequest, ReleaseInfoResponse,
-    SearchRequest, SearchResponse, SearchScope,
-    Trailer, TrailerKind, TrailersRequest, TrailersResponse,
+    cache_get, cache_set, error_codes, http_get, id_sources, normalize_crew_role, parse_manifest,
+    plugin_error, plugin_info, stui_export_catalog_plugin, AlternativeTitle,
+    AlternativeTitlesRequest, AlternativeTitlesResponse, ArtworkRequest, ArtworkResponse,
+    ArtworkSize, ArtworkVariant, BoxOfficeRequest, BoxOfficeResponse, CastMember, CastRole,
+    CatalogPlugin, CreditsRequest, CreditsResponse, CrewMember, EnrichRequest, EnrichResponse,
+    EntryKind, EpisodeWire, EpisodesRequest, EpisodesResponse, InitContext, Keyword,
+    KeywordsRequest, KeywordsResponse, LookupRequest, LookupResponse, MoneyAmount, Plugin,
+    PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult, RelatedRequest,
+    RelatedResponse, RelationKind, ReleaseEntry, ReleaseInfoRequest, ReleaseInfoResponse,
+    SearchRequest, SearchResponse, SearchScope, Trailer, TrailerKind, TrailersRequest,
+    TrailersResponse,
 };
 
 const BASE_URL: &str = "https://xmdbapi.com/api/v1";
@@ -66,7 +57,10 @@ impl XmdbPlugin {
     pub fn new() -> Self {
         let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
-        Self { manifest, api_key: OnceLock::new() }
+        Self {
+            manifest,
+            api_key: OnceLock::new(),
+        }
     }
 
     #[cfg(test)]
@@ -94,7 +88,9 @@ impl XmdbPlugin {
 }
 
 impl Default for XmdbPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Cache helper ──────────────────────────────────────────────────────────────
@@ -147,15 +143,17 @@ impl XmdbPlugin {
         plugin_info!("xmdb: fetch {} (force_refresh={})", imdb_id, force_refresh);
 
         let body = http_get(&url).map_err(|e| classify_http_err(&e))?;
-        let serialized = serde_json::to_string(&CachedPayload::wrap(&body, CACHE_TTL_SECS))
-            .unwrap_or_default();
+        let serialized =
+            serde_json::to_string(&CachedPayload::wrap(&body, CACHE_TTL_SECS)).unwrap_or_default();
         cache_set(&cache_key, &serialized);
         parse_json::<MovieDetail>(&body)
     }
 }
 
 impl Plugin for XmdbPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
         let key = ctx
@@ -185,12 +183,12 @@ fn classify_http_err(err: &str) -> PluginError {
         if let Some((code_str, body)) = rest.split_once(": ") {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
-                    401 | 403   => error_codes::INVALID_REQUEST,   // bad/unauthorized key
-                    402         => error_codes::RATE_LIMITED,       // payment/quota
-                    404         => error_codes::UNKNOWN_ID,
-                    429         => error_codes::RATE_LIMITED,
-                    500..=599   => error_codes::TRANSIENT,
-                    _           => error_codes::REMOTE_ERROR,
+                    401 | 403 => error_codes::INVALID_REQUEST, // bad/unauthorized key
+                    402 => error_codes::RATE_LIMITED,          // payment/quota
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
+                    500..=599 => error_codes::TRANSIENT,
+                    _ => error_codes::REMOTE_ERROR,
                 };
                 return PluginError {
                     code: code.to_string(),
@@ -217,13 +215,19 @@ fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, PluginError
 
 #[cfg(test)]
 fn opt_non_empty(s: &str) -> Option<String> {
-    if s.trim().is_empty() { None } else { Some(s.to_string()) }
+    if s.trim().is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 /// `imdb_url` is `https://www.imdb.com/title/tt1234567/` — extract the tt-id.
 fn imdb_id_from_url(url: &str) -> Option<String> {
     url.split('/')
-        .find(|seg| seg.starts_with("tt") && seg.len() > 2 && seg[2..].chars().all(|c| c.is_ascii_digit()))
+        .find(|seg| {
+            seg.starts_with("tt") && seg.len() > 2 && seg[2..].chars().all(|c| c.is_ascii_digit())
+        })
         .map(str::to_string)
 }
 
@@ -251,7 +255,7 @@ impl CatalogPlugin for XmdbPlugin {
         };
 
         let entry_kind = match req.scope {
-            SearchScope::Movie  => EntryKind::Movie,
+            SearchScope::Movie => EntryKind::Movie,
             SearchScope::Series => EntryKind::Series,
             _ => {
                 return PluginResult::err(
@@ -265,7 +269,10 @@ impl CatalogPlugin for XmdbPlugin {
         if query.is_empty() {
             // No documented trending endpoint usable as a "browse" fallback;
             // an empty query yields zero results, same as omdb.
-            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+            return PluginResult::ok(SearchResponse {
+                items: vec![],
+                total: 0,
+            });
         }
 
         let url = format!(
@@ -290,7 +297,11 @@ impl CatalogPlugin for XmdbPlugin {
             Err(e) => return PluginResult::Err(e),
         };
 
-        let limit = if req.limit == 0 { usize::MAX } else { req.limit as usize };
+        let limit = if req.limit == 0 {
+            usize::MAX
+        } else {
+            req.limit as usize
+        };
         let items: Vec<PluginEntry> = raw
             .results
             .into_iter()
@@ -300,7 +311,7 @@ impl CatalogPlugin for XmdbPlugin {
                 // since the field shape isn't pinned.
                 match s.title_type.as_deref() {
                     Some(t) => kind_from_title_type(t, entry_kind) == entry_kind,
-                    None    => true,
+                    None => true,
                 }
             })
             .take(limit)
@@ -322,11 +333,14 @@ impl CatalogPlugin for XmdbPlugin {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let kind = detail.title_type
+        let kind = detail
+            .title_type
             .as_deref()
             .map(|t| kind_from_title_type(t, req.kind))
             .unwrap_or(req.kind);
-        PluginResult::ok(LookupResponse { entry: detail.into_entry(kind) })
+        PluginResult::ok(LookupResponse {
+            entry: detail.into_entry(kind),
+        })
     }
 
     fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
@@ -343,10 +357,7 @@ impl CatalogPlugin for XmdbPlugin {
             .cloned()
             .or_else(|| req.partial.imdb_id.clone());
         let Some(imdb_id) = imdb else {
-            return PluginResult::err(
-                error_codes::UNKNOWN_ID,
-                "xmdb enrich: imdb_id is required",
-            );
+            return PluginResult::err(error_codes::UNKNOWN_ID, "xmdb enrich: imdb_id is required");
         };
         let lookup_req = LookupRequest {
             id: imdb_id,
@@ -368,7 +379,10 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb credits only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb credits only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
@@ -383,7 +397,10 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB && req.id_source != "xmdb" {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb episodes only supports imdb/xmdb id_source, got: {}", req.id_source),
+                format!(
+                    "xmdb episodes only supports imdb/xmdb id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         if req.season < 1 {
@@ -422,7 +439,10 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb artwork only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb artwork only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
@@ -432,7 +452,8 @@ impl CatalogPlugin for XmdbPlugin {
         // TODO(v2): hit /poster/{id} or /posters for multi-resolution
         // variants once the wire shape is verified. First cut serves the
         // single poster_url already in the cached /movies/{id} payload.
-        let variants: Vec<ArtworkVariant> = detail.poster_url
+        let variants: Vec<ArtworkVariant> = detail
+            .poster_url
             .into_iter()
             .map(|url| ArtworkVariant {
                 size: ArtworkSize::Standard,
@@ -449,15 +470,23 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb related only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb related only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let limit = if req.limit == 0 { usize::MAX } else { req.limit as usize };
-        let items: Vec<PluginEntry> = detail.similar_titles
+        let limit = if req.limit == 0 {
+            usize::MAX
+        } else {
+            req.limit as usize
+        };
+        let items: Vec<PluginEntry> = detail
+            .similar_titles
             .into_iter()
             .take(limit)
             .map(|s| s.into_entry(req.kind))
@@ -469,22 +498,26 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb trailers only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb trailers only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let trailers = detail.trailer
+        let trailers = detail
+            .trailer
             .into_iter()
             .filter(|t| !t.url.is_empty())
             .map(|t| Trailer {
-                url:           t.url,
+                url: t.url,
                 thumbnail_url: t.thumbnail,
-                title:         t.name,
-                kind:          TrailerKind::Trailer,
-                language:      None,
+                title: t.name,
+                kind: TrailerKind::Trailer,
+                language: None,
                 duration_secs: None,
             })
             .collect();
@@ -495,21 +528,25 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb release_info only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb release_info only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let releases = detail.release_dates
+        let releases = detail
+            .release_dates
             .into_iter()
             .map(|r| ReleaseEntry {
-                country:      r.country_code.or(r.country).unwrap_or_default(),
-                date:         r.date,
-                release_kind: None,   // xmdb's release_type isn't a meaningful enum
-                certificate:  None,   // RawReleaseDate has no certificate field
-                note:         None,   // RawReleaseDate has no attributes field
+                country: r.country_code.or(r.country).unwrap_or_default(),
+                date: r.date,
+                release_kind: None, // xmdb's release_type isn't a meaningful enum
+                certificate: None,  // RawReleaseDate has no certificate field
+                note: None,         // RawReleaseDate has no attributes field
             })
             .filter(|r| !r.country.is_empty())
             .collect();
@@ -520,17 +557,25 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb keywords only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb keywords only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let keywords = detail.keywords
+        let keywords = detail
+            .keywords
             .into_iter()
             .filter(|k| !k.trim().is_empty())
-            .map(|name| Keyword { name, source_id: None, provider: None })
+            .map(|name| Keyword {
+                name,
+                source_id: None,
+                provider: None,
+            })
             .collect();
         PluginResult::ok(KeywordsResponse { keywords })
     }
@@ -539,7 +584,10 @@ impl CatalogPlugin for XmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb box_office only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb box_office only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
@@ -549,40 +597,46 @@ impl CatalogPlugin for XmdbPlugin {
         fn project(raw: Option<RawMoney>) -> Option<MoneyAmount> {
             raw.and_then(|m| match (m.amount, m.currency) {
                 (Some(a), Some(c)) if a > 0 && !c.is_empty() => Some(MoneyAmount {
-                    amount: a, currency: c,
+                    amount: a,
+                    currency: c,
                 }),
                 _ => None,
             })
         }
         PluginResult::ok(BoxOfficeResponse {
-            budget:          project(detail.budget),
+            budget: project(detail.budget),
             opening_weekend: project(detail.opening_weekend_gross),
-            gross_domestic:  project(detail.lifetime_gross),
+            gross_domestic: project(detail.lifetime_gross),
             gross_worldwide: project(detail.worldwide_gross),
         })
     }
 
-    fn get_alternative_titles(&self, req: AlternativeTitlesRequest)
-        -> PluginResult<AlternativeTitlesResponse>
-    {
+    fn get_alternative_titles(
+        &self,
+        req: AlternativeTitlesRequest,
+    ) -> PluginResult<AlternativeTitlesResponse> {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("xmdb alt_titles only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "xmdb alt_titles only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let detail = match self.fetch_or_cache_movie_payload(&req.id, req.force_refresh) {
             Ok(d) => d,
             Err(e) => return PluginResult::Err(e),
         };
-        let titles = detail.alternative_titles
+        let titles = detail
+            .alternative_titles
             .into_iter()
             .filter(|a| !a.title.trim().is_empty())
             .map(|a| AlternativeTitle {
-                title:   a.title,
-                locale:  a.language_code.or(a.language),
+                title: a.title,
+                locale: a.language_code.or(a.language),
                 country: a.country_code.or(a.country),
-                kind:    None,   // xmdb has no per-row classification
+                kind: None, // xmdb has no per-row classification
             })
             .collect();
         PluginResult::ok(AlternativeTitlesResponse { titles })
@@ -595,14 +649,15 @@ fn build_episodes(series_id: &str, season: u32, raw: Vec<RawEpisode>) -> Vec<Epi
     raw.into_iter()
         .map(|ep| {
             let n = ep.episode_number.unwrap_or(0);
-            let title = ep.title
+            let title = ep
+                .title
                 .filter(|t| !t.trim().is_empty())
                 .unwrap_or_else(|| format!("Episode {n}"));
             let imdb_from_url = ep.imdb_url.as_deref().and_then(imdb_id_from_url);
             let imdb_id = imdb_from_url.or(ep.imdb_id);
             let entry_id = match imdb_id {
                 Some(ref id) => format!("xmdb-{id}"),
-                None         => format!("xmdb-{series_id}:s{season}e{n}"),
+                None => format!("xmdb-{series_id}:s{season}e{n}"),
             };
             EpisodeWire {
                 season,
@@ -677,26 +732,32 @@ struct SearchEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct SearchHit {
-    #[serde(default)] id:          Option<String>,
-    #[serde(default)] title:       Option<String>,
-    #[serde(default)] release_year: Option<u32>,
-    #[serde(default)] poster_url:  Option<String>,
-    #[serde(default)] imdb_url:    Option<String>,
-    #[serde(default)] title_type:  Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    release_year: Option<u32>,
+    #[serde(default)]
+    poster_url: Option<String>,
+    #[serde(default)]
+    imdb_url: Option<String>,
+    #[serde(default)]
+    title_type: Option<String>,
 }
 
 impl SearchHit {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let imdb = self.imdb_url.as_deref().and_then(imdb_id_from_url);
-        let id   = self.id.clone().or_else(|| imdb.clone()).unwrap_or_default();
+        let id = self.id.clone().or_else(|| imdb.clone()).unwrap_or_default();
         let mut entry = PluginEntry {
             id,
             kind,
-            source:     "xmdb".to_string(),
-            title:      self.title.unwrap_or_default(),
-            year:       self.release_year,
+            source: "xmdb".to_string(),
+            title: self.title.unwrap_or_default(),
+            year: self.release_year,
             poster_url: self.poster_url,
-            imdb_id:    imdb.clone(),
+            imdb_id: imdb.clone(),
             ..Default::default()
         };
         if let Some(id) = imdb {
@@ -712,83 +773,131 @@ impl SearchHit {
 /// fields never break parsing.
 #[derive(Debug, Deserialize)]
 struct MovieDetail {
-    #[serde(default)] id:                   String,
-    #[serde(default)] title:                String,
-    #[serde(default)] original_title:       Option<String>,
-    #[serde(default)] release_year:         Option<u32>,
-    #[serde(default)] runtime_minutes:      Option<u32>,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    original_title: Option<String>,
+    #[serde(default)]
+    release_year: Option<u32>,
+    #[serde(default)]
+    runtime_minutes: Option<u32>,
     /// IMDb-shaped 0–10. Maps to entry.ratings["imdb"] and entry.rating.
-    #[serde(default)] rating:               Option<f32>,
-    #[serde(default)] vote_count:           Option<u32>,
+    #[serde(default)]
+    rating: Option<f32>,
+    #[serde(default)]
+    vote_count: Option<u32>,
     /// Metacritic 0–100. Maps to entry.ratings["metacritic"].
-    #[serde(default)] metascore:            Option<f32>,
-    #[serde(default)] certificate:          Option<String>,
-    #[serde(default)] genres:               Vec<String>,
-    #[serde(default)] languages:            Vec<String>,
-    #[serde(default)] countries:            Vec<String>,
-    #[serde(default)] plot:                 Option<String>,
-    #[serde(default)] poster_url:           Option<String>,
-    #[serde(default)] imdb_url:             Option<String>,
-    #[serde(default)] title_type:           Option<String>,
+    #[serde(default)]
+    metascore: Option<f32>,
+    #[serde(default)]
+    certificate: Option<String>,
+    #[serde(default)]
+    genres: Vec<String>,
+    #[serde(default)]
+    languages: Vec<String>,
+    #[serde(default)]
+    countries: Vec<String>,
+    #[serde(default)]
+    plot: Option<String>,
+    #[serde(default)]
+    poster_url: Option<String>,
+    #[serde(default)]
+    imdb_url: Option<String>,
+    #[serde(default)]
+    title_type: Option<String>,
     /// Role-keyed map: `{"Actor": [{...}, ...], "Director": [{...}, ...], ...}`.
     /// Each role's array carries `CreditPerson` rows. Splitting into
     /// cast vs crew is done in `into_entry` based on the role key —
     /// `Actor` / `Actress` go to cast, everything else to crew.
-    #[serde(default)] full_cast_and_crew:   std::collections::HashMap<String, Vec<CreditPerson>>,
+    #[serde(default)]
+    full_cast_and_crew: std::collections::HashMap<String, Vec<CreditPerson>>,
     // ── New raw shapes for verbs in Chunk 7 ──
-    #[serde(default)] keywords:             Vec<String>,
-    #[serde(default)] alternative_titles:   Vec<RawAlternativeTitle>,
-    #[serde(default)] release_dates:        Vec<RawReleaseDate>,
-    #[serde(default)] similar_titles:       Vec<RawSimilarTitle>,
-    #[serde(default)] trailer:              Option<RawTrailer>,
-    #[serde(default)] budget:               Option<RawMoney>,
-    #[serde(default)] opening_weekend_gross: Option<RawMoney>,
-    #[serde(default)] lifetime_gross:       Option<RawMoney>,
-    #[serde(default)] worldwide_gross:      Option<RawMoney>,
+    #[serde(default)]
+    keywords: Vec<String>,
+    #[serde(default)]
+    alternative_titles: Vec<RawAlternativeTitle>,
+    #[serde(default)]
+    release_dates: Vec<RawReleaseDate>,
+    #[serde(default)]
+    similar_titles: Vec<RawSimilarTitle>,
+    #[serde(default)]
+    trailer: Option<RawTrailer>,
+    #[serde(default)]
+    budget: Option<RawMoney>,
+    #[serde(default)]
+    opening_weekend_gross: Option<RawMoney>,
+    #[serde(default)]
+    lifetime_gross: Option<RawMoney>,
+    #[serde(default)]
+    worldwide_gross: Option<RawMoney>,
 }
 
 // ── Raw wire shapes for Chunk 7 verbs ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct RawAlternativeTitle {
-    #[serde(default)] title:         String,
-    #[serde(default)] country:       Option<String>,
-    #[serde(default)] country_code:  Option<String>,
-    #[serde(default)] language:      Option<String>,
-    #[serde(default)] language_code: Option<String>,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    country_code: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    language_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawReleaseDate {
-    #[serde(default)] country:       Option<String>,
-    #[serde(default)] country_code:  Option<String>,
-    #[serde(default)] date:          Option<String>,
-    #[serde(default)] day:           Option<u32>,
-    #[serde(default)] month:         Option<u32>,
-    #[serde(default)] year:          Option<u32>,
-    #[serde(default)] release_type:  Option<String>,
+    #[serde(default)]
+    country: Option<String>,
+    #[serde(default)]
+    country_code: Option<String>,
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    day: Option<u32>,
+    #[serde(default)]
+    month: Option<u32>,
+    #[serde(default)]
+    year: Option<u32>,
+    #[serde(default)]
+    release_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawSimilarTitle {
-    #[serde(default)] id:          Option<String>,
-    #[serde(default)] title:       Option<String>,
-    #[serde(default)] year:        Option<u32>,
-    #[serde(default)] rating:      Option<f32>,
-    #[serde(default)] poster_url:  Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    year: Option<u32>,
+    #[serde(default)]
+    rating: Option<f32>,
+    #[serde(default)]
+    poster_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawTrailer {
-    #[serde(default)] url:           String,
-    #[serde(default)] thumbnail:     Option<String>,
-    #[serde(default)] name:          Option<String>,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    thumbnail: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawMoney {
-    #[serde(default)] amount:   Option<u64>,
-    #[serde(default)] currency: Option<String>,
+    #[serde(default)]
+    amount: Option<u64>,
+    #[serde(default)]
+    currency: Option<String>,
 }
 
 impl RawSimilarTitle {
@@ -797,22 +906,26 @@ impl RawSimilarTitle {
         let imdb = self.id.as_deref().and_then(|s| {
             if s.starts_with("tt") && s.len() > 2 && s[2..].chars().all(|c| c.is_ascii_digit()) {
                 Some(s.to_string())
-            } else { None }
+            } else {
+                None
+            }
         });
         let id = self.id.clone().or_else(|| imdb.clone()).unwrap_or_default();
         let mut entry = PluginEntry {
             id,
-            kind:       fallback_kind,
-            source:     "xmdb".to_string(),
-            title:      self.title.unwrap_or_default(),
-            year:       self.year,
-            rating:     self.rating,
+            kind: fallback_kind,
+            source: "xmdb".to_string(),
+            title: self.title.unwrap_or_default(),
+            year: self.year,
+            rating: self.rating,
             poster_url: self.poster_url,
-            imdb_id:    imdb.clone(),
+            imdb_id: imdb.clone(),
             ..Default::default()
         };
         if let Some(ref id) = imdb {
-            entry.external_ids.insert(id_sources::IMDB.to_string(), id.clone());
+            entry
+                .external_ids
+                .insert(id_sources::IMDB.to_string(), id.clone());
         }
         entry
     }
@@ -832,26 +945,30 @@ impl MovieDetail {
             ratings.insert("metacritic".to_string(), m);
         }
         let id_for_entry = imdb.clone().unwrap_or_else(|| {
-            if !self.id.is_empty() { self.id.clone() } else { self.title.clone() }
+            if !self.id.is_empty() {
+                self.id.clone()
+            } else {
+                self.title.clone()
+            }
         });
         let mut entry = PluginEntry {
-            id:                  id_for_entry,
+            id: id_for_entry,
             kind,
-            source:              "xmdb".to_string(),
-            title:               self.title,
-            year:                self.release_year,
-            poster_url:          self.poster_url,
-            imdb_id:             imdb.clone(),
-            description:         self.plot,
-            genre:               Some(self.genres.join(", ")).filter(|s| !s.is_empty()),
-            rating:              self.rating,
-            duration:            self.runtime_minutes,
+            source: "xmdb".to_string(),
+            title: self.title,
+            year: self.release_year,
+            poster_url: self.poster_url,
+            imdb_id: imdb.clone(),
+            description: self.plot,
+            genre: Some(self.genres.join(", ")).filter(|s| !s.is_empty()),
+            rating: self.rating,
+            duration: self.runtime_minutes,
             ratings,
-            original_title:      self.original_title,
-            certificate:         self.certificate,
+            original_title: self.original_title,
+            certificate: self.certificate,
             certificate_country: Some("US".to_string()),
-            languages:           self.languages,
-            countries:           self.countries,
+            languages: self.languages,
+            countries: self.countries,
             ..Default::default()
         };
         if let Some(votes) = self.vote_count {
@@ -878,9 +995,12 @@ impl MovieDetail {
 /// today, so it's ignored at deserialize time.
 #[derive(Debug, Deserialize)]
 struct CreditPerson {
-    #[serde(default)] name:       String,
-    #[serde(default)] id:         Option<String>,
-    #[serde(default)] characters: Vec<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    characters: Vec<String>,
 }
 
 /// Cast roles are the role keys we project as `CastMember`. Anything
@@ -894,17 +1014,24 @@ fn is_cast_role(role: &str) -> bool {
 
 #[derive(Debug, Deserialize)]
 struct SeasonResponse {
-    #[serde(default)] episodes: Vec<RawEpisode>,
+    #[serde(default)]
+    episodes: Vec<RawEpisode>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawEpisode {
-    #[serde(default)] title:           Option<String>,
-    #[serde(default)] release_date:    Option<String>,
-    #[serde(default)] episode_number:  Option<u32>,
-    #[serde(default)] runtime_minutes: Option<u32>,
-    #[serde(default)] imdb_url:        Option<String>,
-    #[serde(default)] imdb_id:         Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    release_date: Option<String>,
+    #[serde(default)]
+    episode_number: Option<u32>,
+    #[serde(default)]
+    runtime_minutes: Option<u32>,
+    #[serde(default)]
+    imdb_url: Option<String>,
+    #[serde(default)]
+    imdb_id: Option<String>,
 }
 
 // ── WASM exports ──────────────────────────────────────────────────────────────
@@ -957,40 +1084,46 @@ mod tests {
     #[test]
     fn movie_detail_projects_ratings() {
         let detail = MovieDetail {
-            id:                     "xmdb-123".into(),
-            title:                  "The Shawshank Redemption".into(),
-            original_title:         None,
-            release_year:           Some(1994),
-            runtime_minutes:        Some(142),
-            rating:                 Some(9.3),
-            vote_count:             None,
-            metascore:              Some(82.0),
-            certificate:            None,
-            genres:                 vec!["Drama".into()],
-            languages:              vec![],
-            countries:              vec![],
-            plot:                   Some("...".into()),
-            poster_url:             Some("https://example.com/p.jpg".into()),
-            imdb_url:               Some("https://www.imdb.com/title/tt0111161/".into()),
-            title_type:             Some("movie".into()),
-            full_cast_and_crew:     std::collections::HashMap::new(),
-            keywords:               vec![],
-            alternative_titles:     vec![],
-            release_dates:          vec![],
-            similar_titles:         vec![],
-            trailer:                None,
-            budget:                 None,
-            opening_weekend_gross:  None,
-            lifetime_gross:         None,
-            worldwide_gross:        None,
+            id: "xmdb-123".into(),
+            title: "The Shawshank Redemption".into(),
+            original_title: None,
+            release_year: Some(1994),
+            runtime_minutes: Some(142),
+            rating: Some(9.3),
+            vote_count: None,
+            metascore: Some(82.0),
+            certificate: None,
+            genres: vec!["Drama".into()],
+            languages: vec![],
+            countries: vec![],
+            plot: Some("...".into()),
+            poster_url: Some("https://example.com/p.jpg".into()),
+            imdb_url: Some("https://www.imdb.com/title/tt0111161/".into()),
+            title_type: Some("movie".into()),
+            full_cast_and_crew: std::collections::HashMap::new(),
+            keywords: vec![],
+            alternative_titles: vec![],
+            release_dates: vec![],
+            similar_titles: vec![],
+            trailer: None,
+            budget: None,
+            opening_weekend_gross: None,
+            lifetime_gross: None,
+            worldwide_gross: None,
         };
         let e = detail.into_entry(EntryKind::Movie);
         assert_eq!(e.kind, EntryKind::Movie);
         assert_eq!(e.source, "xmdb");
         assert_eq!(e.year, Some(1994));
         assert_eq!(e.imdb_id.as_deref(), Some("tt0111161"));
-        assert_eq!(e.external_ids.get(id_sources::IMDB).map(String::as_str), Some("tt0111161"));
-        assert_eq!(e.external_ids.get("xmdb").map(String::as_str), Some("xmdb-123"));
+        assert_eq!(
+            e.external_ids.get(id_sources::IMDB).map(String::as_str),
+            Some("tt0111161")
+        );
+        assert_eq!(
+            e.external_ids.get("xmdb").map(String::as_str),
+            Some("xmdb-123")
+        );
         assert_eq!(e.rating, Some(9.3));
         assert_eq!(e.ratings.get("imdb").copied(), Some(9.3));
         assert_eq!(e.ratings.get("metacritic").copied(), Some(82.0));
@@ -1001,32 +1134,32 @@ mod tests {
     #[test]
     fn movie_detail_handles_missing_metascore() {
         let detail = MovieDetail {
-            id:                     "xmdb-123".into(),
-            title:                  "Untracked".into(),
-            original_title:         None,
-            release_year:           None,
-            runtime_minutes:        None,
-            rating:                 Some(7.0),
-            vote_count:             None,
-            metascore:              None,
-            certificate:            None,
-            genres:                 vec![],
-            languages:              vec![],
-            countries:              vec![],
-            plot:                   None,
-            poster_url:             None,
-            imdb_url:               None,
-            title_type:             None,
-            full_cast_and_crew:     std::collections::HashMap::new(),
-            keywords:               vec![],
-            alternative_titles:     vec![],
-            release_dates:          vec![],
-            similar_titles:         vec![],
-            trailer:                None,
-            budget:                 None,
-            opening_weekend_gross:  None,
-            lifetime_gross:         None,
-            worldwide_gross:        None,
+            id: "xmdb-123".into(),
+            title: "Untracked".into(),
+            original_title: None,
+            release_year: None,
+            runtime_minutes: None,
+            rating: Some(7.0),
+            vote_count: None,
+            metascore: None,
+            certificate: None,
+            genres: vec![],
+            languages: vec![],
+            countries: vec![],
+            plot: None,
+            poster_url: None,
+            imdb_url: None,
+            title_type: None,
+            full_cast_and_crew: std::collections::HashMap::new(),
+            keywords: vec![],
+            alternative_titles: vec![],
+            release_dates: vec![],
+            similar_titles: vec![],
+            trailer: None,
+            budget: None,
+            opening_weekend_gross: None,
+            lifetime_gross: None,
+            worldwide_gross: None,
         };
         let e = detail.into_entry(EntryKind::Movie);
         assert_eq!(e.ratings.get("imdb").copied(), Some(7.0));
@@ -1109,16 +1242,14 @@ mod tests {
 
     #[test]
     fn build_episodes_uses_imdb_id_when_present() {
-        let raw = vec![
-            RawEpisode {
-                title:           Some("Pilot".into()),
-                release_date:    Some("2008-01-20".into()),
-                episode_number:  Some(1),
-                runtime_minutes: Some(58),
-                imdb_url:        Some("https://www.imdb.com/title/tt0959621/".into()),
-                imdb_id:         None,
-            },
-        ];
+        let raw = vec![RawEpisode {
+            title: Some("Pilot".into()),
+            release_date: Some("2008-01-20".into()),
+            episode_number: Some(1),
+            runtime_minutes: Some(58),
+            imdb_url: Some("https://www.imdb.com/title/tt0959621/".into()),
+            imdb_id: None,
+        }];
         let eps = build_episodes("tt0903747", 1, raw);
         assert_eq!(eps.len(), 1);
         assert_eq!(eps[0].entry_id, "xmdb-tt0959621");
@@ -1129,12 +1260,12 @@ mod tests {
     #[test]
     fn build_episodes_synthesises_when_imdb_missing() {
         let raw = vec![RawEpisode {
-            title:           None,
-            release_date:    None,
-            episode_number:  Some(2),
+            title: None,
+            release_date: None,
+            episode_number: Some(2),
             runtime_minutes: None,
-            imdb_url:        None,
-            imdb_id:         None,
+            imdb_url: None,
+            imdb_id: None,
         }];
         let eps = build_episodes("tt0903747", 1, raw);
         assert_eq!(eps[0].entry_id, "xmdb-tt0903747:s1e2");
@@ -1153,7 +1284,7 @@ mod tests {
         };
         match p.lookup(req) {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
-            PluginResult::Ok(_)  => panic!("expected UNKNOWN_ID"),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID"),
         }
     }
 
@@ -1171,7 +1302,7 @@ mod tests {
         };
         match p.enrich(req) {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
-            PluginResult::Ok(_)  => panic!("expected UNKNOWN_ID"),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID"),
         }
     }
 
@@ -1328,12 +1459,10 @@ mod tests {
 
     #[test]
     fn movie_detail_parses_real_shawshank_fixture() {
-        let body = std::fs::read_to_string(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/movies_tt0111161.json"
-            ),
-        )
+        let body = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/movies_tt0111161.json"
+        ))
         .expect("fixture missing — run Chunk 0 first");
         let detail: MovieDetail =
             serde_json::from_str(&body).expect("real fixture should deserialize cleanly");
@@ -1357,12 +1486,10 @@ mod tests {
 
     #[test]
     fn movie_detail_parses_real_breaking_bad_fixture() {
-        let body = std::fs::read_to_string(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/movies_tt0903747.json"
-            ),
-        )
+        let body = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/movies_tt0903747.json"
+        ))
         .expect("fixture missing");
         let detail: MovieDetail =
             serde_json::from_str(&body).expect("series fixture should deserialize cleanly");
@@ -1496,7 +1623,10 @@ mod tests {
         };
         assert_eq!(resp.trailers.len(), 1);
         assert_eq!(resp.trailers[0].url, "https://yt/abc");
-        assert_eq!(resp.trailers[0].thumbnail_url.as_deref(), Some("https://yt/abc.jpg"));
+        assert_eq!(
+            resp.trailers[0].thumbnail_url.as_deref(),
+            Some("https://yt/abc.jpg")
+        );
         assert_eq!(resp.trailers[0].title.as_deref(), Some("Official Trailer"));
         assert_eq!(resp.trailers[0].kind, TrailerKind::Trailer);
     }
@@ -1584,7 +1714,7 @@ mod tests {
             PluginResult::Ok(r) => r,
             PluginResult::Err(e) => panic!("keywords err: {} {}", e.code, e.message),
         };
-        assert_eq!(resp.keywords.len(), 3);  // empties filtered
+        assert_eq!(resp.keywords.len(), 3); // empties filtered
         assert_eq!(resp.keywords[0].name, "indie");
         assert!(resp.keywords[0].source_id.is_none());
         assert!(resp.keywords[0].provider.is_none());
@@ -1619,7 +1749,7 @@ mod tests {
         assert_eq!(resp.budget.unwrap().amount, 25_000_000);
         assert_eq!(resp.gross_worldwide.unwrap().amount, 29_420_884);
         assert!(resp.opening_weekend.is_none(), "zero amount should drop");
-        assert!(resp.gross_domestic.is_none(),  "missing should drop");
+        assert!(resp.gross_domestic.is_none(), "missing should drop");
     }
 
     #[test]
@@ -1651,7 +1781,7 @@ mod tests {
             PluginResult::Ok(r) => r,
             PluginResult::Err(e) => panic!("alt_titles err: {} {}", e.code, e.message),
         };
-        assert_eq!(resp.titles.len(), 2);  // empty title filtered
+        assert_eq!(resp.titles.len(), 2); // empty title filtered
         assert_eq!(resp.titles[0].title, "Les \u{00c9}vad\u{00e9}s");
         assert_eq!(resp.titles[0].locale.as_deref(), Some("fr"));
         assert_eq!(resp.titles[0].country.as_deref(), Some("FR"));
@@ -1663,35 +1793,38 @@ mod tests {
     #[test]
     fn movie_detail_projects_group_x_fields() {
         let detail = MovieDetail {
-            id:                     "xmdb-1".into(),
-            title:                  "Shawshank".into(),
-            original_title:         Some("The Shawshank Redemption".into()),
-            release_year:           Some(1994),
-            runtime_minutes:        Some(142),
-            rating:                 Some(9.3),
-            vote_count:             Some(2_700_000),
-            metascore:              Some(82.0),
-            certificate:            Some("R".into()),
-            genres:                 vec!["Drama".into()],
-            languages:              vec!["en".into()],
-            countries:              vec!["US".into()],
-            plot:                   None,
-            poster_url:             None,
-            imdb_url:               Some("https://www.imdb.com/title/tt0111161/".into()),
-            title_type:             Some("movie".into()),
-            full_cast_and_crew:     Default::default(),
-            keywords:               vec![],
-            alternative_titles:     vec![],
-            release_dates:          vec![],
-            similar_titles:         vec![],
-            trailer:                None,
-            budget:                 None,
-            opening_weekend_gross:  None,
-            lifetime_gross:         None,
-            worldwide_gross:        None,
+            id: "xmdb-1".into(),
+            title: "Shawshank".into(),
+            original_title: Some("The Shawshank Redemption".into()),
+            release_year: Some(1994),
+            runtime_minutes: Some(142),
+            rating: Some(9.3),
+            vote_count: Some(2_700_000),
+            metascore: Some(82.0),
+            certificate: Some("R".into()),
+            genres: vec!["Drama".into()],
+            languages: vec!["en".into()],
+            countries: vec!["US".into()],
+            plot: None,
+            poster_url: None,
+            imdb_url: Some("https://www.imdb.com/title/tt0111161/".into()),
+            title_type: Some("movie".into()),
+            full_cast_and_crew: Default::default(),
+            keywords: vec![],
+            alternative_titles: vec![],
+            release_dates: vec![],
+            similar_titles: vec![],
+            trailer: None,
+            budget: None,
+            opening_weekend_gross: None,
+            lifetime_gross: None,
+            worldwide_gross: None,
         };
         let e = detail.into_entry(EntryKind::Movie);
-        assert_eq!(e.original_title.as_deref(), Some("The Shawshank Redemption"));
+        assert_eq!(
+            e.original_title.as_deref(),
+            Some("The Shawshank Redemption")
+        );
         assert_eq!(e.certificate.as_deref(), Some("R"));
         assert_eq!(e.certificate_country.as_deref(), Some("US"));
         assert_eq!(e.languages, vec!["en".to_string()]);

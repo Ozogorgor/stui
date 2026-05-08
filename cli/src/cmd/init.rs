@@ -12,8 +12,14 @@ pub fn run(name: String, dir: Option<PathBuf>) -> Result<()> {
     // Validate plugin name: must be a valid Rust identifier for the PLUGIN_TYPE
     // (after CamelCase conversion) and a valid cargo package name (kebab-case OK
     // with the `-provider` suffix).
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        anyhow::bail!("plugin name must be non-empty ASCII alphanumeric (dash/underscore allowed): {name}");
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        anyhow::bail!(
+            "plugin name must be non-empty ASCII alphanumeric (dash/underscore allowed): {name}"
+        );
     }
 
     let dir = dir.unwrap_or_else(|| PathBuf::from(format!("{}-provider", name)));
@@ -28,8 +34,8 @@ pub fn run(name: String, dir: Option<PathBuf>) -> Result<()> {
 
     let subst = |s: &str| {
         s.replace("{{PLUGIN_NAME}}", &name)
-         .replace("{{PLUGIN_TYPE}}", &plugin_type)
-         .replace("{{PLUGIN_NAME_UNDERSCORED}}", &plugin_name_underscored)
+            .replace("{{PLUGIN_TYPE}}", &plugin_type)
+            .replace("{{PLUGIN_NAME_UNDERSCORED}}", &plugin_name_underscored)
     };
 
     std::fs::create_dir_all(&dir).with_context(|| format!("create dir {}", dir.display()))?;
@@ -44,7 +50,10 @@ pub fn run(name: String, dir: Option<PathBuf>) -> Result<()> {
     std::fs::write(dir.join("README.md"), subst(README))?;
 
     println!("Scaffolded plugin '{}' at {}", name, dir.display());
-    println!("Next: cd {} && stui plugin build && stui plugin lint", dir.display());
+    println!(
+        "Next: cd {} && stui plugin build && stui plugin lint",
+        dir.display()
+    );
     Ok(())
 }
 

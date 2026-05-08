@@ -15,19 +15,12 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use stui_plugin_sdk::{
-    parse_manifest,
-    cache_get, error_codes, http_get,
-    id_sources, normalize_crew_role,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    CastMember, CastRole, CatalogPlugin, CreditsRequest, CreditsResponse, CrewMember,
-    EnrichRequest, EnrichResponse,
-    EntryKind,
-    EpisodeWire, EpisodesRequest, EpisodesResponse,
-    InitContext,
-    LookupRequest, LookupResponse,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse, SearchScope,
+    cache_get, error_codes, http_get, id_sources, normalize_crew_role, parse_manifest,
+    plugin_error, plugin_info, stui_export_catalog_plugin, CastMember, CastRole, CatalogPlugin,
+    CreditsRequest, CreditsResponse, CrewMember, EnrichRequest, EnrichResponse, EntryKind,
+    EpisodeWire, EpisodesRequest, EpisodesResponse, InitContext, LookupRequest, LookupResponse,
+    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult, SearchRequest,
+    SearchResponse, SearchScope,
 };
 
 const BASE_URL: &str = "https://www.omdbapi.com/";
@@ -43,7 +36,10 @@ impl OmdbPlugin {
     pub fn new() -> Self {
         let manifest: PluginManifest = parse_manifest(include_str!("../plugin.toml"))
             .expect("plugin.toml failed to parse at compile time");
-        Self { manifest, api_key: OnceLock::new() }
+        Self {
+            manifest,
+            api_key: OnceLock::new(),
+        }
     }
 
     #[cfg(test)]
@@ -71,11 +67,15 @@ impl OmdbPlugin {
 }
 
 impl Default for OmdbPlugin {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Plugin for OmdbPlugin {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
         let key = ctx
@@ -105,11 +105,11 @@ fn classify_http_err(err: &str) -> PluginError {
         if let Some((code_str, body)) = rest.split_once(": ") {
             if let Ok(status) = code_str.parse::<u16>() {
                 let code = match status {
-                    401 | 402 => error_codes::INVALID_REQUEST,   // bad/exhausted key
-                    404         => error_codes::UNKNOWN_ID,
-                    429         => error_codes::RATE_LIMITED,
-                    500..=599   => error_codes::TRANSIENT,
-                    _           => error_codes::REMOTE_ERROR,
+                    401 | 402 => error_codes::INVALID_REQUEST, // bad/exhausted key
+                    404 => error_codes::UNKNOWN_ID,
+                    429 => error_codes::RATE_LIMITED,
+                    500..=599 => error_codes::TRANSIENT,
+                    _ => error_codes::REMOTE_ERROR,
                 };
                 return PluginError {
                     code: code.to_string(),
@@ -142,14 +142,18 @@ fn parse_year(raw: &str) -> Option<u32> {
 }
 
 fn opt_non_na(s: &str) -> Option<String> {
-    if s.is_empty() || s == "N/A" { None } else { Some(s.to_string()) }
+    if s.is_empty() || s == "N/A" {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 fn type_param(kind: EntryKind) -> Option<&'static str> {
     match kind {
-        EntryKind::Movie  => Some("movie"),
+        EntryKind::Movie => Some("movie"),
         EntryKind::Series => Some("series"),
-        _                 => None,
+        _ => None,
     }
 }
 
@@ -163,7 +167,7 @@ impl CatalogPlugin for OmdbPlugin {
         };
 
         let entry_kind = match req.scope {
-            SearchScope::Movie  => EntryKind::Movie,
+            SearchScope::Movie => EntryKind::Movie,
             SearchScope::Series => EntryKind::Series,
             _ => {
                 return PluginResult::err(
@@ -176,7 +180,10 @@ impl CatalogPlugin for OmdbPlugin {
         let query = req.query.trim();
         // OMDb has no trending/browse endpoint; an empty query yields zero results.
         if query.is_empty() {
-            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+            return PluginResult::ok(SearchResponse {
+                items: vec![],
+                total: 0,
+            });
         }
 
         let tp = type_param(entry_kind).expect("checked by scope match above");
@@ -201,10 +208,17 @@ impl CatalogPlugin for OmdbPlugin {
         // OMDb returns `Response: "False"` + `Error: "..."` when no matches or
         // on non-HTTP errors (e.g. invalid key that they surface with 200).
         if raw.response.eq_ignore_ascii_case("false") {
-            return PluginResult::ok(SearchResponse { items: vec![], total: 0 });
+            return PluginResult::ok(SearchResponse {
+                items: vec![],
+                total: 0,
+            });
         }
 
-        let limit = if req.limit == 0 { usize::MAX } else { req.limit as usize };
+        let limit = if req.limit == 0 {
+            usize::MAX
+        } else {
+            req.limit as usize
+        };
         let items: Vec<PluginEntry> = raw
             .search
             .unwrap_or_default()
@@ -248,19 +262,23 @@ impl CatalogPlugin for OmdbPlugin {
         if detail.response.eq_ignore_ascii_case("false") {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                detail.error.unwrap_or_else(|| format!("no OMDb entry for imdb {}", req.id)),
+                detail
+                    .error
+                    .unwrap_or_else(|| format!("no OMDb entry for imdb {}", req.id)),
             );
         }
 
         // Upstream `Type` can be `movie`, `series`, `episode`, `game`. We only
         // map the first two; anything else gets squashed to the request kind.
         let kind = match detail.media_type.as_deref() {
-            Some("movie")   => EntryKind::Movie,
-            Some("series")  => EntryKind::Series,
-            _               => req.kind,
+            Some("movie") => EntryKind::Movie,
+            Some("series") => EntryKind::Series,
+            _ => req.kind,
         };
 
-        PluginResult::ok(LookupResponse { entry: detail.into_entry(kind) })
+        PluginResult::ok(LookupResponse {
+            entry: detail.into_entry(kind),
+        })
     }
 
     fn enrich(&self, req: EnrichRequest) -> PluginResult<EnrichResponse> {
@@ -327,13 +345,15 @@ impl CatalogPlugin for OmdbPlugin {
         if detail.response.eq_ignore_ascii_case("false") {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                detail.error.unwrap_or_else(|| format!("omdb: no match for '{title}'")),
+                detail
+                    .error
+                    .unwrap_or_else(|| format!("omdb: no match for '{title}'")),
             );
         }
         let kind = match detail.media_type.as_deref() {
-            Some("movie")  => EntryKind::Movie,
+            Some("movie") => EntryKind::Movie,
             Some("series") => EntryKind::Series,
-            _              => req.partial.kind,
+            _ => req.partial.kind,
         };
         // Title-search match is less precise than imdb-id lookup; reflect
         // that in the confidence score.
@@ -347,7 +367,10 @@ impl CatalogPlugin for OmdbPlugin {
         if req.id_source != id_sources::IMDB {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("omdb credits only supports imdb ids, got: {}", req.id_source),
+                format!(
+                    "omdb credits only supports imdb ids, got: {}",
+                    req.id_source
+                ),
             );
         }
         let api_key = match self.api_key() {
@@ -370,7 +393,9 @@ impl CatalogPlugin for OmdbPlugin {
         if detail.response.eq_ignore_ascii_case("false") {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                detail.error.unwrap_or_else(|| format!("omdb: no entry for {}", req.id)),
+                detail
+                    .error
+                    .unwrap_or_else(|| format!("omdb: no entry for {}", req.id)),
             );
         }
 
@@ -419,7 +444,10 @@ impl CatalogPlugin for OmdbPlugin {
         if req.id_source != id_sources::IMDB && req.id_source != "omdb" {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                format!("omdb episodes only supports imdb/omdb id_source, got: {}", req.id_source),
+                format!(
+                    "omdb episodes only supports imdb/omdb id_source, got: {}",
+                    req.id_source
+                ),
             );
         }
         if req.season < 1 {
@@ -452,9 +480,9 @@ impl CatalogPlugin for OmdbPlugin {
         if resp.response.eq_ignore_ascii_case("false") {
             return PluginResult::err(
                 error_codes::UNKNOWN_ID,
-                resp.error.unwrap_or_else(|| format!(
-                    "omdb: no season {} for {}", req.season, req.series_id,
-                )),
+                resp.error.unwrap_or_else(|| {
+                    format!("omdb: no season {} for {}", req.season, req.series_id,)
+                }),
             );
         }
 
@@ -482,12 +510,12 @@ fn build_episodes(series_id: &str, season: u32, raw: Vec<RawEpisode>) -> Vec<Epi
             let n = ep.episode.trim().parse::<u32>().unwrap_or(0);
             let title = match opt_non_na(&ep.title) {
                 Some(t) => t,
-                None    => format!("Episode {n}"),
+                None => format!("Episode {n}"),
             };
             let imdb = opt_non_na(&ep.imdb_id);
             let entry_id = match imdb {
                 Some(id) => format!("omdb-{id}"),
-                None     => format!("omdb-{series_id}:s{season}e{n}"),
+                None => format!("omdb-{series_id}:s{season}e{n}"),
             };
             EpisodeWire {
                 season,
@@ -520,7 +548,11 @@ fn split_names(raw: &str) -> Vec<String> {
 struct SearchResponseRaw {
     #[serde(rename = "Search", default)]
     search: Option<Vec<SearchResult>>,
-    #[serde(rename = "totalResults", default, deserialize_with = "de_opt_u32_string")]
+    #[serde(
+        rename = "totalResults",
+        default,
+        deserialize_with = "de_opt_u32_string"
+    )]
     total_results: Option<u32>,
     #[serde(rename = "Response", default)]
     response: String,
@@ -528,23 +560,27 @@ struct SearchResponseRaw {
 
 #[derive(Debug, Deserialize)]
 struct SearchResult {
-    #[serde(rename = "Title",  default)] title:     String,
-    #[serde(rename = "Year",   default)] year:      String,
-    #[serde(rename = "imdbID", default)] imdb_id:   String,
-    #[serde(rename = "Poster", default)] poster:    String,
+    #[serde(rename = "Title", default)]
+    title: String,
+    #[serde(rename = "Year", default)]
+    year: String,
+    #[serde(rename = "imdbID", default)]
+    imdb_id: String,
+    #[serde(rename = "Poster", default)]
+    poster: String,
 }
 
 impl SearchResult {
     fn into_entry(self, kind: EntryKind) -> PluginEntry {
         let imdb = opt_non_na(&self.imdb_id);
         let mut entry = PluginEntry {
-            id:          imdb.clone().unwrap_or_else(|| self.title.clone()),
+            id: imdb.clone().unwrap_or_else(|| self.title.clone()),
             kind,
-            source:      "omdb".to_string(),
-            title:       self.title,
-            year:        parse_year(&self.year),
-            poster_url:  opt_non_na(&self.poster),
-            imdb_id:     imdb.clone(),
+            source: "omdb".to_string(),
+            title: self.title,
+            year: parse_year(&self.year),
+            poster_url: opt_non_na(&self.poster),
+            imdb_id: imdb.clone(),
             ..Default::default()
         };
         if let Some(id) = imdb {
@@ -556,32 +592,49 @@ impl SearchResult {
 
 #[derive(Debug, Deserialize)]
 struct DetailResponse {
-    #[serde(rename = "Response", default)]  response:  String,
-    #[serde(rename = "Error",    default)]  error:     Option<String>,
-    #[serde(rename = "Type",     default)]  media_type: Option<String>,
-    #[serde(rename = "Title",    default)]  title:     String,
-    #[serde(rename = "Year",     default)]  year:      String,
-    #[serde(rename = "imdbID",   default)]  imdb_id:   String,
-    #[serde(rename = "Poster",   default)]  poster:    String,
-    #[serde(rename = "Plot",     default)]  plot:      String,
-    #[serde(rename = "Genre",    default)]  genre:     String,
-    #[serde(rename = "Runtime",  default)]  runtime:   String,
-    #[serde(rename = "imdbRating", default)] rating:   String,
-    #[serde(rename = "Director", default)]  director:  String,
-    #[serde(rename = "Writer",   default)]  writer:    String,
-    #[serde(rename = "Actors",   default)]  actors:    String,
+    #[serde(rename = "Response", default)]
+    response: String,
+    #[serde(rename = "Error", default)]
+    error: Option<String>,
+    #[serde(rename = "Type", default)]
+    media_type: Option<String>,
+    #[serde(rename = "Title", default)]
+    title: String,
+    #[serde(rename = "Year", default)]
+    year: String,
+    #[serde(rename = "imdbID", default)]
+    imdb_id: String,
+    #[serde(rename = "Poster", default)]
+    poster: String,
+    #[serde(rename = "Plot", default)]
+    plot: String,
+    #[serde(rename = "Genre", default)]
+    genre: String,
+    #[serde(rename = "Runtime", default)]
+    runtime: String,
+    #[serde(rename = "imdbRating", default)]
+    rating: String,
+    #[serde(rename = "Director", default)]
+    director: String,
+    #[serde(rename = "Writer", default)]
+    writer: String,
+    #[serde(rename = "Actors", default)]
+    actors: String,
     /// OMDb's `Ratings` array carries the multi-source breakdown:
     /// IMDb (X.Y/10), Rotten Tomatoes (X%), Metacritic (X/100). We
     /// project these into PluginEntry.ratings so the aggregator can
     /// compose a weighted composite using the catalog_engine's
     /// existing `imdb`/`tomatometer`/`metacritic` weight keys.
-    #[serde(rename = "Ratings", default)]   ratings: Vec<RatingSource>,
+    #[serde(rename = "Ratings", default)]
+    ratings: Vec<RatingSource>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RatingSource {
-    #[serde(rename = "Source", default)] source: String,
-    #[serde(rename = "Value",  default)] value:  String,
+    #[serde(rename = "Source", default)]
+    source: String,
+    #[serde(rename = "Value", default)]
+    value: String,
 }
 
 /// Parse a single OMDb rating value into (aggregator_key, score)
@@ -596,15 +649,18 @@ struct RatingSource {
 fn parse_omdb_rating_source(r: &RatingSource) -> Option<(&'static str, f32)> {
     let key = match r.source.as_str() {
         "Internet Movie Database" => "imdb",
-        "Rotten Tomatoes"         => "tomatometer",
-        "Metacritic"              => "metacritic",
-        _                          => return None,
+        "Rotten Tomatoes" => "tomatometer",
+        "Metacritic" => "metacritic",
+        _ => return None,
     };
     let v = r.value.trim();
     // Strip the suffix to extract just the numeric portion. OMDb is
     // consistent enough that splitting on '/' and '%' handles every
     // form we've seen, but `parse` errors fall through to None.
-    let num_str = v.split_once('/').map(|(n, _)| n).unwrap_or_else(|| v.trim_end_matches('%'));
+    let num_str = v
+        .split_once('/')
+        .map(|(n, _)| n)
+        .unwrap_or_else(|| v.trim_end_matches('%'));
     num_str.trim().parse::<f32>().ok().map(|n| (key, n))
 }
 
@@ -620,17 +676,17 @@ impl DetailResponse {
             }
         }
         let mut entry = PluginEntry {
-            id:          imdb.clone().unwrap_or_else(|| self.title.clone()),
+            id: imdb.clone().unwrap_or_else(|| self.title.clone()),
             kind,
-            source:      "omdb".to_string(),
-            title:       self.title,
-            year:        parse_year(&self.year),
-            poster_url:  opt_non_na(&self.poster),
-            imdb_id:     imdb.clone(),
+            source: "omdb".to_string(),
+            title: self.title,
+            year: parse_year(&self.year),
+            poster_url: opt_non_na(&self.poster),
+            imdb_id: imdb.clone(),
             description: opt_non_na(&self.plot),
-            genre:       opt_non_na(&self.genre),
-            rating:      opt_non_na(&self.rating).and_then(|s| s.parse::<f32>().ok()),
-            duration:    parse_runtime_minutes(&self.runtime),
+            genre: opt_non_na(&self.genre),
+            rating: opt_non_na(&self.rating).and_then(|s| s.parse::<f32>().ok()),
+            duration: parse_runtime_minutes(&self.runtime),
             ratings,
             ..Default::default()
         };
@@ -643,22 +699,31 @@ impl DetailResponse {
 
 /// `"142 min"` → `Some(142)`. Anything else → `None`.
 fn parse_runtime_minutes(raw: &str) -> Option<u32> {
-    raw.split_whitespace().next().and_then(|n| n.parse::<u32>().ok())
+    raw.split_whitespace()
+        .next()
+        .and_then(|n| n.parse::<u32>().ok())
 }
 
 #[derive(Debug, Deserialize)]
 struct SeasonResponse {
-    #[serde(rename = "Response", default)] response: String,
-    #[serde(rename = "Error",    default)] error:    Option<String>,
-    #[serde(rename = "Episodes", default)] episodes: Vec<RawEpisode>,
+    #[serde(rename = "Response", default)]
+    response: String,
+    #[serde(rename = "Error", default)]
+    error: Option<String>,
+    #[serde(rename = "Episodes", default)]
+    episodes: Vec<RawEpisode>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawEpisode {
-    #[serde(rename = "Title",    default)] title:    String,
-    #[serde(rename = "Released", default)] released: String,
-    #[serde(rename = "Episode",  default)] episode:  String,
-    #[serde(rename = "imdbID",   default)] imdb_id:  String,
+    #[serde(rename = "Title", default)]
+    title: String,
+    #[serde(rename = "Released", default)]
+    released: String,
+    #[serde(rename = "Episode", default)]
+    episode: String,
+    #[serde(rename = "imdbID", default)]
+    imdb_id: String,
 }
 
 /// OMDb stringifies `totalResults`; accept both string and number shapes.
@@ -675,11 +740,21 @@ fn de_opt_u32_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u3
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
             Ok(v.trim().parse::<u32>().ok())
         }
-        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> { self.visit_str(&v) }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> { Ok(Some(v as u32)) }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> { Ok(if v < 0 { None } else { Some(v as u32) }) }
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> { Ok(None) }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            self.visit_str(&v)
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v as u32))
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(if v < 0 { None } else { Some(v as u32) })
+        }
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
         fn visit_some<D: de::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
             d.deserialize_any(V)
         }
@@ -756,7 +831,10 @@ mod tests {
         assert_eq!(e.source, "omdb");
         assert_eq!(e.year, Some(2010));
         assert_eq!(e.imdb_id.as_deref(), Some("tt1375666"));
-        assert_eq!(e.external_ids.get(id_sources::IMDB).map(String::as_str), Some("tt1375666"));
+        assert_eq!(
+            e.external_ids.get(id_sources::IMDB).map(String::as_str),
+            Some("tt1375666")
+        );
         assert_eq!(e.poster_url.as_deref(), Some("https://example.com/p.jpg"));
     }
 
@@ -841,14 +919,12 @@ mod tests {
 
     #[test]
     fn build_episodes_uses_omdb_imdb_id_as_entry_id() {
-        let raw = vec![
-            RawEpisode {
-                title: "Winter Is Coming".into(),
-                released: "2011-04-17".into(),
-                episode: "1".into(),
-                imdb_id: "tt1480055".into(),
-            },
-        ];
+        let raw = vec![RawEpisode {
+            title: "Winter Is Coming".into(),
+            released: "2011-04-17".into(),
+            episode: "1".into(),
+            imdb_id: "tt1480055".into(),
+        }];
         let eps = build_episodes("tt0944947", 1, raw);
         assert_eq!(eps.len(), 1);
         assert_eq!(eps[0].entry_id, "omdb-tt1480055");
@@ -876,9 +952,24 @@ mod tests {
     #[test]
     fn build_episodes_falls_back_to_episode_n_for_na_title() {
         let raw = vec![
-            RawEpisode { title: "N/A".into(),  released: "".into(), episode: "1".into(), imdb_id: "tt1".into() },
-            RawEpisode { title: "".into(),     released: "".into(), episode: "2".into(), imdb_id: "tt2".into() },
-            RawEpisode { title: "Real".into(), released: "".into(), episode: "3".into(), imdb_id: "tt3".into() },
+            RawEpisode {
+                title: "N/A".into(),
+                released: "".into(),
+                episode: "1".into(),
+                imdb_id: "tt1".into(),
+            },
+            RawEpisode {
+                title: "".into(),
+                released: "".into(),
+                episode: "2".into(),
+                imdb_id: "tt2".into(),
+            },
+            RawEpisode {
+                title: "Real".into(),
+                released: "".into(),
+                episode: "3".into(),
+                imdb_id: "tt3".into(),
+            },
         ];
         let eps = build_episodes("tt0", 1, raw);
         assert_eq!(eps[0].title, "Episode 1");

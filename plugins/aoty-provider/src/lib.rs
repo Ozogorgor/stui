@@ -20,22 +20,14 @@
 
 use std::sync::OnceLock;
 
-use stui_plugin_sdk::{
-    err_not_implemented,
-    error_codes,
-    http_request, HttpRequest,
-    parse_manifest,
-    plugin_error, plugin_info,
-    stui_export_catalog_plugin,
-    BulkEnrichEntry, BulkEnrichRequest, BulkEnrichResponse,
-    CatalogPlugin, EnrichRequest, EnrichResponse,
-    EntryKind,
-    InitContext,
-    Plugin, PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult,
-    SearchRequest, SearchResponse,
-    StreamProvider,
-};
 use serde::Deserialize;
+use stui_plugin_sdk::{
+    err_not_implemented, error_codes, http_request, parse_manifest, plugin_error, plugin_info,
+    stui_export_catalog_plugin, BulkEnrichEntry, BulkEnrichRequest, BulkEnrichResponse,
+    CatalogPlugin, EnrichRequest, EnrichResponse, EntryKind, HttpRequest, InitContext, Plugin,
+    PluginEntry, PluginError, PluginInitError, PluginManifest, PluginResult, SearchRequest,
+    SearchResponse, StreamProvider,
+};
 
 const DEFAULT_BASE_URL: &str = "https://album-of-the-year-api.vercel.app";
 
@@ -43,7 +35,7 @@ const DEFAULT_BASE_URL: &str = "https://album-of-the-year-api.vercel.app";
 
 pub struct AotyProvider {
     manifest: PluginManifest,
-    api_key:  OnceLock<String>,
+    api_key: OnceLock<String>,
     base_url: OnceLock<String>,
 }
 
@@ -53,7 +45,7 @@ impl AotyProvider {
             .expect("plugin.toml failed to parse at compile time");
         Self {
             manifest,
-            api_key:  OnceLock::new(),
+            api_key: OnceLock::new(),
             base_url: OnceLock::new(),
         }
     }
@@ -120,13 +112,17 @@ impl AotyProvider {
 }
 
 impl Default for AotyProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Plugin impl ───────────────────────────────────────────────────────────────
 
 impl Plugin for AotyProvider {
-    fn manifest(&self) -> &PluginManifest { &self.manifest }
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
 
     fn init(&mut self, ctx: &InitContext) -> Result<(), PluginInitError> {
         let key = ctx
@@ -176,7 +172,10 @@ impl CatalogPlugin for AotyProvider {
             );
         };
         match enrich_one(self, kind, &mb_id) {
-            Ok(entry) => PluginResult::ok(EnrichResponse { entry, confidence: 1.0 }),
+            Ok(entry) => PluginResult::ok(EnrichResponse {
+                entry,
+                confidence: 1.0,
+            }),
             Err(e) => PluginResult::Err(e),
         }
     }
@@ -184,7 +183,9 @@ impl CatalogPlugin for AotyProvider {
     fn bulk_enrich(&self, req: BulkEnrichRequest) -> PluginResult<BulkEnrichResponse> {
         // AOTY API has no MB-keyed batch endpoint; loop single-id calls.
         // The API caches per-MB-id internally so repeats are cheap.
-        let entries: Vec<BulkEnrichEntry> = req.partials.into_iter()
+        let entries: Vec<BulkEnrichEntry> = req
+            .partials
+            .into_iter()
             .map(|partial| {
                 let id = partial.id.clone();
                 let Some(mb_id) = mb_id_from(&partial) else {
@@ -197,7 +198,10 @@ impl CatalogPlugin for AotyProvider {
                     };
                 };
                 let result = match enrich_one(self, partial.kind, &mb_id) {
-                    Ok(entry) => PluginResult::ok(EnrichResponse { entry, confidence: 1.0 }),
+                    Ok(entry) => PluginResult::ok(EnrichResponse {
+                        entry,
+                        confidence: 1.0,
+                    }),
                     Err(e) => PluginResult::Err(e),
                 };
                 BulkEnrichEntry { id, result }
@@ -216,39 +220,54 @@ stui_export_catalog_plugin!(AotyProvider);
 /// `GET /artist/mb/{id}` response. Critic + user nested.
 #[derive(Debug, Clone, Deserialize)]
 struct AotyArtistResponse {
-    #[serde(default)] artist_id: String,
-    #[serde(default)] critic: Option<NestedCritic>,
-    #[serde(default)] user:   Option<NestedUser>,
+    #[serde(default)]
+    artist_id: String,
+    #[serde(default)]
+    critic: Option<NestedCritic>,
+    #[serde(default)]
+    user: Option<NestedUser>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct NestedCritic {
-    #[serde(default)] critic_score: Option<f32>,
-    #[serde(default)] review_count: Option<u32>,
+    #[serde(default)]
+    critic_score: Option<f32>,
+    #[serde(default)]
+    review_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct NestedUser {
-    #[serde(default)] user_score:   Option<f32>,
-    #[serde(default)] rating_count: Option<u32>,
+    #[serde(default)]
+    user_score: Option<f32>,
+    #[serde(default)]
+    rating_count: Option<u32>,
 }
 
 /// `GET /album/mb/{id}` response. Flat.
 #[derive(Debug, Clone, Deserialize)]
 struct AotyAlbumResponse {
-    #[serde(default)] album_slug:   Option<String>,
-    #[serde(default)] title:        Option<String>,
-    #[serde(default)] artist:       Option<String>,
+    #[serde(default)]
+    album_slug: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    artist: Option<String>,
     /// Primary genre per AOTY's curated taxonomy (e.g. "Indie Pop",
     /// "Hip Hop"). Single string, not a tag cloud — preferred over
     /// Last.fm/MB tag-derived genres which leak labels like "album" /
     /// "favorite" / personal-taxonomy noise. None when the album page
     /// has no `<a href="/genre/...">` row.
-    #[serde(default)] genre:        Option<String>,
-    #[serde(default)] critic_score: Option<f32>,
-    #[serde(default)] review_count: Option<u32>,
-    #[serde(default)] user_score:   Option<f32>,
-    #[serde(default)] rating_count: Option<u32>,
+    #[serde(default)]
+    genre: Option<String>,
+    #[serde(default)]
+    critic_score: Option<f32>,
+    #[serde(default)]
+    review_count: Option<u32>,
+    #[serde(default)]
+    user_score: Option<f32>,
+    #[serde(default)]
+    rating_count: Option<u32>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -256,7 +275,9 @@ struct AotyAlbumResponse {
 /// Extract the MusicBrainz ID from a partial entry. Looks in
 /// `external_ids["musicbrainz"]`. Empty/missing → None.
 fn mb_id_from(partial: &PluginEntry) -> Option<String> {
-    partial.external_ids.get("musicbrainz")
+    partial
+        .external_ids
+        .get("musicbrainz")
         .map(String::clone)
         .filter(|s| !s.is_empty())
 }
@@ -302,7 +323,7 @@ fn enrich_one(
 /// Build a PluginEntry for an artist response. Drops zero/null scores.
 fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
     let mut ratings = std::collections::HashMap::new();
-    let mut votes   = std::collections::HashMap::new();
+    let mut votes = std::collections::HashMap::new();
     if let Some(c) = resp.critic {
         if let Some(s) = c.critic_score.filter(|v| *v > 0.0) {
             ratings.insert("aoty_critic".to_string(), s);
@@ -332,20 +353,22 @@ fn project_artist(resp: AotyArtistResponse, mb_id: &str) -> PluginEntry {
     let mut entry = PluginEntry {
         id,
         kind: EntryKind::Artist,
-        title: String::new(),  // AOTY artist endpoint doesn't surface display name
+        title: String::new(), // AOTY artist endpoint doesn't surface display name
         source: "albumoftheyear".to_string(),
         ratings,
         rating_votes: votes,
         ..Default::default()
     };
-    entry.external_ids.insert("musicbrainz".to_string(), mb_id.to_string());
+    entry
+        .external_ids
+        .insert("musicbrainz".to_string(), mb_id.to_string());
     entry
 }
 
 /// Build a PluginEntry for an album response. Drops zero/null scores.
 fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
     let mut ratings = std::collections::HashMap::new();
-    let mut votes   = std::collections::HashMap::new();
+    let mut votes = std::collections::HashMap::new();
     if let Some(s) = resp.critic_score.filter(|v| *v > 0.0) {
         ratings.insert("aoty_critic".to_string(), s);
     }
@@ -362,7 +385,8 @@ fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
     // dedup and silently drop entries during merge. AOTY's album_slug
     // is the canonical identifier when present; otherwise pin to
     // mb_id so every entry has a stable, non-empty key.
-    let id = resp.album_slug
+    let id = resp
+        .album_slug
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| mb_id.to_string());
@@ -377,9 +401,13 @@ fn project_album(resp: AotyAlbumResponse, mb_id: &str) -> PluginEntry {
         rating_votes: votes,
         ..Default::default()
     };
-    entry.external_ids.insert("musicbrainz".to_string(), mb_id.to_string());
+    entry
+        .external_ids
+        .insert("musicbrainz".to_string(), mb_id.to_string());
     if let Some(artist) = resp.artist.filter(|s| !s.is_empty()) {
-        entry.external_ids.insert("aoty_artist_name".to_string(), artist);
+        entry
+            .external_ids
+            .insert("aoty_artist_name".to_string(), artist);
     }
     entry
 }
@@ -440,7 +468,7 @@ mod tests {
         });
         match result {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::NOT_IMPLEMENTED),
-            PluginResult::Ok(_)  => panic!("expected NOT_IMPLEMENTED"),
+            PluginResult::Ok(_) => panic!("expected NOT_IMPLEMENTED"),
         }
     }
 
@@ -474,11 +502,17 @@ mod tests {
     fn project_artist_drops_zero_and_missing() {
         let resp = AotyArtistResponse {
             artist_id: "x".into(),
-            critic: Some(NestedCritic { critic_score: Some(0.0), review_count: None }),
-            user:   None,
+            critic: Some(NestedCritic {
+                critic_score: Some(0.0),
+                review_count: None,
+            }),
+            user: None,
         };
         let e = project_artist(resp, "mb-id");
-        assert!(e.ratings.is_empty(), "0 score + missing user should drop both");
+        assert!(
+            e.ratings.is_empty(),
+            "0 score + missing user should drop both"
+        );
         assert!(e.rating_votes.is_empty());
     }
 
@@ -486,12 +520,12 @@ mod tests {
     fn project_album_populates_ratings_and_votes() {
         let resp = AotyAlbumResponse {
             album_slug: Some("2546-dom-family-of-love".into()),
-            title:      Some("Family of Love".into()),
-            artist:     Some("DOM".into()),
-            genre:      Some("Indie Pop".into()),
+            title: Some("Family of Love".into()),
+            artist: Some("DOM".into()),
+            genre: Some("Indie Pop".into()),
             critic_score: Some(73.0),
             review_count: Some(7),
-            user_score:   Some(67.0),
+            user_score: Some(67.0),
             rating_count: Some(9),
         };
         let e = project_album(resp, "mb-album-id");
@@ -562,9 +596,9 @@ mod tests {
     fn project_album_omits_empty_genre() {
         let resp = AotyAlbumResponse {
             album_slug: Some("x".into()),
-            title:      Some("X".into()),
-            artist:     None,
-            genre:      Some("".into()),
+            title: Some("X".into()),
+            artist: None,
+            genre: Some("".into()),
             critic_score: Some(50.0),
             review_count: Some(1),
             user_score: None,
@@ -589,7 +623,7 @@ mod tests {
         };
         match p.enrich(req) {
             PluginResult::Err(e) => assert_eq!(e.code, error_codes::UNKNOWN_ID),
-            PluginResult::Ok(_)  => panic!("expected UNKNOWN_ID"),
+            PluginResult::Ok(_) => panic!("expected UNKNOWN_ID"),
         }
     }
 
@@ -638,14 +672,19 @@ mod tests {
             "164f0d73-1234-4e2c-8743-d77bf2191051".into(),
         );
         let resp = match p.enrich(EnrichRequest {
-            partial, prefer_id_source: None, force_refresh: false,
+            partial,
+            prefer_id_source: None,
+            force_refresh: false,
         }) {
             PluginResult::Ok(r) => r,
             PluginResult::Err(e) => panic!("enrich err: {} {}", e.code, e.message),
         };
         assert_eq!(resp.entry.ratings.get("aoty_critic").copied(), Some(73.0));
         assert_eq!(resp.entry.ratings.get("aoty_user").copied(), Some(80.0));
-        assert_eq!(resp.entry.rating_votes.get("aoty_critic").copied(), Some(376));
+        assert_eq!(
+            resp.entry.rating_votes.get("aoty_critic").copied(),
+            Some(376)
+        );
     }
 
     #[test]
@@ -660,10 +699,8 @@ mod tests {
             "user_score":67,"user_score_precise":67.4,"rating_count":9,
             "success":true
         }"#;
-        let _h = MockHost::new().with_fixture_response(
-            "https://test.example.com/album/mb/some-mb-id",
-            body,
-        );
+        let _h = MockHost::new()
+            .with_fixture_response("https://test.example.com/album/mb/some-mb-id", body);
         let p = AotyProvider::new_for_test("fake-key", "https://test.example.com");
         let mut partial = PluginEntry {
             id: "fam".into(),
@@ -671,9 +708,13 @@ mod tests {
             source: "test".into(),
             ..Default::default()
         };
-        partial.external_ids.insert("musicbrainz".into(), "some-mb-id".into());
+        partial
+            .external_ids
+            .insert("musicbrainz".into(), "some-mb-id".into());
         let resp = match p.enrich(EnrichRequest {
-            partial, prefer_id_source: None, force_refresh: false,
+            partial,
+            prefer_id_source: None,
+            force_refresh: false,
         }) {
             PluginResult::Ok(r) => r,
             PluginResult::Err(e) => panic!("enrich err: {} {}", e.code, e.message),
