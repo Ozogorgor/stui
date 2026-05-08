@@ -19,7 +19,8 @@
 //! The obfuscation only defeats naive `strings` extraction — a determined
 //! attacker with a disassembler trivially recovers both salt and key.
 //!
-//! **Runtime override:** setting `TVDB_API_KEY` in the environment when
+//! **Runtime source:** setting `TVDB_API_KEY` in `~/.config/stui/secrets.env`
+//! (or the process environment as a fallback) when
 //! launching `stui-runtime` replaces the embedded key. Useful for dev
 //! testing against a different TVDB account without rebuilding.
 //!
@@ -67,16 +68,19 @@ fn deobfuscate_embedded() -> Option<String> {
 }
 
 /// Build a TVDB client using, in order of preference:
-///   1. `TVDB_API_KEY` env var at runtime (dev override)
+///   1. `TVDB_API_KEY` from `~/.config/stui/secrets.env` or the
+///      process env (resolved via `config::secrets::env_lookup`,
+///      which already encodes the secrets-then-env fallback chain
+///      that plugins use)
 ///   2. The build-time embedded (XOR-obfuscated) key
 ///
 /// Returns `Ok(None)` — NOT an error — when neither source yields a key.
 /// That means TVDB is simply inactive for this process; plugins still work.
 pub fn embedded_client() -> Result<Option<Arc<TvdbClient>>> {
-    if let Ok(k) = std::env::var("TVDB_API_KEY") {
+    if let Some(k) = crate::config::secrets::env_lookup("TVDB_API_KEY") {
         let k = k.trim().to_string();
         if !k.is_empty() {
-            info!("tvdb: using TVDB_API_KEY env override (runtime)");
+            info!("tvdb: using TVDB_API_KEY from secrets.env / process env");
             return Ok(Some(TvdbClient::new(k)?));
         }
     }
