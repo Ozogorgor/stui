@@ -1,15 +1,18 @@
 //! Integration tests for `HealthRegistry` and `ProviderThrottle`.
 
-use stui_runtime::providers::{HealthRegistry, ProviderThrottle};
 use stui_runtime::providers::health::FailureKind;
+use stui_runtime::providers::{HealthRegistry, ProviderThrottle};
 
 // ── HealthRegistry ────────────────────────────────────────────────────────────
 
 #[test]
 fn new_provider_gets_full_reliability() {
     let h = HealthRegistry::new();
-    assert_eq!(h.reliability_score("unseen"), 1.0,
-        "unseen provider gets 1.0 benefit of the doubt");
+    assert_eq!(
+        h.reliability_score("unseen"),
+        1.0,
+        "unseen provider gets 1.0 benefit of the doubt"
+    );
 }
 
 #[test]
@@ -19,7 +22,10 @@ fn perfect_record_keeps_full_score() {
     h.record_success("tmdb", 95);
     h.record_success("tmdb", 150);
     let score = h.reliability_score("tmdb");
-    assert!(score > 0.9, "three successes should give near-perfect score, got {score}");
+    assert!(
+        score > 0.9,
+        "three successes should give near-perfect score, got {score}"
+    );
 }
 
 #[test]
@@ -29,7 +35,10 @@ fn failures_lower_score() {
     h.record_failure("bad", FailureKind::Error);
     h.record_failure("bad", FailureKind::Error);
     let score = h.reliability_score("bad");
-    assert!(score < 0.6, "2 failures out of 3 requests should drop score below 0.6, got {score}");
+    assert!(
+        score < 0.6,
+        "2 failures out of 3 requests should drop score below 0.6, got {score}"
+    );
 }
 
 #[test]
@@ -62,7 +71,10 @@ fn avg_latency_computed_correctly() {
     h.record_success("p", 300);
     let stats = h.stats("p");
     let avg = stats.avg_latency_ms();
-    assert!((avg - 200.0).abs() < 1.0, "average of 100+200+300 should be 200ms, got {avg}");
+    assert!(
+        (avg - 200.0).abs() < 1.0,
+        "average of 100+200+300 should be 200ms, got {avg}"
+    );
 }
 
 #[test]
@@ -111,8 +123,10 @@ async fn cooldown_set_after_rate_limit() {
 
     let remaining = t.cooldown_remaining("tmdb").await;
     assert!(remaining.is_some());
-    assert!(remaining.unwrap().as_secs() <= 60,
-        "remaining cooldown should be ≤ the hint value");
+    assert!(
+        remaining.unwrap().as_secs() <= 60,
+        "remaining cooldown should be ≤ the hint value"
+    );
 }
 
 #[tokio::test]
@@ -121,14 +135,16 @@ async fn zero_second_cooldown_not_blocking() {
     t.record_rate_limited("tmdb", Some(0)).await;
     // Wait a tiny bit for time to pass
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    assert!(!t.is_cooling_down("tmdb").await,
-        "0-second cooldown should expire immediately");
+    assert!(
+        !t.is_cooling_down("tmdb").await,
+        "0-second cooldown should expire immediately"
+    );
 }
 
 #[tokio::test]
 async fn cooling_down_providers_list() {
     let t = ProviderThrottle::new();
-    t.record_rate_limited("tmdb",      Some(60)).await;
+    t.record_rate_limited("tmdb", Some(60)).await;
     t.record_rate_limited("torrentio", Some(30)).await;
 
     let cooling = t.cooling_down_providers().await;
@@ -146,18 +162,22 @@ async fn success_does_not_remove_cooldown() {
     t.record_rate_limited("tmdb", Some(60)).await;
     t.record_success("tmdb").await;
     // cooldown should still be active (time hasn't passed)
-    assert!(t.is_cooling_down("tmdb").await,
-        "active cooldown should persist even after success call");
+    assert!(
+        t.is_cooling_down("tmdb").await,
+        "active cooldown should persist even after success call"
+    );
 }
 
 #[tokio::test]
 async fn set_limit_respects_capacity() {
     let t = ProviderThrottle::new();
     t.set_limit("fast-provider", 100).await; // 100 req/s
-    // At 100 tokens/s the bucket should have 100 tokens immediately,
-    // so acquire() should return without any wait
+                                             // At 100 tokens/s the bucket should have 100 tokens immediately,
+                                             // so acquire() should return without any wait
     let start = std::time::Instant::now();
     t.acquire("fast-provider").await;
-    assert!(start.elapsed().as_millis() < 50,
-        "acquire with full bucket should be instant");
+    assert!(
+        start.elapsed().as_millis() < 50,
+        "acquire with full bucket should be instant"
+    );
 }

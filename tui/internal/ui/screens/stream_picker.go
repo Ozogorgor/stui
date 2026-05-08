@@ -74,7 +74,9 @@ func SortStreamsByQualityThenSeeders(streams []ipc.StreamInfo) {
 	sort.SliceStable(streams, func(i, j int) bool {
 		qi := qualityScore(streams[i].Quality)
 		qj := qualityScore(streams[j].Quality)
-		if qi != qj { return qi > qj }
+		if qi != qj {
+			return qi > qj
+		}
 		return streams[i].Seeders > streams[j].Seeders
 	})
 }

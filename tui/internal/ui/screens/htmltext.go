@@ -17,10 +17,10 @@ import (
 )
 
 var (
-	brTagRE     = regexp.MustCompile(`(?i)<br\s*/?>`)
-	pTagRE      = regexp.MustCompile(`(?i)</?p\s*>`)
-	anyTagRE    = regexp.MustCompile(`<[^>]+>`)
-	tripleNlRE  = regexp.MustCompile(`\n{3,}`)
+	brTagRE    = regexp.MustCompile(`(?i)<br\s*/?>`)
+	pTagRE     = regexp.MustCompile(`(?i)</?p\s*>`)
+	anyTagRE   = regexp.MustCompile(`<[^>]+>`)
+	tripleNlRE = regexp.MustCompile(`\n{3,}`)
 )
 
 // cleanDescription normalizes inline HTML and HTML entities. <br> and

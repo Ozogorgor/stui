@@ -64,11 +64,11 @@ const (
 // detail_related.go and detail_artwork.go. Chunk 8 snapshot tests match
 // the exact spelling here.
 const (
-	detailCrewHeader      = "CREW"
-	detailRelatedHeader   = "RELATED"
-	detailEmptyCredits    = "No crew or cast available"
-	detailEmptyArtwork    = "No artwork available"
-	detailEmptyRelated    = "No related items"
+	detailCrewHeader     = "CREW"
+	detailRelatedHeader  = "RELATED"
+	detailEmptyCredits   = "No crew or cast available"
+	detailEmptyArtwork   = "No artwork available"
+	detailEmptyRelated   = "No related items"
 	detailLoadingCrew    = "Loading crew…"
 	detailLoadingArtwork = "Loading artwork…"
 	detailLoadingRelated = "Loading related…"
@@ -579,9 +579,9 @@ func windowedView(lines []string, cursor, height int) (visible []string, top int
 }
 
 // renderEpisodesTab — Series-only "Episodes" tab. Three columns:
-//   1. Seasons (left, ~22 cols matching the poster width above)
-//   2. Episodes for the selected season (middle, flexes)
-//   3. Streams for the selected episode (right, ~36 cols)
+//  1. Seasons (left, ~22 cols matching the poster width above)
+//  2. Episodes for the selected season (middle, flexes)
+//  3. Streams for the selected episode (right, ~36 cols)
 //
 // The streams column is the placeholder slot for the future
 // streaming pipeline — when the user lands on an episode, it'll

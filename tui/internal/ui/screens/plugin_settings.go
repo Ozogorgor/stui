@@ -69,7 +69,6 @@ type PluginSettingsScreen struct {
 	loading bool
 	status  string // transient feedback ("Saved!", "Error: ...")
 
-
 	spinner components.Spinner
 }
 

@@ -157,8 +157,16 @@ impl FanartClient {
 /// missing values sink to the bottom.
 fn rank_by_likes_then_lang(mut items: Vec<FanartItem>) -> Vec<String> {
     items.sort_by(|a, b| {
-        let likes_a = a.likes.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-        let likes_b = b.likes.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        let likes_a = a
+            .likes
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        let likes_b = b
+            .likes
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
         let lang_pref = |it: &FanartItem| match it.lang.as_deref() {
             Some("en") => 0,
             Some("00") | None => 2, // "00" = no specific language
@@ -212,6 +220,8 @@ pub fn from_secrets() -> Option<Arc<FanartClient>> {
     let project = secrets
         .get("FANART_PROJECT_KEY")
         .filter(|k| !k.trim().is_empty())?;
-    let user = secrets.get("FANART_USER_KEY").filter(|k| !k.trim().is_empty());
+    let user = secrets
+        .get("FANART_USER_KEY")
+        .filter(|k| !k.trim().is_empty());
     FanartClient::new(project, user).map(Arc::new)
 }

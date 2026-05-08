@@ -1,8 +1,8 @@
 //! Search pipeline — fan-out to engine plugins via scoped streaming.
 
-use crate::engine::{Engine, search_scoped, ScopedSearchConfig};
-use crate::ipc::SearchRequest;
+use crate::engine::{search_scoped, Engine, ScopedSearchConfig};
 use crate::ipc::v1::stream::EventSender;
+use crate::ipc::SearchRequest;
 use tracing::Instrument;
 
 /// Drive a scoped search: delegates to `search_scoped`, which emits per-scope

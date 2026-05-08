@@ -74,8 +74,8 @@ impl SourceResolver {
         let (priority, disabled): (&[String], &[String]) = match kind_hint {
             "movies" => (&self.config.movies, &self.config.movies_disabled),
             "series" => (&self.config.series, &self.config.series_disabled),
-            "anime"  => (&self.config.anime,  &self.config.anime_disabled),
-            "music"  => (&self.config.music,  &self.config.music_disabled),
+            "anime" => (&self.config.anime, &self.config.anime_disabled),
+            "music" => (&self.config.music, &self.config.music_disabled),
             _ => return Vec::new(),
         };
 
@@ -181,7 +181,12 @@ mod tests {
         let ordered = r.resolve(MetadataVerb::Enrich, "movies");
         assert_eq!(
             ordered,
-            vec!["tmdb".to_string(), "omdb".into(), "tvdb".into(), "letterboxd".into()]
+            vec![
+                "tmdb".to_string(),
+                "omdb".into(),
+                "tvdb".into(),
+                "letterboxd".into()
+            ]
         );
     }
 
@@ -197,7 +202,10 @@ mod tests {
         cfg.movies_disabled = Vec::new(); // isolate: test resolver logic, not defaults
         let r = SourceResolver::new(cfg, Box::new(probe));
         let ordered = r.resolve(MetadataVerb::Enrich, "movies");
-        assert_eq!(ordered, vec!["tmdb".to_string(), "omdb".into(), "tvdb".into()]);
+        assert_eq!(
+            ordered,
+            vec!["tmdb".to_string(), "omdb".into(), "tvdb".into()]
+        );
     }
 
     #[test]
@@ -215,8 +223,8 @@ mod tests {
         // User installed a plugin and explicitly opted it out via the
         // disabled list. Even though discover() would surface it, it
         // must not appear in the result.
-        let probe = MockProbe::new(vec!["tmdb", "letterboxd"])
-            .with_discoverable(vec!["letterboxd"]);
+        let probe =
+            MockProbe::new(vec!["tmdb", "letterboxd"]).with_discoverable(vec!["letterboxd"]);
         let mut cfg = cfg_with_defaults();
         cfg.movies_disabled = vec!["letterboxd".into()];
         let r = SourceResolver::new(cfg, Box::new(probe));

@@ -157,7 +157,7 @@ type settingItem struct {
 	minVal        int      // lower bound for settingInt; 0 = no lower bound
 	maxVal        int      // upper bound for settingInt; 0 = no upper bound
 	choiceDisplay []string // optional display names for choice values (if nil, use choiceVals)
-	hidden        bool    // if true, item is not rendered and skipped during navigation
+	hidden        bool     // if true, item is not rendered and skipped during navigation
 }
 
 // ── Visualizer visibility helpers ────────────────────────────────────────────
@@ -957,7 +957,7 @@ func (m SettingsModel) View() tea.View {
 	// The overlay system gives us m.height rows. We consume 6 rows of
 	// overhead (header, 2 blanks, footer, border top/bottom) so the panels
 	// get the rest. Falls back to category count if height isn't set yet.
-	const leftInnerW = 20 // inner content width of the categories box
+	const leftInnerW = 20     // inner content width of the categories box
 	boxInnerH := m.height - 6 // 1 header + 2 blank + 1 footer + 2 border
 	if boxInnerH < len(m.categories) {
 		boxInnerH = len(m.categories)

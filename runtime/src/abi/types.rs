@@ -85,39 +85,56 @@ pub struct PluginEntry {
     pub title: String,
     pub source: String,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub year: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub genre: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub rating: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub poster_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub imdb_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub duration: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imdb_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub artist_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub album_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub track_number: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub season: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
     /// Total seasons for series entries (populated by lookup/enrich on
     /// providers that have it; absent otherwise). Mirrors
     /// `stui_plugin_sdk::PluginEntry::season_count`.
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub season_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season_count: Option<u32>,
     /// Per-season provider-native ids, parallel to seasons 1..=N. Used
     /// by providers (e.g. AniList) where each season is a separate
     /// catalog entry. Mirrors
     /// `stui_plugin_sdk::PluginEntry::season_ids`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")] pub season_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub season_ids: Vec<String>,
     /// True when the provider exposes a "Specials" track (TVDB season 0).
     /// Mirrors `stui_plugin_sdk::PluginEntry::has_specials`.
-    #[serde(default)] pub has_specials: bool,
+    #[serde(default)]
+    pub has_specials: bool,
     /// ISO 639-1 original language. Mirrors `stui_plugin_sdk::PluginEntry`.
     /// Used by the engine's anime-mix classifier alongside genre.
-    #[serde(default, skip_serializing_if = "Option::is_none")] pub original_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_language: Option<String>,
     /// Cross-provider native ids (e.g. `{"anilist": "5114", "kitsu": "1376"}`).
     /// Mirrors `stui_plugin_sdk::PluginEntry::external_ids` so plugins can
     /// fast-path enrich when their own native id is already known on a
     /// foreign-provider entry.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub external_ids: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub external_ids: HashMap<String, String>,
     /// Per-source rating breakdown — mirrors
     /// `stui_plugin_sdk::PluginEntry::ratings`. Plugins like OMDb that
     /// aggregate multiple providers in one response (IMDb + Rotten
@@ -125,7 +142,8 @@ pub struct PluginEntry {
     /// aggregator can compose a weighted composite with full
     /// provenance. The keys must match the aggregator's RatingWeight
     /// names (e.g. `imdb`, `tomatometer`, `metacritic`).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub ratings: HashMap<String, f32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub ratings: HashMap<String, f32>,
 
     /// Per-source vote count — mirror of
     /// `stui_plugin_sdk::PluginEntry::rating_votes`. When present the
@@ -133,7 +151,8 @@ pub struct PluginEntry {
     /// rating before composing the weighted median, suppressing tiny-
     /// sample 10.0s. Absent for sources that don't expose vote
     /// counts (e.g. RT critic / Metacritic critic).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")] pub rating_votes: HashMap<String, u32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rating_votes: HashMap<String, u32>,
 }
 
 /// Returned by `stui_resolve`.
@@ -457,8 +476,8 @@ pub struct HttpResponse {
 pub enum LogLevel {
     Trace = 0,
     Debug = 1,
-    Info  = 2,
-    Warn  = 3,
+    Info = 2,
+    Warn = 3,
     Error = 4,
 }
 
@@ -551,7 +570,9 @@ mod tests {
 
     #[test]
     fn lookup_response_round_trip() {
-        let resp = LookupResponse { entry: sample_entry() };
+        let resp = LookupResponse {
+            entry: sample_entry(),
+        };
         let json = serde_json::to_string(&resp).unwrap();
         let back: LookupResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, resp);
@@ -586,8 +607,14 @@ mod tests {
 
     #[test]
     fn artwork_size_snake_case() {
-        assert_eq!(serde_json::to_string(&ArtworkSize::HiRes).unwrap(), "\"hi_res\"");
-        assert_eq!(serde_json::to_string(&ArtworkSize::Thumbnail).unwrap(), "\"thumbnail\"");
+        assert_eq!(
+            serde_json::to_string(&ArtworkSize::HiRes).unwrap(),
+            "\"hi_res\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ArtworkSize::Thumbnail).unwrap(),
+            "\"thumbnail\""
+        );
     }
 
     #[test]
@@ -690,8 +717,14 @@ mod tests {
 
     #[test]
     fn relation_kind_snake_case() {
-        assert_eq!(serde_json::to_string(&RelationKind::SameArtist).unwrap(), "\"same_artist\"");
-        assert_eq!(serde_json::to_string(&RelationKind::SameDirector).unwrap(), "\"same_director\"");
+        assert_eq!(
+            serde_json::to_string(&RelationKind::SameArtist).unwrap(),
+            "\"same_artist\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RelationKind::SameDirector).unwrap(),
+            "\"same_director\""
+        );
     }
 
     #[test]
@@ -711,7 +744,9 @@ mod tests {
 
     #[test]
     fn related_response_round_trip() {
-        let resp = RelatedResponse { items: vec![sample_entry()] };
+        let resp = RelatedResponse {
+            items: vec![sample_entry()],
+        };
         let json = serde_json::to_string(&resp).unwrap();
         let back: RelatedResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back, resp);

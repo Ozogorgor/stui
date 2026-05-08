@@ -76,22 +76,38 @@ impl PresetStore {
     }
 
     fn load_builtin_presets(&mut self) {
-        self.presets.insert("music_default".to_string(), Self::music_default());
-        self.presets.insert("music_jazz".to_string(), Self::music_jazz());
-        self.presets.insert("music_classical".to_string(), Self::music_classical());
-        self.presets.insert("music_rock".to_string(), Self::music_rock());
-        self.presets.insert("music_electronic".to_string(), Self::music_electronic());
-        self.presets.insert("music_pop".to_string(), Self::music_pop());
-        self.presets.insert("music_hiphop".to_string(), Self::music_hiphop());
-        self.presets.insert("music_acoustic".to_string(), Self::music_acoustic());
-        self.presets.insert("movies_default".to_string(), Self::movies_default());
-        self.presets.insert("movies_action".to_string(), Self::movies_action());
-        self.presets.insert("movies_drama".to_string(), Self::movies_drama());
-        self.presets.insert("movies_comedy".to_string(), Self::movies_comedy());
-        self.presets.insert("movies_horror".to_string(), Self::movies_horror());
-        self.presets.insert("movies_scifi".to_string(), Self::movies_scifi());
-        self.presets.insert("movies_animation".to_string(), Self::movies_animation());
-        self.presets.insert("night_mode".to_string(), Self::night_mode());
+        self.presets
+            .insert("music_default".to_string(), Self::music_default());
+        self.presets
+            .insert("music_jazz".to_string(), Self::music_jazz());
+        self.presets
+            .insert("music_classical".to_string(), Self::music_classical());
+        self.presets
+            .insert("music_rock".to_string(), Self::music_rock());
+        self.presets
+            .insert("music_electronic".to_string(), Self::music_electronic());
+        self.presets
+            .insert("music_pop".to_string(), Self::music_pop());
+        self.presets
+            .insert("music_hiphop".to_string(), Self::music_hiphop());
+        self.presets
+            .insert("music_acoustic".to_string(), Self::music_acoustic());
+        self.presets
+            .insert("movies_default".to_string(), Self::movies_default());
+        self.presets
+            .insert("movies_action".to_string(), Self::movies_action());
+        self.presets
+            .insert("movies_drama".to_string(), Self::movies_drama());
+        self.presets
+            .insert("movies_comedy".to_string(), Self::movies_comedy());
+        self.presets
+            .insert("movies_horror".to_string(), Self::movies_horror());
+        self.presets
+            .insert("movies_scifi".to_string(), Self::movies_scifi());
+        self.presets
+            .insert("movies_animation".to_string(), Self::movies_animation());
+        self.presets
+            .insert("night_mode".to_string(), Self::night_mode());
         self.presets.insert("podcast".to_string(), Self::podcast());
     }
 
@@ -121,17 +137,20 @@ impl PresetStore {
     /// Add or update a preset. Writes to user customizations so the change
     /// is persisted on the next call to [`save`].
     pub fn upsert_preset(&mut self, name: String, config: DspProfileConfig) {
-        self.user_customizations.insert(name.clone(), config.clone());
+        self.user_customizations
+            .insert(name.clone(), config.clone());
         self.presets.insert(name, config);
     }
 
     pub fn list_presets(&self) -> Vec<(String, String)> {
-        let known: HashMap<String, String> =
-            DspProfile::all_profiles().into_iter().collect();
+        let known: HashMap<String, String> = DspProfile::all_profiles().into_iter().collect();
         self.presets
             .iter()
             .map(|(id, config)| {
-                let display = known.get(id).cloned().unwrap_or_else(|| config.name.clone());
+                let display = known
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| config.name.clone());
                 (id.clone(), display)
             })
             .collect()

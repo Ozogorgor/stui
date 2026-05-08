@@ -27,8 +27,8 @@
 //! streams snapshots back via `on_progress` every
 //! [`PROGRESS_BATCH_SIZE`] entries — cards repaint in waves.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use stui_plugin_sdk::EntryKind;
 use tokio::sync::{Mutex, Semaphore};
@@ -53,8 +53,7 @@ pub async fn enrich_grid_progressive<F, Fut>(
     engine: Arc<Engine>,
     entries: Vec<CatalogEntry>,
     on_progress: F,
-)
-where
+) where
     F: Fn(Vec<CatalogEntry>) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = ()> + Send,
 {
@@ -121,11 +120,7 @@ where
     info!(total, "music_enrich: pass complete");
 }
 
-async fn enrich_one(
-    engine: &Engine,
-    plugins: &[String],
-    mut entry: CatalogEntry,
-) -> CatalogEntry {
+async fn enrich_one(engine: &Engine, plugins: &[String], mut entry: CatalogEntry) -> CatalogEntry {
     let title = entry.title.trim().to_string();
     if title.is_empty() {
         return entry;
@@ -154,7 +149,9 @@ async fn enrich_one(
             };
             let name = name.clone();
             async move {
-                let res = engine.supervisor_enrich(&name, req, CallPriority::Background).await;
+                let res = engine
+                    .supervisor_enrich(&name, req, CallPriority::Background)
+                    .await;
                 (name, res)
             }
         })

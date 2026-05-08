@@ -19,32 +19,32 @@
 //!
 #![allow(dead_code)]
 
-/// Stream providers — resolve entry IDs to playable URLs.
-pub mod streams;
-/// Provider health tracking — reliability metrics for smart stream ranking.
-pub mod health;
+/// Bridge between stream benchmark results and provider health scoring.
+pub mod bench_health_bridge;
 /// Stream benchmarking — measures HTTP throughput and latency for stream ranking.
 pub mod benchmark;
 /// Provider capability declarations — what each provider can do.
 pub mod capabilities;
-/// Provider rate-limit throttle — per-provider token-bucket and backoff.
-pub mod throttle;
 /// Circuit breaker — prevents cascading failures by disabling failing providers.
 pub mod circuit_breaker;
-/// Bridge between stream benchmark results and provider health scoring.
-pub mod bench_health_bridge;
+/// Provider health tracking — reliability metrics for smart stream ranking.
+pub mod health;
+/// Stream providers — resolve entry IDs to playable URLs.
+pub mod streams;
+/// Provider rate-limit throttle — per-provider token-bucket and backoff.
+pub mod throttle;
 
 #[allow(unused_imports)]
-pub use health::{HealthRegistry, ProviderStats, FailureKind, blend_score};
-pub use capabilities::ProviderCapabilities;
+pub use bench_health_bridge::BenchHealthBridge;
 #[allow(unused_imports)]
-pub use throttle::ProviderThrottle;
+pub use benchmark::StreamBenchmarker;
+pub use capabilities::ProviderCapabilities;
 #[allow(unused_imports)]
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats};
 #[allow(unused_imports)]
-pub use benchmark::StreamBenchmarker;
+pub use health::{blend_score, FailureKind, HealthRegistry, ProviderStats};
 #[allow(unused_imports)]
-pub use bench_health_bridge::BenchHealthBridge;
+pub use throttle::ProviderThrottle;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -86,9 +86,9 @@ impl HdrFormat {
     pub fn score(&self) -> u32 {
         match self {
             HdrFormat::DolbyVision => 50,
-            HdrFormat::Hdr10Plus   => 45,
-            HdrFormat::Hdr10       => 40,
-            HdrFormat::None        => 0,
+            HdrFormat::Hdr10Plus => 45,
+            HdrFormat::Hdr10 => 40,
+            HdrFormat::None => 0,
         }
     }
 }
@@ -104,56 +104,55 @@ impl HdrFormat {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Stream {
     /// Unique identifier within this provider (e.g. magnet hash, URL).
-    pub id:       String,
+    pub id: String,
     /// Human-readable label (e.g. "1080p BluRay HEVC", "HDTV 720p").
-    pub name:     String,
+    pub name: String,
     /// The actual playable URL or magnet link.
-    pub url:      String,
+    pub url: String,
     /// Mime type hint: "video/x-matroska", "application/x-bittorrent", "magnet", …
-    pub mime:     Option<String>,
+    pub mime: Option<String>,
     /// Coarse quality bucket used for sort ordering.
-    pub quality:  StreamQuality,
+    pub quality: StreamQuality,
     /// Which provider produced this stream.
     pub provider: String,
 
     // ── Extended metadata ─────────────────────────────────────────────────
-
     /// Transport protocol: "http", "https", "magnet", "torrent", "hls", "dash", …
     #[serde(default)]
-    pub protocol:       Option<String>,
+    pub protocol: Option<String>,
     /// Torrent swarm size at resolution time.
     #[serde(default)]
-    pub seeders:        Option<u32>,
+    pub seeders: Option<u32>,
     /// Video bitrate in kilobits per second.
     #[serde(default)]
-    pub bitrate_kbps:   Option<u32>,
+    pub bitrate_kbps: Option<u32>,
     /// Video codec, e.g. `"H264"`, `"HEVC"`, `"AV1"`.
     #[serde(default)]
-    pub codec:          Option<String>,
+    pub codec: Option<String>,
     /// Freeform resolution string for display, e.g. `"1920×1080"`, `"4K UHD"`.
     /// `quality` is the canonical sort key; this is the human label.
     #[serde(default)]
-    pub resolution:     Option<String>,
+    pub resolution: Option<String>,
     /// HDR format of the video stream.
     #[serde(default)]
-    pub hdr:            HdrFormat,
+    pub hdr: HdrFormat,
     /// Approximate encoded file size in bytes.
     #[serde(default)]
-    pub size_bytes:     Option<u64>,
+    pub size_bytes: Option<u64>,
     /// Last measured round-trip latency to the source in milliseconds.
     /// Populated by the stream benchmarking pass when enabled.
     #[serde(default)]
-    pub latency_ms:     Option<u32>,
+    pub latency_ms: Option<u32>,
     /// Measured download throughput in megabits per second.
     /// Populated by the stream benchmarking pass when enabled.
     #[serde(default)]
-    pub speed_mbps:    Option<f64>,
+    pub speed_mbps: Option<f64>,
     /// Audio channel layout, e.g. `"2.0"`, `"5.1"`, `"7.1 Atmos"`.
     #[serde(default)]
     pub audio_channels: Option<String>,
     /// Primary audio language (ISO 639-1 or 639-2 tag, e.g. `"en"`, `"spa"`).
     #[serde(default)]
-    pub language:       Option<String>,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -170,19 +169,27 @@ pub enum StreamQuality {
 impl StreamQuality {
     pub fn from_label(s: &str) -> Self {
         let s = s.to_lowercase();
-        if s.contains("4k") || s.contains("2160") { return StreamQuality::Uhd4k; }
-        if s.contains("1080")                      { return StreamQuality::Hd1080; }
-        if s.contains("720")                       { return StreamQuality::Hd720; }
-        if s.contains("480") || s.contains("sd")   { return StreamQuality::Sd; }
+        if s.contains("4k") || s.contains("2160") {
+            return StreamQuality::Uhd4k;
+        }
+        if s.contains("1080") {
+            return StreamQuality::Hd1080;
+        }
+        if s.contains("720") {
+            return StreamQuality::Hd720;
+        }
+        if s.contains("480") || s.contains("sd") {
+            return StreamQuality::Sd;
+        }
         StreamQuality::Unknown
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            StreamQuality::Uhd4k  => "4K",
+            StreamQuality::Uhd4k => "4K",
             StreamQuality::Hd1080 => "1080p",
-            StreamQuality::Hd720  => "720p",
-            StreamQuality::Sd     => "SD",
+            StreamQuality::Hd720 => "720p",
+            StreamQuality::Sd => "SD",
             StreamQuality::Unknown => "?",
         }
     }
@@ -207,23 +214,31 @@ pub trait Provider: Send + Sync {
 
     /// Human-readable display name shown in the UI.
     /// Default: same as `name()`.
-    fn display_name(&self) -> &str { self.name() }
+    fn display_name(&self) -> &str {
+        self.name()
+    }
 
     /// One-line description of what this provider covers.
     /// Shown in the Plugin Settings screen below the provider name.
-    fn description(&self) -> &str { "" }
+    fn description(&self) -> &str {
+        ""
+    }
 
     /// Configuration schema — one entry per required credential/API key.
     /// Default: empty (no credentials needed; provider is always ready).
     ///
     /// Each entry describes a config key path (e.g. `"api_keys.tmdb"`), its
     /// label, a usage hint, and whether the value is currently set.
-    fn config_schema(&self) -> Vec<crate::ipc::ProviderField> { vec![] }
+    fn config_schema(&self) -> Vec<crate::ipc::ProviderField> {
+        vec![]
+    }
 
     /// Whether this provider is currently active (all required credentials
     /// are present and the provider is ready to serve requests).
     /// Default: `true` — keyless providers are always active.
-    fn is_active(&self) -> bool { true }
+    fn is_active(&self) -> bool {
+        true
+    }
 
     // ── Catalog ───────────────────────────────────────────────────────────
 
@@ -258,18 +273,26 @@ pub trait Provider: Send + Sync {
 
     /// Which tabs this provider has data for.
     /// Returning `None` means "all tabs".
-    fn supported_tabs(&self) -> Option<Vec<MediaTab>> { None }
+    fn supported_tabs(&self) -> Option<Vec<MediaTab>> {
+        None
+    }
 
     /// True if this provider can resolve streams (not just catalog).
-    fn has_streams(&self) -> bool { false }
+    fn has_streams(&self) -> bool {
+        false
+    }
 
     /// Which `MediaSource` types this provider can supply content for.
     ///
     /// The engine uses this to skip providers that can't help for a given
     /// source type — no wasted round trips.  Returning `None` means the
     /// provider supports all source types (opt-in to everything).
-    fn supported_sources(&self) -> Option<&[crate::media::MediaSource]> { None }
+    fn supported_sources(&self) -> Option<&[crate::media::MediaSource]> {
+        None
+    }
 
     /// True if this provider can supply subtitles.
-    fn has_subtitles(&self) -> bool { false }
+    fn has_subtitles(&self) -> bool {
+        false
+    }
 }

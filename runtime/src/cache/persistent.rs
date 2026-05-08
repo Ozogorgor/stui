@@ -103,14 +103,11 @@ impl SqliteKv {
 
     /// Upsert. Empty-value guard is left to callers — this module serializes
     /// whatever bytes it's handed.
-    pub fn put(
-        &self,
-        namespace: &str,
-        key: &str,
-        value: &[u8],
-        expires_at: u64,
-    ) -> Result<()> {
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+    pub fn put(&self, namespace: &str, key: &str, value: &[u8], expires_at: u64) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
         conn.execute(
             "INSERT INTO response_cache (namespace, key, value, expires_at)
              VALUES (?1, ?2, ?3, ?4)
@@ -126,7 +123,10 @@ impl SqliteKv {
     /// deleted so callers can log disk reclamation.
     pub fn purge_expired(&self) -> Result<usize> {
         let now = now_secs() as i64;
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
         let deleted = conn.execute(
             "DELETE FROM response_cache WHERE expires_at <= ?1",
             params![now],
@@ -141,7 +141,10 @@ impl SqliteKv {
     /// catalog-refresh so a forced refresh also wipes the on-disk cache.
     #[allow(dead_code)] // pub API: wired once Phase 2 integration lands
     pub fn clear_namespace(&self, namespace: &str) -> Result<usize> {
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
         let deleted = conn.execute(
             "DELETE FROM response_cache WHERE namespace = ?1",
             params![namespace],
@@ -152,14 +155,20 @@ impl SqliteKv {
     /// Drop every row across all namespaces. Used by the admin CLI's
     /// `cache clear` (no --namespace flag).
     pub fn clear_all(&self) -> Result<usize> {
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
         let deleted = conn.execute("DELETE FROM response_cache", [])?;
         Ok(deleted)
     }
 
     /// Aggregated stats per namespace. Used by `cache stats` admin CLI.
     pub fn namespace_stats(&self) -> Result<Vec<NamespaceStats>> {
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
         let mut stmt = conn.prepare(
             "SELECT namespace,
                     COUNT(*)              AS rows,
@@ -179,19 +188,25 @@ impl SqliteKv {
                 newest_expiry: row.get(4)?,
             })
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Iterate all keys in a namespace (without values). Useful for `cache
     /// inspect` to enumerate what's available. Sorted lexicographically
     /// so `| head` gives a stable view.
     pub fn list_keys(&self, namespace: &str, limit: usize) -> Result<Vec<String>> {
-        let conn = self.conn.lock().map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
-        let mut stmt = conn.prepare(
-            "SELECT key FROM response_cache WHERE namespace = ?1 ORDER BY key LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![namespace, limit as i64], |row| row.get::<_, String>(0))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sqlite mutex poisoned"))?;
+        let mut stmt = conn
+            .prepare("SELECT key FROM response_cache WHERE namespace = ?1 ORDER BY key LIMIT ?2")?;
+        let rows = stmt.query_map(params![namespace, limit as i64], |row| {
+            row.get::<_, String>(0)
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 }
 
@@ -257,14 +272,18 @@ mod tests {
         let kv = SqliteKv::open(&dir.path().join("t.db")).unwrap();
         let past = now_secs().saturating_sub(10);
         kv.put("ns", "k", b"old", past).unwrap();
-        assert!(kv.get("ns", "k").is_none(), "expired rows must not leak out via get");
+        assert!(
+            kv.get("ns", "k").is_none(),
+            "expired rows must not leak out via get"
+        );
     }
 
     #[test]
     fn purge_expired_deletes_matching_rows() {
         let dir = tempdir().unwrap();
         let kv = SqliteKv::open(&dir.path().join("t.db")).unwrap();
-        kv.put("ns", "stale", b"x", now_secs().saturating_sub(5)).unwrap();
+        kv.put("ns", "stale", b"x", now_secs().saturating_sub(5))
+            .unwrap();
         kv.put("ns", "fresh", b"y", now_secs() + 3600).unwrap();
         let deleted = kv.purge_expired().unwrap();
         assert_eq!(deleted, 1);

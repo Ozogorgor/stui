@@ -29,19 +29,19 @@ pub struct LoadedPluginSummary {
 
 #[derive(Debug, Default, Clone)]
 pub struct Dispatcher {
-    by_scope:              HashMap<SearchScope, Vec<String>>,
-    by_lookup:             HashMap<(String /* id_source */, EntryKind), Vec<String>>,
-    by_enrich:             HashMap<EntryKind, Vec<String>>,
-    by_artwork:            HashMap<EntryKind, Vec<String>>,
-    by_credits:            HashMap<EntryKind, Vec<String>>,
-    by_related:            HashMap<EntryKind, Vec<String>>,
-    by_episodes:           HashMap<EntryKind, Vec<String>>,
-    by_trailers:           HashMap<EntryKind, Vec<String>>,
-    by_release_info:       HashMap<EntryKind, Vec<String>>,
-    by_keywords:           HashMap<EntryKind, Vec<String>>,
-    by_box_office:         HashMap<EntryKind, Vec<String>>,
+    by_scope: HashMap<SearchScope, Vec<String>>,
+    by_lookup: HashMap<(String /* id_source */, EntryKind), Vec<String>>,
+    by_enrich: HashMap<EntryKind, Vec<String>>,
+    by_artwork: HashMap<EntryKind, Vec<String>>,
+    by_credits: HashMap<EntryKind, Vec<String>>,
+    by_related: HashMap<EntryKind, Vec<String>>,
+    by_episodes: HashMap<EntryKind, Vec<String>>,
+    by_trailers: HashMap<EntryKind, Vec<String>>,
+    by_release_info: HashMap<EntryKind, Vec<String>>,
+    by_keywords: HashMap<EntryKind, Vec<String>>,
+    by_box_office: HashMap<EntryKind, Vec<String>>,
     by_alternative_titles: HashMap<EntryKind, Vec<String>>,
-    by_bulk_enrich:        HashMap<EntryKind, Vec<String>>,
+    by_bulk_enrich: HashMap<EntryKind, Vec<String>>,
 }
 
 impl Dispatcher {
@@ -78,7 +78,10 @@ impl Dispatcher {
             // plugin must opt in to each kind explicitly.
             if search.unwrap_or(false) {
                 for k in kinds {
-                    d.by_scope.entry(scope_of(*k)).or_default().push(p.name.clone());
+                    d.by_scope
+                        .entry(scope_of(*k))
+                        .or_default()
+                        .push(p.name.clone());
                 }
             }
 
@@ -142,7 +145,10 @@ impl Dispatcher {
             if let Some(vc) = release_info {
                 if vc.is_enabled() && !vc.is_stub() {
                     for k in kinds {
-                        d.by_release_info.entry(*k).or_default().push(p.name.clone());
+                        d.by_release_info
+                            .entry(*k)
+                            .or_default()
+                            .push(p.name.clone());
                     }
                 }
             }
@@ -163,7 +169,10 @@ impl Dispatcher {
             if let Some(vc) = alternative_titles {
                 if vc.is_enabled() && !vc.is_stub() {
                     for k in kinds {
-                        d.by_alternative_titles.entry(*k).or_default().push(p.name.clone());
+                        d.by_alternative_titles
+                            .entry(*k)
+                            .or_default()
+                            .push(p.name.clone());
                     }
                 }
             }
@@ -231,17 +240,20 @@ impl Dispatcher {
     }
 
     pub fn plugins_for_alternative_titles(&self, kind: EntryKind) -> Vec<String> {
-        self.by_alternative_titles.get(&kind).cloned().unwrap_or_default()
+        self.by_alternative_titles
+            .get(&kind)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
 fn scope_of(k: EntryKind) -> SearchScope {
     match k {
-        EntryKind::Artist  => SearchScope::Artist,
-        EntryKind::Album   => SearchScope::Album,
-        EntryKind::Track   => SearchScope::Track,
-        EntryKind::Movie   => SearchScope::Movie,
-        EntryKind::Series  => SearchScope::Series,
+        EntryKind::Artist => SearchScope::Artist,
+        EntryKind::Album => SearchScope::Album,
+        EntryKind::Track => SearchScope::Track,
+        EntryKind::Movie => SearchScope::Movie,
+        EntryKind::Series => SearchScope::Series,
         EntryKind::Episode => SearchScope::Episode,
     }
 }
@@ -262,8 +274,10 @@ mod tests {
         credits: Option<VerbConfig>,
         related: Option<VerbConfig>,
     ) -> CatalogCapability {
-        typed_v2(kinds, search, lookup, enrich, artwork, credits, related,
-                 None, None, None, None, None, None, None)
+        typed_v2(
+            kinds, search, lookup, enrich, artwork, credits, related, None, None, None, None, None,
+            None, None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -302,13 +316,30 @@ mod tests {
     }
 
     fn plugin(name: &str, caps: CatalogCapability) -> LoadedPluginSummary {
-        LoadedPluginSummary { name: name.into(), capabilities: caps }
+        LoadedPluginSummary {
+            name: name.into(),
+            capabilities: caps,
+        }
     }
 
     #[test]
     fn search_routes_by_scope_in_declaration_order() {
-        let a = plugin("a", typed(&[EntryKind::Movie], true, None, None, None, None, None));
-        let b = plugin("b", typed(&[EntryKind::Movie, EntryKind::Series], true, None, None, None, None, None));
+        let a = plugin(
+            "a",
+            typed(&[EntryKind::Movie], true, None, None, None, None, None),
+        );
+        let b = plugin(
+            "b",
+            typed(
+                &[EntryKind::Movie, EntryKind::Series],
+                true,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        );
         let d = Dispatcher::rebuild(&[a, b]);
         assert_eq!(d.plugins_for_scope(SearchScope::Movie), vec!["a", "b"]);
         assert_eq!(d.plugins_for_scope(SearchScope::Series), vec!["b"]);
@@ -322,8 +353,15 @@ mod tests {
             typed(
                 &[EntryKind::Movie, EntryKind::Series],
                 true,
-                Some(LookupConfig { id_sources: vec!["tmdb".into(), "imdb".into()], stub: false, reason: None }),
-                None, None, None, None,
+                Some(LookupConfig {
+                    id_sources: vec!["tmdb".into(), "imdb".into()],
+                    stub: false,
+                    reason: None,
+                }),
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let omdb = plugin(
@@ -331,14 +369,27 @@ mod tests {
             typed(
                 &[EntryKind::Movie],
                 true,
-                Some(LookupConfig { id_sources: vec!["imdb".into()], stub: false, reason: None }),
-                None, None, None, None,
+                Some(LookupConfig {
+                    id_sources: vec!["imdb".into()],
+                    stub: false,
+                    reason: None,
+                }),
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[tmdb, omdb]);
         assert_eq!(d.plugins_for_lookup("tmdb", EntryKind::Movie), vec!["tmdb"]);
-        assert_eq!(d.plugins_for_lookup("imdb", EntryKind::Movie), vec!["tmdb", "omdb"]);
-        assert_eq!(d.plugins_for_lookup("imdb", EntryKind::Series), vec!["tmdb"]);
+        assert_eq!(
+            d.plugins_for_lookup("imdb", EntryKind::Movie),
+            vec!["tmdb", "omdb"]
+        );
+        assert_eq!(
+            d.plugins_for_lookup("imdb", EntryKind::Series),
+            vec!["tmdb"]
+        );
         assert!(d.plugins_for_lookup("tvdb", EntryKind::Movie).is_empty());
     }
 
@@ -351,7 +402,11 @@ mod tests {
                 true,
                 None,
                 Some(VerbConfig::Bool(true)),
-                Some(ArtworkConfig { sizes: vec!["standard".into()], stub: false, reason: None }),
+                Some(ArtworkConfig {
+                    sizes: vec!["standard".into()],
+                    stub: false,
+                    reason: None,
+                }),
                 Some(VerbConfig::Bool(true)),
                 Some(VerbConfig::Bool(true)),
             ),
@@ -370,8 +425,15 @@ mod tests {
             typed(
                 &[EntryKind::Movie],
                 true,
-                Some(LookupConfig { id_sources: vec!["tmdb".into()], stub: true, reason: Some("upstream lacks it".into()) }),
-                None, None, None, None,
+                Some(LookupConfig {
+                    id_sources: vec!["tmdb".into()],
+                    stub: true,
+                    reason: Some("upstream lacks it".into()),
+                }),
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -405,8 +467,15 @@ mod tests {
             typed(
                 &[EntryKind::Movie],
                 true,
-                Some(LookupConfig { id_sources: vec![], stub: false, reason: None }),
-                None, None, None, None,
+                Some(LookupConfig {
+                    id_sources: vec![],
+                    stub: false,
+                    reason: None,
+                }),
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -427,8 +496,13 @@ mod tests {
                 true,
                 None,
                 None,
-                Some(ArtworkConfig { sizes: vec![], stub: false, reason: None }),
-                None, None,
+                Some(ArtworkConfig {
+                    sizes: vec![],
+                    stub: false,
+                    reason: None,
+                }),
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -447,9 +521,18 @@ mod tests {
             typed_v2(
                 &[EntryKind::Series],
                 true,
-                None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(VerbConfig::Bool(true)), // episodes
-                None, None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -464,10 +547,18 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie],
                 false,
-                None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 Some(VerbConfig::Bool(true)), // trailers
-                None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -482,10 +573,18 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie],
                 false,
-                None, None, None, None, None,
-                None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(VerbConfig::Bool(true)), // release_info
-                None, None, None, None,
+                None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -500,10 +599,18 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie, EntryKind::Series],
                 false,
-                None, None, None, None, None,
-                None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(VerbConfig::Bool(true)), // keywords
-                None, None, None,
+                None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -519,10 +626,18 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie],
                 false,
-                None, None, None, None, None,
-                None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(VerbConfig::Bool(true)), // box_office
-                None, None,
+                None,
+                None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
@@ -537,15 +652,28 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie],
                 false,
-                None, None, None, None, None,
-                None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(VerbConfig::Bool(true)), // alternative_titles
                 None,
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
-        assert_eq!(d.plugins_for_alternative_titles(EntryKind::Movie), vec!["tmdb"]);
-        assert!(d.plugins_for_alternative_titles(EntryKind::Series).is_empty());
+        assert_eq!(
+            d.plugins_for_alternative_titles(EntryKind::Movie),
+            vec!["tmdb"]
+        );
+        assert!(d
+            .plugins_for_alternative_titles(EntryKind::Series)
+            .is_empty());
     }
 
     #[test]
@@ -561,7 +689,11 @@ mod tests {
             typed_v2(
                 &[EntryKind::Movie],
                 false,
-                None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 Some(stub.clone()),
                 Some(stub.clone()),
                 Some(stub.clone()),
@@ -572,11 +704,30 @@ mod tests {
             ),
         );
         let d = Dispatcher::rebuild(&[p]);
-        assert!(d.plugins_for_episodes(EntryKind::Movie).is_empty(),           "stub episodes must not route");
-        assert!(d.plugins_for_trailers(EntryKind::Movie).is_empty(),           "stub trailers must not route");
-        assert!(d.plugins_for_release_info(EntryKind::Movie).is_empty(),       "stub release_info must not route");
-        assert!(d.plugins_for_keywords(EntryKind::Movie).is_empty(),           "stub keywords must not route");
-        assert!(d.plugins_for_box_office(EntryKind::Movie).is_empty(),         "stub box_office must not route");
-        assert!(d.plugins_for_alternative_titles(EntryKind::Movie).is_empty(), "stub alternative_titles must not route");
+        assert!(
+            d.plugins_for_episodes(EntryKind::Movie).is_empty(),
+            "stub episodes must not route"
+        );
+        assert!(
+            d.plugins_for_trailers(EntryKind::Movie).is_empty(),
+            "stub trailers must not route"
+        );
+        assert!(
+            d.plugins_for_release_info(EntryKind::Movie).is_empty(),
+            "stub release_info must not route"
+        );
+        assert!(
+            d.plugins_for_keywords(EntryKind::Movie).is_empty(),
+            "stub keywords must not route"
+        );
+        assert!(
+            d.plugins_for_box_office(EntryKind::Movie).is_empty(),
+            "stub box_office must not route"
+        );
+        assert!(
+            d.plugins_for_alternative_titles(EntryKind::Movie)
+                .is_empty(),
+            "stub alternative_titles must not route"
+        );
     }
 }

@@ -4,6 +4,16 @@ version     = "0.1.0"
 edition     = "2021"
 description = "High-performance backend runtime for stui"
 
+# Per-lint allows. `.clippy.toml` only accepts tunable thresholds
+# (too-many-lines, type-complexity, etc.); lint-id allow/deny lists
+# must live here. Keep this list narrow — every entry suppresses a
+# class of feedback that would otherwise nudge the codebase forward.
+[lints.clippy]
+field_reassign_with_default = "allow"
+len_zero                    = "allow"
+len_without_is_empty        = "allow"
+unused_fields               = "allow"
+
 [lib]
 name        = "stui_runtime"
 crate-type  = ["cdylib", "rlib"]

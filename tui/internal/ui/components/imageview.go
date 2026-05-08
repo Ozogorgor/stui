@@ -93,12 +93,12 @@ func (iv *ImageView) SetPlaceholder(s string) {
 //
 // Two-tier cache + async fallback:
 //
-//   1. L1 (in-memory, per ImageView): hit → return immediately.
-//   2. L2 (disk): hit → load + populate L1 → return.
-//   3. Miss → enqueue an async render job, return placeholder lines.
-//      The pool emits ImageRenderedMsg on completion; the controller
-//      triggers a View() refresh and the next Lines() call hits L1
-//      via L2 (the worker wrote the result to disk).
+//  1. L1 (in-memory, per ImageView): hit → return immediately.
+//  2. L2 (disk): hit → load + populate L1 → return.
+//  3. Miss → enqueue an async render job, return placeholder lines.
+//     The pool emits ImageRenderedMsg on completion; the controller
+//     triggers a View() refresh and the next Lines() call hits L1
+//     via L2 (the worker wrote the result to disk).
 //
 // This keeps View() non-blocking: the grid paints immediately with
 // placeholders, and posters fade in as their renders complete.

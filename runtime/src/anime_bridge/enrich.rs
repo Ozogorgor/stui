@@ -38,23 +38,55 @@ use std::sync::Arc;
 /// If no foreign id is present, or none resolves in the bridge,
 /// the entry is left unchanged.
 pub fn enrich_entry(entry: &mut MediaEntry, bridge: &AnimeBridge) {
-    let record: Option<Arc<AnimeRecord>> =
-        entry.mal_id.as_deref().and_then(|id| bridge.lookup_by_mal(id))
-        .or_else(|| entry.anilist_id.as_deref().and_then(|id| bridge.lookup_by_anilist(id)))
-        .or_else(|| entry.kitsu_id.as_deref().and_then(|id| bridge.lookup_by_kitsu(id)))
-        .or_else(|| entry.imdb_id.as_deref().and_then(|id| bridge.lookup_by_imdb(id)))
-        .or_else(|| entry.tmdb_id.as_deref().and_then(|id| bridge.lookup_by_tmdb(id)));
+    let record: Option<Arc<AnimeRecord>> = entry
+        .mal_id
+        .as_deref()
+        .and_then(|id| bridge.lookup_by_mal(id))
+        .or_else(|| {
+            entry
+                .anilist_id
+                .as_deref()
+                .and_then(|id| bridge.lookup_by_anilist(id))
+        })
+        .or_else(|| {
+            entry
+                .kitsu_id
+                .as_deref()
+                .and_then(|id| bridge.lookup_by_kitsu(id))
+        })
+        .or_else(|| {
+            entry
+                .imdb_id
+                .as_deref()
+                .and_then(|id| bridge.lookup_by_imdb(id))
+        })
+        .or_else(|| {
+            entry
+                .tmdb_id
+                .as_deref()
+                .and_then(|id| bridge.lookup_by_tmdb(id))
+        });
 
     let Some(r) = record else { return };
 
     // Fill ONLY missing fields. Provider-supplied values always win
     // (defensive — never trust the bridge's data over a provider's
     // own).
-    if entry.mal_id.is_none()     { entry.mal_id     = r.mal_id.clone(); }
-    if entry.anilist_id.is_none() { entry.anilist_id = r.anilist_id.clone(); }
-    if entry.kitsu_id.is_none()   { entry.kitsu_id   = r.kitsu_id.clone(); }
-    if entry.imdb_id.is_none()    { entry.imdb_id    = r.imdb_id.clone(); }
-    if entry.tmdb_id.is_none()    { entry.tmdb_id    = r.tmdb_id.clone(); }
+    if entry.mal_id.is_none() {
+        entry.mal_id = r.mal_id.clone();
+    }
+    if entry.anilist_id.is_none() {
+        entry.anilist_id = r.anilist_id.clone();
+    }
+    if entry.kitsu_id.is_none() {
+        entry.kitsu_id = r.kitsu_id.clone();
+    }
+    if entry.imdb_id.is_none() {
+        entry.imdb_id = r.imdb_id.clone();
+    }
+    if entry.tmdb_id.is_none() {
+        entry.tmdb_id = r.tmdb_id.clone();
+    }
 }
 
 /// Spine selector consulted by both merge functions
@@ -73,23 +105,23 @@ pub fn provider_priority_for_key(provider: &str, key: &str) -> u8 {
         // Anime-tier merge: AniList > Kitsu > western tier.
         match provider {
             "anilist" => 0,
-            "kitsu"   => 1,
-            "tvdb"    => 2,
-            "tmdb"    => 3,
-            "omdb"    => 4,
-            _         => 5,
+            "kitsu" => 1,
+            "tvdb" => 2,
+            "tmdb" => 3,
+            "omdb" => 4,
+            _ => 5,
         }
     } else {
         // Existing α priority for western-tier and title-fallback merges.
         match provider {
-            "tmdb"           => 0,
-            "tvdb"           => 1,
-            "xmdb"           => 2,   // beats omdb for IMDb id + ratings
-            "rottentomatoes" => 3,   // NEW — beats omdb for IMDb-keyed merges
-            "omdb"           => 4,
-            "anilist"        => 5,
-            "kitsu"          => 6,
-            _                => 7,
+            "tmdb" => 0,
+            "tvdb" => 1,
+            "xmdb" => 2,           // beats omdb for IMDb id + ratings
+            "rottentomatoes" => 3, // NEW — beats omdb for IMDb-keyed merges
+            "omdb" => 4,
+            "anilist" => 5,
+            "kitsu" => 6,
+            _ => 7,
         }
     }
 }
@@ -146,14 +178,14 @@ mod priority_tests {
 
     #[test]
     fn provider_priority_rottentomatoes_beats_omdb() {
-        let rt   = provider_priority_for_key("rottentomatoes", "imdb:tt1");
+        let rt = provider_priority_for_key("rottentomatoes", "imdb:tt1");
         let omdb = provider_priority_for_key("omdb", "imdb:tt1");
         assert!(rt < omdb, "rt={rt} should beat omdb={omdb}");
     }
 
     #[test]
     fn provider_priority_rottentomatoes_loses_to_xmdb() {
-        let rt   = provider_priority_for_key("rottentomatoes", "imdb:tt1");
+        let rt = provider_priority_for_key("rottentomatoes", "imdb:tt1");
         let xmdb = provider_priority_for_key("xmdb", "imdb:tt1");
         assert!(xmdb < rt, "xmdb={xmdb} should beat rottentomatoes={rt}");
     }
@@ -162,7 +194,10 @@ mod priority_tests {
     fn provider_priority_rottentomatoes_anime_arm_unchanged() {
         let rt = provider_priority_for_key("rottentomatoes", "mal:1");
         let anilist = provider_priority_for_key("anilist", "mal:1");
-        assert!(anilist < rt, "anilist={anilist} should beat rt={rt} on mal: keys");
+        assert!(
+            anilist < rt,
+            "anilist={anilist} should beat rt={rt} on mal: keys"
+        );
     }
 }
 
@@ -170,26 +205,45 @@ mod priority_tests {
 mod tests {
     use super::*;
     use crate::anime_bridge::index::{AnimeIndex, AnimeRecord};
+    use arc_swap::ArcSwap;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use arc_swap::ArcSwap;
 
     /// Build a bridge with one canned record under specified id keys.
     fn bridge_with(record: AnimeRecord) -> Arc<AnimeBridge> {
         let r = Arc::new(record);
-        let mut by_mal     = HashMap::new();
+        let mut by_mal = HashMap::new();
         let mut by_anilist = HashMap::new();
-        let mut by_kitsu   = HashMap::new();
-        let mut by_imdb    = HashMap::new();
-        let mut by_tmdb    = HashMap::new();
-        let mut by_tvdb    = HashMap::new();
-        if let Some(id) = &r.mal_id     { by_mal.insert(id.clone(),     Arc::clone(&r)); }
-        if let Some(id) = &r.anilist_id { by_anilist.insert(id.clone(), Arc::clone(&r)); }
-        if let Some(id) = &r.kitsu_id   { by_kitsu.insert(id.clone(),   Arc::clone(&r)); }
-        if let Some(id) = &r.imdb_id    { by_imdb.insert(id.clone(),    Arc::clone(&r)); }
-        if let Some(id) = &r.tmdb_id    { by_tmdb.insert(id.clone(),    Arc::clone(&r)); }
-        if let Some(id) = &r.tvdb_id    { by_tvdb.insert(id.clone(),    Arc::clone(&r)); }
-        let idx = AnimeIndex { by_mal, by_anilist, by_kitsu, by_imdb, by_tmdb, by_tvdb };
+        let mut by_kitsu = HashMap::new();
+        let mut by_imdb = HashMap::new();
+        let mut by_tmdb = HashMap::new();
+        let mut by_tvdb = HashMap::new();
+        if let Some(id) = &r.mal_id {
+            by_mal.insert(id.clone(), Arc::clone(&r));
+        }
+        if let Some(id) = &r.anilist_id {
+            by_anilist.insert(id.clone(), Arc::clone(&r));
+        }
+        if let Some(id) = &r.kitsu_id {
+            by_kitsu.insert(id.clone(), Arc::clone(&r));
+        }
+        if let Some(id) = &r.imdb_id {
+            by_imdb.insert(id.clone(), Arc::clone(&r));
+        }
+        if let Some(id) = &r.tmdb_id {
+            by_tmdb.insert(id.clone(), Arc::clone(&r));
+        }
+        if let Some(id) = &r.tvdb_id {
+            by_tvdb.insert(id.clone(), Arc::clone(&r));
+        }
+        let idx = AnimeIndex {
+            by_mal,
+            by_anilist,
+            by_kitsu,
+            by_imdb,
+            by_tmdb,
+            by_tvdb,
+        };
         // Construct AnimeBridge directly (bypass `new()` which loads
         // the bundled snapshot) so this test isolates `enrich_entry`'s
         // behaviour from the bundled data.
@@ -200,12 +254,12 @@ mod tests {
 
     fn aot_record() -> AnimeRecord {
         AnimeRecord {
-            mal_id:     Some("16498".into()),
+            mal_id: Some("16498".into()),
             anilist_id: Some("16498".into()),
-            kitsu_id:   Some("7442".into()),
-            imdb_id:    Some("tt2560140".into()),
-            tmdb_id:    Some("1429".into()),
-            tvdb_id:    Some("267440".into()),
+            kitsu_id: Some("7442".into()),
+            imdb_id: Some("tt2560140".into()),
+            tmdb_id: Some("1429".into()),
+            tvdb_id: Some("267440".into()),
         }
     }
 
@@ -224,7 +278,7 @@ mod tests {
         let mut e = make_entry("anilist");
         e.mal_id = Some("16498".into());
         enrich_entry(&mut e, &bridge);
-        assert_eq!(e.mal_id.as_deref(),  Some("16498"));
+        assert_eq!(e.mal_id.as_deref(), Some("16498"));
         assert_eq!(e.imdb_id.as_deref(), Some("tt2560140"));
         assert_eq!(e.tmdb_id.as_deref(), Some("1429"));
     }
@@ -235,7 +289,7 @@ mod tests {
         let mut e = make_entry("tvdb");
         e.imdb_id = Some("tt2560140".into());
         enrich_entry(&mut e, &bridge);
-        assert_eq!(e.mal_id.as_deref(),  Some("16498"));
+        assert_eq!(e.mal_id.as_deref(), Some("16498"));
         assert_eq!(e.imdb_id.as_deref(), Some("tt2560140"));
         assert_eq!(e.tmdb_id.as_deref(), Some("1429"));
     }
@@ -246,12 +300,12 @@ mod tests {
         let mut e = make_entry("custom");
         e.imdb_id = Some("tt9999999".into()); // intentionally wrong
         e.tmdb_id = Some("99999".into());
-        e.mal_id  = Some("16498".into()); // present
+        e.mal_id = Some("16498".into()); // present
         enrich_entry(&mut e, &bridge);
         // Existing imdb/tmdb values preserved despite bridge's record.
         assert_eq!(e.imdb_id.as_deref(), Some("tt9999999"));
         assert_eq!(e.tmdb_id.as_deref(), Some("99999"));
-        assert_eq!(e.mal_id.as_deref(),  Some("16498"));
+        assert_eq!(e.mal_id.as_deref(), Some("16498"));
     }
 
     #[test]

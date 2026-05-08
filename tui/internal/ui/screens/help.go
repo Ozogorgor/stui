@@ -33,8 +33,8 @@ func (h HelpScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 }
 
 func (h HelpScreen) View() tea.View {
-	accent   := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	normal   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	accent := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
+	normal := lipgloss.NewStyle().Foreground(theme.T.Text())
 	keyStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Width(18)
 
 	var sb strings.Builder

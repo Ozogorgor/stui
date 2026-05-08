@@ -141,7 +141,10 @@ mod tests {
         std::env::set_var("STUI_MACHINE_ID", "a-different-machine");
         let result = decrypt(&enc);
         std::env::remove_var("STUI_MACHINE_ID");
-        assert!(result.is_err(), "ciphertext from one machine must not decrypt on another");
+        assert!(
+            result.is_err(),
+            "ciphertext from one machine must not decrypt on another"
+        );
     }
 
     #[test]

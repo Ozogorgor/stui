@@ -52,7 +52,9 @@ async fn set_player_keep_open() {
 #[tokio::test]
 async fn set_streaming_prefer_torrent() {
     let (mgr, _) = make_manager();
-    mgr.set_bool("streaming.prefer_torrent", true).await.unwrap();
+    mgr.set_bool("streaming.prefer_torrent", true)
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert!(snap.streaming.prefer_torrent);
 }
@@ -60,7 +62,9 @@ async fn set_streaming_prefer_torrent() {
 #[tokio::test]
 async fn set_streaming_auto_fallback_off() {
     let (mgr, _) = make_manager();
-    mgr.set_bool("streaming.auto_fallback", false).await.unwrap();
+    mgr.set_bool("streaming.auto_fallback", false)
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert!(!snap.streaming.auto_fallback);
 }
@@ -68,7 +72,9 @@ async fn set_streaming_auto_fallback_off() {
 #[tokio::test]
 async fn set_streaming_max_candidates() {
     let (mgr, _) = make_manager();
-    mgr.set_number("streaming.max_candidates", 5.0).await.unwrap();
+    mgr.set_number("streaming.max_candidates", 5.0)
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert_eq!(snap.streaming.max_candidates, 5);
 }
@@ -78,7 +84,9 @@ async fn set_streaming_max_candidates() {
 #[tokio::test]
 async fn set_subtitles_language() {
     let (mgr, _) = make_manager();
-    mgr.set_str("subtitles.preferred_language", "fra").await.unwrap();
+    mgr.set_str("subtitles.preferred_language", "fra")
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert_eq!(snap.subtitles.preferred_language, "fra");
 }
@@ -86,7 +94,9 @@ async fn set_subtitles_language() {
 #[tokio::test]
 async fn set_subtitles_default_delay() {
     let (mgr, _) = make_manager();
-    mgr.set_number("subtitles.default_delay", 1.5).await.unwrap();
+    mgr.set_number("subtitles.default_delay", 1.5)
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert!((snap.subtitles.default_delay - 1.5).abs() < 1e-6);
 }
@@ -104,7 +114,9 @@ async fn disable_tmdb() {
 #[tokio::test]
 async fn enable_prowlarr() {
     let (mgr, _) = make_manager();
-    mgr.set_bool("providers.enable_prowlarr", true).await.unwrap();
+    mgr.set_bool("providers.enable_prowlarr", true)
+        .await
+        .unwrap();
     let snap = mgr.snapshot().await;
     assert!(snap.providers.enable_prowlarr);
 }
@@ -129,10 +141,9 @@ async fn set_emits_config_changed_event() {
     mgr.set_number("player.default_volume", 42.0).await.unwrap();
 
     // Should have received a ConfigChanged event
-    let event = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        async { rx.recv().await },
-    )
+    let event = tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        rx.recv().await
+    })
     .await
     .expect("timeout waiting for event")
     .expect("channel closed");
@@ -160,7 +171,12 @@ async fn unknown_key_returns_error() {
 async fn wrong_type_returns_error() {
     let (mgr, _) = make_manager();
     // volume expects a number, not a string
-    let result = mgr.set("player.default_volume", serde_json::Value::String("loud".into())).await;
+    let result = mgr
+        .set(
+            "player.default_volume",
+            serde_json::Value::String("loud".into()),
+        )
+        .await;
     assert!(result.is_err(), "wrong type should return Err");
 }
 
@@ -169,7 +185,9 @@ async fn multiple_updates_accumulate() {
     let (mgr, _) = make_manager();
     mgr.set_number("player.default_volume", 50.0).await.unwrap();
     mgr.set_str("player.hwdec", "nvdec").await.unwrap();
-    mgr.set_bool("streaming.prefer_torrent", true).await.unwrap();
+    mgr.set_bool("streaming.prefer_torrent", true)
+        .await
+        .unwrap();
 
     let snap = mgr.snapshot().await;
     assert!((snap.playback.default_volume - 50.0).abs() < 1e-6);

@@ -17,8 +17,8 @@
 //! (NAS, Raspberry Pi, Volumio) are handled via RPC plugins that return
 //! an `mpd+tcp://host:port` URL; the local bridge dials that host instead.
 
-pub mod client;
 pub mod bridge;
+pub mod client;
 pub mod mpd_conf;
 mod search;
 

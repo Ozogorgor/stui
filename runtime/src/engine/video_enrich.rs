@@ -27,10 +27,12 @@
 //! (no double-work). Plugins that return a transient error fall through
 //! back into the per-entry cohort so data isn't silently dropped.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use stui_plugin_sdk::{EntryKind, BulkEnrichRequest, BulkEnrichResponse, BulkEnrichEntry, PluginResult};
+use stui_plugin_sdk::{
+    BulkEnrichEntry, BulkEnrichRequest, BulkEnrichResponse, EntryKind, PluginResult,
+};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, info, warn};
 
@@ -52,8 +54,7 @@ pub async fn enrich_grid_progressive<F, Fut>(
     engine: Arc<Engine>,
     entries: Vec<CatalogEntry>,
     on_progress: F,
-)
-where
+) where
     F: Fn(Vec<CatalogEntry>) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = ()> + Send,
 {
@@ -85,7 +86,7 @@ where
     // Discover bulk-capable plugins and run them first. Plugins that succeed
     // are removed from the per-entry cohort. Plugins that fail with a
     // transient error fall through so no data is silently dropped.
-    let movie_bulk_plugins  = engine.bulk_enrich_plugins_for_kind(EntryKind::Movie).await;
+    let movie_bulk_plugins = engine.bulk_enrich_plugins_for_kind(EntryKind::Movie).await;
     let series_bulk_plugins = engine.bulk_enrich_plugins_for_kind(EntryKind::Series).await;
 
     // Per-entry cohort starts as: enrich plugins MINUS bulk-capable ones.
@@ -112,12 +113,13 @@ where
             &movie_bulk_plugins,
             &series_bulk_plugins,
             snapshot.clone(),
-        ).await;
+        )
+        .await;
 
         // Plugins that errored transiently go back into per-entry.
         for (name, kind) in fall_through {
             match kind {
-                EntryKind::Movie  => movie_per_entry_plugins.push(name),
+                EntryKind::Movie => movie_per_entry_plugins.push(name),
                 EntryKind::Series => series_per_entry_plugins.push(name),
                 _ => {}
             }
@@ -131,7 +133,7 @@ where
     }
 
     // ── Per-entry fan-out ────────────────────────────────────────────────────
-    let movie_per_entry_plugins  = Arc::new(movie_per_entry_plugins);
+    let movie_per_entry_plugins = Arc::new(movie_per_entry_plugins);
     let series_per_entry_plugins = Arc::new(series_per_entry_plugins);
     let completed = Arc::new(AtomicUsize::new(0));
     let sem = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
@@ -140,7 +142,7 @@ where
     let mut tasks = Vec::with_capacity(total);
     for idx in 0..total {
         let engine = engine.clone();
-        let movie_plugins  = movie_per_entry_plugins.clone();
+        let movie_plugins = movie_per_entry_plugins.clone();
         let series_plugins = series_per_entry_plugins.clone();
         let snapshot = snapshot.clone();
         let completed = completed.clone();
@@ -185,11 +187,7 @@ where
     info!(total, "video_enrich: pass complete");
 }
 
-async fn enrich_one(
-    engine: &Engine,
-    plugins: &[String],
-    mut entry: CatalogEntry,
-) -> CatalogEntry {
+async fn enrich_one(engine: &Engine, plugins: &[String], mut entry: CatalogEntry) -> CatalogEntry {
     let imdb_id = match entry.imdb_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
         None => return entry, // skip — no imdb id, no fast path
@@ -221,7 +219,9 @@ async fn enrich_one(
             };
             let name = name.clone();
             async move {
-                let res = engine.supervisor_enrich(&name, req, CallPriority::Background).await;
+                let res = engine
+                    .supervisor_enrich(&name, req, CallPriority::Background)
+                    .await;
                 (name, res)
             }
         })
@@ -296,32 +296,26 @@ fn merge_enrich_into(entry: &mut CatalogEntry, p: PluginEntry) -> bool {
     // this enrichment pass to populate posters, overviews, etc.
     // Pre-mdblist this path was a no-op because TMDB-trending
     // already shipped rich rows.
-    if entry.poster_url.is_none()
-        && p.poster_url.as_deref().is_some_and(|s| !s.is_empty())
-    {
+    if entry.poster_url.is_none() && p.poster_url.as_deref().is_some_and(|s| !s.is_empty()) {
         entry.poster_url = p.poster_url.clone();
         got_any = true;
     }
-    if entry.description.is_none()
-        && p.description.as_deref().is_some_and(|s| !s.is_empty())
-    {
+    if entry.description.is_none() && p.description.as_deref().is_some_and(|s| !s.is_empty()) {
         entry.description = p.description.clone();
         got_any = true;
     }
-    if entry.genre.is_none()
-        && p.genre.as_deref().is_some_and(|s| !s.is_empty())
-    {
+    if entry.genre.is_none() && p.genre.as_deref().is_some_and(|s| !s.is_empty()) {
         entry.genre = p.genre.clone();
         got_any = true;
     }
-    if entry.year.is_none()
-        && p.year.is_some_and(|y| y > 0)
-    {
+    if entry.year.is_none() && p.year.is_some_and(|y| y > 0) {
         entry.year = p.year.map(|y| y.to_string());
         got_any = true;
     }
     if entry.original_language.is_none()
-        && p.original_language.as_deref().is_some_and(|s| !s.is_empty())
+        && p.original_language
+            .as_deref()
+            .is_some_and(|s| !s.is_empty())
     {
         entry.original_language = p.original_language.clone();
         got_any = true;
@@ -370,20 +364,22 @@ impl EngineBulkDispatch {
 /// non-NOT_IMPLEMENTED error and should fall through to per-entry.
 async fn run_bulk_pass<D: BulkDispatch>(
     dispatch: &D,
-    movie_bulk_plugins:  &[String],
+    movie_bulk_plugins: &[String],
     series_bulk_plugins: &[String],
     snapshot: Arc<Mutex<Vec<CatalogEntry>>>,
 ) -> Vec<(String, EntryKind)> {
     let mut fall_through: Vec<(String, EntryKind)> = Vec::new();
 
     for (kind, plugins) in [
-        (EntryKind::Movie,  movie_bulk_plugins),
+        (EntryKind::Movie, movie_bulk_plugins),
         (EntryKind::Series, series_bulk_plugins),
     ] {
-        if plugins.is_empty() { continue; }
+        if plugins.is_empty() {
+            continue;
+        }
 
         let kind_str = match kind {
-            EntryKind::Movie  => "movies",
+            EntryKind::Movie => "movies",
             EntryKind::Series => "series",
             _ => continue,
         };
@@ -392,15 +388,19 @@ async fn run_bulk_pass<D: BulkDispatch>(
         let entries_for_kind: Vec<CatalogEntry> = {
             let snap = snapshot.lock().await;
             snap.iter()
-                .filter(|e| e.tab == kind_str
-                    && e.imdb_id.as_deref().filter(|s| !s.is_empty()).is_some())
+                .filter(|e| {
+                    e.tab == kind_str && e.imdb_id.as_deref().filter(|s| !s.is_empty()).is_some()
+                })
                 .cloned()
                 .collect()
         };
-        if entries_for_kind.is_empty() { continue; }
+        if entries_for_kind.is_empty() {
+            continue;
+        }
 
         for plugin in plugins {
-            let partials: Vec<stui_plugin_sdk::PluginEntry> = entries_for_kind.iter()
+            let partials: Vec<stui_plugin_sdk::PluginEntry> = entries_for_kind
+                .iter()
                 .map(|e| build_sdk_partial_from_entry(e, kind))
                 .collect();
 
@@ -441,14 +441,16 @@ async fn run_bulk_pass<D: BulkDispatch>(
 
 /// Find the snapshot entry by stable id (imdb_id wins; falls back to entry.id).
 fn find_snapshot_idx(snap: &[CatalogEntry], id: &str) -> Option<usize> {
-    snap.iter().position(|e|
-        e.imdb_id.as_deref() == Some(id) || e.id == id
-    )
+    snap.iter()
+        .position(|e| e.imdb_id.as_deref() == Some(id) || e.id == id)
 }
 
 /// Build an SDK `PluginEntry` partial from a `CatalogEntry` for use as
 /// a `BulkEnrichRequest` element.
-fn build_sdk_partial_from_entry(entry: &CatalogEntry, kind: EntryKind) -> stui_plugin_sdk::PluginEntry {
+fn build_sdk_partial_from_entry(
+    entry: &CatalogEntry,
+    kind: EntryKind,
+) -> stui_plugin_sdk::PluginEntry {
     let imdb_id = entry.imdb_id.clone().unwrap_or_default();
     let mut partial = stui_plugin_sdk::PluginEntry {
         kind,
@@ -469,8 +471,9 @@ fn sdk_plugin_entry_to_abi(sdk: stui_plugin_sdk::PluginEntry) -> PluginEntry {
     // and JSON encodings. A compile error here means the schemas diverged
     // and both sides need to be updated together.
     serde_json::from_value(
-        serde_json::to_value(sdk).expect("sdk PluginEntry serialization must not fail")
-    ).expect("abi PluginEntry deserialization must not fail — schema diverged?")
+        serde_json::to_value(sdk).expect("sdk PluginEntry serialization must not fail"),
+    )
+    .expect("abi PluginEntry deserialization must not fail — schema diverged?")
 }
 
 // ── BulkDispatch trait (test seam) ───────────────────────────────────────────
@@ -505,11 +508,10 @@ mod video_enrich_bulk_tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
     use stui_plugin_sdk::{
-        BulkEnrichResponse, BulkEnrichEntry, PluginResult,
-        EntryKind as SdkEntryKind,
+        BulkEnrichEntry, BulkEnrichResponse, EntryKind as SdkEntryKind, PluginResult,
     };
+    use tokio::sync::Mutex;
 
     // A minimal BulkDispatch backed by canned response maps.
     struct CannedDispatch {
@@ -567,21 +569,20 @@ mod video_enrich_bulk_tests {
         ]));
 
         let mut responses = HashMap::new();
-        responses.insert("bulky".to_string(), Ok(BulkEnrichResponse {
-            entries: vec![
-                ok_bulk_entry("tt0000001", 8.5),
-                ok_bulk_entry("tt0000002", 7.5),
-                ok_bulk_entry("tt0000003", 9.0),
-            ],
-        }));
+        responses.insert(
+            "bulky".to_string(),
+            Ok(BulkEnrichResponse {
+                entries: vec![
+                    ok_bulk_entry("tt0000001", 8.5),
+                    ok_bulk_entry("tt0000002", 7.5),
+                    ok_bulk_entry("tt0000003", 9.0),
+                ],
+            }),
+        );
         let dispatch = CannedDispatch { responses };
 
-        let fall_through = run_bulk_pass(
-            &dispatch,
-            &["bulky".to_string()],
-            &[],
-            snapshot.clone(),
-        ).await;
+        let fall_through =
+            run_bulk_pass(&dispatch, &["bulky".to_string()], &[], snapshot.clone()).await;
 
         assert!(fall_through.is_empty(), "successful bulk = no fall-through");
         let snap = snapshot.lock().await;
@@ -590,50 +591,53 @@ mod video_enrich_bulk_tests {
         for entry in snap.iter() {
             assert!(
                 !entry.ratings.is_empty(),
-                "entry {} should have ratings from bulk enrich", entry.id
+                "entry {} should have ratings from bulk enrich",
+                entry.id
             );
         }
     }
 
     #[tokio::test]
     async fn run_bulk_pass_skips_plugin_on_top_level_not_implemented() {
-        let snapshot = Arc::new(Mutex::new(vec![
-            make_test_entry("1", "tt0000001", "movies"),
-        ]));
+        let snapshot = Arc::new(Mutex::new(vec![make_test_entry(
+            "1",
+            "tt0000001",
+            "movies",
+        )]));
 
         let mut responses = HashMap::new();
-        responses.insert("bulky".to_string(),
-            Err("not_implemented: verb not implemented by this plugin".to_string()));
+        responses.insert(
+            "bulky".to_string(),
+            Err("not_implemented: verb not implemented by this plugin".to_string()),
+        );
         let dispatch = CannedDispatch { responses };
 
-        let fall_through = run_bulk_pass(
-            &dispatch,
-            &["bulky".to_string()],
-            &[],
-            snapshot.clone(),
-        ).await;
+        let fall_through =
+            run_bulk_pass(&dispatch, &["bulky".to_string()], &[], snapshot.clone()).await;
 
-        assert!(fall_through.is_empty(),
-                "NOT_IMPLEMENTED should NOT add plugin to fall_through");
+        assert!(
+            fall_through.is_empty(),
+            "NOT_IMPLEMENTED should NOT add plugin to fall_through"
+        );
     }
 
     #[tokio::test]
     async fn run_bulk_pass_adds_plugin_to_fall_through_on_other_error() {
-        let snapshot = Arc::new(Mutex::new(vec![
-            make_test_entry("1", "tt0000001", "movies"),
-        ]));
+        let snapshot = Arc::new(Mutex::new(vec![make_test_entry(
+            "1",
+            "tt0000001",
+            "movies",
+        )]));
 
         let mut responses = HashMap::new();
-        responses.insert("bulky".to_string(),
-            Err("transient: upstream timeout".to_string()));
+        responses.insert(
+            "bulky".to_string(),
+            Err("transient: upstream timeout".to_string()),
+        );
         let dispatch = CannedDispatch { responses };
 
-        let fall_through = run_bulk_pass(
-            &dispatch,
-            &["bulky".to_string()],
-            &[],
-            snapshot.clone(),
-        ).await;
+        let fall_through =
+            run_bulk_pass(&dispatch, &["bulky".to_string()], &[], snapshot.clone()).await;
 
         assert_eq!(fall_through.len(), 1);
         assert_eq!(fall_through[0].0, "bulky");

@@ -49,11 +49,7 @@ impl SandboxCtx {
         Self {
             plugin_id: plugin.id.clone(),
             plugin_name: plugin.manifest.plugin.name.clone(),
-            permissions: plugin
-                .manifest
-                .permissions
-                .clone()
-                .unwrap_or_default(),
+            permissions: plugin.manifest.permissions.clone().unwrap_or_default(),
             mode: plugin.mode.clone(),
             cache_dir,
             data_dir,
@@ -107,12 +103,10 @@ impl SandboxCtx {
                         // canonicalize the parent and append the filename
                         path.parent()
                             .and_then(|p| p.canonicalize().ok())
-                            .map(|parent| {
-                                parent.join(path.file_name().unwrap_or_default())
-                            })
+                            .map(|parent| parent.join(path.file_name().unwrap_or_default()))
                     };
                     let resolved_root = root.canonicalize().ok();
-                    
+
                     match (resolved_path, resolved_root) {
                         (Some(resolved), Some(base)) => resolved.starts_with(&base),
                         _ => false,
@@ -141,8 +135,8 @@ impl SandboxCtx {
         for scope in &self.permissions.filesystem {
             match scope.as_str() {
                 "cache" => roots.push(self.cache_dir.clone()),
-                "data"  => roots.push(self.data_dir.clone()),
-                other   => {
+                "data" => roots.push(self.data_dir.clone()),
+                other => {
                     warn!(plugin = %self.plugin_name, scope = %other, "unknown fs scope — ignored");
                 }
             }

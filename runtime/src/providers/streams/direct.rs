@@ -20,18 +20,26 @@ use crate::providers::{Provider, Stream, StreamQuality};
 pub struct DirectProvider;
 
 impl DirectProvider {
-    pub fn new() -> Self { DirectProvider }
+    pub fn new() -> Self {
+        DirectProvider
+    }
 }
 
 impl Default for DirectProvider {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Provider for DirectProvider {
-    fn name(&self) -> &str { "direct" }
+    fn name(&self) -> &str {
+        "direct"
+    }
 
-    fn has_streams(&self) -> bool { true }
+    fn has_streams(&self) -> bool {
+        true
+    }
 
     async fn fetch_trending(&self, _tab: &MediaTab, _page: u32) -> Result<Vec<CatalogEntry>> {
         Ok(vec![])
@@ -52,10 +60,10 @@ impl Provider for DirectProvider {
         let quality = infer_quality(id);
 
         Ok(vec![Stream {
-            id:       id.to_string(),
-            name:     url_label(id),
-            url:      id.to_string(),
-            mime:     Some(mime),
+            id: id.to_string(),
+            name: url_label(id),
+            url: id.to_string(),
+            mime: Some(mime),
             quality,
             provider: "direct".to_string(),
             ..Default::default()
@@ -69,24 +77,39 @@ impl Provider for DirectProvider {
 
 fn infer_mime(url: &str) -> String {
     let u = url.to_lowercase();
-    if u.ends_with(".mkv")  { return "video/x-matroska".into(); }
-    if u.ends_with(".mp4")  { return "video/mp4".into(); }
-    if u.ends_with(".webm") { return "video/webm".into(); }
-    if u.ends_with(".avi")  { return "video/x-msvideo".into(); }
+    if u.ends_with(".mkv") {
+        return "video/x-matroska".into();
+    }
+    if u.ends_with(".mp4") {
+        return "video/mp4".into();
+    }
+    if u.ends_with(".webm") {
+        return "video/webm".into();
+    }
+    if u.ends_with(".avi") {
+        return "video/x-msvideo".into();
+    }
     "video/*".into()
 }
 
 fn infer_quality(url: &str) -> StreamQuality {
     let u = url.to_uppercase();
-    if u.contains("4K") || u.contains("2160") { return StreamQuality::Uhd4k; }
-    if u.contains("1080")                      { return StreamQuality::Hd1080; }
-    if u.contains("720")                       { return StreamQuality::Hd720; }
+    if u.contains("4K") || u.contains("2160") {
+        return StreamQuality::Uhd4k;
+    }
+    if u.contains("1080") {
+        return StreamQuality::Hd1080;
+    }
+    if u.contains("720") {
+        return StreamQuality::Hd720;
+    }
     StreamQuality::Unknown
 }
 
 fn url_label(url: &str) -> String {
     // Use the last path segment without query string as a label
-    url.split('?').next()
+    url.split('?')
+        .next()
         .unwrap_or(url)
         .rsplit('/')
         .next()

@@ -17,7 +17,9 @@ pub struct LookupResult {
 /// Copy `src` into `dst` only when `dst` is empty (or whitespace-only).
 pub fn overwrite_if_empty(dst: &mut String, src: Option<&str>) {
     if dst.trim().is_empty() {
-        if let Some(s) = src { *dst = s.to_string(); }
+        if let Some(s) = src {
+            *dst = s.to_string();
+        }
     }
 }
 
@@ -25,17 +27,20 @@ pub fn overwrite_if_empty(dst: &mut String, src: Option<&str>) {
 mod tests {
     use super::*;
 
-    #[test] fn fills_empty() {
+    #[test]
+    fn fills_empty() {
         let mut s = String::new();
         overwrite_if_empty(&mut s, Some("Pink Floyd"));
         assert_eq!(s, "Pink Floyd");
     }
-    #[test] fn preserves_existing() {
+    #[test]
+    fn preserves_existing() {
         let mut s = String::from("Pink Floyd");
         overwrite_if_empty(&mut s, Some("pink floyd"));
         assert_eq!(s, "Pink Floyd");
     }
-    #[test] fn whitespace_treated_as_empty() {
+    #[test]
+    fn whitespace_treated_as_empty() {
         let mut s = String::from("   ");
         overwrite_if_empty(&mut s, Some("Pink Floyd"));
         assert_eq!(s, "Pink Floyd");

@@ -37,13 +37,13 @@ func (c CurrentMedia) IsSet() bool { return c.ID != "" }
 // cleared on PlayerEndedMsg.
 type CurrentStream struct {
 	// URL is the local path or remote URL being played by mpv.
-	URL      string
+	URL string
 	// Title is the human-readable title of the playing item.
-	Title    string
+	Title string
 	// Provider is the source that resolved the stream (e.g. "torrentio").
 	Provider string
 	// Quality is the resolved quality label, e.g. "1080p", "4K" (may be empty).
-	Quality  string
+	Quality string
 	// Protocol is the transport type: "torrent", "http", "magnet", etc.
 	Protocol string
 

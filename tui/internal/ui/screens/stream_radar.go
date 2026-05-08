@@ -110,7 +110,7 @@ type OpenStreamRadarMsg struct{}
 // StreamRadarScreen displays the accumulated stream stats.
 type StreamRadarScreen struct {
 	Dims
-	stats  StreamRadarStats
+	stats StreamRadarStats
 }
 
 // NewStreamRadarScreen creates the screen with a pre-populated stats snapshot.

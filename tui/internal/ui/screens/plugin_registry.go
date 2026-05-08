@@ -44,7 +44,6 @@ type PluginRegistryScreen struct {
 	installing  bool   // a download+install is in progress
 	status      string // last status/error message
 
-
 	spinner components.Spinner
 }
 

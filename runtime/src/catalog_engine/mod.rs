@@ -15,9 +15,9 @@ pub mod aggregator;
 pub mod filters;
 pub mod ranking;
 
-pub use aggregator::CatalogAggregator;
 #[allow(unused_imports)]
 pub use aggregator::weighted_median;
+pub use aggregator::CatalogAggregator;
 #[allow(unused_imports)]
 pub use filters::{Filter, FilterSet};
 #[allow(unused_imports)]

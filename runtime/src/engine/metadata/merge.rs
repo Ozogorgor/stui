@@ -89,7 +89,10 @@ fn fill_from_secondaries(
     // kitsu-only-entry → AniList bridge has to land).
     for s in &secondaries {
         for (k, v) in &s.entry.external_ids {
-            base.entry.external_ids.entry(k.clone()).or_insert_with(|| v.clone());
+            base.entry
+                .external_ids
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
     }
     base
@@ -115,11 +118,7 @@ pub fn merge_credits(
     let sources = primary.into_iter().chain(secondaries.into_iter());
     for src in sources {
         for c in src.cast {
-            let key = (
-                c.name.clone(),
-                format!("{:?}", c.role),
-                c.character.clone(),
-            );
+            let key = (c.name.clone(), format!("{:?}", c.role), c.character.clone());
             if cast_seen.insert(key) {
                 cast.push(c);
             }
@@ -196,9 +195,7 @@ pub fn merge_related(items: Vec<Vec<PluginEntry>>) -> Vec<PluginEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::types::{
-        ArtworkSize, ArtworkVariant, CastMember, CastRole, CrewRole,
-    };
+    use crate::abi::types::{ArtworkSize, ArtworkVariant, CastMember, CastRole, CrewRole};
     use std::collections::HashMap;
     use stui_plugin_sdk::EntryKind;
 

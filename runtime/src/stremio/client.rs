@@ -6,14 +6,14 @@ use tracing::debug;
 use urlencoding::encode;
 
 use super::manifest::{
-    StremioManifest, StremioCatalogResponse, StremioStreamResponse, StremioSubtitleResponse,
+    StremioCatalogResponse, StremioManifest, StremioStreamResponse, StremioSubtitleResponse,
 };
 
 /// HTTP client bound to one addon's base URL.
 #[allow(dead_code)] // pub API: Stremio addon HTTP client
 #[derive(Clone)]
 pub struct StremioClient {
-    http:     Client,
+    http: Client,
     base_url: String,
 }
 
@@ -21,11 +21,9 @@ impl StremioClient {
     /// Create a client from a manifest URL like
     /// `https://torrentio.strem.fun/manifest.json`
     pub fn from_manifest_url(manifest_url: &str) -> Self {
-        let base_url = manifest_url
-            .trim_end_matches("/manifest.json")
-            .to_string();
+        let base_url = manifest_url.trim_end_matches("/manifest.json").to_string();
         StremioClient {
-            http:     Client::builder()
+            http: Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
                 .user_agent("stui/0.1")
                 .build()
@@ -35,7 +33,9 @@ impl StremioClient {
     }
 
     #[allow(dead_code)] // pub API: Stremio addon HTTP client
-    pub fn base_url(&self) -> &str { &self.base_url }
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 
     // ── Manifest ──────────────────────────────────────────────────────────
 
@@ -44,9 +44,11 @@ impl StremioClient {
         debug!("stremio: GET {url}");
         self.http
             .get(&url)
-            .send().await
+            .send()
+            .await
             .context("manifest fetch")?
-            .json().await
+            .json()
+            .await
             .context("manifest parse")
     }
 
@@ -58,12 +60,13 @@ impl StremioClient {
         &self,
         media_type: &str, // "movie" | "series"
         catalog_id: &str,
-        extra:      &[(&str, &str)],
+        extra: &[(&str, &str)],
     ) -> Result<StremioCatalogResponse> {
         let extra_str = if extra.is_empty() {
             String::new()
         } else {
-            let parts: Vec<String> = extra.iter()
+            let parts: Vec<String> = extra
+                .iter()
                 .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
                 .collect();
             format!("/{}", parts.join("&"))
@@ -74,7 +77,12 @@ impl StremioClient {
             self.base_url, media_type, catalog_id, extra_str
         );
         debug!("stremio: GET {url}");
-        self.http.get(&url).send().await?.json().await
+        self.http
+            .get(&url)
+            .send()
+            .await?
+            .json()
+            .await
             .context("catalog parse")
     }
 
@@ -82,14 +90,15 @@ impl StremioClient {
 
     /// Fetch streams for an item: `/stream/{type}/{id}.json`
     /// `id` is typically the IMDB id: `tt0816692`
-    pub async fn streams(
-        &self,
-        media_type: &str,
-        item_id:    &str,
-    ) -> Result<StremioStreamResponse> {
+    pub async fn streams(&self, media_type: &str, item_id: &str) -> Result<StremioStreamResponse> {
         let url = format!("{}/stream/{}/{}.json", self.base_url, media_type, item_id);
         debug!("stremio: GET {url}");
-        self.http.get(&url).send().await?.json().await
+        self.http
+            .get(&url)
+            .send()
+            .await?
+            .json()
+            .await
             .context("stream parse")
     }
 
@@ -100,11 +109,19 @@ impl StremioClient {
     pub async fn subtitles(
         &self,
         media_type: &str,
-        item_id:    &str,
+        item_id: &str,
     ) -> Result<StremioSubtitleResponse> {
-        let url = format!("{}/subtitles/{}/{}.json", self.base_url, media_type, item_id);
+        let url = format!(
+            "{}/subtitles/{}/{}.json",
+            self.base_url, media_type, item_id
+        );
         debug!("stremio: GET {url}");
-        self.http.get(&url).send().await?.json().await
+        self.http
+            .get(&url)
+            .send()
+            .await?
+            .json()
+            .await
             .context("subtitle parse")
     }
 }

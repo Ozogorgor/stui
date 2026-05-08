@@ -1,7 +1,7 @@
 //! FFmpeg/Chromaprint audio fingerprint extraction.
 
-use std::time::Duration;
 use anyhow::{Context, Result};
+use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -9,8 +9,8 @@ use tracing::{debug, warn};
 /// Raw Chromaprint fingerprint for one segment of audio.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Fingerprint {
-    pub values:       Vec<u32>,
-    pub scan_secs:    f64,  // how many seconds of audio were requested
+    pub values: Vec<u32>,
+    pub scan_secs: f64, // how many seconds of audio were requested
 }
 
 impl Fingerprint {
@@ -40,16 +40,20 @@ async fn run_with_timeout(url: &str, from_end: Option<f64>, scan_secs: f64) -> O
         (scan_secs.max(0.0).min(MAX_SCAN_SECS).ceil() as u64).saturating_add(90),
     );
     match timeout(deadline, run_ffmpeg(url, from_end, scan_secs)).await {
-        Ok(Ok(fp))  => Some(fp),
-        Ok(Err(e))  => { debug!(url, error=%e, "fingerprint extraction failed"); None }
-        Err(_)      => { warn!(url, "fingerprint extraction timed out"); None }
+        Ok(Ok(fp)) => Some(fp),
+        Ok(Err(e)) => {
+            debug!(url, error=%e, "fingerprint extraction failed");
+            None
+        }
+        Err(_) => {
+            warn!(url, "fingerprint extraction timed out");
+            None
+        }
     }
 }
 
 async fn run_ffmpeg(url: &str, from_end: Option<f64>, scan_secs: f64) -> Result<Fingerprint> {
-    let mut args: Vec<String> = vec![
-        "-hide_banner".into(), "-loglevel".into(), "error".into(),
-    ];
+    let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into()];
 
     if let Some(secs) = from_end {
         args.push("-sseof".into());
@@ -60,11 +64,16 @@ async fn run_ffmpeg(url: &str, from_end: Option<f64>, scan_secs: f64) -> Result<
     args.extend(["-t".into(), format!("{scan_secs}")]);
     args.extend([
         "-vn".into(),
-        "-acodec".into(), "pcm_s16le".into(),
-        "-ar".into(),     "16000".into(),
-        "-ac".into(),     "1".into(),
-        "-f".into(),      "chromaprint".into(),
-        "-fp_format".into(), "raw".into(),
+        "-acodec".into(),
+        "pcm_s16le".into(),
+        "-ar".into(),
+        "16000".into(),
+        "-ac".into(),
+        "1".into(),
+        "-f".into(),
+        "chromaprint".into(),
+        "-fp_format".into(),
+        "raw".into(),
         "pipe:1".into(),
     ]);
 
@@ -76,7 +85,10 @@ async fn run_ffmpeg(url: &str, from_end: Option<f64>, scan_secs: f64) -> Result<
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("ffmpeg error: {}", err.lines().last().unwrap_or("(no output)"));
+        anyhow::bail!(
+            "ffmpeg error: {}",
+            err.lines().last().unwrap_or("(no output)")
+        );
     }
 
     let raw = &output.stdout;

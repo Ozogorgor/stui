@@ -322,19 +322,19 @@ func (m Model) handleSearchDebounceFire(msg searchDebounceFireMsg) (tea.Model, t
 
 func (m *Model) openDetail(entry ipc.CatalogEntry) tea.Cmd {
 	detail := ipc.DetailEntry{
-		ID:          entry.ID,
-		Title:       entry.Title,
-		Year:        derefStr(entry.Year),
-		Genre:       derefStr(entry.Genre),
-		Rating:      derefStr(entry.Rating),
-		Description: derefStr(entry.Description),
-		PosterURL:   derefStr(entry.PosterURL),
-		Provider:    entry.Provider,
-		Tab:         entry.Tab,
-		ImdbID:      derefStr(entry.ImdbID),
-		TmdbID:      derefStr(entry.TmdbID),
+		ID:               entry.ID,
+		Title:            entry.Title,
+		Year:             derefStr(entry.Year),
+		Genre:            derefStr(entry.Genre),
+		Rating:           derefStr(entry.Rating),
+		Description:      derefStr(entry.Description),
+		PosterURL:        derefStr(entry.PosterURL),
+		Provider:         entry.Provider,
+		Tab:              entry.Tab,
+		ImdbID:           derefStr(entry.ImdbID),
+		TmdbID:           derefStr(entry.TmdbID),
 		OriginalLanguage: derefStr(entry.OriginalLanguage),
-		Providers:   []string{entry.Provider},
+		Providers:        []string{entry.Provider},
 	}
 	ds := screens.NewDetailState(detail)
 	// Catalog entry already carries everything for the initial paint

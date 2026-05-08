@@ -29,14 +29,14 @@
 //! ```
 
 pub mod loader;
-pub mod migrate;
-pub mod types;
 pub mod manager;
+pub mod migrate;
 pub mod secrets;
 pub mod secrets_enc;
+pub mod types;
 
 pub use loader::load;
+pub use manager::ConfigManager;
+pub use types::{LoggingConfig, RuntimeConfig};
 #[allow(unused_imports)]
 pub use types::{PlaybackConfig, ProvidersConfig, StreamingConfig, SubtitlesConfig};
-pub use types::{LoggingConfig, RuntimeConfig};
-pub use manager::ConfigManager;

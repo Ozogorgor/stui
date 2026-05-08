@@ -26,8 +26,8 @@ use tracing::Instrument as _;
 use stui_plugin_sdk::SearchScope;
 
 use crate::engine::{CallPriority, Engine, PluginCallError};
-use crate::ipc::v1::{MediaEntry, ScopeError, ScopeResultsMsg};
 use crate::ipc::v1::stream::{emit, Event, EventSender};
+use crate::ipc::v1::{MediaEntry, ScopeError, ScopeResultsMsg};
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -94,17 +94,20 @@ async fn run_one_scope(
             SearchScope::Series => Some(crate::tvdb::SearchKind::Series),
             _ => None,
         };
-        let tvdb_handle =
-            tvdb_kind.and_then(|kind| engine.tvdb().map(|client| (client, kind)));
+        let tvdb_handle = tvdb_kind.and_then(|kind| engine.tvdb().map(|client| (client, kind)));
 
         if plugins.is_empty() && tvdb_handle.is_none() {
-            emit(&out, Event::ScopeResults(ScopeResultsMsg {
-                query_id,
-                scope,
-                entries: Vec::new(),
-                partial: false,
-                error: Some(ScopeError::NoPluginsConfigured),
-            })).await;
+            emit(
+                &out,
+                Event::ScopeResults(ScopeResultsMsg {
+                    query_id,
+                    scope,
+                    entries: Vec::new(),
+                    partial: false,
+                    error: Some(ScopeError::NoPluginsConfigured),
+                }),
+            )
+            .await;
             return;
         }
 
@@ -125,7 +128,9 @@ async fn run_one_scope(
                 );
                 tokio::spawn(
                     async move {
-                        engine.supervisor_search(&pid, &q, scope, CallPriority::Foreground).await
+                        engine
+                            .supervisor_search(&pid, &q, scope, CallPriority::Foreground)
+                            .await
                     }
                     .instrument(plugin_span),
                 )
@@ -153,7 +158,15 @@ async fn run_one_scope(
             ));
         }
 
-        run_scope_timing(handles, query_id, scope, cfg, Some(engine.anime_bridge()), out).await;
+        run_scope_timing(
+            handles,
+            query_id,
+            scope,
+            cfg,
+            Some(engine.anime_bridge()),
+            out,
+        )
+        .await;
     }
     .instrument(span)
     .await
@@ -164,7 +177,10 @@ async fn run_one_scope(
 /// `search_catalog_entries` (engine/mod.rs ~1027) — kept duplicated for
 /// now since the two paths diverge in non-trivial ways; consolidate
 /// when one of them retires.
-fn tvdb_items_to_entries(items: Vec<crate::tvdb::TvdbEntry>, scope: SearchScope) -> Vec<MediaEntry> {
+fn tvdb_items_to_entries(
+    items: Vec<crate::tvdb::TvdbEntry>,
+    scope: SearchScope,
+) -> Vec<MediaEntry> {
     let tab = match scope {
         SearchScope::Movie => crate::ipc::MediaTab::Movies,
         SearchScope::Series => crate::ipc::MediaTab::Series,
@@ -222,13 +238,17 @@ pub(crate) async fn run_scope_timing(
 ) {
     if handles.is_empty() {
         // Caller should have already handled this, but be defensive.
-        emit(&out, Event::ScopeResults(ScopeResultsMsg {
-            query_id,
-            scope,
-            entries: Vec::new(),
-            partial: false,
-            error: Some(ScopeError::NoPluginsConfigured),
-        })).await;
+        emit(
+            &out,
+            Event::ScopeResults(ScopeResultsMsg {
+                query_id,
+                scope,
+                entries: Vec::new(),
+                partial: false,
+                error: Some(ScopeError::NoPluginsConfigured),
+            }),
+        )
+        .await;
         return;
     }
 
@@ -349,13 +369,17 @@ pub(crate) async fn run_scope_timing(
     } else {
         None
     };
-    emit(&out, Event::ScopeResults(ScopeResultsMsg {
-        query_id,
-        scope,
-        entries: merge_dedupe(collected),
-        partial: false,
-        error,
-    })).await;
+    emit(
+        &out,
+        Event::ScopeResults(ScopeResultsMsg {
+            query_id,
+            scope,
+            entries: merge_dedupe(collected),
+            partial: false,
+            error,
+        }),
+    )
+    .await;
 }
 
 // ── Cross-provider dedup / merge ──────────────────────────────────────────────
@@ -439,7 +463,9 @@ fn merge_dedupe(entries: Vec<MediaEntry>) -> Vec<MediaEntry> {
             let mut group = buckets.remove(&k)?;
             // Lowest priority value wins. Stable sort preserves relative
             // order for ties (= same-provider duplicates).
-            group.sort_by_key(|e| crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &k));
+            group.sort_by_key(|e| {
+                crate::anime_bridge::enrich::provider_priority_for_key(&e.provider, &k)
+            });
             let mut primary = group.remove(0);
             // Fold non-empty fields from secondaries into the primary's
             // None-shaped slots. Skip provider-distinguishing fields
@@ -497,11 +523,11 @@ fn merge_dedupe(entries: Vec<MediaEntry>) -> Vec<MediaEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use tokio::sync::mpsc;
-    use stui_plugin_sdk::SearchScope;
-    use crate::ipc::v1::{MediaEntry, MediaTab, MediaType, ScopeError};
     use crate::ipc::v1::stream::{Event, EventSender};
+    use crate::ipc::v1::{MediaEntry, MediaTab, MediaType, ScopeError};
+    use std::time::Duration;
+    use stui_plugin_sdk::SearchScope;
+    use tokio::sync::mpsc;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -549,7 +575,7 @@ mod tests {
 
         let cfg = ScopedSearchConfig {
             partial_deadline: Duration::from_millis(500),
-            hard_floor:       Duration::from_millis(2000),
+            hard_floor: Duration::from_millis(2000),
         };
 
         // Build two fast handles: one returns immediately, one after 10ms.
@@ -594,14 +620,27 @@ mod tests {
 
         // Should have at least a finalized message.
         let finalized: Vec<_> = msgs.iter().filter(|m| !m.partial).collect();
-        assert!(!finalized.is_empty(), "expected a finalized ScopeResultsMsg");
+        assert!(
+            !finalized.is_empty(),
+            "expected a finalized ScopeResultsMsg"
+        );
         let fin = &finalized[0];
         assert_eq!(fin.query_id, 1);
         // Both entries should appear in the finalized snapshot.
         let ids: Vec<&str> = fin.entries.iter().map(|e| e.id.as_str()).collect();
-        assert!(ids.contains(&"a"), "entry 'a' missing from finalized: {ids:?}");
-        assert!(ids.contains(&"b"), "entry 'b' missing from finalized: {ids:?}");
-        assert!(fin.error.is_none(), "finalized should have no error: {:?}", fin.error);
+        assert!(
+            ids.contains(&"a"),
+            "entry 'a' missing from finalized: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"b"),
+            "entry 'b' missing from finalized: {ids:?}"
+        );
+        assert!(
+            fin.error.is_none(),
+            "finalized should have no error: {:?}",
+            fin.error
+        );
     }
 
     // ── Test 2: hard floor fires when no plugin responds in time ─────────────
@@ -618,7 +657,7 @@ mod tests {
 
         let cfg = ScopedSearchConfig {
             partial_deadline: Duration::from_millis(500),
-            hard_floor:       Duration::from_millis(200),
+            hard_floor: Duration::from_millis(200),
         };
 
         let slow_handle: JoinHandle<Result<Vec<MediaEntry>, PluginCallError>> =
@@ -663,9 +702,18 @@ mod tests {
         // Should have a partial (from hard floor) and a finalized.
         let partials: Vec<_> = msgs.iter().filter(|m| m.partial).collect();
         let finalized: Vec<_> = msgs.iter().filter(|m| !m.partial).collect();
-        assert!(!partials.is_empty(), "expected an empty partial from hard floor; got: {msgs:?}");
-        assert!(partials[0].entries.is_empty(), "hard-floor partial must be empty");
-        assert!(!finalized.is_empty(), "expected a finalized message after slow plugin");
+        assert!(
+            !partials.is_empty(),
+            "expected an empty partial from hard floor; got: {msgs:?}"
+        );
+        assert!(
+            partials[0].entries.is_empty(),
+            "hard-floor partial must be empty"
+        );
+        assert!(
+            !finalized.is_empty(),
+            "expected a finalized message after slow plugin"
+        );
     }
 
     // ── Test 3: no plugins configured → immediate NoPluginsConfigured ────────
@@ -727,7 +775,15 @@ mod tests {
         // fires as the test expects. Used to be Series, but TVDB now joins
         // the Series fan-out unconditionally and emits a 2nd ScopeResults
         // message, breaking the `msgs.len() == 1` assertion below.
-        run_one_scope(engine, "test".into(), SearchScope::Track, 99, cfg, tx.clone()).await;
+        run_one_scope(
+            engine,
+            "test".into(),
+            SearchScope::Track,
+            99,
+            cfg,
+            tx.clone(),
+        )
+        .await;
         drop(tx);
         rx.close();
 
@@ -754,7 +810,7 @@ mod tests {
 
         let cfg = ScopedSearchConfig {
             partial_deadline: Duration::from_millis(50),
-            hard_floor:       Duration::from_millis(2000),
+            hard_floor: Duration::from_millis(2000),
         };
 
         // Build Artist scope handles (fast).
@@ -841,7 +897,7 @@ mod tests {
 
         let cfg = ScopedSearchConfig {
             partial_deadline: Duration::from_millis(50),
-            hard_floor:       Duration::from_millis(500),
+            hard_floor: Duration::from_millis(500),
         };
 
         let h1: JoinHandle<Result<Vec<MediaEntry>, PluginCallError>> =
@@ -851,14 +907,8 @@ mod tests {
 
         let (tx, rx) = make_event_channel(16);
 
-        let timing_fut = run_scope_timing(
-            vec![h1, h2],
-            5,
-            SearchScope::Album,
-            cfg,
-            None,
-            tx.clone(),
-        );
+        let timing_fut =
+            run_scope_timing(vec![h1, h2], 5, SearchScope::Album, cfg, None, tx.clone());
         tokio::pin!(timing_fut);
         tokio::time::advance(Duration::from_millis(200)).await;
         timing_fut.await;
@@ -968,7 +1018,11 @@ mod tests {
         kitsu.mal_id = Some("16498".into());
 
         let merged = merge_dedupe(vec![anilist, kitsu]);
-        assert_eq!(merged.len(), 1, "AniList and Kitsu with same MAL should collapse");
+        assert_eq!(
+            merged.len(),
+            1,
+            "AniList and Kitsu with same MAL should collapse"
+        );
         // AniList wins by priority (3 < 4).
         assert_eq!(merged[0].provider, "anilist");
         // English title preserved (AniList's), not romaji (Kitsu's).
@@ -990,7 +1044,11 @@ mod tests {
         omdb.imdb_id = Some("tt0903747".into());
 
         let merged = merge_dedupe(vec![tvdb, omdb]);
-        assert_eq!(merged.len(), 1, "TVDB and OMDb with same imdb should collapse");
+        assert_eq!(
+            merged.len(),
+            1,
+            "TVDB and OMDb with same imdb should collapse"
+        );
         // TVDB wins by priority (1 < 2).
         assert_eq!(merged[0].provider, "tvdb");
         assert_eq!(merged[0].title, "Breaking Bad");
@@ -1103,6 +1161,9 @@ mod tests {
         assert_eq!(merged.len(), 1);
         // AniList is the spine, but the description hole filled from Kitsu.
         assert_eq!(merged[0].provider, "anilist");
-        assert_eq!(merged[0].description.as_deref(), Some("Filled by secondary"));
+        assert_eq!(
+            merged[0].description.as_deref(),
+            Some("Filled by secondary")
+        );
     }
 }

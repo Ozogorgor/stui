@@ -36,8 +36,8 @@ const (
 
 // GridCursor tracks position in the 2D grid.
 type GridCursor struct {
-	Row int  // Exported for mouse handling
-	Col int  // Exported for mouse handling
+	Row int // Exported for mouse handling
+	Col int // Exported for mouse handling
 }
 
 func (g GridCursor) Index(cols int) int {

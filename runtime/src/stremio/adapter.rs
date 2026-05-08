@@ -4,15 +4,15 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tracing::{info, warn};
 
+use super::client::StremioClient;
+use super::manifest::StremioManifest;
 use crate::catalog::CatalogEntry;
 use crate::ipc::{MediaTab, MediaType, SubtitleTrack};
 use crate::providers::{Provider, Stream, StreamQuality};
-use super::client::StremioClient;
-use super::manifest::StremioManifest;
 
 #[allow(dead_code)] // pub API: Stremio provider adapter
 pub struct StremioAddon {
-    client:   StremioClient,
+    client: StremioClient,
     manifest: StremioManifest,
 }
 
@@ -38,7 +38,7 @@ impl StremioAddon {
         let mut addons = vec![];
         for url in urls.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             match StremioAddon::from_url(url).await {
-                Ok(a)  => addons.push(a),
+                Ok(a) => addons.push(a),
                 Err(e) => warn!("stremio: failed to load addon {url}: {e}"),
             }
         }
@@ -48,10 +48,10 @@ impl StremioAddon {
     #[allow(dead_code)] // pub API: Stremio provider adapter
     fn stremio_type_for_tab(tab: &MediaTab) -> &'static str {
         match tab {
-            MediaTab::Movies   => "movie",
-            MediaTab::Series   => "series",
-            MediaTab::Music    => "other",
-            MediaTab::Library  => "other",
+            MediaTab::Movies => "movie",
+            MediaTab::Series => "series",
+            MediaTab::Music => "other",
+            MediaTab::Library => "other",
             MediaTab::Radio | MediaTab::Podcasts | MediaTab::Videos => "other",
         }
     }
@@ -64,12 +64,13 @@ impl StremioAddon {
 
 #[async_trait]
 impl Provider for StremioAddon {
-    fn name(&self) -> &str { &self.manifest.name }
+    fn name(&self) -> &str {
+        &self.manifest.name
+    }
 
     fn has_streams(&self) -> bool {
         self.manifest.resources.iter().any(|r| {
-            r.as_str() == Some("stream")
-                || r.get("name").and_then(|n| n.as_str()) == Some("stream")
+            r.as_str() == Some("stream") || r.get("name").and_then(|n| n.as_str()) == Some("stream")
         })
     }
 
@@ -82,34 +83,53 @@ impl Provider for StremioAddon {
 
     async fn fetch_trending(&self, tab: &MediaTab, _page: u32) -> Result<Vec<CatalogEntry>> {
         let stype = Self::stremio_type_for_tab(tab);
-        if !self.supports_type(stype) { return Ok(vec![]); }
+        if !self.supports_type(stype) {
+            return Ok(vec![]);
+        }
 
         // Use the first catalog that matches this type
-        let catalog = self.manifest.catalogs.iter()
-            .find(|c| c.r#type == stype);
+        let catalog = self.manifest.catalogs.iter().find(|c| c.r#type == stype);
 
-        let Some(cat) = catalog else { return Ok(vec![]); };
+        let Some(cat) = catalog else {
+            return Ok(vec![]);
+        };
 
         let resp = self.client.catalog(stype, &cat.id, &[]).await?;
 
-        Ok(resp.metas.into_iter().map(|m| meta_to_entry(m, tab, self.name())).collect())
+        Ok(resp
+            .metas
+            .into_iter()
+            .map(|m| meta_to_entry(m, tab, self.name()))
+            .collect())
     }
 
     async fn search(&self, tab: &MediaTab, query: &str, _page: u32) -> Result<Vec<CatalogEntry>> {
         let stype = Self::stremio_type_for_tab(tab);
-        if !self.supports_type(stype) { return Ok(vec![]); }
+        if !self.supports_type(stype) {
+            return Ok(vec![]);
+        }
 
         // Find a catalog that supports the "search" extra
-        let catalog = self.manifest.catalogs.iter().find(|c| {
-            c.r#type == stype
-                && c.extra.iter().any(|e| e.name == "search")
-        });
+        let catalog = self
+            .manifest
+            .catalogs
+            .iter()
+            .find(|c| c.r#type == stype && c.extra.iter().any(|e| e.name == "search"));
 
-        let Some(cat) = catalog else { return Ok(vec![]); };
+        let Some(cat) = catalog else {
+            return Ok(vec![]);
+        };
 
-        let resp = self.client.catalog(stype, &cat.id, &[("search", query)]).await?;
+        let resp = self
+            .client
+            .catalog(stype, &cat.id, &[("search", query)])
+            .await?;
 
-        Ok(resp.metas.into_iter().map(|m| meta_to_entry(m, tab, self.name())).collect())
+        Ok(resp
+            .metas
+            .into_iter()
+            .map(|m| meta_to_entry(m, tab, self.name()))
+            .collect())
     }
 
     async fn streams(&self, id: &str) -> Result<Vec<Stream>> {
@@ -119,17 +139,25 @@ impl Provider for StremioAddon {
 
         let resp = self.client.streams(media_type, id).await?;
 
-        Ok(resp.streams.into_iter().filter_map(|s| stremio_stream_to_stream(s, self.name())).collect())
+        Ok(resp
+            .streams
+            .into_iter()
+            .filter_map(|s| stremio_stream_to_stream(s, self.name()))
+            .collect())
     }
 
     async fn subtitles(&self, id: &str) -> Result<Vec<SubtitleTrack>> {
         let media_type = if id.contains(':') { "series" } else { "movie" };
         let resp = self.client.subtitles(media_type, id).await?;
-        Ok(resp.subtitles.into_iter().map(|s| SubtitleTrack {
-            language: s.lang,
-            url:      s.url,
-            format:   "srt".into(),
-        }).collect())
+        Ok(resp
+            .subtitles
+            .into_iter()
+            .map(|s| SubtitleTrack {
+                language: s.lang,
+                url: s.url,
+                format: "srt".into(),
+            })
+            .collect())
     }
 }
 
@@ -138,46 +166,46 @@ impl Provider for StremioAddon {
 #[allow(dead_code)] // pub API: Stremio provider adapter
 fn meta_to_entry(m: super::manifest::StremioMeta, tab: &MediaTab, provider: &str) -> CatalogEntry {
     let year = m.year.as_ref().and_then(|v| {
-        v.as_u64().map(|n| n.to_string())
+        v.as_u64()
+            .map(|n| n.to_string())
             .or_else(|| v.as_str().map(str::to_string))
     });
 
-    let rating = m.rating.map(|r| format!("{:.1}", r))
+    let rating = m
+        .rating
+        .map(|r| format!("{:.1}", r))
         .or_else(|| m.imdb_rating.clone());
 
     let media_type = match m.r#type.as_str() {
-        "movie"  => MediaType::Movie,
+        "movie" => MediaType::Movie,
         "series" => MediaType::Series,
-        "anime"  => MediaType::Series,
-        _        => MediaType::Unknown,
+        "anime" => MediaType::Series,
+        _ => MediaType::Unknown,
     };
 
     CatalogEntry {
-        id:          m.id,
-        title:       m.name,
+        id: m.id,
+        title: m.name,
         year,
-        genre:       None,
+        genre: None,
         rating,
         description: m.description,
-        poster_url:  m.poster,
-        poster_art:  None,
-        provider:    provider.to_string(),
-        tab:         format!("{:?}", tab).to_lowercase(),
-        artist:      None, // Stremio meta has no artist field.
-        imdb_id:     m.imdb_id,
-        tmdb_id:     None,
-        mal_id:      None,
+        poster_url: m.poster,
+        poster_art: None,
+        provider: provider.to_string(),
+        tab: format!("{:?}", tab).to_lowercase(),
+        artist: None, // Stremio meta has no artist field.
+        imdb_id: m.imdb_id,
+        tmdb_id: None,
+        mal_id: None,
         media_type,
-        ratings:     std::collections::HashMap::new(),
+        ratings: std::collections::HashMap::new(),
         rating_votes: std::collections::HashMap::new(),
         original_language: None,
     }
 }
 
-fn stremio_stream_to_stream(
-    s: super::manifest::StremioStream,
-    provider: &str,
-) -> Option<Stream> {
+fn stremio_stream_to_stream(s: super::manifest::StremioStream, provider: &str) -> Option<Stream> {
     // Derive a playable URL from either url or infoHash
     let url = if let Some(u) = s.url {
         u
@@ -197,10 +225,10 @@ fn stremio_stream_to_stream(
     let quality = StreamQuality::from_label(&name);
 
     Some(Stream {
-        id:       url.clone(),
+        id: url.clone(),
         name,
         url,
-        mime:     None,
+        mime: None,
         quality,
         provider: provider.to_string(),
         ..Default::default()

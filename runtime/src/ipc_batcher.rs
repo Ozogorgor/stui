@@ -62,7 +62,7 @@ impl IpcBatcher {
         loop {
             tokio::select! {
                 biased;
-                
+
                 update = self.rx.recv() => {
                     match update {
                         Ok(u) => {
@@ -85,7 +85,7 @@ impl IpcBatcher {
                         }
                     }
                 }
-                
+
                 _ = sleep(self.flush_interval.saturating_sub(self.last_flush.elapsed()).max(Duration::from_millis(1))) => {
                     if !self.buffer.is_empty() {
                         return Some(self.drain_buffer());
@@ -107,7 +107,6 @@ impl IpcBatcher {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -148,7 +147,10 @@ mod tests {
     }
 
     async fn recv_with_timeout(batcher: &mut IpcBatcher) -> Option<Vec<GridUpdate>> {
-        tokio::time::timeout(TEST_FLUSH_INTERVAL * 2, batcher.recv()).await.ok().flatten()
+        tokio::time::timeout(TEST_FLUSH_INTERVAL * 2, batcher.recv())
+            .await
+            .ok()
+            .flatten()
     }
 
     #[tokio::test]
@@ -157,13 +159,15 @@ mod tests {
         let batcher = IpcBatcher::with_interval(rx, TEST_FLUSH_INTERVAL);
         let mut batcher = batcher;
 
-        tx.send(make_update("movies", GridUpdateSource::Live, 5)).ok();
-        tx.send(make_update("movies", GridUpdateSource::Live, 3)).ok();
-        
+        tx.send(make_update("movies", GridUpdateSource::Live, 5))
+            .ok();
+        tx.send(make_update("movies", GridUpdateSource::Live, 3))
+            .ok();
+
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         let updates = recv_with_timeout(&mut batcher).await.unwrap();
-        
+
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].entries.len(), 8);
         assert_eq!(updates[0].tab, "movies");
@@ -175,13 +179,15 @@ mod tests {
         let batcher = IpcBatcher::with_interval(rx, TEST_FLUSH_INTERVAL);
         let mut batcher = batcher;
 
-        tx.send(make_update("movies", GridUpdateSource::Live, 5)).ok();
-        tx.send(make_update("series", GridUpdateSource::Live, 3)).ok();
-        
+        tx.send(make_update("movies", GridUpdateSource::Live, 5))
+            .ok();
+        tx.send(make_update("series", GridUpdateSource::Live, 3))
+            .ok();
+
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         let updates = recv_with_timeout(&mut batcher).await.unwrap();
-        
+
         assert_eq!(updates.len(), 2);
     }
 
@@ -193,11 +199,16 @@ mod tests {
         let mut batcher = batcher;
 
         for i in 0..12 {
-            tx.send(make_update(&format!("tab_{}", i), GridUpdateSource::Live, 1)).ok();
+            tx.send(make_update(
+                &format!("tab_{}", i),
+                GridUpdateSource::Live,
+                1,
+            ))
+            .ok();
         }
-        
+
         let updates = recv_with_timeout(&mut batcher).await.unwrap();
-        
+
         assert_eq!(updates.len(), MAX_BATCH_SIZE);
     }
 
@@ -207,10 +218,11 @@ mod tests {
         let batcher = IpcBatcher::with_interval(rx, Duration::from_millis(100));
         let mut batcher = batcher;
 
-        tx.send(make_update("movies", GridUpdateSource::Live, 5)).ok();
-        
+        tx.send(make_update("movies", GridUpdateSource::Live, 5))
+            .ok();
+
         let updates = recv_with_timeout(&mut batcher).await.unwrap();
-        
+
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].entries.len(), 5);
     }
@@ -223,7 +235,7 @@ mod tests {
         let mut batcher = batcher;
 
         let result = recv_with_timeout(&mut batcher).await;
-        
+
         assert!(result.is_none());
     }
 }

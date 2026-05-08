@@ -116,7 +116,7 @@ impl DspCommand {
         let input = input.trim();
 
         match input {
-            "mute"   => return Some(GainAdjust::Mute),
+            "mute" => return Some(GainAdjust::Mute),
             "unmute" => return Some(GainAdjust::Unmute),
             _ => {}
         }

@@ -69,7 +69,7 @@ type MusicQueueScreen struct {
 	nowSingle   bool
 	nowRandom   bool
 
-	visualizer   *components.Visualizer // nil when disabled; non-nil when active
+	visualizer *components.Visualizer // nil when disabled; non-nil when active
 
 	// IDs we've already asked MPD to delete via auto-dedup but which
 	// still appear in the latest queue refresh (MPD hasn't applied yet).
@@ -82,8 +82,8 @@ const queueDoubleClickThreshold = 300 * time.Millisecond
 
 // queueLastClick tracks the last click position and time for double-click detection.
 var queueLastClick struct {
-	x, y    int
-	time    time.Time
+	x, y int
+	time time.Time
 }
 
 // NewMusicQueueScreen creates a new queue screen and triggers the initial fetch.
@@ -359,16 +359,16 @@ func queueArtPlaceholder(innerW int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(theme.T.TextDim()).
 		Width(innerW).
-		Height(innerW / 2).
+		Height(innerW/2).
 		Align(lipgloss.Center, lipgloss.Center)
 	return boxStyle.Render(dim.Render("♪")) + "\n"
 }
 
 // Package-level ImageView + cover art resolver.
 var (
-	queueImageView       *components.ImageView
-	cachedArtResolvedFile string // tracks which file we've already resolved art for
-	queueClient          *ipc.Client // set when the screen gets a client
+	queueImageView        *components.ImageView
+	cachedArtResolvedFile string      // tracks which file we've already resolved art for
+	queueClient           *ipc.Client // set when the screen gets a client
 )
 
 func init() {
@@ -469,7 +469,7 @@ func findCoverArt(dir string) string {
 func queueSeekBar(elapsed, duration float64, w int) (barRow, timeRow string) {
 	// When duration == 0, return all dashes (no cursor tip)
 	if duration <= 0 {
-		barRow  = strings.Repeat("─", w)
+		barRow = strings.Repeat("─", w)
 		timeRow = "0:00" + strings.Repeat(" ", w-8) + "0:00"
 		return
 	}
@@ -508,7 +508,7 @@ const numVolBlocks = 16
 // Clicking the bar sets volume proportional to the block clicked.
 func queueVolumeBar(volume uint32, muted bool) (barRow, hintRow string) {
 	filled := int(volume) * numVolBlocks / 100
-	empty  := numVolBlocks - filled
+	empty := numVolBlocks - filled
 	bar := strings.Repeat("▮", filled) + strings.Repeat("▯", empty)
 	barRow = fmt.Sprintf("%s  %d%%", bar, volume)
 	if muted {
@@ -532,8 +532,8 @@ func padRightANSI(s string, w int) string {
 // View renders the queue screen within the given width/height constraints.
 func (s MusicQueueScreen) View(w, h int) string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 	cursorStyle := lipgloss.NewStyle().Foreground(theme.T.AccentAlt()).Bold(true)
 
 	// ── Narrow layout (≤80 cols): existing single-column behaviour ────────
@@ -543,10 +543,10 @@ func (s MusicQueueScreen) View(w, h int) string {
 
 	// Wide layout: two bordered boxes side by side.
 	// rightBoxW=24 gives innerR=22, which fits the widest hint "0 unmute" (22ch).
-	const rightBoxW = 24  // outer width of right box (border + 22 inner + border)
-	leftBoxW := w - rightBoxW  // outer width of left box
-	innerL   := leftBoxW - 2   // inner content width of left box
-	const innerR = 22           // inner content width of right box
+	const rightBoxW = 24      // outer width of right box (border + 22 inner + border)
+	leftBoxW := w - rightBoxW // outer width of left box
+	innerL := leftBoxW - 2    // inner content width of left box
+	const innerR = 22         // inner content width of right box
 
 	// Visualizer panel is reserved whenever the backend is not "off", even if
 	// it's not currently running — the container stays visible (idle) so the
@@ -609,15 +609,15 @@ func (s MusicQueueScreen) View(w, h int) string {
 	for i := start; i < end; i++ {
 		tr := s.tracks[i]
 		isCurrent := s.isCurrentTrack(tr)
-		isCursor  := i == s.cursor
+		isCursor := i == s.cursor
 
 		prefix := "   "
 		if isCurrent {
 			prefix = "▶  "
 		}
-		posStr   := fmt.Sprintf("%3d", tr.Pos+1)
-		durStr   := fmt.Sprintf("%7s", fmtMusicDuration(tr.Duration))
-		titleStr  := truncate(tr.Title,  titleW)
+		posStr := fmt.Sprintf("%3d", tr.Pos+1)
+		durStr := fmt.Sprintf("%7s", fmtMusicDuration(tr.Duration))
+		titleStr := truncate(tr.Title, titleW)
 		artistStr := truncate(tr.Artist, artistW)
 
 		var line string
@@ -637,9 +637,12 @@ func (s MusicQueueScreen) View(w, h int) string {
 
 		var st lipgloss.Style
 		switch {
-		case isCurrent: st = accentStyle
-		case isCursor:  st = cursorStyle
-		default:        st = textStyle
+		case isCurrent:
+			st = accentStyle
+		case isCursor:
+			st = cursorStyle
+		default:
+			st = textStyle
 		}
 		trackLines = append(trackLines, st.Render(line))
 	}
@@ -669,7 +672,7 @@ func (s MusicQueueScreen) View(w, h int) string {
 	}
 	topLeft := dimStyle.Render("╭─ ") + accentStyle.Render(queueTitle) +
 		dimStyle.Render(" "+strings.Repeat("─", dashCt)+"╮")
-	botLeft    := dimStyle.Render("╰" + strings.Repeat("─", innerL) + "╯")
+	botLeft := dimStyle.Render("╰" + strings.Repeat("─", innerL) + "╯")
 	borderVert := dimStyle.Render("│")
 
 	var leftLines []string
@@ -841,7 +844,7 @@ func rightPanelContentHeight(innerW int, showAlbum bool) int {
 	// OUTER height (border-inclusive), so the rendered art is innerW/2 rows
 	// total — not innerW/2 + 2. See queueArtPlaceholder's doc comment.
 	artRows := innerW / 2
-	metaRows := 6           // TITLE + ARTIST + DURATION, each label + value
+	metaRows := 6 // TITLE + ARTIST + DURATION, each label + value
 	if showAlbum {
 		metaRows = 8
 	}
@@ -856,8 +859,8 @@ func rightPanelContentHeight(innerW int, showAlbum bool) int {
 // innerW is the inner width of the right panel box.
 func (s MusicQueueScreen) buildRightPanel(availH int, showAlbum bool, innerW int) []string {
 	accentStyle := lipgloss.NewStyle().Foreground(theme.T.Accent()).Bold(true)
-	dimStyle    := lipgloss.NewStyle().Foreground(theme.T.TextDim())
-	textStyle   := lipgloss.NewStyle().Foreground(theme.T.Text())
+	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
+	textStyle := lipgloss.NewStyle().Foreground(theme.T.Text())
 
 	// Art is now rendered separately in the View (supports Kitty protocol).
 	// This method only builds metadata + seekbar + volume.
@@ -1031,16 +1034,16 @@ func (s MusicQueueScreen) viewNarrow(w, h int,
 	for i := start; i < end; i++ {
 		tr := s.tracks[i]
 		isCurrent := s.isCurrentTrack(tr)
-		isCursor  := i == s.cursor
+		isCursor := i == s.cursor
 
 		prefix := "   "
 		if isCurrent {
 			prefix = "▶  "
 		}
 
-		posStr   := fmt.Sprintf("%3d", tr.Pos+1)
-		titleStr  := fmt.Sprintf("%-*s", titleW, truncate(tr.Title, titleW))
-		durStr    := fmt.Sprintf("%5s", fmtMusicDuration(tr.Duration))
+		posStr := fmt.Sprintf("%3d", tr.Pos+1)
+		titleStr := fmt.Sprintf("%-*s", titleW, truncate(tr.Title, titleW))
+		durStr := fmt.Sprintf("%5s", fmtMusicDuration(tr.Duration))
 		artistStr := truncate(tr.Artist, artistW)
 		line := prefix + posStr + " " + titleStr + " " + durStr + "  " + artistStr
 
@@ -1152,7 +1155,7 @@ func (s MusicQueueScreen) HandleMouse(x, localY int) MusicQueueScreen {
 			metaRows = 8
 		}
 		volBarInnerRow := artRows + metaRows + 2 // after art+meta+seek
-		volBarLocalY := volBarInnerRow + 1        // +1 for right-box top border
+		volBarLocalY := volBarInnerRow + 1       // +1 for right-box top border
 
 		if x > leftBoxW && x <= leftBoxW+innerR+1 && localY == volBarLocalY {
 			blockX := x - leftBoxW - 1
@@ -1238,24 +1241,30 @@ func queueColWidths(L int) (titleW, artistW, albumW, fmtW int) {
 		// Wide: Title + Artist + Album + Format + Dur
 		fmtW = 5
 		R := L - 18 - fmtW - 1
-		if R < 1 { R = 1 }
-		titleW  = R * 38 / 100
+		if R < 1 {
+			R = 1
+		}
+		titleW = R * 38 / 100
 		artistW = R * 33 / 100
-		albumW  = R * 29 / 100
+		albumW = R * 29 / 100
 		titleW += R - titleW - artistW - albumW
 	} else if L >= 120 {
 		// Medium: Title + Artist + Album + Dur (no format)
 		R := L - 18
-		if R < 1 { R = 1 }
-		titleW  = R * 40 / 100
+		if R < 1 {
+			R = 1
+		}
+		titleW = R * 40 / 100
 		artistW = R * 35 / 100
-		albumW  = R * 25 / 100
+		albumW = R * 25 / 100
 		titleW += R - titleW - artistW - albumW
 	} else {
 		// Narrow: Title + Artist + Dur only
 		R := L - 17
-		if R < 1 { R = 1 }
-		titleW  = R * 55 / 100
+		if R < 1 {
+			R = 1
+		}
+		titleW = R * 55 / 100
 		artistW = R * 45 / 100
 		titleW += R - titleW - artistW
 	}

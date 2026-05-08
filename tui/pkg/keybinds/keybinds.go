@@ -108,78 +108,78 @@ type KeyMap struct {
 	VolumeMute key.Binding // m
 
 	// ── Player — stream switching ─────────────────────────────────────────
-	SwitchStream    key.Binding // s → opens stream picker
-	NextCandidate   key.Binding // n → auto-switch to next candidate
+	SwitchStream  key.Binding // s → opens stream picker
+	NextCandidate key.Binding // n → auto-switch to next candidate
 
 	// ── Player — subtitle control ─────────────────────────────────────────
-	SubtitleTrack    key.Binding // v → cycle subtitle tracks
-	SubtitleDisable  key.Binding // V (shift+v) → disable subs
-	SubDelayPlus     key.Binding // z → subtitle +0.1s
-	SubDelayMinus    key.Binding // Z (shift+z) → subtitle -0.1s
-	SubDelayReset    key.Binding // X (shift+x) → reset sub delay
+	SubtitleTrack   key.Binding // v → cycle subtitle tracks
+	SubtitleDisable key.Binding // V (shift+v) → disable subs
+	SubDelayPlus    key.Binding // z → subtitle +0.1s
+	SubDelayMinus   key.Binding // Z (shift+z) → subtitle -0.1s
+	SubDelayReset   key.Binding // X (shift+x) → reset sub delay
 
 	// ── Player — audio control ────────────────────────────────────────────
-	AudioTrack       key.Binding // a → cycle audio tracks
-	AudioDelayPlus   key.Binding // ctrl+] → audio +0.1s
-	AudioDelayMinus  key.Binding // ctrl+[ → audio -0.1s
-	AudioDelayReset  key.Binding // ctrl+\ → reset audio delay
+	AudioTrack      key.Binding // a → cycle audio tracks
+	AudioDelayPlus  key.Binding // ctrl+] → audio +0.1s
+	AudioDelayMinus key.Binding // ctrl+[ → audio -0.1s
+	AudioDelayReset key.Binding // ctrl+\ → reset audio delay
 }
 
 // Default returns the default keybindings.
 func Default() KeyMap {
 	return KeyMap{
 		// Navigation
-		Up:    key.NewBinding(key.WithKeys("up", "k"),    key.WithHelp("↑/k", "up")),
-		Down:  key.NewBinding(key.WithKeys("down", "j"),  key.WithHelp("↓/j", "down")),
-		Left:  key.NewBinding(key.WithKeys("left", "h"),  key.WithHelp("←/h", "left")),
+		Up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Left:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left")),
 		Right: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right")),
-		Enter: key.NewBinding(key.WithKeys("enter"),      key.WithHelp("enter", "select")),
-		Back:  key.NewBinding(key.WithKeys("esc"),        key.WithHelp("esc", "back")),
+		Enter: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		Back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 
 		// Tabs
-		Tab1:    key.NewBinding(key.WithKeys("1"),         key.WithHelp("1", "movies")),
-		Tab2:    key.NewBinding(key.WithKeys("2"),         key.WithHelp("2", "series")),
-		Tab3:    key.NewBinding(key.WithKeys("3"),         key.WithHelp("3", "music")),
-		Tab4:    key.NewBinding(key.WithKeys("4"),         key.WithHelp("4", "library")),
-		NextTab: key.NewBinding(key.WithKeys("tab"),       key.WithHelp("tab", "next tab")),
+		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "movies")),
+		Tab2:    key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "series")),
+		Tab3:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "music")),
+		Tab4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "library")),
+		NextTab: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next tab")),
 		PrevTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev tab")),
 
 		// App
-		Search:   key.NewBinding(key.WithKeys("/"),   key.WithHelp("/", "search")),
-		Settings: key.NewBinding(key.WithKeys(","),   key.WithHelp(",", "settings")),
+		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		Settings: key.NewBinding(key.WithKeys(","), key.WithHelp(",", "settings")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		Help:     key.NewBinding(key.WithKeys("?"),   key.WithHelp("?", "help")),
+		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 
 		// Player — transport
-		PlayerPause:        key.NewBinding(key.WithKeys(" "),          key.WithHelp("space", "pause")),
-		PlayerSeekFwd:      key.NewBinding(key.WithKeys("right"),      key.WithHelp("→", "+10s")),
-		PlayerSeekBack:     key.NewBinding(key.WithKeys("left"),       key.WithHelp("←", "-10s")),
-		PlayerSeekFwdLong:  key.NewBinding(key.WithKeys("shift+right"),key.WithHelp("⇧→", "+60s")),
+		PlayerPause:        key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause")),
+		PlayerSeekFwd:      key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "+10s")),
+		PlayerSeekBack:     key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "-10s")),
+		PlayerSeekFwdLong:  key.NewBinding(key.WithKeys("shift+right"), key.WithHelp("⇧→", "+60s")),
 		PlayerSeekBackLong: key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←", "-60s")),
-		PlayerStop:         key.NewBinding(key.WithKeys("Q"),          key.WithHelp("Q", "stop")),
-		PlayerFullscreen:   key.NewBinding(key.WithKeys("f"),          key.WithHelp("f", "fullscreen")),
-		PlayerScreenshot:   key.NewBinding(key.WithKeys("S"),          key.WithHelp("S", "screenshot")),
+		PlayerStop:         key.NewBinding(key.WithKeys("Q"), key.WithHelp("Q", "stop")),
+		PlayerFullscreen:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fullscreen")),
+		PlayerScreenshot:   key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "screenshot")),
 
 		// Player — volume
 		VolumeUp:   key.NewBinding(key.WithKeys("]", "0"), key.WithHelp("]/0", "vol +")),
 		VolumeDown: key.NewBinding(key.WithKeys("[", "9"), key.WithHelp("[/9", "vol -")),
-		VolumeMute: key.NewBinding(key.WithKeys("m"),      key.WithHelp("m", "mute")),
+		VolumeMute: key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
 
 		// Player — stream switching
 		SwitchStream:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "streams")),
 		NextCandidate: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next stream")),
 
 		// Player — subtitle control
-		SubtitleTrack:   key.NewBinding(key.WithKeys("v"),   key.WithHelp("v", "cycle subs")),
-		SubtitleDisable: key.NewBinding(key.WithKeys("V"),   key.WithHelp("V", "no subs")),
-		SubDelayPlus:    key.NewBinding(key.WithKeys("z"),   key.WithHelp("z", "sub +0.1s")),
-		SubDelayMinus:   key.NewBinding(key.WithKeys("Z"),   key.WithHelp("Z", "sub -0.1s")),
-		SubDelayReset:   key.NewBinding(key.WithKeys("X"),   key.WithHelp("X", "sub reset")),
+		SubtitleTrack:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "cycle subs")),
+		SubtitleDisable: key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "no subs")),
+		SubDelayPlus:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "sub +0.1s")),
+		SubDelayMinus:   key.NewBinding(key.WithKeys("Z"), key.WithHelp("Z", "sub -0.1s")),
+		SubDelayReset:   key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "sub reset")),
 
 		// Player — audio control
-		AudioTrack:      key.NewBinding(key.WithKeys("a"),       key.WithHelp("a", "cycle audio")),
-		AudioDelayPlus:  key.NewBinding(key.WithKeys("ctrl+]"),  key.WithHelp("⌃]", "audio +0.1s")),
-		AudioDelayMinus: key.NewBinding(key.WithKeys("ctrl+["),  key.WithHelp("⌃[", "audio -0.1s")),
+		AudioTrack:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "cycle audio")),
+		AudioDelayPlus:  key.NewBinding(key.WithKeys("ctrl+]"), key.WithHelp("⌃]", "audio +0.1s")),
+		AudioDelayMinus: key.NewBinding(key.WithKeys("ctrl+["), key.WithHelp("⌃[", "audio -0.1s")),
 		AudioDelayReset: key.NewBinding(key.WithKeys("ctrl+\\"), key.WithHelp("⌃\\", "audio reset")),
 	}
 }

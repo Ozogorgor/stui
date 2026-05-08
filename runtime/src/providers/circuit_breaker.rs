@@ -210,7 +210,9 @@ impl CircuitBreaker {
     /// Record a successful request. Closes the circuit if it was half-open.
     pub async fn record_success(&self, provider: &str) {
         let mut map = self.inner.write().await;
-        let state = map.entry(provider.to_string()).or_insert_with(BreakerState::new);
+        let state = map
+            .entry(provider.to_string())
+            .or_insert_with(BreakerState::new);
 
         state.consecutive_failures = 0;
         state.total_successes += 1;
@@ -227,7 +229,9 @@ impl CircuitBreaker {
     /// Record a failed request. Opens the circuit if threshold is exceeded.
     pub async fn record_failure(&self, provider: &str) {
         let mut map = self.inner.write().await;
-        let state = map.entry(provider.to_string()).or_insert_with(BreakerState::new);
+        let state = map
+            .entry(provider.to_string())
+            .or_insert_with(BreakerState::new);
 
         state.consecutive_failures += 1;
         state.total_failures += 1;
@@ -257,7 +261,9 @@ impl CircuitBreaker {
     /// Transition to half-open state. Called when recovery timeout expires.
     pub async fn transition_to_half_open(&self, provider: &str) {
         let mut map = self.inner.write().await;
-        let state = map.entry(provider.to_string()).or_insert_with(BreakerState::new);
+        let state = map
+            .entry(provider.to_string())
+            .or_insert_with(BreakerState::new);
 
         if state.state == CircuitState::Open {
             state.state = CircuitState::HalfOpen;
@@ -336,7 +342,9 @@ impl CircuitBreaker {
     /// Consume a half-open permit if available.
     pub async fn try_acquire_half_open(&self, provider: &str) -> bool {
         let mut map = self.inner.write().await;
-        let state = map.entry(provider.to_string()).or_insert_with(BreakerState::new);
+        let state = map
+            .entry(provider.to_string())
+            .or_insert_with(BreakerState::new);
 
         if state.state == CircuitState::HalfOpen && state.half_open_requests > 0 {
             state.half_open_requests -= 1;
@@ -347,7 +355,9 @@ impl CircuitBreaker {
 }
 
 impl Default for CircuitBreaker {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

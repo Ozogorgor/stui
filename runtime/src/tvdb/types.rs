@@ -339,7 +339,10 @@ mod tests {
         assert_eq!(s.remote_ids.len(), 2);
         assert_eq!(s.remote_ids[0].source_name.as_deref(), Some("IMDB"));
         assert_eq!(s.remote_ids[0].id, "tt0903747");
-        assert_eq!(s.remote_ids[1].source_name.as_deref(), Some("TheMovieDB.com"));
+        assert_eq!(
+            s.remote_ids[1].source_name.as_deref(),
+            Some("TheMovieDB.com")
+        );
         assert_eq!(s.seasons.len(), 4);
         // Verify season-type discriminator survives.
         assert_eq!(s.seasons[3].season_type.id, 2);

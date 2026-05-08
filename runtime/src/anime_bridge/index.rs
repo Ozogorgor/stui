@@ -28,7 +28,11 @@ struct RawFribbRecord {
     kitsu_id: Option<String>,
     #[serde(default, deserialize_with = "id_from_num_or_str")]
     imdb_id: Option<String>,
-    #[serde(default, rename = "themoviedb_id", deserialize_with = "id_from_num_or_str")]
+    #[serde(
+        default,
+        rename = "themoviedb_id",
+        deserialize_with = "id_from_num_or_str"
+    )]
     tmdb_id: Option<String>,
     // Note: Fribb's JSON key is `tvdb_id` (verified against the live
     // dataset 2026-04-26, 42k entries). NO rename needed — the field
@@ -44,24 +48,24 @@ struct RawFribbRecord {
 /// `MediaEntry` from this record.
 #[derive(Debug, Clone)]
 pub struct AnimeRecord {
-    pub mal_id:     Option<String>,
+    pub mal_id: Option<String>,
     pub anilist_id: Option<String>,
-    pub kitsu_id:   Option<String>,
-    pub imdb_id:    Option<String>,
-    pub tmdb_id:    Option<String>,
-    pub tvdb_id:    Option<String>,
+    pub kitsu_id: Option<String>,
+    pub imdb_id: Option<String>,
+    pub tmdb_id: Option<String>,
+    pub tvdb_id: Option<String>,
 }
 
 /// Per-id-type indexes pointing at the same `Arc<AnimeRecord>`. Built
 /// once at parse time and never mutated — refresh creates a fresh
 /// `AnimeIndex` and atomic-swaps the parent `Arc<AnimeIndex>`.
 pub struct AnimeIndex {
-    pub(crate) by_mal:     HashMap<String, Arc<AnimeRecord>>,
+    pub(crate) by_mal: HashMap<String, Arc<AnimeRecord>>,
     pub(crate) by_anilist: HashMap<String, Arc<AnimeRecord>>,
-    pub(crate) by_kitsu:   HashMap<String, Arc<AnimeRecord>>,
-    pub(crate) by_imdb:    HashMap<String, Arc<AnimeRecord>>,
-    pub(crate) by_tmdb:    HashMap<String, Arc<AnimeRecord>>,
-    pub(crate) by_tvdb:    HashMap<String, Arc<AnimeRecord>>,
+    pub(crate) by_kitsu: HashMap<String, Arc<AnimeRecord>>,
+    pub(crate) by_imdb: HashMap<String, Arc<AnimeRecord>>,
+    pub(crate) by_tmdb: HashMap<String, Arc<AnimeRecord>>,
+    pub(crate) by_tvdb: HashMap<String, Arc<AnimeRecord>>,
 }
 
 impl AnimeIndex {
@@ -71,12 +75,12 @@ impl AnimeIndex {
     /// merge, but search still works).
     pub fn empty() -> Self {
         Self {
-            by_mal:     HashMap::new(),
+            by_mal: HashMap::new(),
             by_anilist: HashMap::new(),
-            by_kitsu:   HashMap::new(),
-            by_imdb:    HashMap::new(),
-            by_tmdb:    HashMap::new(),
-            by_tvdb:    HashMap::new(),
+            by_kitsu: HashMap::new(),
+            by_imdb: HashMap::new(),
+            by_tmdb: HashMap::new(),
+            by_tvdb: HashMap::new(),
         }
     }
 
@@ -88,12 +92,12 @@ impl AnimeIndex {
         let raw_records: Vec<RawFribbRecord> = serde_json::from_slice(raw)
             .map_err(|e| anyhow::anyhow!("Fribb top-level shape mismatch: {e}"))?;
 
-        let mut by_mal     = HashMap::new();
+        let mut by_mal = HashMap::new();
         let mut by_anilist = HashMap::new();
-        let mut by_kitsu   = HashMap::new();
-        let mut by_imdb    = HashMap::new();
-        let mut by_tmdb    = HashMap::new();
-        let mut by_tvdb    = HashMap::new();
+        let mut by_kitsu = HashMap::new();
+        let mut by_imdb = HashMap::new();
+        let mut by_tmdb = HashMap::new();
+        let mut by_tvdb = HashMap::new();
 
         for raw in raw_records {
             // Drop records with no anime-tier id — they're not useful
@@ -105,25 +109,41 @@ impl AnimeIndex {
             }
 
             let record = Arc::new(AnimeRecord {
-                mal_id:     raw.mal_id.clone(),
+                mal_id: raw.mal_id.clone(),
                 anilist_id: raw.anilist_id.clone(),
-                kitsu_id:   raw.kitsu_id.clone(),
-                imdb_id:    raw.imdb_id.clone(),
-                tmdb_id:    raw.tmdb_id.clone(),
-                tvdb_id:    raw.tvdb_id.clone(),
+                kitsu_id: raw.kitsu_id.clone(),
+                imdb_id: raw.imdb_id.clone(),
+                tmdb_id: raw.tmdb_id.clone(),
+                tvdb_id: raw.tvdb_id.clone(),
             });
 
-            if let Some(id) = &raw.mal_id     { by_mal.insert(id.clone(),     Arc::clone(&record)); }
-            if let Some(id) = &raw.anilist_id { by_anilist.insert(id.clone(), Arc::clone(&record)); }
-            if let Some(id) = &raw.kitsu_id   { by_kitsu.insert(id.clone(),   Arc::clone(&record)); }
-            if let Some(id) = &raw.imdb_id    { by_imdb.insert(id.clone(),    Arc::clone(&record)); }
-            if let Some(id) = &raw.tmdb_id    { by_tmdb.insert(id.clone(),    Arc::clone(&record)); }
-            if let Some(id) = &raw.tvdb_id    { by_tvdb.insert(id.clone(),    Arc::clone(&record)); }
+            if let Some(id) = &raw.mal_id {
+                by_mal.insert(id.clone(), Arc::clone(&record));
+            }
+            if let Some(id) = &raw.anilist_id {
+                by_anilist.insert(id.clone(), Arc::clone(&record));
+            }
+            if let Some(id) = &raw.kitsu_id {
+                by_kitsu.insert(id.clone(), Arc::clone(&record));
+            }
+            if let Some(id) = &raw.imdb_id {
+                by_imdb.insert(id.clone(), Arc::clone(&record));
+            }
+            if let Some(id) = &raw.tmdb_id {
+                by_tmdb.insert(id.clone(), Arc::clone(&record));
+            }
+            if let Some(id) = &raw.tvdb_id {
+                by_tvdb.insert(id.clone(), Arc::clone(&record));
+            }
         }
 
         Ok(Self {
-            by_mal, by_anilist, by_kitsu,
-            by_imdb, by_tmdb, by_tvdb,
+            by_mal,
+            by_anilist,
+            by_kitsu,
+            by_imdb,
+            by_tmdb,
+            by_tvdb,
         })
     }
 }
@@ -199,7 +219,12 @@ mod tests {
         let idx = AnimeIndex::from_json(raw.as_bytes()).unwrap();
         // Only the second record (has mal_id) should index.
         assert_eq!(idx.by_imdb.len(), 1);
-        assert_eq!(idx.by_imdb.get("tt0002").map(|r| r.imdb_id.as_deref().unwrap()), Some("tt0002"));
+        assert_eq!(
+            idx.by_imdb
+                .get("tt0002")
+                .map(|r| r.imdb_id.as_deref().unwrap()),
+            Some("tt0002")
+        );
         assert!(idx.by_imdb.get("tt0001").is_none());
     }
 
@@ -221,7 +246,10 @@ mod tests {
         // Same record indexed under all 6 id types must point at one Arc.
         let r1 = Arc::clone(idx.by_mal.get("1").unwrap());
         let r2 = Arc::clone(idx.by_imdb.get("tt0213338").unwrap());
-        assert!(Arc::ptr_eq(&r1, &r2), "all index entries for one record must share the same Arc");
+        assert!(
+            Arc::ptr_eq(&r1, &r2),
+            "all index entries for one record must share the same Arc"
+        );
     }
 
     #[test]
@@ -239,7 +267,8 @@ mod tests {
     #[test]
     fn from_json_tolerates_unexpected_fields() {
         // Fribb periodically adds new id types. Our struct must ignore them.
-        let raw = r#"[{ "mal_id": 1, "notify_moe_id": "abc", "anisearch_id": 99, "livechart_id": 42 }]"#;
+        let raw =
+            r#"[{ "mal_id": 1, "notify_moe_id": "abc", "anisearch_id": 99, "livechart_id": 42 }]"#;
         let idx = AnimeIndex::from_json(raw.as_bytes()).unwrap();
         assert_eq!(idx.by_mal.len(), 1);
     }

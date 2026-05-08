@@ -26,13 +26,13 @@
 //! Stremio addons are registered alongside WASM plugins.  The engine calls
 //! `StremioAddon::as_provider()` to get a `Box<dyn Provider>`.
 
-pub mod manifest;
-pub mod client;
 pub mod adapter;
+pub mod client;
+pub mod manifest;
 
 #[allow(unused_imports)]
-pub use manifest::StremioManifest;
+pub use adapter::StremioAddon;
 #[allow(unused_imports)]
 pub use client::StremioClient;
 #[allow(unused_imports)]
-pub use adapter::StremioAddon;
+pub use manifest::StremioManifest;

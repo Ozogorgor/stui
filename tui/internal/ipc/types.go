@@ -78,7 +78,6 @@ type SearchResult struct {
 	Offset int          `json:"offset"`
 }
 
-
 type MediaEntry struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`

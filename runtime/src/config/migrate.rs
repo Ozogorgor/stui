@@ -28,7 +28,9 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 fn legacy_base() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".stui")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".stui")
 }
 
 fn config_base() -> PathBuf {
@@ -49,11 +51,7 @@ pub fn migrate_legacy_paths() {
         return;
     }
 
-    move_if_destination_missing(
-        &legacy.join("plugins"),
-        &config.join("plugins"),
-        "plugins",
-    );
+    move_if_destination_missing(&legacy.join("plugins"), &config.join("plugins"), "plugins");
     move_if_destination_missing(
         &legacy.join("secrets.env"),
         &config.join("secrets.env"),
@@ -64,11 +62,7 @@ pub fn migrate_legacy_paths() {
         &config.join("runtime.toml"),
         "runtime config",
     );
-    move_if_destination_missing(
-        &legacy.join("data"),
-        &config.join("data"),
-        "data",
-    );
+    move_if_destination_missing(&legacy.join("data"), &config.join("data"), "data");
 }
 
 fn move_if_destination_missing(src: &Path, dst: &Path, label: &str) {

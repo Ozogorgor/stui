@@ -26,11 +26,11 @@ const (
 // Config holds the user-configurable notification preferences.
 // These are mirrored from the settings screen into the root model.
 type Config struct {
-	Enabled     bool   // master switch
-	Backend     string // "auto", "notify-send", "dunstctl", "off"
-	OnPlayback  bool   // notify when mpv starts playing
-	OnDownload  bool   // notify when a torrent download completes
-	OnStreams   bool   // notify when stream candidates are resolved
+	Enabled    bool   // master switch
+	Backend    string // "auto", "notify-send", "dunstctl", "off"
+	OnPlayback bool   // notify when mpv starts playing
+	OnDownload bool   // notify when a torrent download completes
+	OnStreams  bool   // notify when stream candidates are resolved
 }
 
 // DefaultConfig returns the recommended default notification config.

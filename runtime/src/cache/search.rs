@@ -36,17 +36,17 @@ fn now_secs() -> u64 {
 #[allow(dead_code)] // pub API: used by engine search result cache
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchKey {
-    plugin_id:  String,
+    plugin_id: String,
     query_norm: String,
-    scope:      SearchScope,
-    page:       u32,
+    scope: SearchScope,
+    page: u32,
 }
 
 impl SearchKey {
     #[allow(dead_code)] // pub API: used by engine search result cache
     pub fn new(plugin_id: &str, query: &str, scope: SearchScope, page: u32) -> Self {
         SearchKey {
-            plugin_id:  plugin_id.to_string(),
+            plugin_id: plugin_id.to_string(),
             query_norm: normalise(query),
             scope,
             page,
@@ -87,13 +87,19 @@ pub struct SearchCache {
 
 impl SearchCache {
     pub fn new() -> Self {
-        SearchCache { inner: Arc::new(RwLock::new(HashMap::new())), disk: None }
+        SearchCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            disk: None,
+        }
     }
 
     /// Same as `new()` but with an on-disk tier wired underneath. Disk reads
     /// are a fallback after mem miss; writes are write-through.
     pub fn with_disk(disk: Arc<SqliteKv>) -> Self {
-        SearchCache { inner: Arc::new(RwLock::new(HashMap::new())), disk: Some(disk) }
+        SearchCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            disk: Some(disk),
+        }
     }
 
     /// Try to retrieve cached results for this key. Mem first, then disk.
@@ -103,7 +109,10 @@ impl SearchCache {
             let map = self.inner.read().await;
             if let Some(entry) = map.get(key) {
                 if entry.is_valid() {
-                    debug!("search cache HIT (mem) plugin={} scope={:?} q={:?} page={}", key.plugin_id, key.scope, key.query_norm, key.page);
+                    debug!(
+                        "search cache HIT (mem) plugin={} scope={:?} q={:?} page={}",
+                        key.plugin_id, key.scope, key.query_norm, key.page
+                    );
                     return Some(entry.value.clone());
                 }
             }
@@ -117,7 +126,14 @@ impl SearchCache {
             let bytes = disk.get(DISK_NAMESPACE, &key.disk_key())?;
             match serde_json::from_slice::<Vec<MediaEntry>>(&bytes) {
                 Ok(entries) if !entries.is_empty() => {
-                    debug!("search cache HIT (disk) plugin={} scope={:?} q={:?} page={} n={}", key.plugin_id, key.scope, key.query_norm, key.page, entries.len());
+                    debug!(
+                        "search cache HIT (disk) plugin={} scope={:?} q={:?} page={} n={}",
+                        key.plugin_id,
+                        key.scope,
+                        key.query_norm,
+                        key.page,
+                        entries.len()
+                    );
                     self.inner
                         .write()
                         .await
@@ -131,7 +147,10 @@ impl SearchCache {
                 }
             }
         }
-        debug!("search cache MISS plugin={} scope={:?} q={:?}", key.plugin_id, key.scope, key.query_norm);
+        debug!(
+            "search cache MISS plugin={} scope={:?} q={:?}",
+            key.plugin_id, key.scope, key.query_norm
+        );
         None
     }
 
@@ -141,11 +160,23 @@ impl SearchCache {
     /// rather re-query than lock in a vacant cache entry for 2 hours.
     pub async fn insert(&self, key: SearchKey, items: Vec<MediaEntry>) {
         if items.is_empty() {
-            debug!("search cache SKIP (empty) plugin={} scope={:?} q={:?}", key.plugin_id, key.scope, key.query_norm);
+            debug!(
+                "search cache SKIP (empty) plugin={} scope={:?} q={:?}",
+                key.plugin_id, key.scope, key.query_norm
+            );
             return;
         }
-        debug!("search cache INSERT plugin={} scope={:?} q={:?} n={}", key.plugin_id, key.scope, key.query_norm, items.len());
-        self.inner.write().await.insert(key.clone(), Ttl::new(items.clone(), TTL));
+        debug!(
+            "search cache INSERT plugin={} scope={:?} q={:?} n={}",
+            key.plugin_id,
+            key.scope,
+            key.query_norm,
+            items.len()
+        );
+        self.inner
+            .write()
+            .await
+            .insert(key.clone(), Ttl::new(items.clone(), TTL));
         if let Some(disk) = &self.disk {
             match serde_json::to_vec(&items) {
                 Ok(bytes) => {
@@ -178,7 +209,9 @@ impl SearchCache {
 }
 
 impl Default for SearchCache {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -189,7 +222,10 @@ mod tests {
     fn key_includes_scope_and_plugin() {
         let k1 = SearchKey::new("discogs", "creep", SearchScope::Track, 0);
         let k2 = SearchKey::new("discogs", "creep", SearchScope::Artist, 0);
-        assert_ne!(k1, k2, "same plugin+query but different scope → different key");
+        assert_ne!(
+            k1, k2,
+            "same plugin+query but different scope → different key"
+        );
     }
 
     #[test]

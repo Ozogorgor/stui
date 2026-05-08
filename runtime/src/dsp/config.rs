@@ -382,30 +382,32 @@ pub enum EqFilterType {
 }
 
 impl Default for EqFilterType {
-    fn default() -> Self { Self::Peak }
+    fn default() -> Self {
+        Self::Peak
+    }
 }
 
 /// A single parametric EQ band.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqBand {
-    pub enabled:     bool,
+    pub enabled: bool,
     pub filter_type: EqFilterType,
     /// Center/corner frequency in Hz (clamped 20.0–20000.0).
-    pub freq:        f32,
+    pub freq: f32,
     /// Gain in dB (clamped ±20.0). Ignored for LowPass, HighPass, Notch.
-    pub gain_db:     f32,
+    pub gain_db: f32,
     /// Q factor (clamped 0.1–10.0).
-    pub q:           f32,
+    pub q: f32,
 }
 
 impl Default for EqBand {
     fn default() -> Self {
         Self {
-            enabled:     true,
+            enabled: true,
             filter_type: EqFilterType::Peak,
-            freq:        1000.0,
-            gain_db:     0.0,
-            q:           1.0,
+            freq: 1000.0,
+            gain_db: 0.0,
+            q: 1.0,
         }
     }
 }
@@ -551,11 +553,11 @@ mod eq_config_tests {
     #[test]
     fn eq_band_roundtrip() {
         let band = EqBand {
-            enabled:     true,
+            enabled: true,
             filter_type: EqFilterType::Peak,
-            freq:        1000.0,
-            gain_db:     3.0,
-            q:           1.0,
+            freq: 1000.0,
+            gain_db: 3.0,
+            q: 1.0,
         };
         let json = serde_json::to_string(&band).unwrap();
         let back: EqBand = serde_json::from_str(&json).unwrap();

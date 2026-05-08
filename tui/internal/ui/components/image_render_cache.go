@@ -37,11 +37,12 @@ import (
 // never match them.
 //
 // History:
-//   mosaic-v1 → first chafa→mosaic swap; cells were under-sized
-//   mosaic-v2 → fixed pixel↔cell math (Width/Height take pixels = cells*2)
-//   mosaic-v3 → aspect-preserving fit (was stretching to fill, distorting posters)
-//   mosaic-v4 → center horizontally + vertically inside the cell box
-//   mosaic-v5 → reverted padding; layout owners (card.go) center via lipgloss
+//
+//	mosaic-v1 → first chafa→mosaic swap; cells were under-sized
+//	mosaic-v2 → fixed pixel↔cell math (Width/Height take pixels = cells*2)
+//	mosaic-v3 → aspect-preserving fit (was stretching to fill, distorting posters)
+//	mosaic-v4 → center horizontally + vertically inside the cell box
+//	mosaic-v5 → reverted padding; layout owners (card.go) center via lipgloss
 const cacheKeySalt = "mosaic-v5"
 
 // imageRenderCacheDirCached is computed once on first call so we don't

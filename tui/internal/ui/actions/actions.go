@@ -62,11 +62,11 @@ const (
 	ActionOpenHelp
 
 	// ── Player — transport ────────────────────────────────────────────────
-	ActionPlayerPause       // toggle pause
-	ActionPlayerSeekFwd     // +10s
-	ActionPlayerSeekBack    // -10s
-	ActionPlayerSeekFwdLong // +60s
-	ActionPlayerSeekBackLong// -60s
+	ActionPlayerPause        // toggle pause
+	ActionPlayerSeekFwd      // +10s
+	ActionPlayerSeekBack     // -10s
+	ActionPlayerSeekFwdLong  // +60s
+	ActionPlayerSeekBackLong // -60s
 	ActionPlayerStop
 	ActionPlayerFullscreen
 	ActionPlayerScreenshot
@@ -77,25 +77,25 @@ const (
 	ActionVolumeMute
 
 	// ── Player — subtitles ────────────────────────────────────────────────
-	ActionSubtitleCycle     // cycle to next track
-	ActionSubtitleOff       // disable subtitles
-	ActionSubDelayPlus      // +0.1s
-	ActionSubDelayMinus     // -0.1s
+	ActionSubtitleCycle // cycle to next track
+	ActionSubtitleOff   // disable subtitles
+	ActionSubDelayPlus  // +0.1s
+	ActionSubDelayMinus // -0.1s
 	ActionSubDelayReset
 
 	// ── Player — audio ────────────────────────────────────────────────────
-	ActionAudioPicker       // open audio track picker screen
-	ActionAudioCycle        // cycle to next audio track
-	ActionAudioDelayPlus    // +0.1s
-	ActionAudioDelayMinus   // -0.1s
+	ActionAudioPicker     // open audio track picker screen
+	ActionAudioCycle      // cycle to next audio track
+	ActionAudioDelayPlus  // +0.1s
+	ActionAudioDelayMinus // -0.1s
 	ActionAudioDelayReset
 
 	// ── Player — stream switching ─────────────────────────────────────────
-	ActionStreamSwitch      // open stream picker
-	ActionStreamNext        // auto-switch to next candidate
+	ActionStreamSwitch // open stream picker
+	ActionStreamNext   // auto-switch to next candidate
 
 	// ── Skip detection ────────────────────────────────────────────────────
-	ActionSkipIntro         // skip detected intro or credits segment
+	ActionSkipIntro // skip detected intro or credits segment
 
 	// Sentinel for range checks
 	actionMax
@@ -104,49 +104,92 @@ const (
 // String returns a human-readable name for the action (useful for logging).
 func (a AppAction) String() string {
 	switch a {
-	case ActionNone:             return "none"
-	case ActionNavigateUp:       return "navigate_up"
-	case ActionNavigateDown:     return "navigate_down"
-	case ActionNavigateLeft:     return "navigate_left"
-	case ActionNavigateRight:    return "navigate_right"
-	case ActionSelect:           return "select"
-	case ActionBack:             return "back"
-	case ActionQuit:             return "quit"
-	case ActionTab1:             return "tab_movies"
-	case ActionTab2:             return "tab_series"
-	case ActionTab3:             return "tab_music"
-	case ActionTab4:             return "tab_library"
-	case ActionTab5:             return "tab_collections"
-	case ActionNextTab:          return "next_tab"
-	case ActionPrevTab:          return "prev_tab"
-	case ActionOpenSearch:       return "open_search"
-	case ActionOpenSettings:     return "open_settings"
-	case ActionOpenHelp:         return "open_help"
-	case ActionPlayerPause:      return "player_pause"
-	case ActionPlayerSeekFwd:    return "player_seek_fwd"
-	case ActionPlayerSeekBack:   return "player_seek_back"
-	case ActionPlayerSeekFwdLong:  return "player_seek_fwd_long"
-	case ActionPlayerSeekBackLong: return "player_seek_back_long"
-	case ActionPlayerStop:       return "player_stop"
-	case ActionPlayerFullscreen: return "player_fullscreen"
-	case ActionPlayerScreenshot: return "player_screenshot"
-	case ActionVolumeUp:         return "volume_up"
-	case ActionVolumeDown:       return "volume_down"
-	case ActionVolumeMute:       return "volume_mute"
-	case ActionSubtitleCycle:    return "subtitle_cycle"
-	case ActionSubtitleOff:      return "subtitle_off"
-	case ActionSubDelayPlus:     return "sub_delay_plus"
-	case ActionSubDelayMinus:    return "sub_delay_minus"
-	case ActionSubDelayReset:    return "sub_delay_reset"
-	case ActionAudioPicker:      return "audio_picker"
-	case ActionAudioCycle:       return "audio_cycle"
-	case ActionAudioDelayPlus:   return "audio_delay_plus"
-	case ActionAudioDelayMinus:  return "audio_delay_minus"
-	case ActionAudioDelayReset:  return "audio_delay_reset"
-	case ActionStreamSwitch:     return "stream_switch"
-	case ActionStreamNext:       return "stream_next"
-	case ActionSkipIntro:        return "skip_intro"
-	default:                     return "unknown"
+	case ActionNone:
+		return "none"
+	case ActionNavigateUp:
+		return "navigate_up"
+	case ActionNavigateDown:
+		return "navigate_down"
+	case ActionNavigateLeft:
+		return "navigate_left"
+	case ActionNavigateRight:
+		return "navigate_right"
+	case ActionSelect:
+		return "select"
+	case ActionBack:
+		return "back"
+	case ActionQuit:
+		return "quit"
+	case ActionTab1:
+		return "tab_movies"
+	case ActionTab2:
+		return "tab_series"
+	case ActionTab3:
+		return "tab_music"
+	case ActionTab4:
+		return "tab_library"
+	case ActionTab5:
+		return "tab_collections"
+	case ActionNextTab:
+		return "next_tab"
+	case ActionPrevTab:
+		return "prev_tab"
+	case ActionOpenSearch:
+		return "open_search"
+	case ActionOpenSettings:
+		return "open_settings"
+	case ActionOpenHelp:
+		return "open_help"
+	case ActionPlayerPause:
+		return "player_pause"
+	case ActionPlayerSeekFwd:
+		return "player_seek_fwd"
+	case ActionPlayerSeekBack:
+		return "player_seek_back"
+	case ActionPlayerSeekFwdLong:
+		return "player_seek_fwd_long"
+	case ActionPlayerSeekBackLong:
+		return "player_seek_back_long"
+	case ActionPlayerStop:
+		return "player_stop"
+	case ActionPlayerFullscreen:
+		return "player_fullscreen"
+	case ActionPlayerScreenshot:
+		return "player_screenshot"
+	case ActionVolumeUp:
+		return "volume_up"
+	case ActionVolumeDown:
+		return "volume_down"
+	case ActionVolumeMute:
+		return "volume_mute"
+	case ActionSubtitleCycle:
+		return "subtitle_cycle"
+	case ActionSubtitleOff:
+		return "subtitle_off"
+	case ActionSubDelayPlus:
+		return "sub_delay_plus"
+	case ActionSubDelayMinus:
+		return "sub_delay_minus"
+	case ActionSubDelayReset:
+		return "sub_delay_reset"
+	case ActionAudioPicker:
+		return "audio_picker"
+	case ActionAudioCycle:
+		return "audio_cycle"
+	case ActionAudioDelayPlus:
+		return "audio_delay_plus"
+	case ActionAudioDelayMinus:
+		return "audio_delay_minus"
+	case ActionAudioDelayReset:
+		return "audio_delay_reset"
+	case ActionStreamSwitch:
+		return "stream_switch"
+	case ActionStreamNext:
+		return "stream_next"
+	case ActionSkipIntro:
+		return "skip_intro"
+	default:
+		return "unknown"
 	}
 }
 
@@ -161,17 +204,17 @@ func (a AppAction) IsPlayerAction() bool {
 // In the future this could be read from the config file.
 var defaultKeyMap = map[string]AppAction{
 	// Navigation
-	"up":    ActionNavigateUp,
-	"k":     ActionNavigateUp,
-	"down":  ActionNavigateDown,
-	"j":     ActionNavigateDown,
-	"left":  ActionNavigateLeft,
-	"h":     ActionNavigateLeft,
-	"right": ActionNavigateRight,
-	"l":     ActionNavigateRight,
-	"enter": ActionSelect,
-	"esc":   ActionBack,
-	"q":     ActionQuit,
+	"up":     ActionNavigateUp,
+	"k":      ActionNavigateUp,
+	"down":   ActionNavigateDown,
+	"j":      ActionNavigateDown,
+	"left":   ActionNavigateLeft,
+	"h":      ActionNavigateLeft,
+	"right":  ActionNavigateRight,
+	"l":      ActionNavigateRight,
+	"enter":  ActionSelect,
+	"esc":    ActionBack,
+	"q":      ActionQuit,
 	"ctrl+c": ActionQuit,
 
 	// Tabs
@@ -414,7 +457,7 @@ func GroupedHelp() []ActionGroup {
 				{"z / Z", "Sub delay ±0.1s"},
 				{"X", "Reset sub delay"},
 				{"A", "Pick audio track"},
-			{"a", "Cycle audio track"},
+				{"a", "Cycle audio track"},
 				{"⌃] / ⌃[", "Audio delay ±0.1s"},
 			},
 		},

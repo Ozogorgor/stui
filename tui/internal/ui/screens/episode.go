@@ -29,16 +29,16 @@ import (
 // To open: screen.TransitionCmd(NewEpisodeScreen(...), true)
 type EpisodeScreen struct {
 	Dims
-	client       *ipc.Client
-	title        string
-	seriesID     string
-	idSource     string // "tmdb" / "tvdb" / "anilist" / etc — empty = let runtime guess
-	year         string // free-form year/year-range — purely for the header meta line
-	genre        string // first-genre snippet — feeds the poster placeholder + meta line
-	rating       string // pre-formatted star rating, e.g. "8.7"
-	posterURL    string // remote poster URL (mediaheader handles cache + chafa)
-	posterArt    string // pre-rendered block art (rare); takes precedence over URL
-	backdropURL  string // optional; rendered under the season list when cached
+	client      *ipc.Client
+	title       string
+	seriesID    string
+	idSource    string // "tmdb" / "tvdb" / "anilist" / etc — empty = let runtime guess
+	year        string // free-form year/year-range — purely for the header meta line
+	genre       string // first-genre snippet — feeds the poster placeholder + meta line
+	rating      string // pre-formatted star rating, e.g. "8.7"
+	posterURL   string // remote poster URL (mediaheader handles cache + chafa)
+	posterArt   string // pre-rendered block art (rare); takes precedence over URL
+	backdropURL string // optional; rendered under the season list when cached
 	// seasonIDs (parallel to seasons): provider-native id for each
 	// season slot. Empty means "use seriesID for every season" (TMDB
 	// style); non-empty means "each season has its own native id"
@@ -97,7 +97,7 @@ func NewEpisodeScreen(client *ipc.Client, title, seriesID, idSource string, auto
 		posterArt:    opts.PosterArt,
 		backdropURL:  opts.BackdropURL,
 		seasonIDs:    append([]string(nil), opts.SeasonIDs...),
-		loading: true,
+		loading:      true,
 		seasons:      seasonsOrDefault(opts.Seasons),
 		bingeEnabled: autoplayDefault,
 		spinner:      *components.NewSpinner("loading episodes…", dimStyle),
@@ -238,7 +238,7 @@ func (s *EpisodeScreen) loadSeason(idx int) {
 	s.episodes = nil
 	if s.client != nil {
 		id, season := s.episodeRequestFor(s.seasonCursor)
-	s.client.LoadEpisodes(id, s.idSource, season, nil)
+		s.client.LoadEpisodes(id, s.idSource, season, nil)
 	}
 }
 
@@ -539,4 +539,3 @@ func (s EpisodeScreen) renderListPanel(acc, dim lipgloss.Style, seasonW int) str
 		content, " ", components.Scrollbar(start, panelH, total),
 	)
 }
-

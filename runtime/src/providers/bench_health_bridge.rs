@@ -30,7 +30,11 @@ impl BenchHealthBridge {
         Self::with_config(health, 3, 1.0)
     }
 
-    pub fn with_config(health: HealthRegistry, streak_threshold: u32, slow_mbps_threshold: f64) -> Self {
+    pub fn with_config(
+        health: HealthRegistry,
+        streak_threshold: u32,
+        slow_mbps_threshold: f64,
+    ) -> Self {
         Self {
             health,
             streaks: Mutex::new(HashMap::new()),
@@ -99,7 +103,10 @@ mod tests {
         bridge.record(&stream);
         bridge.record(&stream);
         let s = stats(&bridge, "prov");
-        assert_eq!(s.request_count, 0, "neutral results must not touch health registry");
+        assert_eq!(
+            s.request_count, 0,
+            "neutral results must not touch health registry"
+        );
     }
 
     #[test]
@@ -108,7 +115,10 @@ mod tests {
         bridge.record(&make_stream("prov", Some(0.5), None));
         bridge.record(&make_stream("prov", Some(0.5), None));
         let s = stats(&bridge, "prov");
-        assert_eq!(s.failure_count, 0, "failure must not fire before streak_threshold");
+        assert_eq!(
+            s.failure_count, 0,
+            "failure must not fire before streak_threshold"
+        );
         assert_eq!(s.request_count, 0);
     }
 
@@ -122,7 +132,11 @@ mod tests {
         assert_eq!(s.failure_count, 1, "exactly one failure on Nth bad result");
         bridge.record(&make_stream("prov", Some(0.5), None));
         bridge.record(&make_stream("prov", Some(0.5), None));
-        assert_eq!(stats(&bridge, "prov").failure_count, 1, "streak must reset to 0 after firing");
+        assert_eq!(
+            stats(&bridge, "prov").failure_count,
+            1,
+            "streak must reset to 0 after firing"
+        );
     }
 
     #[test]
@@ -132,7 +146,10 @@ mod tests {
         bridge.record(&make_stream("prov", Some(0.5), None));
         bridge.record(&make_stream("prov", Some(10.0), Some(50)));
         let s = stats(&bridge, "prov");
-        assert_eq!(s.failure_count, 0, "good result must prevent failure from firing");
+        assert_eq!(
+            s.failure_count, 0,
+            "good result must prevent failure from firing"
+        );
         assert_eq!(s.success_count, 1, "good result must record a success");
         bridge.record(&make_stream("prov", Some(0.5), None));
         bridge.record(&make_stream("prov", Some(0.5), None));
@@ -145,7 +162,11 @@ mod tests {
         bridge.record(&make_stream("prov", Some(5.0), Some(45)));
         let s = stats(&bridge, "prov");
         assert_eq!(s.success_count, 1);
-        assert_eq!(s.latency_sum_ms(), 45, "latency_ms must be forwarded to health registry");
+        assert_eq!(
+            s.latency_sum_ms(),
+            45,
+            "latency_ms must be forwarded to health registry"
+        );
     }
 
     #[test]
@@ -154,7 +175,11 @@ mod tests {
         bridge.record(&make_stream("prov", Some(5.0), None));
         let s = stats(&bridge, "prov");
         assert_eq!(s.success_count, 1);
-        assert_eq!(s.latency_sum_ms(), 0, "None latency must become 0, not panic");
+        assert_eq!(
+            s.latency_sum_ms(),
+            0,
+            "None latency must become 0, not panic"
+        );
     }
 
     #[test]

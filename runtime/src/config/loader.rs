@@ -118,8 +118,8 @@ pub(crate) fn merge_metadata_source_defaults(cfg: &mut RuntimeConfig) {
     let canonical = MetadataSources::default();
     append_missing(&mut cfg.metadata.sources.movies, &canonical.movies);
     append_missing(&mut cfg.metadata.sources.series, &canonical.series);
-    append_missing(&mut cfg.metadata.sources.anime,  &canonical.anime);
-    append_missing(&mut cfg.metadata.sources.music,  &canonical.music);
+    append_missing(&mut cfg.metadata.sources.anime, &canonical.anime);
+    append_missing(&mut cfg.metadata.sources.music, &canonical.music);
 }
 
 fn append_missing(user: &mut Vec<String>, canonical: &[String]) {

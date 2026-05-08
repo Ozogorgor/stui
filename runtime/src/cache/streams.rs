@@ -32,7 +32,9 @@ pub struct StreamCache {
 impl StreamCache {
     #[allow(dead_code)] // pub API: used by engine stream resolution cache
     pub fn new() -> Self {
-        StreamCache { inner: Arc::new(RwLock::new(HashMap::new())) }
+        StreamCache {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     #[allow(dead_code)] // pub API: used by engine stream resolution cache
@@ -69,5 +71,7 @@ impl StreamCache {
 }
 
 impl Default for StreamCache {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

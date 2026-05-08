@@ -47,19 +47,19 @@ type SharedAuthPhase = Arc<tokio::sync::Mutex<AuthPhase>>;
 #[allow(clippy::type_complexity)]
 pub struct PluginProcess {
     /// Handshake info: name, version, capabilities.
-    pub info:      PluginHandshake,
+    pub info: PluginHandshake,
     /// Notified when the plugin process exits (stdout EOF).
     /// The supervisor awaits this to trigger restart logic.
     pub death_notify: Arc<Notify>,
     /// OS process ID, captured before the child handle is moved.
-    pub pid:          Option<u32>,
+    pub pid: Option<u32>,
 
-    stdin_tx:      mpsc::UnboundedSender<String>,
+    stdin_tx: mpsc::UnboundedSender<String>,
     #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
-    auth_phase:    SharedAuthPhase,
+    auth_phase: SharedAuthPhase,
     /// Pending calls: correlation-id → response sender.
-    pending:       Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
-    _child:        Arc<Mutex<Child>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>>,
+    _child: Arc<Mutex<Child>>,
 }
 
 impl PluginProcess {
@@ -74,9 +74,9 @@ impl PluginProcess {
             .spawn()
             .with_context(|| format!("failed to spawn plugin: {}", bin.display()))?;
 
-        let stdin  = child.stdin.take().context("no stdin on plugin process")?;
+        let stdin = child.stdin.take().context("no stdin on plugin process")?;
         let stdout = child.stdout.take().context("no stdout on plugin process")?;
-        let pid    = child.id();
+        let pid = child.id();
 
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
         tokio::spawn(async move {
@@ -92,18 +92,20 @@ impl PluginProcess {
         let pending: Arc<Mutex<HashMap<String, oneshot::Sender<RpcResponse>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let death_notify = Arc::new(Notify::new());
-        let child        = Arc::new(Mutex::new(child));
+        let child = Arc::new(Mutex::new(child));
 
         // Spawn the reader task — reads NDJSON lines and routes them to waiters.
         // When stdout closes (process exited), the loop ends and we fire death_notify.
-        let pending_rx     = Arc::clone(&pending);
-        let death_notify2  = Arc::clone(&death_notify);
-        let stdin_tx_loop  = stdin_tx.clone();
+        let pending_rx = Arc::clone(&pending);
+        let death_notify2 = Arc::clone(&death_notify);
+        let stdin_tx_loop = stdin_tx.clone();
         let auth_phase_loop = Arc::clone(&auth_phase);
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 if let Ok(action) = serde_json::from_str::<ActionRequest>(&line) {
                     tokio::spawn(handle_action(
                         action,
@@ -128,26 +130,28 @@ impl PluginProcess {
         });
 
         let mut proc = PluginProcess {
-            info:         PluginHandshake {
-                name:         "unknown".into(),
-                version:      "0.0.0".into(),
+            info: PluginHandshake {
+                name: "unknown".into(),
+                version: "0.0.0".into(),
                 capabilities: vec![],
-                description:  None,
+                description: None,
             },
             death_notify,
             pid,
             stdin_tx,
             auth_phase,
             pending,
-            _child:       child,
+            _child: child,
         };
 
         // Perform the handshake to get name/version/capabilities.
-        let hs_resp = proc.call("handshake", serde_json::json!({})).await
+        let hs_resp = proc
+            .call("handshake", serde_json::json!({}))
+            .await
             .context("handshake failed")?;
 
-        let hs: PluginHandshake = serde_json::from_value(hs_resp)
-            .context("invalid handshake response")?;
+        let hs: PluginHandshake =
+            serde_json::from_value(hs_resp).context("invalid handshake response")?;
 
         info!(
             plugin = %hs.name,
@@ -162,8 +166,12 @@ impl PluginProcess {
 
     /// Send an RPC call and wait for the response (up to 30 seconds).
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let id  = Uuid::new_v4().to_string();
-        let req = RpcRequest { id: id.clone(), method: method.to_string(), params };
+        let id = Uuid::new_v4().to_string();
+        let req = RpcRequest {
+            id: id.clone(),
+            method: method.to_string(),
+            params,
+        };
         let line = serde_json::to_string(&req).context("serialize request")?;
 
         let (tx, rx) = oneshot::channel();
@@ -175,13 +183,10 @@ impl PluginProcess {
 
         debug!(method, id, "rpc call sent");
 
-        let resp = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            rx,
-        )
-        .await
-        .context("plugin call timed out")?
-        .context("plugin channel closed")?;
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
+            .await
+            .context("plugin call timed out")?
+            .context("plugin channel closed")?;
 
         if let Some(err) = resp.error {
             bail!("plugin error {}: {}", err.code, err.message);
@@ -207,7 +212,7 @@ impl PluginProcess {
     ) -> Result<Vec<RpcMediaItem>> {
         let params = serde_json::to_value(CatalogSearchParams {
             query: query.to_string(),
-            tab:   tab.to_string(),
+            tab: tab.to_string(),
             page,
         })?;
         let val = self.call("catalog.search", params).await?;
@@ -247,7 +252,10 @@ async fn handle_action(
             {
                 let phase = auth_phase.lock().await;
                 if matches!(*phase, AuthPhase::InProgress) {
-                    send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                    send_response(
+                        &stdin_tx,
+                        ActionResponse::err(&req.id, "auth_already_in_progress"),
+                    );
                     return;
                 }
             } // lock released before await
@@ -256,7 +264,10 @@ async fn handle_action(
                 Ok((port, rx)) => {
                     let mut phase = auth_phase.lock().await;
                     if matches!(*phase, AuthPhase::InProgress) {
-                        send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                        send_response(
+                            &stdin_tx,
+                            ActionResponse::err(&req.id, "auth_already_in_progress"),
+                        );
                         return;
                     }
                     *phase = AuthPhase::Allocated(rx);
@@ -292,7 +303,10 @@ async fn handle_action(
                     }
                     AuthPhase::InProgress => {
                         *phase = AuthPhase::InProgress;
-                        send_response(&stdin_tx, ActionResponse::err(&req.id, "auth_already_in_progress"));
+                        send_response(
+                            &stdin_tx,
+                            ActionResponse::err(&req.id, "auth_already_in_progress"),
+                        );
                         return;
                     }
                 }
@@ -302,7 +316,8 @@ async fn handle_action(
                 &url,
                 receiver,
                 std::time::Duration::from_millis(timeout_ms),
-            ).await;
+            )
+            .await;
 
             *auth_phase.lock().await = AuthPhase::Idle;
 
@@ -311,14 +326,16 @@ async fn handle_action(
                     &req.id,
                     serde_json::json!({"code": cb.code, "state": cb.state}),
                 ),
-                Err(crate::auth::AuthError::TimedOut) =>
-                    ActionResponse::err(&req.id, "timed_out"),
-                Err(crate::auth::AuthError::Denied { message }) =>
-                    ActionResponse::err(&req.id, format!("denied: {message}")),
-                Err(crate::auth::AuthError::BrowserOpenFailed(m)) =>
-                    ActionResponse::err(&req.id, format!("browser_open_failed: {m}")),
-                Err(crate::auth::AuthError::ReceiverDropped) =>
-                    ActionResponse::err(&req.id, "timed_out"),
+                Err(crate::auth::AuthError::TimedOut) => ActionResponse::err(&req.id, "timed_out"),
+                Err(crate::auth::AuthError::Denied { message }) => {
+                    ActionResponse::err(&req.id, format!("denied: {message}"))
+                }
+                Err(crate::auth::AuthError::BrowserOpenFailed(m)) => {
+                    ActionResponse::err(&req.id, format!("browser_open_failed: {m}"))
+                }
+                Err(crate::auth::AuthError::ReceiverDropped) => {
+                    ActionResponse::err(&req.id, "timed_out")
+                }
             }
         }
 
@@ -329,10 +346,7 @@ async fn handle_action(
 }
 
 #[allow(dead_code)] // pub API: plugin RPC process, used by supervisor
-fn send_response(
-    stdin_tx: &mpsc::UnboundedSender<String>,
-    resp: ActionResponse,
-) {
+fn send_response(stdin_tx: &mpsc::UnboundedSender<String>, resp: ActionResponse) {
     if let Ok(line) = serde_json::to_string(&resp) {
         let _ = stdin_tx.send(format!("{line}\n"));
     }
@@ -342,7 +356,9 @@ fn send_response(
 mod tests {
     use super::*;
 
-    fn idle() -> AuthPhase { AuthPhase::Idle }
+    fn idle() -> AuthPhase {
+        AuthPhase::Idle
+    }
 
     #[test]
     fn test_auth_phase_transitions() {

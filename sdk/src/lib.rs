@@ -926,7 +926,7 @@ pub mod testing {
     thread_local! {
         static FIXTURES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
         static CACHE: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-        static HTTP_CALL_COUNT: Cell<u32> = Cell::new(0);
+        static HTTP_CALL_COUNT: Cell<u32> = const { Cell::new(0) };
     }
 
     /// Handle for registering canned HTTP responses. See module doc.

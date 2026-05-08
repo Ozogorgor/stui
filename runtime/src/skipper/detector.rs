@@ -4,50 +4,54 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::config::types::SkipperConfig;
-use super::fingerprint;
 use super::analyzer::{self, Segment};
+use super::fingerprint;
 use super::store::SkipperStore;
-use super::video_analysis;
 use super::text_analysis;
+use super::video_analysis;
+use crate::config::types::SkipperConfig;
 
 #[derive(serde::Serialize)]
 struct SkipSegmentWire {
-    r#type:         &'static str,  // always "skip_segment"
-    segment_type:   &'static str,  // "intro" | "credits"
-    start:          f64,
-    end:            f64,
+    r#type: &'static str,       // always "skip_segment"
+    segment_type: &'static str, // "intro" | "credits"
+    start: f64,
+    end: f64,
     /// For credits: start/end are seconds-from-end. For intro: false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    from_end:       bool,
+    from_end: bool,
 }
 
 /// Background intro/credits detector.
 pub struct Skipper {
     config: Arc<RwLock<SkipperConfig>>,
-    store:  SkipperStore,
+    store: SkipperStore,
     ipc_tx: mpsc::Sender<String>,
 }
 
 impl Skipper {
     /// Get video duration using ffprobe with timeout.
     async fn get_video_duration(url: &str) -> Option<f64> {
-        use tokio::time::timeout;
         use std::time::Duration;
-        
+        use tokio::time::timeout;
+
         let result = timeout(
             Duration::from_secs(10),
             tokio::process::Command::new("ffprobe")
                 .args([
-                    "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
                     url,
                 ])
                 .kill_on_drop(true)
-                .output()
-        ).await;
-        
+                .output(),
+        )
+        .await;
+
         match result {
             Ok(Ok(output)) => {
                 if output.status.success() {
@@ -57,14 +61,20 @@ impl Skipper {
                     None
                 }
             }
-            Ok(Err(e)) => { debug!(error = %e, "ffprobe failed"); None }
-            Err(_) => { debug!("ffprobe timed out"); None }
+            Ok(Err(e)) => {
+                debug!(error = %e, "ffprobe failed");
+                None
+            }
+            Err(_) => {
+                debug!("ffprobe timed out");
+                None
+            }
         }
     }
 
     pub fn new(
         config: SkipperConfig,
-        store:  SkipperStore,
+        store: SkipperStore,
         ipc_tx: mpsc::Sender<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -83,7 +93,9 @@ impl Skipper {
     /// Main entry point — spawned in background when a play request fires.
     pub async fn analyze(&self, url: &str, entry_id: &str, imdb_id: &str) {
         let cfg = self.config.read().await.clone();
-        if !cfg.enabled { return; }
+        if !cfg.enabled {
+            return;
+        }
 
         // Only HTTP/HTTPS — skip magnets/local paths
         if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -91,7 +103,7 @@ impl Skipper {
             return;
         }
 
-        let series_id  = derive_series_id(entry_id, imdb_id);
+        let series_id = derive_series_id(entry_id, imdb_id);
         let episode_id = entry_id.to_string();
 
         info!(series_id, episode_id, "skipper: starting analysis");
@@ -136,9 +148,16 @@ impl Skipper {
 
         // Persist fingerprints regardless of comparison outcome
         if intro_fp.is_some() || credits_fp.is_some() {
-            if let Err(e) = self.store.save_fp(
-                &series_id, &episode_id, intro_fp.clone(), credits_fp.clone(),
-            ).await {
+            if let Err(e) = self
+                .store
+                .save_fp(
+                    &series_id,
+                    &episode_id,
+                    intro_fp.clone(),
+                    credits_fp.clone(),
+                )
+                .await
+            {
                 warn!(error=%e, "skipper: failed to save fingerprints");
             }
         }
@@ -147,25 +166,34 @@ impl Skipper {
         let others = self.store.load_others(&series_id, &episode_id).await;
 
         if others.len() + 1 < cfg.min_episodes {
-            info!(series_id, have=others.len()+1, need=cfg.min_episodes,
-                  "skipper: not enough episodes yet — waiting for more watches");
+            info!(
+                series_id,
+                have = others.len() + 1,
+                need = cfg.min_episodes,
+                "skipper: not enough episodes yet — waiting for more watches"
+            );
             return;
         }
 
-        let mut det_intro:   Option<Segment> = None;
+        let mut det_intro: Option<Segment> = None;
         let mut det_credits: Option<Segment> = None;
 
         // Intro: all fingerprints anchored at offset 0.0
         if let Some(ref ifp) = intro_fp {
-            let other_intros: Vec<_> = others.iter()
+            let other_intros: Vec<_> = others
+                .iter()
                 .filter_map(|o| o.intro_fp.as_ref().map(|fp| (fp.clone(), 0.0f64)))
                 .collect();
 
             det_intro = analyzer::detect_segment(
-                ifp, 0.0, &other_intros,
-                cfg.min_intro_secs, cfg.max_intro_secs, cfg.similarity_threshold,
+                ifp,
+                0.0,
+                &other_intros,
+                cfg.min_intro_secs,
+                cfg.max_intro_secs,
+                cfg.similarity_threshold,
             );
-            
+
             // Enhance with video/text analysis if available
             if let Some(ref scene) = video_analysis.0 {
                 if let Some(ref intro) = det_intro {
@@ -174,7 +202,11 @@ impl Skipper {
                         // Intro should start near first scene cut
                         let offset = (intro.start - first_cut).abs();
                         if offset < 5.0 {
-                            debug!(intro_start = intro.start, first_cut = first_cut, "intro aligns with scene cut");
+                            debug!(
+                                intro_start = intro.start,
+                                first_cut = first_cut,
+                                "intro aligns with scene cut"
+                            );
                         }
                     }
                 }
@@ -184,13 +216,22 @@ impl Skipper {
             if let Some(ref profile) = video_analysis.1 {
                 // Check for low silence ratio in intro (indicates active content, not black screen)
                 if det_intro.is_some() && profile.silence_ratio < 0.3 {
-                    debug!(silence_ratio = profile.silence_ratio, "intro has active audio");
+                    debug!(
+                        silence_ratio = profile.silence_ratio,
+                        "intro has active audio"
+                    );
                 }
             }
-            
+
             // Validate with text patterns
             if let (Some(ref patterns), Some(ref intro)) = (&text_patterns, &det_intro) {
-                let score = text_analysis::validate_with_patterns(patterns, intro.start, intro.end, "intro", video_duration);
+                let score = text_analysis::validate_with_patterns(
+                    patterns,
+                    intro.start,
+                    intro.end,
+                    "intro",
+                    video_duration,
+                );
                 debug!(validation_score = score, "intro validation");
             }
         }
@@ -198,7 +239,8 @@ impl Skipper {
         // Credits: fingerprints are anchored at offset 0.0 within the credits window;
         // published timestamps are "seconds from end" (handled by TUI with from_end flag).
         if let Some(ref cfp) = credits_fp {
-            let other_credits: Vec<_> = others.iter()
+            let other_credits: Vec<_> = others
+                .iter()
                 .filter_map(|o| o.credits_fp.as_ref().map(|fp| (fp.clone(), 0.0f64)))
                 .collect();
 
@@ -206,64 +248,106 @@ impl Skipper {
             // Text validation runs here, before the from_end flip, because
             // validate_with_patterns and refine_boundaries work in absolute video time.
             let scan = cfg.credits_scan_secs as f64;
-            let window_offset = if video_duration > scan { video_duration - scan } else { 0.0 };
+            let window_offset = if video_duration > scan {
+                video_duration - scan
+            } else {
+                0.0
+            };
 
             let raw_credits = analyzer::detect_segment(
-                cfp, 0.0, &other_credits,
-                cfg.min_credits_secs, cfg.max_credits_secs, cfg.similarity_threshold,
+                cfp,
+                0.0,
+                &other_credits,
+                cfg.min_credits_secs,
+                cfg.max_credits_secs,
+                cfg.similarity_threshold,
             );
 
             // Validate and optionally refine in absolute coordinates.
-            let final_raw = if let (Some(ref patterns), Some(ref seg)) = (&text_patterns, &raw_credits) {
-                let abs_start = window_offset + seg.start;
-                let abs_end   = window_offset + seg.end;
-                let score = text_analysis::validate_with_patterns(patterns, abs_start, abs_end, "credits", video_duration);
-                debug!(validation_score = score, "credits validation");
+            let final_raw =
+                if let (Some(ref patterns), Some(ref seg)) = (&text_patterns, &raw_credits) {
+                    let abs_start = window_offset + seg.start;
+                    let abs_end = window_offset + seg.end;
+                    let score = text_analysis::validate_with_patterns(
+                        patterns,
+                        abs_start,
+                        abs_end,
+                        "credits",
+                        video_duration,
+                    );
+                    debug!(validation_score = score, "credits validation");
 
-                if score > 0.7 {
-                    let (rs, re) = text_analysis::refine_boundaries(patterns, video_duration, abs_start, abs_end, "credits");
-                    let refined_duration = re - rs;
-                    if refined_duration >= cfg.min_credits_secs && refined_duration <= cfg.max_credits_secs {
-                        debug!(refined_start = rs, refined_end = re, "credits refined with patterns");
-                        // Convert refined absolute back to window-relative.
-                        Some(Segment {
-                            start: (rs - window_offset).max(0.0),
-                            end:   (re - window_offset).max(0.0),
-                        })
+                    if score > 0.7 {
+                        let (rs, re) = text_analysis::refine_boundaries(
+                            patterns,
+                            video_duration,
+                            abs_start,
+                            abs_end,
+                            "credits",
+                        );
+                        let refined_duration = re - rs;
+                        if refined_duration >= cfg.min_credits_secs
+                            && refined_duration <= cfg.max_credits_secs
+                        {
+                            debug!(
+                                refined_start = rs,
+                                refined_end = re,
+                                "credits refined with patterns"
+                            );
+                            // Convert refined absolute back to window-relative.
+                            Some(Segment {
+                                start: (rs - window_offset).max(0.0),
+                                end: (re - window_offset).max(0.0),
+                            })
+                        } else {
+                            warn!(
+                                refined_duration,
+                                min = cfg.min_credits_secs,
+                                max = cfg.max_credits_secs,
+                                "refined credits out of bounds, using original"
+                            );
+                            raw_credits.clone()
+                        }
                     } else {
-                        warn!(refined_duration, min = cfg.min_credits_secs, max = cfg.max_credits_secs,
-                              "refined credits out of bounds, using original");
                         raw_credits.clone()
                     }
                 } else {
-                    raw_credits.clone()
-                }
-            } else {
-                raw_credits
-            };
+                    raw_credits
+                };
 
             // Convert window-relative → from_end:
             //   start_from_end = scan - seg.end   (distance from end of video)
             //   end_from_end   = scan - seg.start
             det_credits = final_raw.map(|seg| Segment {
                 start: (scan - seg.end).max(0.0),
-                end:   (scan - seg.start).max(0.0),
+                end: (scan - seg.start).max(0.0),
             });
         }
 
         // Cache and push
-        if let Err(e) = self.store.save_segments(
-            &series_id, &episode_id, det_intro.clone(), det_credits.clone(),
-        ).await {
+        if let Err(e) = self
+            .store
+            .save_segments(
+                &series_id,
+                &episode_id,
+                det_intro.clone(),
+                det_credits.clone(),
+            )
+            .await
+        {
             warn!(error=%e, "skipper: failed to cache segments");
         }
 
         if let Some(ref seg) = det_intro {
-            info!(start=seg.start, end=seg.end, "skipper: intro detected");
+            info!(start = seg.start, end = seg.end, "skipper: intro detected");
             self.push("intro", seg, false).await;
         }
         if let Some(ref seg) = det_credits {
-            info!(start=seg.start, end=seg.end, "skipper: credits detected (from_end)");
+            info!(
+                start = seg.start,
+                end = seg.end,
+                "skipper: credits detected (from_end)"
+            );
             self.push("credits", seg, true).await;
         }
         if det_intro.is_none() && det_credits.is_none() {
@@ -273,10 +357,10 @@ impl Skipper {
 
     async fn push(&self, seg_type: &'static str, seg: &Segment, from_end: bool) {
         let wire = SkipSegmentWire {
-            r#type:       "skip_segment",
+            r#type: "skip_segment",
             segment_type: seg_type,
-            start:        seg.start,
-            end:          seg.end,
+            start: seg.start,
+            end: seg.end,
             from_end,
         };
         if let Ok(json) = serde_json::to_string(&wire) {

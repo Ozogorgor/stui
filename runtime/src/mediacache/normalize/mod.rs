@@ -89,7 +89,10 @@ pub fn normalize(
     }
 
     NormalizedTags {
-        artist, album_artist, album, title,
+        artist,
+        album_artist,
+        album,
+        title,
         year: year::extract_year(&date),
         genre,
         track: rules::parse_track_or_disc(&raw.track),
@@ -101,18 +104,33 @@ pub fn normalize(
 mod tests {
     use super::*;
 
-    fn empty_exceptions() -> ExceptionList { ExceptionList::default() }
+    fn empty_exceptions() -> ExceptionList {
+        ExceptionList::default()
+    }
     fn cfg_on<'a>(ex: &'a ExceptionList) -> NormalizationConfig<'a> {
-        NormalizationConfig { enabled: true, use_lookup: false, exceptions: ex }
+        NormalizationConfig {
+            enabled: true,
+            use_lookup: false,
+            exceptions: ex,
+        }
     }
     fn cfg_off<'a>(ex: &'a ExceptionList) -> NormalizationConfig<'a> {
-        NormalizationConfig { enabled: false, use_lookup: false, exceptions: ex }
+        NormalizationConfig {
+            enabled: false,
+            use_lookup: false,
+            exceptions: ex,
+        }
     }
 
     #[test]
     fn disabled_extracts_year_only() {
-        let raw = RawTags { artist: "pink floyd".into(), album: "the wall".into(),
-            date: "1979-11-30".into(), track: "3/12".into(), ..Default::default() };
+        let raw = RawTags {
+            artist: "pink floyd".into(),
+            album: "the wall".into(),
+            date: "1979-11-30".into(),
+            track: "3/12".into(),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
         let out = normalize(&raw, &cfg_off(&ex), None);
         assert_eq!(out.artist, "pink floyd");
@@ -123,7 +141,11 @@ mod tests {
 
     #[test]
     fn enabled_title_cases() {
-        let raw = RawTags { artist: "pink floyd".into(), album: "the wall".into(), ..Default::default() };
+        let raw = RawTags {
+            artist: "pink floyd".into(),
+            album: "the wall".into(),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
         let out = normalize(&raw, &cfg_on(&ex), None);
         assert_eq!(out.artist, "Pink Floyd");
@@ -132,7 +154,11 @@ mod tests {
 
     #[test]
     fn exception_vetoes_artist() {
-        let raw = RawTags { artist: "deadmau5".into(), album: "random album name".into(), ..Default::default() };
+        let raw = RawTags {
+            artist: "deadmau5".into(),
+            album: "random album name".into(),
+            ..Default::default()
+        };
         let mut ex = ExceptionList::default();
         ex.artist.insert("deadmau5".to_string());
         let out = normalize(&raw, &cfg_on(&ex), None);
@@ -142,7 +168,10 @@ mod tests {
 
     #[test]
     fn unusual_case_preserved_without_exception() {
-        let raw = RawTags { artist: "AC/DC".into(), ..Default::default() };
+        let raw = RawTags {
+            artist: "AC/DC".into(),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
         let out = normalize(&raw, &cfg_on(&ex), None);
         assert_eq!(out.artist, "AC/DC");
@@ -150,20 +179,40 @@ mod tests {
 
     #[test]
     fn lookup_fills_missing_fields() {
-        let raw = RawTags { artist: "pink floyd".into(), ..Default::default() };
-        let look = LookupResult { album: Some("the wall".into()), ..Default::default() };
+        let raw = RawTags {
+            artist: "pink floyd".into(),
+            ..Default::default()
+        };
+        let look = LookupResult {
+            album: Some("the wall".into()),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
-        let cfg = NormalizationConfig { enabled: true, use_lookup: true, exceptions: &ex };
+        let cfg = NormalizationConfig {
+            enabled: true,
+            use_lookup: true,
+            exceptions: &ex,
+        };
         let out = normalize(&raw, &cfg, Some(&look));
         assert_eq!(out.album, "The Wall");
     }
 
     #[test]
     fn lookup_does_not_overwrite() {
-        let raw = RawTags { album: "Already Here".into(), ..Default::default() };
-        let look = LookupResult { album: Some("Different Value".into()), ..Default::default() };
+        let raw = RawTags {
+            album: "Already Here".into(),
+            ..Default::default()
+        };
+        let look = LookupResult {
+            album: Some("Different Value".into()),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
-        let cfg = NormalizationConfig { enabled: true, use_lookup: true, exceptions: &ex };
+        let cfg = NormalizationConfig {
+            enabled: true,
+            use_lookup: true,
+            exceptions: &ex,
+        };
         let out = normalize(&raw, &cfg, Some(&look));
         assert_eq!(out.album, "Already Here");
     }
@@ -171,9 +220,16 @@ mod tests {
     #[test]
     fn lookup_full_date_still_year_extracted() {
         let raw = RawTags::default();
-        let look = LookupResult { year: Some("2017-05-03".into()), ..Default::default() };
+        let look = LookupResult {
+            year: Some("2017-05-03".into()),
+            ..Default::default()
+        };
         let ex = empty_exceptions();
-        let cfg = NormalizationConfig { enabled: true, use_lookup: true, exceptions: &ex };
+        let cfg = NormalizationConfig {
+            enabled: true,
+            use_lookup: true,
+            exceptions: &ex,
+        };
         let out = normalize(&raw, &cfg, Some(&look));
         assert_eq!(out.year, "2017");
     }

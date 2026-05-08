@@ -204,10 +204,10 @@ func (c *Client) LastfmAlbumGetTracks(artist, album string) {
 		// re-parsing.
 		var payload struct {
 			Tracks []struct {
-				Number       uint32 `json:"number"`
-				Title        string `json:"title"`
+				Number       uint32  `json:"number"`
+				Title        string  `json:"title"`
 				DurationSecs *uint32 `json:"duration_secs,omitempty"`
-				Mbid         string `json:"mbid,omitempty"`
+				Mbid         string  `json:"mbid,omitempty"`
 			} `json:"tracks"`
 		}
 		if err := json.Unmarshal(raw.Raw, &payload); err != nil {

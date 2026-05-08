@@ -24,19 +24,19 @@ use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
-use crate::media::MediaItem;
-use crate::media::stream::StreamCandidate;
-use crate::events::{EventBus, RuntimeEvent};
 use super::bridge::PlayerBridge;
 use super::commands::PlayerCommand;
 use super::state::PlaybackState;
+use crate::events::{EventBus, RuntimeEvent};
+use crate::media::stream::StreamCandidate;
+use crate::media::MediaItem;
 
 // ── Queue entry ───────────────────────────────────────────────────────────────
 
 #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
-    pub item:     MediaItem,
+    pub item: MediaItem,
     pub provider: String,
     /// Subtitle file path if already resolved.
     pub sub_path: Option<String>,
@@ -49,35 +49,35 @@ pub struct QueueEntry {
 #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 #[derive(Debug, Clone)]
 pub struct PlaybackRecord {
-    pub item:       MediaItem,
+    pub item: MediaItem,
     pub started_at: Instant,
     pub stopped_at: Option<Instant>,
     /// Last known position when playback ended.
-    pub position:   f64,
-    pub completed:  bool,
+    pub position: f64,
+    pub completed: bool,
 }
 
 // ── PlayerManager ─────────────────────────────────────────────────────────────
 
 #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
 pub struct PlayerManager {
-    bridge:  PlayerBridge,
-    inner:   Arc<Mutex<ManagerState>>,
-    ipc_tx:  mpsc::Sender<String>,
-    bus:     Arc<EventBus>,
+    bridge: PlayerBridge,
+    inner: Arc<Mutex<ManagerState>>,
+    ipc_tx: mpsc::Sender<String>,
+    bus: Arc<EventBus>,
 }
 
 #[allow(dead_code)] // planned: PlayerManager pub API, fields read when manager is wired in
 struct ManagerState {
-    queue:      VecDeque<QueueEntry>,
-    current:    Option<QueueEntry>,
-    history:    Vec<PlaybackRecord>,
+    queue: VecDeque<QueueEntry>,
+    current: Option<QueueEntry>,
+    history: Vec<PlaybackRecord>,
     /// Ranked stream candidates for the currently playing item.
     candidates: Vec<StreamCandidate>,
     /// Index into `candidates` of the active stream.
     active_idx: usize,
     /// Current playback state snapshot (updated from MpvEvent::Progress).
-    state:      PlaybackState,
+    state: PlaybackState,
 }
 
 #[allow(dead_code)] // planned: PlayerManager pub API, wired in by TUI/IPC layer
@@ -89,12 +89,12 @@ impl PlayerManager {
             ipc_tx,
             bus,
             inner: Arc::new(Mutex::new(ManagerState {
-                queue:      VecDeque::new(),
-                current:    None,
-                history:    Vec::new(),
+                queue: VecDeque::new(),
+                current: None,
+                history: Vec::new(),
                 candidates: vec![],
                 active_idx: 0,
-                state:      PlaybackState::default(),
+                state: PlaybackState::default(),
             })),
         }
     }
@@ -126,20 +126,23 @@ impl PlayerManager {
         tracing::debug!("player command: {}", cmd_name);
 
         let result: Result<(), String> = match cmd {
-            Pause              => self.bridge.mpv().set_pause(true).await,
-            Resume             => self.bridge.mpv().set_pause(false).await,
-            TogglePause        => self.bridge.mpv().toggle_pause().await,
-            Stop               => { self.stop().await; Ok(()) }
-            Seek { seconds }   => self.bridge.mpv().seek_relative(seconds).await,
+            Pause => self.bridge.mpv().set_pause(true).await,
+            Resume => self.bridge.mpv().set_pause(false).await,
+            TogglePause => self.bridge.mpv().toggle_pause().await,
+            Stop => {
+                self.stop().await;
+                Ok(())
+            }
+            Seek { seconds } => self.bridge.mpv().seek_relative(seconds).await,
             SeekAbsolute { seconds } => self.bridge.mpv().seek_absolute(seconds).await,
 
-            SetVolume { level }    => self.bridge.mpv().set_volume(level).await,
+            SetVolume { level } => self.bridge.mpv().set_volume(level).await,
             AdjustVolume { delta } => self.bridge.mpv().adjust_volume(delta).await,
-            ToggleMute             => self.bridge.mpv().toggle_mute().await,
+            ToggleMute => self.bridge.mpv().toggle_mute().await,
 
-            SetSubtitleTrack { id }       => self.bridge.mpv().set_subtitle_track(id).await,
-            DisableSubtitles              => self.bridge.mpv().disable_subtitles().await,
-            CycleSubtitles                => self.bridge.mpv().cycle_subtitles().await,
+            SetSubtitleTrack { id } => self.bridge.mpv().set_subtitle_track(id).await,
+            DisableSubtitles => self.bridge.mpv().disable_subtitles().await,
+            CycleSubtitles => self.bridge.mpv().cycle_subtitles().await,
             AdjustSubtitleDelay { delta } => {
                 self.inner.lock().await.state.subtitle_delay += delta;
                 self.bridge.mpv().adjust_sub_delay(delta).await
@@ -150,9 +153,9 @@ impl PlayerManager {
             }
             LoadSubtitle { path } => self.bridge.mpv().load_subtitle(&path).await,
 
-            SetAudioTrack { id }        => self.bridge.mpv().set_audio_track(id).await,
-            CycleAudioTracks            => self.bridge.mpv().cycle_audio_tracks().await,
-            AdjustAudioDelay { delta }  => {
+            SetAudioTrack { id } => self.bridge.mpv().set_audio_track(id).await,
+            CycleAudioTracks => self.bridge.mpv().cycle_audio_tracks().await,
+            AdjustAudioDelay { delta } => {
                 self.inner.lock().await.state.audio_delay += delta;
                 self.bridge.mpv().adjust_audio_delay(delta).await
             }
@@ -163,7 +166,9 @@ impl PlayerManager {
 
             SwitchStream { url } => {
                 info!("manager: switching stream to {}", &url[..url.len().min(80)]);
-                self.bus.emit(RuntimeEvent::StreamSwitchRequested { entry_id: url.clone() });
+                self.bus.emit(RuntimeEvent::StreamSwitchRequested {
+                    entry_id: url.clone(),
+                });
                 if self.bridge.mpv().is_running().await {
                     // Hot path: existing mpv, just retarget it.
                     self.bridge.mpv().loadfile_replace(&url).await
@@ -182,7 +187,7 @@ impl PlayerManager {
             }
 
             ToggleFullscreen => self.bridge.mpv().toggle_fullscreen().await,
-            Screenshot       => self.bridge.mpv().screenshot().await,
+            Screenshot => self.bridge.mpv().screenshot().await,
         };
 
         if let Err(e) = result {
@@ -204,7 +209,12 @@ impl PlayerManager {
             let url = s.candidates[next].url.clone();
             (url, next, s.candidates.len())
         };
-        info!("manager: switching to candidate {}/{}: {}", new_idx + 1, total, &url[..url.len().min(80)]);
+        info!(
+            "manager: switching to candidate {}/{}: {}",
+            new_idx + 1,
+            total,
+            &url[..url.len().min(80)]
+        );
         let _ = self.bridge.mpv().loadfile_replace(&url).await;
     }
 
@@ -222,14 +232,16 @@ impl PlayerManager {
             let mut s = self.inner.lock().await;
             s.current = Some(entry.clone());
         }
-        self.bridge.play(
-            &entry.item.id.to_string_id(),
-            &entry.provider,
-            entry.item.imdb_id.as_deref().unwrap_or(""),
-            None,
-            Some(entry.item.media_type.clone()),
-            entry.item.year,
-        ).await;
+        self.bridge
+            .play(
+                &entry.item.id.to_string_id(),
+                &entry.provider,
+                entry.item.imdb_id.as_deref().unwrap_or(""),
+                None,
+                Some(entry.item.media_type.clone()),
+                entry.item.year,
+            )
+            .await;
     }
 
     /// Add an item to the end of the playback queue.
@@ -270,7 +282,7 @@ impl PlayerManager {
             let mut s = self.inner.lock().await;
             if let Some(entry) = s.current.take() {
                 s.history.push(PlaybackRecord {
-                    item:       entry.item,
+                    item: entry.item,
                     started_at: Instant::now(), // approximate
                     stopped_at: Some(Instant::now()),
                     position,
@@ -291,7 +303,12 @@ impl PlayerManager {
     }
 
     pub async fn current_item(&self) -> Option<MediaItem> {
-        self.inner.lock().await.current.as_ref().map(|e| e.item.clone())
+        self.inner
+            .lock()
+            .await
+            .current
+            .as_ref()
+            .map(|e| e.item.clone())
     }
 
     pub async fn history(&self) -> Vec<PlaybackRecord> {
@@ -318,7 +335,8 @@ impl PlayerManager {
         let msg = serde_json::to_string(&serde_json::json!({
             "type":      "queue_update",
             "queue_len": len,
-        })).unwrap_or_default();
+        }))
+        .unwrap_or_default();
         let _ = self.ipc_tx.send(msg).await;
     }
 }

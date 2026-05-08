@@ -32,13 +32,17 @@ impl MpdConnection {
 
         let (rx, tx) = tokio::io::split(stream);
         let mut conn = MpdConnection {
-            writer:  tx,
-            reader:  BufReader::new(rx).lines(),
+            writer: tx,
+            reader: BufReader::new(rx).lines(),
             version: String::new(),
         };
 
         // Read banner: "OK MPD <version>"
-        let banner = conn.reader.next_line().await?.context("MPD closed connection immediately")?;
+        let banner = conn
+            .reader
+            .next_line()
+            .await?
+            .context("MPD closed connection immediately")?;
         if let Some(v) = banner.strip_prefix("OK MPD ") {
             conn.version = v.to_string();
         } else {
@@ -60,8 +64,12 @@ impl MpdConnection {
         let mut map = HashMap::new();
         loop {
             let line = self.next_line().await?;
-            if line == "OK" { break; }
-            if line.starts_with("ACK") { bail!("MPD error: {line}"); }
+            if line == "OK" {
+                break;
+            }
+            if line.starts_with("ACK") {
+                bail!("MPD error: {line}");
+            }
             if let Some((k, v)) = line.split_once(": ") {
                 map.insert(k.to_string(), v.to_string());
             }
@@ -74,8 +82,12 @@ impl MpdConnection {
         self.send_line(cmd).await?;
         loop {
             let line = self.next_line().await?;
-            if line == "OK" { return Ok(()); }
-            if line.starts_with("ACK") { bail!("MPD error on `{cmd}`: {line}"); }
+            if line == "OK" {
+                return Ok(());
+            }
+            if line.starts_with("ACK") {
+                bail!("MPD error on `{cmd}`: {line}");
+            }
         }
     }
 
@@ -92,8 +104,12 @@ impl MpdConnection {
         let mut changed = vec![];
         loop {
             let line = self.next_line().await?;
-            if line == "OK" { break; }
-            if line.starts_with("ACK") { bail!("MPD idle error: {line}"); }
+            if line == "OK" {
+                break;
+            }
+            if line.starts_with("ACK") {
+                bail!("MPD idle error: {line}");
+            }
             if let Some(sub) = line.strip_prefix("changed: ") {
                 changed.push(sub.to_string());
             }
@@ -110,8 +126,12 @@ impl MpdConnection {
         let mut out = Vec::new();
         loop {
             let line = self.next_line().await?;
-            if line == "OK" { break; }
-            if line.starts_with("ACK") { bail!("MPD error on `{cmd}`: {line}"); }
+            if line == "OK" {
+                break;
+            }
+            if line.starts_with("ACK") {
+                bail!("MPD error on `{cmd}`: {line}");
+            }
             if let Some((k, v)) = line.split_once(": ") {
                 out.push((k.to_string(), v.to_string()));
             }
@@ -132,10 +152,14 @@ impl MpdConnection {
         loop {
             let line = self.next_line().await?;
             if line == "OK" {
-                if !current.is_empty() { records.push(current); }
+                if !current.is_empty() {
+                    records.push(current);
+                }
                 break;
             }
-            if line.starts_with("ACK") { bail!("MPD error on `{cmd}`: {line}"); }
+            if line.starts_with("ACK") {
+                bail!("MPD error on `{cmd}`: {line}");
+            }
             if let Some((k, v)) = line.split_once(": ") {
                 if k == split_key && !current.is_empty() {
                     records.push(std::mem::take(&mut current));
@@ -169,7 +193,9 @@ impl MpdConnection {
                 let mut s = String::from("update ");
                 s.push('"');
                 for ch in p.chars() {
-                    if ch == '\\' || ch == '"' { s.push('\\'); }
+                    if ch == '\\' || ch == '"' {
+                        s.push('\\');
+                    }
                     s.push(ch);
                 }
                 s.push('"');

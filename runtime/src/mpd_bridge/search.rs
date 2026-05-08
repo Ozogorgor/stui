@@ -39,22 +39,22 @@ use super::bridge::{parse_f64, str_or, MpdBridge};
 // pure functions with no I/O — they can be tested without any MPD connection.
 
 /// Map `search artist "query"` records to `MpdArtistWire`.
-pub(super) fn records_to_artists(
-    records: Vec<HashMap<String, String>>,
-) -> Vec<MpdArtistWire> {
+pub(super) fn records_to_artists(records: Vec<HashMap<String, String>>) -> Vec<MpdArtistWire> {
     records
         .into_iter()
         .filter_map(|r| {
             let name = r.get("Artist")?.clone();
-            if name.is_empty() { None } else { Some(MpdArtistWire { name }) }
+            if name.is_empty() {
+                None
+            } else {
+                Some(MpdArtistWire { name })
+            }
         })
         .collect()
 }
 
 /// Map `search album "query"` records to `MpdAlbumWire`.
-pub(super) fn records_to_albums(
-    records: Vec<HashMap<String, String>>,
-) -> Vec<MpdAlbumWire> {
+pub(super) fn records_to_albums(records: Vec<HashMap<String, String>>) -> Vec<MpdAlbumWire> {
     records
         .into_iter()
         .filter_map(|r| {
@@ -78,22 +78,20 @@ pub(super) fn records_to_albums(
 }
 
 /// Map `search title "query"` records to `MpdSongWire`.
-pub(super) fn records_to_tracks(
-    records: Vec<HashMap<String, String>>,
-) -> Vec<MpdSongWire> {
+pub(super) fn records_to_tracks(records: Vec<HashMap<String, String>>) -> Vec<MpdSongWire> {
     records
         .into_iter()
         .filter_map(|r| {
             let file = r.get("file")?.clone();
             Some(MpdSongWire {
-                title:    str_or(r.get("Title")),
-                artist:   str_or(r.get("Artist")),
-                album:    str_or(r.get("Album")),
+                title: str_or(r.get("Title")),
+                artist: str_or(r.get("Artist")),
+                album: str_or(r.get("Album")),
                 duration: parse_f64(r.get("duration").or_else(|| r.get("Time"))),
                 file,
                 raw_artist: String::new(),
-                raw_album:  String::new(),
-                raw_title:  String::new(),
+                raw_album: String::new(),
+                raw_title: String::new(),
             })
         })
         .collect()
@@ -131,12 +129,12 @@ impl MpdBridge {
     ///   the caller can show partial results.
     pub async fn search(&self, req: MpdSearchRequest) -> MpdSearchResult {
         let empty = MpdSearchResult {
-            id:       req.id.clone(),
+            id: req.id.clone(),
             query_id: req.query_id,
-            artists:  vec![],
-            albums:   vec![],
-            tracks:   vec![],
-            error:    None,
+            artists: vec![],
+            albums: vec![],
+            tracks: vec![],
+            error: None,
         };
 
         // Acquire connection — on failure return NotConnected immediately.
@@ -162,7 +160,9 @@ impl MpdBridge {
             match conn.command_records(&cmd, "Artist").await {
                 Ok(records) => {
                     let mut artists = records_to_artists(records);
-                    if limit > 0 { artists.truncate(limit); }
+                    if limit > 0 {
+                        artists.truncate(limit);
+                    }
                     result.artists = artists;
                 }
                 Err(e) => {
@@ -179,7 +179,9 @@ impl MpdBridge {
             match conn.command_records(&cmd, "Album").await {
                 Ok(records) => {
                     let mut albums = records_to_albums(records);
-                    if limit > 0 { albums.truncate(limit); }
+                    if limit > 0 {
+                        albums.truncate(limit);
+                    }
                     result.albums = albums;
                 }
                 Err(e) => {
@@ -196,7 +198,9 @@ impl MpdBridge {
             match conn.command_records(&cmd, "file").await {
                 Ok(records) => {
                     let mut tracks = records_to_tracks(records);
-                    if limit > 0 { tracks.truncate(limit); }
+                    if limit > 0 {
+                        tracks.truncate(limit);
+                    }
                     result.tracks = tracks;
                 }
                 Err(e) => {
@@ -265,19 +269,20 @@ mod tests {
     #[test]
     fn search_fans_out_per_scope() {
         // Artist records
-        let artist_records = vec![
-            artist_row("Radiohead"),
-        ];
+        let artist_records = vec![artist_row("Radiohead")];
         // Album records (empty for this test)
         let album_records: Vec<HashMap<String, String>> = vec![];
         // Track records
-        let track_records = vec![
-            track_row("music/creep.flac", "Creep", "Radiohead", "Pablo Honey"),
-        ];
+        let track_records = vec![track_row(
+            "music/creep.flac",
+            "Creep",
+            "Radiohead",
+            "Pablo Honey",
+        )];
 
         let artists = records_to_artists(artist_records);
-        let albums  = records_to_albums(album_records);
-        let tracks  = records_to_tracks(track_records);
+        let albums = records_to_albums(album_records);
+        let tracks = records_to_tracks(track_records);
 
         assert_eq!(artists.len(), 1, "expected 1 artist");
         assert_eq!(artists[0].name, "Radiohead");
@@ -299,7 +304,7 @@ mod tests {
         let artists = records_to_artists(artist_records);
         // Simulated result when only Artist scope was requested:
         let albums: Vec<MpdAlbumWire> = vec![];
-        let tracks: Vec<MpdSongWire>  = vec![];
+        let tracks: Vec<MpdSongWire> = vec![];
 
         assert_eq!(artists.len(), 1);
         assert!(albums.is_empty());
@@ -324,10 +329,10 @@ mod tests {
         let bridge = MpdBridge::new(cfg, ipc_tx, MusicNormalizeConfig::default());
 
         let req = MpdSearchRequest {
-            id:       "test-id".to_string(),
-            query:    "radiohead".to_string(),
-            scopes:   vec![MpdScope::Artist, MpdScope::Album, MpdScope::Track],
-            limit:    50,
+            id: "test-id".to_string(),
+            query: "radiohead".to_string(),
+            scopes: vec![MpdScope::Artist, MpdScope::Album, MpdScope::Track],
+            limit: 50,
             query_id: 3,
         };
 
@@ -336,7 +341,8 @@ mod tests {
         assert_eq!(result.query_id, 3);
         assert!(
             result.error == Some(MpdSearchError::NotConnected),
-            "expected NotConnected, got {:?}", result.error
+            "expected NotConnected, got {:?}",
+            result.error
         );
         assert!(result.artists.is_empty());
         assert!(result.albums.is_empty());
@@ -375,7 +381,7 @@ mod tests {
         assert_eq!(albums[0].year, "1995");
         assert_eq!(albums[0].date, "1995-03-13");
         assert_eq!(albums[1].year, "1997");
-        assert_eq!(albums[2].year, "");    // no date → empty year
+        assert_eq!(albums[2].year, ""); // no date → empty year
     }
 
     #[test]

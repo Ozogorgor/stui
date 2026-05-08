@@ -80,7 +80,7 @@ use crate::events::{EventBus, RuntimeEvent};
 #[derive(Clone)]
 pub struct ConfigManager {
     config: Arc<RwLock<RuntimeConfig>>,
-    bus:    Arc<EventBus>,
+    bus: Arc<EventBus>,
 }
 
 impl ConfigManager {
@@ -139,7 +139,7 @@ impl ConfigManager {
         }
 
         self.bus.emit(RuntimeEvent::ConfigChanged {
-            key:   key.to_string(),
+            key: key.to_string(),
             value: value.to_string(),
         });
 
@@ -165,18 +165,22 @@ impl ConfigManager {
         let cfg = self.config.read().await.clone();
 
         let Some(path) = default_config_path() else {
-            return Err(StuidError::config("cannot determine config path (no home dir)"));
+            return Err(StuidError::config(
+                "cannot determine config path (no home dir)",
+            ));
         };
 
         let text = toml::to_string_pretty(&cfg)
             .map_err(|e| StuidError::config(format!("config serialize: {e}")))?;
 
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| StuidError::config(format!("create config dir: {e}")))?;
         }
 
-        tokio::fs::write(&path, text).await
+        tokio::fs::write(&path, text)
+            .await
             .map_err(|e| StuidError::config(format!("write config {}: {e}", path.display())))?;
 
         info!(path = %path.display(), "config persisted");
@@ -204,13 +208,13 @@ impl ConfigManager {
     /// Persists the change to disk and broadcasts `ConfigChanged`.
     pub async fn set_plugin_repos(&self, mut repos: Vec<String>) -> Result<()> {
         const BUILTIN: &str = "https://plugins.stui.dev";
-        
+
         // Normalize URLs: strip trailing slashes, deduplicate
         repos = repos
             .into_iter()
             .map(|r| r.trim_end_matches('/').to_string())
             .collect();
-        
+
         // Remove any existing copy of the built-in URL so we can prepend it once.
         repos.retain(|r| r != BUILTIN);
         repos.insert(0, BUILTIN.to_string());
@@ -223,7 +227,7 @@ impl ConfigManager {
         info!(?repos, "plugin repos updated");
 
         self.bus.emit(RuntimeEvent::ConfigChanged {
-            key:   "plugin_repos".to_string(),
+            key: "plugin_repos".to_string(),
             value: repos.join(","),
         });
 
@@ -504,11 +508,7 @@ fn apply_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn apply_metadata_sources_key(
-    cfg: &mut RuntimeConfig,
-    key: &str,
-    value: &Value,
-) -> Result<()> {
+fn apply_metadata_sources_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()> {
     let field = key.strip_prefix("metadata_sources.").unwrap_or("").trim();
     let arr = match value {
         Value::Array(a) => a
@@ -522,14 +522,14 @@ fn apply_metadata_sources_key(
         }
     };
     match field {
-        "movies"          => cfg.metadata.sources.movies = arr,
-        "series"          => cfg.metadata.sources.series = arr,
-        "anime"           => cfg.metadata.sources.anime = arr,
-        "music"           => cfg.metadata.sources.music = arr,
+        "movies" => cfg.metadata.sources.movies = arr,
+        "series" => cfg.metadata.sources.series = arr,
+        "anime" => cfg.metadata.sources.anime = arr,
+        "music" => cfg.metadata.sources.music = arr,
         "movies_disabled" => cfg.metadata.sources.movies_disabled = arr,
         "series_disabled" => cfg.metadata.sources.series_disabled = arr,
-        "anime_disabled"  => cfg.metadata.sources.anime_disabled = arr,
-        "music_disabled"  => cfg.metadata.sources.music_disabled = arr,
+        "anime_disabled" => cfg.metadata.sources.anime_disabled = arr,
+        "music_disabled" => cfg.metadata.sources.music_disabled = arr,
         _ => {
             return Err(StuidError::config(format!(
                 "unknown metadata_sources field: {field} (expected one of: movies, series, anime, music, *_disabled)",
@@ -584,9 +584,11 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 "fast" => crate::dsp::FilterType::Fast,
                 "slow" => crate::dsp::FilterType::Slow,
                 "synchronous" => crate::dsp::FilterType::Synchronous,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: invalid filter_type {s} (expected fast|slow|synchronous)"
-                ))),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: invalid filter_type {s} (expected fast|slow|synchronous)"
+                    )))
+                }
             };
         }
         "resample_enabled" => cfg.dsp.resample_enabled = as_bool(key, value)?,
@@ -598,9 +600,11 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 "pcm" => crate::dsp::OutputMode::Pcm,
                 "dsd" => crate::dsp::OutputMode::Dsd,
                 "dsd_to_pcm" => crate::dsp::OutputMode::DsdToPcm,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: invalid output_mode {s} (expected pcm|dsd|dsd_to_pcm)"
-                ))),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: invalid output_mode {s} (expected pcm|dsd|dsd_to_pcm)"
+                    )))
+                }
             };
         }
         "output_target" => {
@@ -610,9 +614,11 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
                 "roon_raat" => crate::dsp::OutputTarget::RoonRaat,
                 "mpd" => crate::dsp::OutputTarget::Mpd,
                 "alsa" => crate::dsp::OutputTarget::Alsa,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: invalid output_target {s} (expected pipewire|roon_raat|mpd|alsa)"
-                ))),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: invalid output_target {s} (expected pipewire|roon_raat|mpd|alsa)"
+                    )))
+                }
             };
         }
         "alsa_device" => cfg.dsp.alsa_device = as_opt_string(key, value)?,
@@ -620,68 +626,84 @@ fn apply_dsp_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
             let s = as_string(key, value)?;
             match s.as_str() {
                 "Music" | "Production" => cfg.dsp.pipewire_role = s,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: invalid pipewire_role {s} (expected Music|Production)"
-                ))),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: invalid pipewire_role {s} (expected Music|Production)"
+                    )))
+                }
             }
         }
         "convolution_filter_path" => cfg.dsp.convolution_filter_path = as_opt_string(key, value)?,
         "convolution_enabled" => cfg.dsp.convolution_enabled = as_bool(key, value)?,
         "convolution_bypass" => cfg.dsp.convolution_bypass = as_bool(key, value)?,
         "buffer_size" => cfg.dsp.buffer_size = as_usize(key, value)?,
-        "crossfeed_enabled"    => cfg.dsp.crossfeed_enabled    = as_bool(key, value)?,
-        "crossfeed_auto"       => cfg.dsp.crossfeed_auto        = as_bool(key, value)?,
-        "crossfeed_feed_level" => cfg.dsp.crossfeed_feed_level  =
-            (as_f64(key, value)? as f32).clamp(0.0_f32, 0.9_f32),
-        "crossfeed_cutoff_hz"  => cfg.dsp.crossfeed_cutoff_hz   =
-            (as_f64(key, value)? as f32).clamp(300.0_f32, 700.0_f32),
-        "dither_enabled"       => cfg.dsp.dither_enabled       = as_bool(key, value)?,
-        "dither_auto"          => cfg.dsp.dither_auto           = as_bool(key, value)?,
-        "dither_bit_depth"     => cfg.dsp.dither_bit_depth      = as_u32(key, value)?.clamp(8, 32),
+        "crossfeed_enabled" => cfg.dsp.crossfeed_enabled = as_bool(key, value)?,
+        "crossfeed_auto" => cfg.dsp.crossfeed_auto = as_bool(key, value)?,
+        "crossfeed_feed_level" => {
+            cfg.dsp.crossfeed_feed_level = (as_f64(key, value)? as f32).clamp(0.0_f32, 0.9_f32)
+        }
+        "crossfeed_cutoff_hz" => {
+            cfg.dsp.crossfeed_cutoff_hz = (as_f64(key, value)? as f32).clamp(300.0_f32, 700.0_f32)
+        }
+        "dither_enabled" => cfg.dsp.dither_enabled = as_bool(key, value)?,
+        "dither_auto" => cfg.dsp.dither_auto = as_bool(key, value)?,
+        "dither_bit_depth" => cfg.dsp.dither_bit_depth = as_u32(key, value)?.clamp(8, 32),
         "dither_noise_shaping" => {
             let s = as_string(key, value)?;
             match s.as_str() {
-                "none" | "lipshitz" | "fweighted" | "modified_e_weighted" |
-                "improved_e_weighted" | "shibata" | "low_shibata" |
-                "high_shibata" | "gesemann"
-                    => cfg.dsp.dither_noise_shaping = s,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: unknown dither_noise_shaping value: {s}"
-                ))),
+                "none"
+                | "lipshitz"
+                | "fweighted"
+                | "modified_e_weighted"
+                | "improved_e_weighted"
+                | "shibata"
+                | "low_shibata"
+                | "high_shibata"
+                | "gesemann" => cfg.dsp.dither_noise_shaping = s,
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: unknown dither_noise_shaping value: {s}"
+                    )))
+                }
             }
-        },
-        "eq_enabled" => cfg.dsp.eq_enabled = as_bool(key, value)?,
-        "eq_bypass"  => cfg.dsp.eq_bypass  = as_bool(key, value)?,
-        "eq_bands"   => {
-            let s = as_string(key, value)?;
-            let bands: Vec<crate::dsp::config::EqBand> =
-                serde_json::from_str(&s).map_err(|e| {
-                    StuidError::config(format!("dsp.eq_bands invalid JSON: {e}"))
-                })?;
-            cfg.dsp.eq_bands = bands.into_iter().map(|b| crate::dsp::config::EqBand {
-                freq:    b.freq.clamp(20.0_f32, 20000.0_f32),
-                gain_db: b.gain_db.clamp(-20.0_f32, 20.0_f32),
-                q:       b.q.clamp(0.1_f32, 10.0_f32),
-                ..b
-            }).collect();
         }
-        "dc_offset_enabled"   => cfg.dsp.dc_offset_enabled   = as_bool(key, value)?,
-        "dc_offset_cutoff_hz" => cfg.dsp.dc_offset_cutoff_hz =
-            (as_f64(key, value)? as f32).clamp(1.0_f32, 100.0_f32),
-        "ms_enabled"          => cfg.dsp.ms_enabled          = as_bool(key, value)?,
-        "ms_width"            => cfg.dsp.ms_width            =
-            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
-        "ms_mid_gain"         => cfg.dsp.ms_mid_gain         =
-            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
-        "ms_side_gain"        => cfg.dsp.ms_side_gain        =
-            (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
-        "lufs_enabled"        => cfg.dsp.lufs_enabled        = as_bool(key, value)?,
-        "lufs_target"         => cfg.dsp.lufs_target         =
-            (as_f64(key, value)? as f32).clamp(-70.0_f32, 0.0_f32),
-        "lufs_max_gain_db"    => cfg.dsp.lufs_max_gain_db    =
-            (as_f64(key, value)? as f32).clamp(0.0_f32, 24.0_f32),
+        "eq_enabled" => cfg.dsp.eq_enabled = as_bool(key, value)?,
+        "eq_bypass" => cfg.dsp.eq_bypass = as_bool(key, value)?,
+        "eq_bands" => {
+            let s = as_string(key, value)?;
+            let bands: Vec<crate::dsp::config::EqBand> = serde_json::from_str(&s)
+                .map_err(|e| StuidError::config(format!("dsp.eq_bands invalid JSON: {e}")))?;
+            cfg.dsp.eq_bands = bands
+                .into_iter()
+                .map(|b| crate::dsp::config::EqBand {
+                    freq: b.freq.clamp(20.0_f32, 20000.0_f32),
+                    gain_db: b.gain_db.clamp(-20.0_f32, 20.0_f32),
+                    q: b.q.clamp(0.1_f32, 10.0_f32),
+                    ..b
+                })
+                .collect();
+        }
+        "dc_offset_enabled" => cfg.dsp.dc_offset_enabled = as_bool(key, value)?,
+        "dc_offset_cutoff_hz" => {
+            cfg.dsp.dc_offset_cutoff_hz = (as_f64(key, value)? as f32).clamp(1.0_f32, 100.0_f32)
+        }
+        "ms_enabled" => cfg.dsp.ms_enabled = as_bool(key, value)?,
+        "ms_width" => cfg.dsp.ms_width = (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
+        "ms_mid_gain" => cfg.dsp.ms_mid_gain = (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32),
+        "ms_side_gain" => {
+            cfg.dsp.ms_side_gain = (as_f64(key, value)? as f32).clamp(0.0_f32, 2.0_f32)
+        }
+        "lufs_enabled" => cfg.dsp.lufs_enabled = as_bool(key, value)?,
+        "lufs_target" => {
+            cfg.dsp.lufs_target = (as_f64(key, value)? as f32).clamp(-70.0_f32, 0.0_f32)
+        }
+        "lufs_max_gain_db" => {
+            cfg.dsp.lufs_max_gain_db = (as_f64(key, value)? as f32).clamp(0.0_f32, 24.0_f32)
+        }
         _ => {
-            return Err(StuidError::config(format!("unknown dsp config key: {field}")));
+            return Err(StuidError::config(format!(
+                "unknown dsp config key: {field}"
+            )));
         }
     }
 
@@ -699,17 +721,21 @@ fn apply_mpd_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
     let field = parts[1];
     match field {
         "host" => cfg.mpd.host = as_string(key, value)?,
-        "port" => cfg.mpd.port = as_u32(key, value)?.try_into().map_err(|_| {
-            StuidError::config(format!("{key}: port must be 1-65535"))
-        })?,
+        "port" => {
+            cfg.mpd.port = as_u32(key, value)?
+                .try_into()
+                .map_err(|_| StuidError::config(format!("{key}: port must be 1-65535")))?
+        }
         "password" => cfg.mpd.password = as_opt_string(key, value)?,
         "replay_gain" => {
             let s = as_string(key, value)?;
             cfg.mpd.replay_gain = match s.as_str() {
                 "auto" | "track" | "album" | "off" => s,
-                _ => return Err(StuidError::config(format!(
-                    "{key}: invalid replay_gain {s} (expected auto|track|album|off)"
-                ))),
+                _ => {
+                    return Err(StuidError::config(format!(
+                        "{key}: invalid replay_gain {s} (expected auto|track|album|off)"
+                    )))
+                }
             };
         }
         "crossfade_secs" => cfg.mpd.crossfade_secs = as_u32(key, value)?,
@@ -717,7 +743,9 @@ fn apply_mpd_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
         "consume" => cfg.mpd.consume = as_bool(key, value)?,
         "music_dir" => cfg.mpd.music_dir = as_opt_pathbuf(key, value)?,
         _ => {
-            return Err(StuidError::config(format!("unknown mpd config key: {field}")));
+            return Err(StuidError::config(format!(
+                "unknown mpd config key: {field}"
+            )));
         }
     }
 
@@ -725,15 +753,13 @@ fn apply_mpd_key(cfg: &mut RuntimeConfig, key: &str, value: &Value) -> Result<()
 }
 
 fn as_bool(key: &str, v: &Value) -> Result<bool> {
-    v.as_bool().ok_or_else(|| {
-        StuidError::config(format!("{key}: expected bool, got {v}"))
-    })
+    v.as_bool()
+        .ok_or_else(|| StuidError::config(format!("{key}: expected bool, got {v}")))
 }
 
 fn as_f64(key: &str, v: &Value) -> Result<f64> {
-    v.as_f64().ok_or_else(|| {
-        StuidError::config(format!("{key}: expected number, got {v}"))
-    })
+    v.as_f64()
+        .ok_or_else(|| StuidError::config(format!("{key}: expected number, got {v}")))
 }
 
 fn as_u32(key: &str, v: &Value) -> Result<u32> {
@@ -748,9 +774,7 @@ fn as_u32(key: &str, v: &Value) -> Result<u32> {
                 }
             })
         })
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected u32, got {v}"))
-        })
+        .ok_or_else(|| StuidError::config(format!("{key}: expected u32, got {v}")))
 }
 
 fn as_usize(key: &str, v: &Value) -> Result<usize> {
@@ -765,25 +789,19 @@ fn as_usize(key: &str, v: &Value) -> Result<usize> {
                 }
             })
         })
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected usize, got {v}"))
-        })
+        .ok_or_else(|| StuidError::config(format!("{key}: expected usize, got {v}")))
 }
 
 fn as_string(key: &str, v: &Value) -> Result<String> {
     v.as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected string, got {v}"))
-        })
+        .ok_or_else(|| StuidError::config(format!("{key}: expected string, got {v}")))
 }
 
 fn as_pathbuf(key: &str, v: &Value) -> Result<std::path::PathBuf> {
     v.as_str()
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected path string, got {v}"))
-        })
+        .ok_or_else(|| StuidError::config(format!("{key}: expected path string, got {v}")))
 }
 
 fn as_opt_string(key: &str, v: &Value) -> Result<Option<String>> {
@@ -792,19 +810,16 @@ fn as_opt_string(key: &str, v: &Value) -> Result<Option<String>> {
     }
     v.as_str()
         .map(|s| Some(s.to_string()))
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected string or null, got {v}"))
-        })
+        .ok_or_else(|| StuidError::config(format!("{key}: expected string or null, got {v}")))
 }
 
 fn as_opt_f64(key: &str, v: &Value) -> Result<Option<f64>> {
     if v.is_null() {
         return Ok(None);
     }
-    let num = v.as_f64()
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected number or null, got {v}"))
-        })?;
+    let num = v
+        .as_f64()
+        .ok_or_else(|| StuidError::config(format!("{key}: expected number or null, got {v}")))?;
     Ok(Some(num))
 }
 
@@ -812,10 +827,9 @@ fn as_opt_pathbuf(key: &str, v: &Value) -> Result<Option<std::path::PathBuf>> {
     if v.is_null() {
         return Ok(None);
     }
-    let s = v.as_str()
-        .ok_or_else(|| {
-            StuidError::config(format!("{key}: expected path string or null, got {v}"))
-        })?;
+    let s = v.as_str().ok_or_else(|| {
+        StuidError::config(format!("{key}: expected path string or null, got {v}"))
+    })?;
     Ok(Some(std::path::PathBuf::from(s)))
 }
 
@@ -856,7 +870,9 @@ mod tests {
     async fn wrong_type_returns_error() {
         let m = make_manager();
         // volume expects a number, not a string
-        let result = m.set("player.default_volume", Value::String("loud".into())).await;
+        let result = m
+            .set("player.default_volume", Value::String("loud".into()))
+            .await;
         assert!(result.is_err());
     }
 
@@ -866,30 +882,60 @@ mod tests {
 
         let mut cfg = RuntimeConfig::default();
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_enabled", &serde_json::Value::Bool(true)).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_enabled",
+            &serde_json::Value::Bool(true),
+        )
+        .unwrap();
         assert!(cfg.dsp.crossfeed_enabled);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_auto", &serde_json::Value::Bool(true)).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_auto",
+            &serde_json::Value::Bool(true),
+        )
+        .unwrap();
         assert!(cfg.dsp.crossfeed_auto);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
-            &serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(0.5).unwrap()),
+        )
+        .unwrap();
         assert!((cfg.dsp.crossfeed_feed_level - 0.5_f32).abs() < 1e-5);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
-            &serde_json::Value::Number(serde_json::Number::from_f64(-0.1).unwrap())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(-0.1).unwrap()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.crossfeed_feed_level, 0.0_f32);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_feed_level",
-            &serde_json::Value::Number(serde_json::Number::from_f64(1.5).unwrap())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_feed_level",
+            &serde_json::Value::Number(serde_json::Number::from_f64(1.5).unwrap()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.crossfeed_feed_level, 0.9_f32);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
-            &serde_json::Value::Number(serde_json::Number::from_f64(250.0).unwrap())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_cutoff_hz",
+            &serde_json::Value::Number(serde_json::Number::from_f64(250.0).unwrap()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 300.0_f32);
 
-        apply_dsp_key(&mut cfg, "dsp.crossfeed_cutoff_hz",
-            &serde_json::Value::Number(serde_json::Number::from_f64(800.0).unwrap())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.crossfeed_cutoff_hz",
+            &serde_json::Value::Number(serde_json::Number::from_f64(800.0).unwrap()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.crossfeed_cutoff_hz, 700.0_f32);
     }
 
@@ -898,32 +944,54 @@ mod tests {
         use crate::config::RuntimeConfig;
         let mut cfg = RuntimeConfig::default();
 
-        apply_dsp_key(&mut cfg, "dsp.dither_enabled",
-            &serde_json::Value::Bool(true)).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_enabled",
+            &serde_json::Value::Bool(true),
+        )
+        .unwrap();
         assert!(cfg.dsp.dither_enabled);
 
-        apply_dsp_key(&mut cfg, "dsp.dither_auto",
-            &serde_json::Value::Bool(true)).unwrap();
+        apply_dsp_key(&mut cfg, "dsp.dither_auto", &serde_json::Value::Bool(true)).unwrap();
         assert!(cfg.dsp.dither_auto);
 
-        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
-            &serde_json::Value::Number(serde_json::Number::from(16u32))).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(16u32)),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 16);
 
-        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
-            &serde_json::Value::Number(serde_json::Number::from(4u32))).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(4u32)),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 8);
 
-        apply_dsp_key(&mut cfg, "dsp.dither_bit_depth",
-            &serde_json::Value::Number(serde_json::Number::from(64u32))).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_bit_depth",
+            &serde_json::Value::Number(serde_json::Number::from(64u32)),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.dither_bit_depth, 32);
 
-        apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
-            &serde_json::Value::String("shibata".into())).unwrap();
+        apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_noise_shaping",
+            &serde_json::Value::String("shibata".into()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.dither_noise_shaping, "shibata");
 
-        let result = apply_dsp_key(&mut cfg, "dsp.dither_noise_shaping",
-            &serde_json::Value::String("bogus".into()));
+        let result = apply_dsp_key(
+            &mut cfg,
+            "dsp.dither_noise_shaping",
+            &serde_json::Value::String("bogus".into()),
+        );
         assert!(result.is_err(), "unknown noise_shaping must error");
     }
 
@@ -938,8 +1006,14 @@ mod tests {
         apply_key(&mut cfg, "dsp.eq_bypass", &Value::Bool(true)).unwrap();
         assert!(cfg.dsp.eq_bypass);
 
-        let bands_json = r#"[{"enabled":true,"filter_type":"peak","freq":1000.0,"gain_db":3.0,"q":1.0}]"#;
-        apply_key(&mut cfg, "dsp.eq_bands", &Value::String(bands_json.to_string())).unwrap();
+        let bands_json =
+            r#"[{"enabled":true,"filter_type":"peak","freq":1000.0,"gain_db":3.0,"q":1.0}]"#;
+        apply_key(
+            &mut cfg,
+            "dsp.eq_bands",
+            &Value::String(bands_json.to_string()),
+        )
+        .unwrap();
         assert_eq!(cfg.dsp.eq_bands.len(), 1);
         assert_eq!(cfg.dsp.eq_bands[0].filter_type, EqFilterType::Peak);
         assert!((cfg.dsp.eq_bands[0].freq - 1000.0).abs() < 0.01);

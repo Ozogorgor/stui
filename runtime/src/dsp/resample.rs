@@ -342,7 +342,7 @@ mod tests {
         let config = Arc::new(RwLock::new(DspConfig {
             enabled: true,
             input_sample_rate: 44100,
-            output_sample_rate: 192000,  // ignored when ratio > 1
+            output_sample_rate: 192000, // ignored when ratio > 1
             upsample_ratio: 4,
             filter_type: FilterType::Synchronous,
             resample_enabled: true,

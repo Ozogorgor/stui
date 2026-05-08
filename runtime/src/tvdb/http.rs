@@ -56,12 +56,7 @@ impl ReqwestFetcher {
 #[async_trait]
 impl HttpFetch for ReqwestFetcher {
     async fn get_json(&self, url: &str, jwt: &str) -> Result<HttpOk> {
-        let resp = self
-            .client
-            .get(url)
-            .bearer_auth(jwt)
-            .send()
-            .await?;
+        let resp = self.client.get(url).bearer_auth(jwt).send().await?;
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
         Ok(HttpOk { status, body })

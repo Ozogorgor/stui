@@ -8,46 +8,45 @@
 
 mod abi;
 // Scheduled for removal in Task 9 of the librqbit migration.
+mod anime_bridge;
+mod auth;
 #[allow(dead_code)]
 mod cache;
 mod catalog;
 mod catalog_engine;
 mod config;
 mod discovery;
+mod dsp;
 mod engine;
 mod error;
 mod events;
 mod fanart;
 mod ipc;
+mod ipc_batcher;
 mod lastfm;
 mod logging;
 mod mdblist;
 mod media;
+mod mediacache;
 mod mpd_bridge;
+mod pipeline;
 mod player;
 mod plugin;
+mod plugin_rpc;
 mod providers;
 mod quality;
 mod rating_aggregator;
+mod registry;
 mod resolver;
+mod roon;
 mod sandbox;
 mod scraper;
+mod skipper;
+pub mod storage;
 mod stremio;
 mod torrent_engine;
 mod tvdb;
-mod anime_bridge;
-mod pipeline;
-mod plugin_rpc;
-mod registry;
-mod skipper;
 mod watchhistory;
-mod mediacache;
-mod ipc_batcher;
-mod dsp;
-mod roon;
-pub mod storage;
-mod auth;
-
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,13 +57,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use catalog::Catalog;
-use discovery::{Discovery, PluginToast};
-use engine::{Engine, TraceEmitter};
 use config::ConfigManager;
+use discovery::{Discovery, PluginToast};
+use dsp::{DspPipeline, OutputTarget};
+use engine::{Engine, TraceEmitter};
 use events::EventBus;
 use ipc::{ErrorCode, GridUpdateMsg, Request, Response};
 use mpd_bridge::MpdBridge;
-use dsp::{DspPipeline, OutputTarget};
 use providers::{HealthRegistry, StreamBenchmarker};
 
 use skipper::{Skipper, SkipperStore};
@@ -109,7 +108,8 @@ async fn main() -> Result<()> {
     // `stui-runtime daemon --socket /path/to/sock`
 
     let daemon_mode = args.get(1).map(|a| a == "daemon").unwrap_or(false);
-    let socket_path = args.windows(2)
+    let socket_path = args
+        .windows(2)
         .find(|w| w[0] == "--socket")
         .and_then(|w| w.get(1))
         .map(|s| std::path::PathBuf::from(s))
@@ -192,9 +192,8 @@ async fn main() -> Result<()> {
     info!(path = %watchhistory::default_history_path().display(), "watch history loaded");
 
     // ── Media cache ─────────────────────────────────────────────────────────
-    let media_cache = Arc::new(mediacache::MediaCacheStore::new(
-        mediacache::default_cache_path(),
-    ).await);
+    let media_cache =
+        Arc::new(mediacache::MediaCacheStore::new(mediacache::default_cache_path()).await);
     info!(path = %mediacache::default_cache_path().display(), "media cache loaded");
 
     // ── Catalog + cached-grid emission (runs in parallel with plugin load) ──
@@ -237,7 +236,10 @@ async fn main() -> Result<()> {
             }
         });
     }
-    { let c = Arc::clone(&catalog); tokio::spawn(async move { c.start().await }); }
+    {
+        let c = Arc::clone(&catalog);
+        tokio::spawn(async move { c.start().await });
+    }
 
     // ── Tag-write job state (for Action A tag normalization) ─────────────────
     let tag_job_store = Arc::new(mediacache::tag_write_job::JobStore::new());
@@ -251,7 +253,10 @@ async fn main() -> Result<()> {
         cfg.storage.music.clone(),
         cfg.storage.podcasts.clone(),
     ));
-    info!("media storage initialized: movies={}", cfg.storage.movies.display());
+    info!(
+        "media storage initialized: movies={}",
+        cfg.storage.movies.display()
+    );
 
     // ── Discovery: scan + hot-reload watcher ──────────────────────────────
     let (toast_tx, _) = broadcast::channel::<PluginToast>(256);
@@ -281,10 +286,10 @@ async fn main() -> Result<()> {
     }
 
     // ── Shared health registry + config manager ───────────────────────────
-    let bus     = Arc::new(EventBus::new());
-    let health  = Arc::new(HealthRegistry::new());
-    let config  = Arc::new(ConfigManager::new(cfg.clone(), Arc::clone(&bus)));
-    let bench   = StreamBenchmarker::new();
+    let bus = Arc::new(EventBus::new());
+    let health = Arc::new(HealthRegistry::new());
+    let config = Arc::new(ConfigManager::new(cfg.clone(), Arc::clone(&bus)));
+    let bench = StreamBenchmarker::new();
     let trace = {
         let t = Arc::new(TraceEmitter::new());
         if std::env::var("STUI_TRACE").is_ok() {
@@ -345,14 +350,16 @@ async fn main() -> Result<()> {
     // ── Download translator ───────────────────────────────────────────────
     // Organizes finished downloads into the user's [storage] library dirs.
     // Re-wired into the playback pipeline in Task 10's organize-on-complete work.
-    let translator = DownloadTranslator::new(
-        cfg.data_dir.join("download-translations.json"),
-    );
+    let translator = DownloadTranslator::new(cfg.data_dir.join("download-translations.json"));
     translator.init().await?;
 
     // ── MPD bridge ────────────────────────────────────────────────────────────
     let mpd_bridge = if cfg.mpd.host != "disabled" {
-        let b = MpdBridge::new(cfg.mpd.clone(), event_tx.clone(), cfg.music.normalize.clone());
+        let b = MpdBridge::new(
+            cfg.mpd.clone(),
+            event_tx.clone(),
+            cfg.music.normalize.clone(),
+        );
         b.apply_config().await;
         info!(host = %cfg.mpd.host, port = cfg.mpd.port, "MPD bridge initialized");
         Some(b)
@@ -364,7 +371,10 @@ async fn main() -> Result<()> {
     // ── DSP pipeline ──────────────────────────────────────────────────────────
     let dsp_pipeline: Option<Arc<tokio::sync::Mutex<DspPipeline>>> = if cfg.dsp.enabled {
         let pipeline = dsp::DspPipeline::with_config_dir(cfg.dsp.clone(), cfg.data_dir.clone());
-        info!(sample_rate = pipeline.output_sample_rate(), "DSP pipeline initialized");
+        info!(
+            sample_rate = pipeline.output_sample_rate(),
+            "DSP pipeline initialized"
+        );
         Some(Arc::new(tokio::sync::Mutex::new(pipeline)))
     } else {
         info!("DSP disabled (set dsp.enabled to enable)");
@@ -377,21 +387,22 @@ async fn main() -> Result<()> {
     // FIFO; stui reads it, processes it through the DSP chain, and sends it
     // to the configured output (PipeWire / ALSA).
     if let (Some(ref dsp), Some(ref mpd)) = (&dsp_pipeline, &mpd_bridge) {
-        let fifo_path  = dsp::mpd_config::DEFAULT_FIFO_PATH.to_string();
+        let fifo_path = dsp::mpd_config::DEFAULT_FIFO_PATH.to_string();
         let conf_path_opt = dsp::mpd_config::find_mpd_conf();
-        let sample_rate: u32 = conf_path_opt.as_deref()
+        let sample_rate: u32 = conf_path_opt
+            .as_deref()
             .and_then(dsp::mpd_config::parse_fifo_sample_rate)
             .unwrap_or(44100);
 
         // Patch mpd.conf with the FIFO stanza if not already present.
         if let Some(conf_path) = conf_path_opt {
             match dsp::mpd_config::ensure_mpd_conf(&conf_path, &fifo_path, sample_rate) {
-                Ok(true)  => info!(
+                Ok(true) => info!(
                     path = %conf_path.display(),
                     "patched mpd.conf with stui-dsp FIFO output — restart MPD to apply"
                 ),
                 Ok(false) => {}
-                Err(e)    => warn!(error = %e, "could not patch mpd.conf"),
+                Err(e) => warn!(error = %e, "could not patch mpd.conf"),
             }
         } else {
             info!("mpd.conf not found — add the stui-dsp FIFO output stanza manually");
@@ -399,12 +410,12 @@ async fn main() -> Result<()> {
 
         // Enable the MPD output if it already exists (from a previous restart).
         match mpd.ensure_dsp_output_enabled().await {
-            Ok(true)  => info!("stui-dsp MPD FIFO output enabled"),
+            Ok(true) => info!("stui-dsp MPD FIFO output enabled"),
             Ok(false) => info!(
                 path = %fifo_path,
                 "stui-dsp output not found in MPD — restart MPD after mpd.conf is patched"
             ),
-            Err(e)    => warn!(error = %e, "could not query/enable stui-dsp MPD output"),
+            Err(e) => warn!(error = %e, "could not query/enable stui-dsp MPD output"),
         }
 
         // Spawn the long-running FIFO reader / DSP loop.
@@ -497,14 +508,16 @@ async fn main() -> Result<()> {
                 &mut event_rx,
                 event_tx.clone(),
                 &mut toast_rx,
-            ).await {
+            )
+            .await
+            {
                 Ok(()) => info!("daemon: client disconnected"),
                 Err(e) => warn!(error = %e, "daemon: client session ended with error"),
             }
         }
     } else {
         // ── Inline: stdin/stdout — single TUI process ─────────────────────
-        let stdin  = tokio::io::stdin();
+        let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
         let mut reader = BufReader::new(stdin).lines();
         let mut writer = tokio::io::BufWriter::new(stdout);
@@ -531,7 +544,8 @@ async fn main() -> Result<()> {
             &mut event_rx,
             event_tx.clone(),
             &mut toast_rx,
-        ).await?;
+        )
+        .await?;
     }
 
     Ok(())
@@ -539,27 +553,27 @@ async fn main() -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_ipc_loop<R, W>(
-    reader:    &mut tokio::io::Lines<tokio::io::BufReader<R>>,
+    reader: &mut tokio::io::Lines<tokio::io::BufReader<R>>,
     mut writer: &mut tokio::io::BufWriter<W>,
-    engine:    &Arc<Engine>,
-    catalog:   &Arc<Catalog>,
-    player:    &player::PlayerBridge,
-    mpd:       Option<&MpdBridge>,
-    dsp:       Option<&Arc<tokio::sync::Mutex<DspPipeline>>>,
-    health:    &Arc<HealthRegistry>,
-    config:    &Arc<ConfigManager>,
-    skipper:   &Arc<Skipper>,
+    engine: &Arc<Engine>,
+    catalog: &Arc<Catalog>,
+    player: &player::PlayerBridge,
+    mpd: Option<&MpdBridge>,
+    dsp: Option<&Arc<tokio::sync::Mutex<DspPipeline>>>,
+    health: &Arc<HealthRegistry>,
+    config: &Arc<ConfigManager>,
+    skipper: &Arc<Skipper>,
     watch_history: &Arc<watchhistory::WatchHistoryStore>,
     media_cache: &Arc<mediacache::MediaCacheStore>,
-    bench:     &StreamBenchmarker,
-    trace:     &Arc<TraceEmitter>,
-    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    bench: &StreamBenchmarker,
+    trace: &Arc<TraceEmitter>,
+    tag_job_store: &Arc<mediacache::tag_write_job::JobStore>,
     tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     // Receiver for async events pushed by background tasks (player, aria2, registry, …).
-    event_rx:  &mut tokio::sync::mpsc::Receiver<String>,
+    event_rx: &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
-    event_tx:  tokio::sync::mpsc::Sender<String>,
-    toast_rx:  &mut tokio::sync::broadcast::Receiver<PluginToast>,
+    event_tx: tokio::sync::mpsc::Sender<String>,
+    toast_rx: &mut tokio::sync::broadcast::Receiver<PluginToast>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -581,9 +595,13 @@ where
                 u.entries.iter().map(catalog_entry_to_media_entry).collect();
             let source = match u.source {
                 catalog::GridUpdateSource::Cache => "cache".to_string(),
-                catalog::GridUpdateSource::Live  => "live".to_string(),
+                catalog::GridUpdateSource::Live => "live".to_string(),
             };
-            let msg = GridUpdateMsg { tab: u.tab, entries, source };
+            let msg = GridUpdateMsg {
+                tab: u.tab,
+                entries,
+                source,
+            };
             send_wire(&mut writer, &msg.to_wire()?).await?;
         }
     }
@@ -997,20 +1015,26 @@ fn format_duration_signed(secs: i64) -> String {
 
 fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
     let tab = match e.tab.as_str() {
-        "movies"   => ipc::MediaTab::Movies,
-        "series"   => ipc::MediaTab::Series,
-        "music"    => ipc::MediaTab::Music,
-        "radio"    => ipc::MediaTab::Radio,
+        "movies" => ipc::MediaTab::Movies,
+        "series" => ipc::MediaTab::Series,
+        "music" => ipc::MediaTab::Music,
+        "radio" => ipc::MediaTab::Radio,
         "podcasts" => ipc::MediaTab::Podcasts,
-        "videos"   => ipc::MediaTab::Videos,
-        _          => ipc::MediaTab::Library,
+        "videos" => ipc::MediaTab::Videos,
+        _ => ipc::MediaTab::Library,
     };
     ipc::MediaEntry {
-        id: e.id.clone(), title: e.title.clone(), year: e.year.clone(), genre: e.genre.clone(),
-        rating: e.rating.clone(), ratings: e.ratings.clone(),
+        id: e.id.clone(),
+        title: e.title.clone(),
+        year: e.year.clone(),
+        genre: e.genre.clone(),
+        rating: e.rating.clone(),
+        ratings: e.ratings.clone(),
         description: e.description.clone(),
-        poster_url: e.poster_url.clone(), provider: e.provider.clone(),
-        tab, media_type: e.media_type,
+        poster_url: e.poster_url.clone(),
+        provider: e.provider.clone(),
+        tab,
+        media_type: e.media_type,
         imdb_id: e.imdb_id.clone(),
         tmdb_id: e.tmdb_id.clone(),
         mal_id: e.mal_id.clone(),
@@ -1028,6 +1052,7 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         season: None,
         episode: None,
         season_count: None,
+        has_specials: false,
     }
 }
 
@@ -1039,7 +1064,8 @@ fn default_socket_path() -> std::path::PathBuf {
             std::env::var("HOME")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
-                .join(".local").join("run")
+                .join(".local")
+                .join("run")
         });
     base.join("stui.sock")
 }
@@ -1062,7 +1088,9 @@ async fn send_wire<W: tokio::io::AsyncWrite + Unpin>(
 /// those, this is a no-op.  For the rest, we inject the request id into the
 /// top-level JSON object before sending.
 fn inject_id_into_response(wire: &str, req_id: Option<&str>) -> String {
-    let Some(id) = req_id else { return wire.to_string(); };
+    let Some(id) = req_id else {
+        return wire.to_string();
+    };
     let trimmed = wire.trim_end_matches('\n');
     let mut value: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(v) => v,
@@ -1162,14 +1190,21 @@ async fn run_load_episodes(engine: &Arc<Engine>, r: ipc::MetadataRequest) -> Res
 
     info!(plugin = %id_source, season = r.season, "load_episodes: dispatching to plugin");
 
-    match engine.supervisor_episodes(&id_source, req, crate::engine::CallPriority::Foreground).await {
+    match engine
+        .supervisor_episodes(&id_source, req, crate::engine::CallPriority::Foreground)
+        .await
+    {
         Ok(episodes) => {
             info!(plugin = %id_source, episodes = episodes.len(), "load_episodes: plugin returned");
             let wire: Vec<ipc::EpisodeEntryWire> = episodes.into_iter().map(Into::into).collect();
             // Truncated preview keeps the log line bounded; full data is on the wire.
             let preview = serde_json::to_string(&serde_json::json!({ "episodes": &wire }))
                 .unwrap_or_default();
-            let preview = if preview.len() > 200 { &preview[..200] } else { &preview[..] };
+            let preview = if preview.len() > 200 {
+                &preview[..200]
+            } else {
+                &preview[..]
+            };
             info!(preview = %preview, "ipc episodes wire preview");
             Response::EpisodesLoaded(ipc::EpisodesLoadedResponse {
                 id: r.id,
@@ -1186,7 +1221,8 @@ async fn run_load_episodes(engine: &Arc<Engine>, r: ipc::MetadataRequest) -> Res
             if id_source != "tvdb" {
                 if let Some(tvdb_id) = r.external_ids.get("tvdb").filter(|s| !s.is_empty()) {
                     info!(tvdb_id = %tvdb_id, "load_episodes: falling back to TVDB");
-                    let resp = run_load_episodes_tvdb(engine, r.id.clone(), tvdb_id, r.season).await;
+                    let resp =
+                        run_load_episodes_tvdb(engine, r.id.clone(), tvdb_id, r.season).await;
                     if matches!(resp, Response::EpisodesLoaded(_)) {
                         return resp;
                     }
@@ -1228,10 +1264,18 @@ async fn run_load_episodes_tvdb(
             "tvdb is not configured (no API key)".to_string(),
         );
     };
-    info!(provider = "tvdb", season = season, "load_episodes: dispatching to runtime-native tvdb");
+    info!(
+        provider = "tvdb",
+        season = season,
+        "load_episodes: dispatching to runtime-native tvdb"
+    );
     match client.episodes(series_id, season).await {
         Ok(eps) => {
-            info!(provider = "tvdb", episodes = eps.len(), "load_episodes: tvdb returned");
+            info!(
+                provider = "tvdb",
+                episodes = eps.len(),
+                "load_episodes: tvdb returned"
+            );
             let wire: Vec<ipc::EpisodeEntryWire> = eps.into_iter().map(Into::into).collect();
             Response::EpisodesLoaded(ipc::EpisodesLoadedResponse {
                 id: request_id,
@@ -1263,7 +1307,7 @@ async fn handle_line(
     media_cache: &Arc<mediacache::MediaCacheStore>,
     bench: &StreamBenchmarker,
     trace: &Arc<TraceEmitter>,
-    tag_job_store:    &Arc<mediacache::tag_write_job::JobStore>,
+    tag_job_store: &Arc<mediacache::tag_write_job::JobStore>,
     tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
     event_tx: ipc::EventSender,
     line: &str,
@@ -1291,7 +1335,7 @@ async fn handle_line(
                 }
             };
             Response::Pong {
-                ipc_version:     ipc::CURRENT_VERSION,
+                ipc_version: ipc::CURRENT_VERSION,
                 runtime_version: env!("CARGO_PKG_VERSION").to_string(),
                 version_ok,
             }
@@ -1299,22 +1343,22 @@ async fn handle_line(
         Request::Shutdown => Response::Ok,
         Request::ListPlugins => engine.list_plugins().await,
 
-        Request::LoadPlugin(r) => {
-            match engine.load_plugin(&PathBuf::from(&r.path)).await {
-                Ok(resp) => resp,
-                Err(e) => Response::error(None, ErrorCode::PluginLoadFailed, e.to_string()),
-            }
-        }
+        Request::LoadPlugin(r) => match engine.load_plugin(&PathBuf::from(&r.path)).await {
+            Ok(resp) => resp,
+            Err(e) => Response::error(None, ErrorCode::PluginLoadFailed, e.to_string()),
+        },
 
         Request::UnloadPlugin(r) => match engine.unload_plugin(&r.plugin_id).await {
             Ok(resp) => resp,
             Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
         },
 
-        Request::SetPluginEnabled(r) => match engine.set_plugin_enabled(&r.plugin_id, r.enabled).await {
-            Ok(resp) => resp,
-            Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
-        },
+        Request::SetPluginEnabled(r) => {
+            match engine.set_plugin_enabled(&r.plugin_id, r.enabled).await {
+                Ok(resp) => resp,
+                Err(e) => Response::error(None, ErrorCode::PluginNotFound, e.to_string()),
+            }
+        }
 
         Request::CatalogRefresh(r) => {
             // Manual refresh: wipe mem AND disk SearchCache so the next
@@ -1333,11 +1377,11 @@ async fn handle_line(
             Response::Ok
         }
 
-        Request::Search(r)    => {
+        Request::Search(r) => {
             // Fire-and-forget: results stream back as Event::ScopeResults messages
             // keyed by query_id.  Response::SearchResult (synchronous path) has
             // no Rust-side producers after Engine::search retirement (Task 7.0 #3).
-            let engine_c   = Arc::clone(engine);
+            let engine_c = Arc::clone(engine);
             let event_tx_c = event_tx.clone();
             let query_id = r.query_id;
             tokio::spawn(async move {
@@ -1351,16 +1395,29 @@ async fn handle_line(
             Response::Ok
         }
 
-        Request::Resolve(r)   => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
+        Request::Resolve(r) => engine.resolve(&r.id, &r.entry_id, &r.provider).await,
 
-        Request::GetStreams(r) => pipeline::resolve::run_get_streams(engine, catalog, config, health, bench, trace, event_tx.clone(), r).await,
+        Request::GetStreams(r) => {
+            pipeline::resolve::run_get_streams(
+                engine,
+                catalog,
+                config,
+                health,
+                bench,
+                trace,
+                event_tx.clone(),
+                r,
+            )
+            .await
+        }
 
         Request::Metadata(r) => {
             if r.kind == "episodes" {
                 run_load_episodes(engine, r).await
             } else {
                 Response::error(
-                    Some(r.id), ErrorCode::MetadataFailed,
+                    Some(r.id),
+                    ErrorCode::MetadataFailed,
                     "Metadata plugins not yet implemented".to_string(),
                 )
             }
@@ -1376,9 +1433,8 @@ async fn handle_line(
             let cfg_snapshot = config.snapshot().await;
             tokio::spawn(async move {
                 let mut req = engine::metadata::DetailMetadataRequest::from_wire(r);
-                req.per_verb_timeout = std::time::Duration::from_millis(
-                    cfg_snapshot.metadata.per_verb_timeout_ms,
-                );
+                req.per_verb_timeout =
+                    std::time::Duration::from_millis(cfg_snapshot.metadata.per_verb_timeout_ms);
                 let dispatch = engine::metadata::EngineMetadataDispatch::new(
                     engine_c,
                     cfg_snapshot.metadata.sources.clone(),
@@ -1415,13 +1471,15 @@ async fn handle_line(
 
         Request::Cmd(cmd) => pipeline::playback::run_player_cmd(player, mpd, cmd).await,
 
-        Request::SetConfig(r)         => pipeline::config::run_set_config(config, engine, r).await,
-        Request::GetProviderSettings  => pipeline::config::run_get_provider_settings(engine, config).await,
-        Request::GetPluginRepos       => pipeline::config::run_get_plugin_repos(config).await,
-        Request::SetPluginRepos(r)    => pipeline::config::run_set_plugin_repos(config, r).await,
-        Request::BrowseRegistry       => pipeline::registry::run_browse_registry(config, engine).await,
-        Request::InstallPlugin(r)     => pipeline::registry::run_install_plugin(config, r).await,
-        Request::RankStreams(r)       => pipeline::rank::run_rank_streams(r).await,
+        Request::SetConfig(r) => pipeline::config::run_set_config(config, engine, r).await,
+        Request::GetProviderSettings => {
+            pipeline::config::run_get_provider_settings(engine, config).await
+        }
+        Request::GetPluginRepos => pipeline::config::run_get_plugin_repos(config).await,
+        Request::SetPluginRepos(r) => pipeline::config::run_set_plugin_repos(config, r).await,
+        Request::BrowseRegistry => pipeline::registry::run_browse_registry(config, engine).await,
+        Request::InstallPlugin(r) => pipeline::registry::run_install_plugin(config, r).await,
+        Request::RankStreams(r) => pipeline::rank::run_rank_streams(r).await,
 
         // Watch history requests
         Request::GetWatchHistoryEntry(r) => {
@@ -1431,9 +1489,13 @@ async fn handle_line(
             })
         }
         Request::GetWatchHistoryInProgress(r) => {
-            let entries: Vec<watchhistory::WatchHistoryEntry> = watch_history.in_progress_for_tab(&r.tab).await;
+            let entries: Vec<watchhistory::WatchHistoryEntry> =
+                watch_history.in_progress_for_tab(&r.tab).await;
             Response::WatchHistoryInProgress(ipc::WatchHistoryInProgressResponse {
-                entries: entries.into_iter().map(ipc::WatchHistoryEntryWire::from).collect(),
+                entries: entries
+                    .into_iter()
+                    .map(ipc::WatchHistoryEntryWire::from)
+                    .collect(),
             })
         }
         Request::UpsertWatchHistoryEntry(r) => {
@@ -1442,8 +1504,12 @@ async fn handle_line(
             Response::WatchHistoryUpsert(ipc::WatchHistoryUpsertResponse { success: true })
         }
         Request::UpdateWatchHistoryPosition(r) => {
-            let success = watch_history.update_position(&r.id, r.position, r.duration).await;
-            Response::WatchHistoryPositionUpdate(ipc::WatchHistoryPositionUpdateResponse { success })
+            let success = watch_history
+                .update_position(&r.id, r.position, r.duration)
+                .await;
+            Response::WatchHistoryPositionUpdate(ipc::WatchHistoryPositionUpdateResponse {
+                success,
+            })
         }
         Request::MarkWatchHistoryCompleted(r) => {
             watch_history.mark_completed(&r.id).await;
@@ -1479,7 +1545,7 @@ async fn handle_line(
         Request::ClearMediaCache(_) => {
             media_cache.clear().await;
             Response::MediaCacheCleared(ipc::MediaCacheClearResponse { success: true })
-            // Note: clear() logs errors internally, so we return success=true 
+            // Note: clear() logs errors internally, so we return success=true
             // if no panic occurred. The TUI can verify by checking cache stats.
         }
 
@@ -1498,7 +1564,7 @@ async fn handle_line(
             let cfg = config.clone();
             let mut errors = Vec::new();
             use serde_json::Value;
-            
+
             if let Some(ref path) = r.movies {
                 if let Err(e) = cfg.set("storage.movies", Value::String(path.clone())).await {
                     errors.push(format!("movies: {}", e));
@@ -1520,11 +1586,14 @@ async fn handle_line(
                 }
             }
             if let Some(ref path) = r.podcasts {
-                if let Err(e) = cfg.set("storage.podcasts", Value::String(path.clone())).await {
+                if let Err(e) = cfg
+                    .set("storage.podcasts", Value::String(path.clone()))
+                    .await
+                {
                     errors.push(format!("podcasts: {}", e));
                 }
             }
-            
+
             if errors.is_empty() {
                 Response::StoragePathsUpdated { success: true }
             } else {
@@ -1561,29 +1630,58 @@ async fn handle_line(
         Request::Play(_) | Request::PlayerStop => Response::Ok,
 
         // GetMpdOutputs is handled earlier in the IPC loop (needs async mpd.outputs()).
-        Request::GetMpdOutputs => Response::error(None, ErrorCode::InvalidRequest, "use get_mpd_outputs message type".to_string()),
+        Request::GetMpdOutputs => Response::error(
+            None,
+            ErrorCode::InvalidRequest,
+            "use get_mpd_outputs message type".to_string(),
+        ),
 
         // ── MPD library / browse pull requests ─────────────────────────────
         Request::MpdGetQueue(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => match bridge.get_queue().await {
                 Ok(tracks) => Response::MpdGetQueue(ipc::MpdGetQueueResponse { id: r.id, tracks }),
-                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                Err(e) => {
+                    Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}"))
+                }
             },
         },
         Request::MpdList(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => {
                 let result = match r.what.as_str() {
                     "artists" => bridge.list_artists().await.map(|a| ipc::MpdListResponse {
-                        id: r.id.clone(), artists: a, albums: vec![], songs: vec![],
+                        id: r.id.clone(),
+                        artists: a,
+                        albums: vec![],
+                        songs: vec![],
                     }),
-                    "albums" => bridge.list_albums(&r.artist).await.map(|a| ipc::MpdListResponse {
-                        id: r.id.clone(), artists: vec![], albums: a, songs: vec![],
-                    }),
-                    "songs" => bridge.list_songs(&r.artist, &r.album, &r.date).await.map(|s| ipc::MpdListResponse {
-                        id: r.id.clone(), artists: vec![], albums: vec![], songs: s,
-                    }),
+                    "albums" => bridge
+                        .list_albums(&r.artist)
+                        .await
+                        .map(|a| ipc::MpdListResponse {
+                            id: r.id.clone(),
+                            artists: vec![],
+                            albums: a,
+                            songs: vec![],
+                        }),
+                    "songs" => bridge
+                        .list_songs(&r.artist, &r.album, &r.date)
+                        .await
+                        .map(|s| ipc::MpdListResponse {
+                            id: r.id.clone(),
+                            artists: vec![],
+                            albums: vec![],
+                            songs: s,
+                        }),
                     other => {
                         return Response::error(
                             Some(r.id),
@@ -1594,34 +1692,63 @@ async fn handle_line(
                 };
                 match result {
                     Ok(resp) => Response::MpdList(resp),
-                    Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                    Err(e) => {
+                        Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}"))
+                    }
                 }
             }
         },
         Request::MpdBrowse(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => match bridge.browse(&r.path).await {
                 Ok(entries) => Response::MpdBrowse(ipc::MpdBrowseResponse { id: r.id, entries }),
-                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                Err(e) => {
+                    Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}"))
+                }
             },
         },
         Request::MpdGetPlaylists(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => match bridge.get_playlists().await {
-                Ok(playlists) => Response::MpdGetPlaylists(ipc::MpdGetPlaylistsResponse { id: r.id, playlists }),
-                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                Ok(playlists) => Response::MpdGetPlaylists(ipc::MpdGetPlaylistsResponse {
+                    id: r.id,
+                    playlists,
+                }),
+                Err(e) => {
+                    Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}"))
+                }
             },
         },
         Request::MpdGetPlaylist(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => match bridge.get_playlist_tracks(&r.name).await {
-                Ok(tracks) => Response::MpdGetPlaylist(ipc::MpdGetPlaylistResponse { id: r.id, tracks }),
-                Err(e) => Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}")),
+                Ok(tracks) => {
+                    Response::MpdGetPlaylist(ipc::MpdGetPlaylistResponse { id: r.id, tracks })
+                }
+                Err(e) => {
+                    Response::error(Some(r.id), ErrorCode::Internal, format!("mpd_error: {e}"))
+                }
             },
         },
 
         Request::MpdSearch(r) => match mpd {
-            None => Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string()),
+            None => Response::error(
+                Some(r.id),
+                ErrorCode::Internal,
+                "MPD not available".to_string(),
+            ),
             Some(bridge) => {
                 let result = bridge.search(r).await;
                 Response::MpdSearch(result)
@@ -1661,10 +1788,22 @@ async fn handle_line(
             // happen in-memory and flush async).
             let cfg = config.snapshot().await;
             let (priority, disabled) = match r.kind.as_str() {
-                "movies" => (cfg.metadata.sources.movies.clone(), cfg.metadata.sources.movies_disabled.clone()),
-                "series" => (cfg.metadata.sources.series.clone(), cfg.metadata.sources.series_disabled.clone()),
-                "anime"  => (cfg.metadata.sources.anime.clone(),  cfg.metadata.sources.anime_disabled.clone()),
-                "music"  => (cfg.metadata.sources.music.clone(),  cfg.metadata.sources.music_disabled.clone()),
+                "movies" => (
+                    cfg.metadata.sources.movies.clone(),
+                    cfg.metadata.sources.movies_disabled.clone(),
+                ),
+                "series" => (
+                    cfg.metadata.sources.series.clone(),
+                    cfg.metadata.sources.series_disabled.clone(),
+                ),
+                "anime" => (
+                    cfg.metadata.sources.anime.clone(),
+                    cfg.metadata.sources.anime_disabled.clone(),
+                ),
+                "music" => (
+                    cfg.metadata.sources.music.clone(),
+                    cfg.metadata.sources.music_disabled.clone(),
+                ),
                 other => {
                     return Response::error(
                         Some(r.id),
@@ -1684,8 +1823,7 @@ async fn handle_line(
             // signal. A future refinement could OR across all four verbs.
             use crate::cache::metadata_key::MetadataVerb;
             use crate::engine::metadata::sources::SourceCapabilityProbe;
-            let mut discovered: Vec<String> =
-                probe.discover(MetadataVerb::Enrich, &r.kind);
+            let mut discovered: Vec<String> = probe.discover(MetadataVerb::Enrich, &r.kind);
             // Drop anything already in the priority list — discovered is
             // the "auto-included tail", not a duplicate of priority.
             let priority_set: std::collections::HashSet<&str> =
@@ -1704,7 +1842,11 @@ async fn handle_line(
         // ── DSP requests ─────────────────────────────────────────────────────────
         Request::GetDspStatus => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let pipeline = d.lock().await;
             let cfg = pipeline.config().await;
@@ -1720,13 +1862,23 @@ async fn handle_line(
         }
         Request::SetDspConfig(r) => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let mut pipeline = d.lock().await;
             let mut cfg = pipeline.config().await;
-            if let Some(v) = r.enabled { cfg.enabled = v; }
-            if let Some(v) = r.output_sample_rate { cfg.output_sample_rate = v; }
-            if let Some(v) = r.upsample_ratio { cfg.upsample_ratio = v; }
+            if let Some(v) = r.enabled {
+                cfg.enabled = v;
+            }
+            if let Some(v) = r.output_sample_rate {
+                cfg.output_sample_rate = v;
+            }
+            if let Some(v) = r.upsample_ratio {
+                cfg.upsample_ratio = v;
+            }
             if let Some(v) = r.filter_type {
                 cfg.filter_type = match v.as_str() {
                     "fast" => dsp::FilterType::Fast,
@@ -1734,8 +1886,12 @@ async fn handle_line(
                     _ => dsp::FilterType::Synchronous,
                 };
             }
-            if let Some(v) = r.resample_enabled { cfg.resample_enabled = v; }
-            if let Some(v) = r.dsd_to_pcm_enabled { cfg.dsd_to_pcm_enabled = v; }
+            if let Some(v) = r.resample_enabled {
+                cfg.resample_enabled = v;
+            }
+            if let Some(v) = r.dsd_to_pcm_enabled {
+                cfg.dsd_to_pcm_enabled = v;
+            }
             if let Some(v) = r.output_mode {
                 cfg.output_mode = match v.as_str() {
                     "dsd" => dsp::OutputMode::Dsd,
@@ -1743,11 +1899,19 @@ async fn handle_line(
                     _ => dsp::OutputMode::Pcm,
                 };
             }
-            if let Some(v) = r.convolution_enabled { cfg.convolution_enabled = v; }
-            if let Some(v) = r.convolution_bypass { cfg.convolution_bypass = v; }
+            if let Some(v) = r.convolution_enabled {
+                cfg.convolution_enabled = v;
+            }
+            if let Some(v) = r.convolution_bypass {
+                cfg.convolution_bypass = v;
+            }
             if let Some(v) = r.buffer_size {
                 if v == 0 {
-                    return Response::error(None, ErrorCode::InvalidRequest, "buffer_size must be non-zero".to_string());
+                    return Response::error(
+                        None,
+                        ErrorCode::InvalidRequest,
+                        "buffer_size must be non-zero".to_string(),
+                    );
                 }
                 cfg.buffer_size = v;
             }
@@ -1756,7 +1920,11 @@ async fn handle_line(
         }
         Request::LoadConvolutionFilter(r) => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let mut pipeline = d.lock().await;
             match pipeline.load_convolution_filter(&r.path) {
@@ -1766,39 +1934,67 @@ async fn handle_line(
         }
         Request::BindDspToMpd => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let cfg = d.lock().await.config().await;
             if cfg.output_target != OutputTarget::Mpd {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP output_target is not set to 'mpd'".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP output_target is not set to 'mpd'".to_string(),
+                );
             }
-            let mpd_config = "audio_output {\n    type \"pipewire\"\n    name \"STUI DSP\"\n}\n".to_string();
-            Response::DspBoundToMpd { success: true, config: mpd_config }
+            let mpd_config =
+                "audio_output {\n    type \"pipewire\"\n    name \"STUI DSP\"\n}\n".to_string();
+            Response::DspBoundToMpd {
+                success: true,
+                config: mpd_config,
+            }
         }
         Request::ListDspProfiles => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let profiles = d.lock().await.profile_store().list_profiles();
             Response::DspProfilesListed { profiles }
         }
         Request::SaveDspProfile(r) => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let mut pipeline = d.lock().await;
             let cfg = pipeline.config().await;
             // Preserve existing profile for rollback in case save fails
             let existing = pipeline.profile_store().get_profile(&r.name).cloned();
             let profile = crate::dsp::config::DspProfileConfig::from_config(&cfg, r.name.clone());
-            pipeline.profile_store_mut().add_profile(r.name.clone(), profile);
+            pipeline
+                .profile_store_mut()
+                .add_profile(r.name.clone(), profile);
             match pipeline.profile_store_mut().save() {
                 Ok(_) => Response::DspProfileSaved { success: true },
                 Err(e) => {
                     // Rollback: restore original or remove if new
                     match existing {
-                        Some(orig) => { pipeline.profile_store_mut().add_profile(r.name.clone(), orig); }
-                        None => { let _ = pipeline.profile_store_mut().remove_profile(&r.name); }
+                        Some(orig) => {
+                            pipeline
+                                .profile_store_mut()
+                                .add_profile(r.name.clone(), orig);
+                        }
+                        None => {
+                            let _ = pipeline.profile_store_mut().remove_profile(&r.name);
+                        }
                     }
                     Response::error(None, ErrorCode::Internal, e)
                 }
@@ -1806,7 +2002,11 @@ async fn handle_line(
         }
         Request::LoadDspProfile(r) => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let mut pipeline = d.lock().await;
             let mut cfg = pipeline.config().await;
@@ -1814,27 +2014,45 @@ async fn handle_line(
                 pipeline.update_config(cfg).await;
                 Response::DspProfileLoaded { success: true }
             } else {
-                Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
+                Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    format!("profile '{}' not found", r.name),
+                )
             }
         }
         Request::DeleteDspProfile(r) => {
             let Some(d) = dsp else {
-                return Response::error(None, ErrorCode::InvalidRequest, "DSP not configured".to_string());
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    "DSP not configured".to_string(),
+                );
             };
             let mut pipeline = d.lock().await;
             let Some(backup) = pipeline.profile_store().get_profile(&r.name).cloned() else {
-                return Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name));
+                return Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    format!("profile '{}' not found", r.name),
+                );
             };
             if pipeline.profile_store_mut().remove_profile(&r.name) {
                 match pipeline.profile_store_mut().save() {
                     Ok(_) => Response::DspProfileDeleted { success: true },
                     Err(e) => {
-                        pipeline.profile_store_mut().add_profile(r.name.clone(), backup);
+                        pipeline
+                            .profile_store_mut()
+                            .add_profile(r.name.clone(), backup);
                         Response::error(None, ErrorCode::Internal, e)
                     }
                 }
             } else {
-                Response::error(None, ErrorCode::InvalidRequest, format!("profile '{}' not found", r.name))
+                Response::error(
+                    None,
+                    ErrorCode::InvalidRequest,
+                    format!("profile '{}' not found", r.name),
+                )
             }
         }
 
@@ -1851,7 +2069,9 @@ async fn handle_line(
                         mediacache::album_art::extract(&audio_path)
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_default()
-                    }).await.unwrap_or_default()
+                    })
+                    .await
+                    .unwrap_or_default()
                 }
                 None => String::new(),
             };
@@ -1862,11 +2082,16 @@ async fn handle_line(
             use mediacache::normalize::{self as norm, exceptions::ExceptionField};
             let field = match ExceptionField::from_str(&r.field) {
                 Some(f) => f,
-                None => return Response::error(
-                    Some(r.id),
-                    ErrorCode::InvalidRequest,
-                    format!("unknown field `{}` (expected artist|album_artist|album|title|genre)", r.field),
-                ),
+                None => {
+                    return Response::error(
+                        Some(r.id),
+                        ErrorCode::InvalidRequest,
+                        format!(
+                            "unknown field `{}` (expected artist|album_artist|album|title|genre)",
+                            r.field
+                        ),
+                    )
+                }
             };
             let Some(store) = norm::store::global() else {
                 return Response::error(
@@ -1876,7 +2101,9 @@ async fn handle_line(
                 );
             };
             match store.add_user_exception(field, &r.raw_value) {
-                Ok(added) => Response::MarkTagException(ipc::MarkTagExceptionResponse { id: r.id, added }),
+                Ok(added) => {
+                    Response::MarkTagException(ipc::MarkTagExceptionResponse { id: r.id, added })
+                }
                 Err(e) => Response::error(
                     Some(r.id),
                     ErrorCode::Internal,
@@ -1891,7 +2118,11 @@ async fn handle_line(
                 tag_write_job,
             };
             let Some(bridge) = mpd else {
-                return Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string());
+                return Response::error(
+                    Some(r.id),
+                    ErrorCode::Internal,
+                    "MPD not available".to_string(),
+                );
             };
             let cfg_snap = config.snapshot().await;
             let Some(music_dir) = cfg_snap.mpd.music_dir.clone() else {
@@ -1903,13 +2134,15 @@ async fn handle_line(
             };
             let raw_files = match bridge.gather_scope_files(&r.scope, &music_dir).await {
                 Ok(f) => f,
-                Err(e) => return Response::error(
-                    Some(r.id), ErrorCode::Internal, format!("gather scope files: {e}"),
-                ),
+                Err(e) => {
+                    return Response::error(
+                        Some(r.id),
+                        ErrorCode::Internal,
+                        format!("gather scope files: {e}"),
+                    )
+                }
             };
-            let exceptions = norm::store::global()
-                .map(|s| s.get())
-                .unwrap_or_default();
+            let exceptions = norm::store::global().map(|s| s.get()).unwrap_or_default();
             let cfg = NormalizationConfig {
                 enabled: true,
                 use_lookup: cfg_snap.music.normalize.use_lookup,
@@ -1932,7 +2165,11 @@ async fn handle_line(
         Request::ActionATagsApply(r) => {
             use mediacache::tag_write_job;
             let Some(bridge) = mpd else {
-                return Response::error(Some(r.id), ErrorCode::Internal, "MPD not available".to_string());
+                return Response::error(
+                    Some(r.id),
+                    ErrorCode::Internal,
+                    "MPD not available".to_string(),
+                );
             };
             let Some(diff) = tag_job_store.take(&r.job_id) else {
                 return Response::error(
@@ -1949,7 +2186,8 @@ async fn handle_line(
                 diff,
                 cancel_flag,
                 None, // v1: no streaming progress (see spec)
-            ).await;
+            )
+            .await;
             tag_job_registry.done(&r.job_id);
 
             let rescan_path = tag_write_job::common_ancestor(&files_for_rescan)
@@ -1962,7 +2200,9 @@ async fn handle_line(
             }
 
             let failed_count = outcome.failed.len();
-            let failures = outcome.failed.iter()
+            let failures = outcome
+                .failed
+                .iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect();
             Response::ActionATagsApply(ipc::ActionATagsApplyResponse {
@@ -1984,61 +2224,114 @@ async fn handle_line(
         }
 
         // ── Plugin verb dispatch ──────────────────────────────────────────────
-
         Request::Lookup(req) => {
-            let ipc::LookupIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_lookup(&plugin, inner, crate::engine::CallPriority::Foreground).await {
+            let ipc::LookupIpcRequest {
+                query_id,
+                plugin,
+                inner,
+            } = req;
+            match engine
+                .supervisor_lookup(&plugin, inner, crate::engine::CallPriority::Foreground)
+                .await
+            {
                 Ok(entry) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "lookup", "plugin verb dispatch ok");
                     Response::Lookup(ipc::LookupIpcResponse { query_id, entry })
                 }
-                Err(e) => Response::error(Some(query_id.to_string()), ErrorCode::Internal, e.to_string()),
+                Err(e) => Response::error(
+                    Some(query_id.to_string()),
+                    ErrorCode::Internal,
+                    e.to_string(),
+                ),
             }
         }
 
         Request::Enrich(req) => {
-            let ipc::EnrichIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_enrich(&plugin, inner, crate::engine::CallPriority::Foreground).await {
+            let ipc::EnrichIpcRequest {
+                query_id,
+                plugin,
+                inner,
+            } = req;
+            match engine
+                .supervisor_enrich(&plugin, inner, crate::engine::CallPriority::Foreground)
+                .await
+            {
                 Ok(entry) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "enrich", "plugin verb dispatch ok");
                     Response::Enrich(ipc::EnrichIpcResponse { query_id, entry })
                 }
-                Err(e) => Response::error(Some(query_id.to_string()), ErrorCode::Internal, e.to_string()),
+                Err(e) => Response::error(
+                    Some(query_id.to_string()),
+                    ErrorCode::Internal,
+                    e.to_string(),
+                ),
             }
         }
 
         Request::GetArtwork(req) => {
-            let ipc::ArtworkIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_get_artwork(&plugin, inner, crate::engine::CallPriority::Foreground).await {
+            let ipc::ArtworkIpcRequest {
+                query_id,
+                plugin,
+                inner,
+            } = req;
+            match engine
+                .supervisor_get_artwork(&plugin, inner, crate::engine::CallPriority::Foreground)
+                .await
+            {
                 Ok(inner) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "get_artwork", "plugin verb dispatch ok");
                     Response::GetArtwork(ipc::ArtworkIpcResponse { query_id, inner })
                 }
-                Err(e) => Response::error(Some(query_id.to_string()), ErrorCode::Internal, e.to_string()),
+                Err(e) => Response::error(
+                    Some(query_id.to_string()),
+                    ErrorCode::Internal,
+                    e.to_string(),
+                ),
             }
         }
 
         Request::GetCredits(req) => {
-            let ipc::CreditsIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_get_credits(&plugin, inner, crate::engine::CallPriority::Foreground).await {
+            let ipc::CreditsIpcRequest {
+                query_id,
+                plugin,
+                inner,
+            } = req;
+            match engine
+                .supervisor_get_credits(&plugin, inner, crate::engine::CallPriority::Foreground)
+                .await
+            {
                 Ok(inner) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "get_credits", "plugin verb dispatch ok");
                     Response::GetCredits(ipc::CreditsIpcResponse { query_id, inner })
                 }
-                Err(e) => Response::error(Some(query_id.to_string()), ErrorCode::Internal, e.to_string()),
+                Err(e) => Response::error(
+                    Some(query_id.to_string()),
+                    ErrorCode::Internal,
+                    e.to_string(),
+                ),
             }
         }
 
         Request::Related(req) => {
-            let ipc::RelatedIpcRequest { query_id, plugin, inner } = req;
-            match engine.supervisor_related(&plugin, inner, crate::engine::CallPriority::Foreground).await {
+            let ipc::RelatedIpcRequest {
+                query_id,
+                plugin,
+                inner,
+            } = req;
+            match engine
+                .supervisor_related(&plugin, inner, crate::engine::CallPriority::Foreground)
+                .await
+            {
                 Ok(items) => {
                     tracing::debug!(query_id, plugin = %plugin, verb = "related", "plugin verb dispatch ok");
                     Response::Related(ipc::RelatedIpcResponse { query_id, items })
                 }
-                Err(e) => Response::error(Some(query_id.to_string()), ErrorCode::Internal, e.to_string()),
+                Err(e) => Response::error(
+                    Some(query_id.to_string()),
+                    ErrorCode::Internal,
+                    e.to_string(),
+                ),
             }
         }
     }
 }
-

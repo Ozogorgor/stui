@@ -157,7 +157,10 @@ mod tests {
         for _ in 0..5 {
             bucket.acquire().await;
         }
-        assert!(start.elapsed() < Duration::from_millis(50), "burst should be instant");
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "burst should be instant"
+        );
         bucket.acquire().await;
         let total = start.elapsed();
         // 1 token needs 1 / 0.4 = 2.5s to accrue.
@@ -174,9 +177,9 @@ mod tests {
     async fn negative_rps_clamped_to_disabled() {
         let bucket = TokenBucket::new(-1.0, 1);
         bucket.acquire().await; // burst
-        // The next acquire would sleep for the disabled-bucket timeout
-        // (~1 hour). Race it against a small sleep and verify it doesn't
-        // complete quickly.
+                                // The next acquire would sleep for the disabled-bucket timeout
+                                // (~1 hour). Race it against a small sleep and verify it doesn't
+                                // complete quickly.
         let racer = async {
             bucket.acquire().await;
             "acquired"

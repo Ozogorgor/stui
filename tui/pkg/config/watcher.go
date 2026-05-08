@@ -16,10 +16,10 @@ const (
 // Watcher watches config.toml and the themes/ directory for external changes.
 // It debounces events (150ms) and suppresses stui's own writes (200ms guard).
 type Watcher struct {
-	watcher      *fsnotify.Watcher
-	cfgPath      string
-	onReload     func(Config)
-	stop         chan struct{}
+	watcher  *fsnotify.Watcher
+	cfgPath  string
+	onReload func(Config)
+	stop     chan struct{}
 
 	mu           sync.Mutex
 	activeTheme  string

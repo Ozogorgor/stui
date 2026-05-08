@@ -4,11 +4,11 @@
 //! Non-HTTP URLs (magnet:, .torrent) return None for benchmarking data,
 //! allowing callers to fall back to seeder-count estimation.
 
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use tokio::sync::Semaphore;
 use futures_util::StreamExt;
+use tokio::sync::Semaphore;
 
 use crate::providers::Stream;
 
@@ -102,7 +102,9 @@ impl StreamBenchmarker {
         request: &reqwest::Request,
         start: Instant,
     ) -> Result<(usize, Duration), String> {
-        let req = request.try_clone().ok_or_else(|| "failed to clone request".to_string())?;
+        let req = request
+            .try_clone()
+            .ok_or_else(|| "failed to clone request".to_string())?;
         let response = self
             .client
             .execute(req)
@@ -158,7 +160,10 @@ impl StreamBenchmarker {
                 let bench = bench.clone();
 
                 tokio::spawn(async move {
-                    let _permit = sem.acquire().await.expect("benchmark semaphore closed unexpectedly");
+                    let _permit = sem
+                        .acquire()
+                        .await
+                        .expect("benchmark semaphore closed unexpectedly");
                     let result = bench.probe(&stream.url).await;
 
                     let mut probed = stream.clone();
@@ -240,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn probe_rejects_non_http_urls() {
         let bench = StreamBenchmarker::new();
-        
+
         let result = bench.probe("magnet:?xt=urn:btih:1234567890").await;
         assert!(result.speed_mbps.is_none());
         assert!(result.error.is_some());
@@ -250,15 +255,15 @@ mod tests {
     #[tokio::test]
     async fn probe_all_preserves_order() {
         let bench = StreamBenchmarker::new();
-        
+
         let streams: Vec<Stream> = vec![
             make_stream("http://example.com/stream1"),
             make_stream("http://example.com/stream2"),
             make_stream("http://example.com/stream3"),
         ];
-        
+
         let results = bench.probe_all(&streams).await;
-        
+
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].id, "http://example.com/stream1");
         assert_eq!(results[1].id, "http://example.com/stream2");
@@ -268,15 +273,15 @@ mod tests {
     #[tokio::test]
     async fn probe_all_handles_mixed_urls() {
         let bench = StreamBenchmarker::new();
-        
+
         let streams: Vec<Stream> = vec![
             make_stream("http://example.com/stream1"),
             make_stream("magnet:?xt=urn:btih:nothttp"),
             make_stream("http://example.com/stream3"),
         ];
-        
+
         let results = bench.probe_all(&streams).await;
-        
+
         assert_eq!(results.len(), 3);
         assert_eq!(results[1].url, "magnet:?xt=urn:btih:nothttp");
         assert!(results[1].speed_mbps.is_none());
@@ -304,7 +309,7 @@ mod tests {
     fn estimate_torrent_speed_scales_linearly() {
         let speed_50 = StreamBenchmarker::estimate_torrent_speed(Some(50));
         let speed_200 = StreamBenchmarker::estimate_torrent_speed(Some(200));
-        
+
         assert_eq!(speed_50, Some(6.0));
         assert_eq!(speed_200, Some(24.0));
     }

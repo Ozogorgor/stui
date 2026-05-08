@@ -14,7 +14,7 @@ type Entry struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`
 	Year     string `json:"year,omitempty"`
-	Tab      string `json:"tab"`             // "movies", "series", etc.
+	Tab      string `json:"tab"` // "movies", "series", etc.
 	Provider string `json:"provider,omitempty"`
 	ImdbID   string `json:"imdb_id,omitempty"`
 	AddedAt  int64  `json:"added_at"` // unix timestamp

@@ -23,20 +23,22 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
+use super::{CallPriority, Engine};
 use crate::cache::RuntimeCache;
 use crate::catalog::Catalog;
+use crate::config::ConfigManager;
 use crate::config::RuntimeConfig;
-use super::{CallPriority, Engine};
+use crate::events::{EventBus, RuntimeEvent};
 use crate::ipc::MediaTab;
 use crate::player::PlayerBridge;
-use crate::events::{EventBus, RuntimeEvent};
-use crate::config::ConfigManager;
-use crate::providers::{HealthRegistry, ProviderThrottle, CircuitBreaker, StreamBenchmarker, BenchHealthBridge};
 use crate::plugin_rpc::PluginRpcManager;
+use crate::providers::{
+    BenchHealthBridge, CircuitBreaker, HealthRegistry, ProviderThrottle, StreamBenchmarker,
+};
 use crate::quality::{RankingPolicy, StreamCandidate};
 use crate::roon::RoonClient;
 
@@ -44,13 +46,13 @@ use crate::roon::RoonClient;
 ///
 /// Owns every runtime subsystem.  Passed by reference to the IPC loop.
 pub struct Pipeline {
-    pub engine:   Engine,
-    pub catalog:  Arc<Catalog>,
-    pub cache:    RuntimeCache,
-    pub policy:   RankingPolicy,
+    pub engine: Engine,
+    pub catalog: Arc<Catalog>,
+    pub cache: RuntimeCache,
+    pub policy: RankingPolicy,
 
     /// Player bridge — routes URLs to aria2 or mpv.
-    pub player:   Arc<PlayerBridge>,
+    pub player: Arc<PlayerBridge>,
 
     /// Language-agnostic RPC plugin manager (Python, Go, JS, Rust, …).
     /// Runs alongside the WASM plugin system; results are merged before ranking.
@@ -86,37 +88,46 @@ impl Pipeline {
     /// Construct the pipeline from config.
     ///
     /// The engine and catalog are created with Engine providing WASM plugin access.
-    pub fn new(
-        cfg: &RuntimeConfig,
-        player: Arc<PlayerBridge>,
-    ) -> Self {
-        let engine  = Engine::new(
+    pub fn new(cfg: &RuntimeConfig, player: Arc<PlayerBridge>) -> Self {
+        let engine = Engine::new(
             cfg.cache_dir.clone(),
             cfg.data_dir.clone(),
             cfg.catalog.anime_ratio,
             cfg.plugins.clone(),
         );
-        let catalog = Arc::new(Catalog::new(cfg.cache_dir.clone(), Arc::new(engine.clone())));
-        let cache   = RuntimeCache::new();
-        let policy  = RankingPolicy::default();
+        let catalog = Arc::new(Catalog::new(
+            cfg.cache_dir.clone(),
+            Arc::new(engine.clone()),
+        ));
+        let cache = RuntimeCache::new();
+        let policy = RankingPolicy::default();
 
-        info!(
-            "pipeline ready, cache_dir={}",
-            cfg.cache_dir.display()
-        );
+        info!("pipeline ready, cache_dir={}", cfg.cache_dir.display());
 
-        let bus      = Arc::new(EventBus::new());
-        let health   = HealthRegistry::new();
+        let bus = Arc::new(EventBus::new());
+        let health = HealthRegistry::new();
         let throttle = ProviderThrottle::new();
         let circuit_breaker = CircuitBreaker::new();
-        let config   = ConfigManager::new(cfg.clone(), bus.clone());
-        let bench    = StreamBenchmarker::new();
+        let config = ConfigManager::new(cfg.clone(), bus.clone());
+        let bench = StreamBenchmarker::new();
         let bridge = BenchHealthBridge::new(health.clone());
 
-        Pipeline { engine, catalog, cache, policy, player,
-                   rpc: Arc::new(PluginRpcManager::new()),
-                   bus, health, throttle, circuit_breaker, config, bench, bridge,
-                   roon: None }
+        Pipeline {
+            engine,
+            catalog,
+            cache,
+            policy,
+            player,
+            rpc: Arc::new(PluginRpcManager::new()),
+            bus,
+            health,
+            throttle,
+            circuit_breaker,
+            config,
+            bench,
+            bridge,
+            roon: None,
+        }
     }
 
     // ── Stage 1: catalog / search ─────────────────────────────────────────
@@ -130,13 +141,13 @@ impl Pipeline {
     /// Fan out a search query to all providers, cache and return results.
     pub async fn search(
         &self,
-        tab:   &MediaTab,
+        tab: &MediaTab,
         query: &str,
-        page:  u32,
+        page: u32,
     ) -> Vec<crate::catalog::CatalogEntry> {
         self.bus.emit(RuntimeEvent::SearchRequested {
             query: query.to_string(),
-            tab:   format!("{tab:?}"),
+            tab: format!("{tab:?}"),
         });
         let offset = ((page.saturating_sub(1)) as usize) * 50;
         let opts = self.config.snapshot().await;
@@ -144,12 +155,15 @@ impl Pipeline {
             adult_content_enabled: opts.adult_content_enabled,
             ..Default::default()
         };
-        let all_entries = self.engine.search_catalog_entries(query, tab, search_opts, CallPriority::Foreground).await;
+        let all_entries = self
+            .engine
+            .search_catalog_entries(query, tab, search_opts, CallPriority::Foreground)
+            .await;
         let count = all_entries.len();
         self.health.record_success("engine", 0);
         self.bus.emit(RuntimeEvent::SearchResultsReady {
-            query:    query.to_string(),
-            tab:      format!("{tab:?}"),
+            query: query.to_string(),
+            tab: format!("{tab:?}"),
             provider: "all".to_string(),
             count,
         });
@@ -160,20 +174,25 @@ impl Pipeline {
 
     /// Resolve and rank all available streams for `entry_id`.
     /// Returns candidates sorted best-first according to `self.policy`.
-    /// 
+    ///
     /// Uses health-blended ranking when provider reliability data is available.
     /// Uses stream benchmarking when `streaming.benchmark_streams` config is enabled.
     pub async fn resolve_streams(&self, entry_id: &str) -> Vec<StreamCandidate> {
         let cfg = self.config.snapshot().await;
         let benchmark_enabled = cfg.streaming.benchmark_streams;
         let health_map = self.health.all_reliability_scores();
-        
+
         if health_map.is_empty() && !benchmark_enabled {
-            self.engine.ranked_streams(entry_id, &self.policy, &[]).await
+            self.engine
+                .ranked_streams(entry_id, &self.policy, &[])
+                .await
         } else if benchmark_enabled {
-            self.resolve_streams_with_benchmark(entry_id, health_map).await
+            self.resolve_streams_with_benchmark(entry_id, health_map)
+                .await
         } else {
-            self.engine.ranked_streams_with_health(entry_id, &self.policy, &[], health_map).await
+            self.engine
+                .ranked_streams_with_health(entry_id, &self.policy, &[], health_map)
+                .await
         }
     }
 
@@ -185,11 +204,15 @@ impl Pipeline {
         health_map: HashMap<String, f64>,
     ) -> Vec<StreamCandidate> {
         use crate::quality::rank_with_health_and_speed;
-        
+
         let candidates = if health_map.is_empty() {
-            self.engine.ranked_streams(entry_id, &self.policy, &[]).await
+            self.engine
+                .ranked_streams(entry_id, &self.policy, &[])
+                .await
         } else {
-            self.engine.ranked_streams_with_health(entry_id, &self.policy, &[], health_map.clone()).await
+            self.engine
+                .ranked_streams_with_health(entry_id, &self.policy, &[], health_map.clone())
+                .await
         };
 
         if candidates.is_empty() {
@@ -213,8 +236,16 @@ impl Pipeline {
         rank_with_health_and_speed(
             probed_streams,
             &self.policy,
-            if health_map.is_empty() { None } else { Some(&health_map) },
-            if speed_map.is_empty() { None } else { Some(&speed_map) },
+            if health_map.is_empty() {
+                None
+            } else {
+                Some(&health_map)
+            },
+            if speed_map.is_empty() {
+                None
+            } else {
+                Some(&speed_map)
+            },
         )
     }
 
@@ -234,11 +265,13 @@ impl Pipeline {
         &self,
         entry_id: &str,
         provider: &str,
-        imdb_id:  &str,
+        imdb_id: &str,
         media_type: Option<crate::ipc::MediaType>,
         year: Option<u32>,
     ) {
-        self.player.play(entry_id, provider, imdb_id, None, media_type, year).await;
+        self.player
+            .play(entry_id, provider, imdb_id, None, media_type, year)
+            .await;
     }
 
     // ── Policy control ────────────────────────────────────────────────────

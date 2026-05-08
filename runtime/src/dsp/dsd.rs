@@ -86,7 +86,6 @@ impl DsdConverter {
     pub fn output_rate(&self) -> u32 {
         self.output_rate
     }
-
 }
 
 /// DSD format variants.

@@ -13,7 +13,9 @@ pub fn init(bundled_path: PathBuf, user_path: PathBuf) -> Arc<ExceptionStore> {
         .clone()
 }
 
-pub fn global() -> Option<Arc<ExceptionStore>> { STORE.get().cloned() }
+pub fn global() -> Option<Arc<ExceptionStore>> {
+    STORE.get().cloned()
+}
 
 /// Default bundled path:
 ///   1. `<CARGO_MANIFEST_DIR>/../config/exceptions.toml` (dev checkout).
@@ -24,9 +26,13 @@ pub fn default_bundled_path() -> PathBuf {
         .parent()
         .map(|p| p.join("config").join("exceptions.toml"))
         .unwrap_or_else(|| PathBuf::from("config/exceptions.toml"));
-    if dev.exists() { return dev; }
+    if dev.exists() {
+        return dev;
+    }
     let installed = PathBuf::from("/usr/share/stui/exceptions.toml");
-    if installed.exists() { return installed; }
+    if installed.exists() {
+        return installed;
+    }
     dev
 }
 

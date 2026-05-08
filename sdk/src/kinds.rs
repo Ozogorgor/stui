@@ -7,15 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryKind {
-    Artist, Album, Track,
+    Artist, Album,
+    #[default]
+    Track,
     Movie, Series, Episode,
-}
-
-impl Default for EntryKind {
-    fn default() -> Self { EntryKind::Track }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]

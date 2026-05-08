@@ -19,7 +19,8 @@ use tracing::{debug, info, warn};
 
 use super::{AnimeBridge, AnimeIndex};
 
-const FRIBB_URL: &str = "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
+const FRIBB_URL: &str =
+    "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json";
 const REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Outcome of a single fetch attempt — either fresh data, no-change,
@@ -74,7 +75,10 @@ impl BridgeHttp for ReqwestBridgeHttp {
                     .await
                     .context("anime_bridge: read body failed")?
                     .to_vec();
-                Ok(FetchOutcome::Fresh { body, etag: new_etag })
+                Ok(FetchOutcome::Fresh {
+                    body,
+                    etag: new_etag,
+                })
             }
             other => anyhow::bail!("anime_bridge: HTTP {other}"),
         }
@@ -85,11 +89,7 @@ impl BridgeHttp for ReqwestBridgeHttp {
 /// context (e.g., the IPC layer's startup, after `Engine::new()`).
 /// The task runs forever; the spawned `JoinHandle` is dropped (the
 /// task continues in the background).
-pub fn spawn_refresh_task(
-    bridge: Arc<AnimeBridge>,
-    http: Arc<dyn BridgeHttp>,
-    cache_dir: PathBuf,
-) {
+pub fn spawn_refresh_task(bridge: Arc<AnimeBridge>, http: Arc<dyn BridgeHttp>, cache_dir: PathBuf) {
     tokio::spawn(async move {
         loop {
             if let Err(e) = run_one_refresh(&bridge, &*http, &cache_dir).await {
@@ -126,8 +126,8 @@ pub async fn run_one_refresh(
         FetchOutcome::Fresh { body, etag } => {
             // Try to parse BEFORE writing — a corrupt response
             // shouldn't overwrite our last-good cache.
-            let new_index = AnimeIndex::from_json(&body)
-                .context("anime_bridge: parse refreshed snapshot")?;
+            let new_index =
+                AnimeIndex::from_json(&body).context("anime_bridge: parse refreshed snapshot")?;
 
             if let Err(e) = tokio::fs::write(&body_path, &body).await {
                 warn!(err = %e, "anime_bridge: cache body write failed (non-fatal)");
@@ -138,7 +138,10 @@ pub async fn run_one_refresh(
                 }
             }
 
-            info!(entries = new_index.by_mal.len(), "anime_bridge: refreshed and swapping index");
+            info!(
+                entries = new_index.by_mal.len(),
+                "anime_bridge: refreshed and swapping index"
+            );
             bridge.swap_index(Arc::new(new_index));
             Ok(())
         }
@@ -167,8 +170,12 @@ mod tests {
             })
         }
         #[allow(dead_code)]
-        fn calls(&self) -> u32 { self.calls.load(Ordering::SeqCst) }
-        fn last_etag(&self) -> Option<String> { self.last_etag.lock().unwrap().clone() }
+        fn calls(&self) -> u32 {
+            self.calls.load(Ordering::SeqCst)
+        }
+        fn last_etag(&self) -> Option<String> {
+            self.last_etag.lock().unwrap().clone()
+        }
     }
     #[async_trait]
     impl BridgeHttp for MockHttp {
@@ -187,7 +194,8 @@ mod tests {
         br#"[
             { "mal_id": 1, "imdb_id": "tt0213338" },
             { "mal_id": 2, "imdb_id": "tt0388629" }
-        ]"#.to_vec()
+        ]"#
+        .to_vec()
     }
 
     #[tokio::test]
@@ -217,7 +225,10 @@ mod tests {
         run_one_refresh(&bridge, &*http, tmp.path()).await.unwrap();
 
         let after = bridge.current();
-        assert!(Arc::ptr_eq(&before, &after), "304 should not swap the index");
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "304 should not swap the index"
+        );
     }
 
     #[tokio::test]
@@ -231,7 +242,10 @@ mod tests {
         assert!(result.is_err());
 
         let after = bridge.current();
-        assert!(Arc::ptr_eq(&before, &after), "5xx should not swap the index");
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "5xx should not swap the index"
+        );
     }
 
     #[tokio::test]
@@ -248,7 +262,10 @@ mod tests {
         assert!(result.is_err());
 
         let after = bridge.current();
-        assert!(Arc::ptr_eq(&before, &after), "parse failure should not swap the index");
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "parse failure should not swap the index"
+        );
     }
 
     #[tokio::test]
@@ -262,9 +279,13 @@ mod tests {
 
         run_one_refresh(&bridge, &*http, tmp.path()).await.unwrap();
 
-        let body = tokio::fs::read(tmp.path().join("anime-bridge.json")).await.unwrap();
+        let body = tokio::fs::read(tmp.path().join("anime-bridge.json"))
+            .await
+            .unwrap();
         assert_eq!(body, fixture_one());
-        let etag = tokio::fs::read_to_string(tmp.path().join("anime-bridge.etag")).await.unwrap();
+        let etag = tokio::fs::read_to_string(tmp.path().join("anime-bridge.etag"))
+            .await
+            .unwrap();
         assert_eq!(etag, "\"abc\"");
     }
 

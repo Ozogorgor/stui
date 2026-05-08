@@ -45,12 +45,12 @@ use uuid::Uuid;
 
 use crate::abi::{SearchRequest, WasmSupervisor, WasmSupervisorConfig};
 use crate::ipc::{
-    ErrorCode, MediaEntry, MediaTab, PluginInfo, PluginListResponse,
-    PluginLoadedResponse, PluginStatus, PluginUnloadedResponse, ResolveResponse, Response,
+    ErrorCode, MediaEntry, MediaTab, PluginInfo, PluginListResponse, PluginLoadedResponse,
+    PluginStatus, PluginUnloadedResponse, ResolveResponse, Response,
 };
-use crate::plugin::{ExecutionMode, LoadedPlugin};
 use crate::plugin;
 use crate::plugin::PluginMetaExt;
+use crate::plugin::{ExecutionMode, LoadedPlugin};
 use crate::sandbox::SandboxCtx;
 use crate::{resolver, scraper};
 
@@ -58,8 +58,8 @@ use crate::{resolver, scraper};
 
 #[derive(Debug, Default)]
 pub struct PluginRegistry {
-    plugins:          HashMap<String, LoadedPlugin>,        // id → plugin
-    sandbox:          HashMap<String, SandboxCtx>,          // id → sandbox context
+    plugins: HashMap<String, LoadedPlugin>, // id → plugin
+    sandbox: HashMap<String, SandboxCtx>,   // id → sandbox context
     wasm_supervisors: HashMap<String, Arc<WasmSupervisor>>, // id → supervisor (WASM plugins only)
 }
 
@@ -120,7 +120,8 @@ impl PluginRegistry {
     /// intact) but are skipped by dispatch so the user can quickly
     /// pause/resume a plugin without a reload cycle.
     pub fn find_by_capability(&self, cap: crate::plugin::PluginCapability) -> Vec<&LoadedPlugin> {
-        self.plugins.values()
+        self.plugins
+            .values()
             .filter(|p| p.enabled && p.has_capability(cap.clone()))
             .collect()
     }
@@ -227,8 +228,7 @@ fn is_anime_dominant(entry: &crate::catalog::CatalogEntry) -> bool {
         return false;
     };
     let genre_lower = genre.to_lowercase();
-    let is_animation_genre =
-        genre_lower.contains("animation") || genre_lower.contains("anime");
+    let is_animation_genre = genre_lower.contains("animation") || genre_lower.contains("anime");
     if !is_animation_genre {
         return false;
     }
@@ -238,7 +238,10 @@ fn is_anime_dominant(entry: &crate::catalog::CatalogEntry) -> bool {
     let l = lang.to_ascii_lowercase();
     // Accept Japanese, Korean, Chinese variants. TMDB emits "ja" / "ko" /
     // "zh"; some sources use "jp" or region-tagged codes like "zh-cn".
-    matches!(l.as_str(), "ja" | "jp" | "ko" | "zh" | "zh-cn" | "zh-tw" | "zh-hk")
+    matches!(
+        l.as_str(),
+        "ja" | "jp" | "ko" | "zh" | "zh-cn" | "zh-tw" | "zh-hk"
+    )
 }
 
 /// Interleave anime-dominant entries with general ones so the final grid
@@ -255,9 +258,7 @@ fn balance_anime_mix(
     let anime_per_batch = (ratio * 10.0).round() as usize;
     let general_per_batch = 10 - anime_per_batch;
 
-    let (anime, general): (Vec<_>, Vec<_>) = entries
-        .into_iter()
-        .partition(is_anime_dominant);
+    let (anime, general): (Vec<_>, Vec<_>) = entries.into_iter().partition(is_anime_dominant);
 
     // Degenerate cases. If ratio excludes a bucket, don't emit from it; if
     // one bucket is naturally empty, emit the other straight through.
@@ -341,36 +342,39 @@ fn catalog_entries_to_media(
     entries: Vec<crate::catalog::CatalogEntry>,
     tab: &MediaTab,
 ) -> Vec<MediaEntry> {
-    entries.into_iter().map(|e| MediaEntry {
-        id:          e.id,
-        title:       e.title,
-        year:        e.year,
-        genre:       e.genre,
-        rating:      e.rating,
-        description: e.description,
-        poster_url:  e.poster_url,
-        provider:    e.provider,
-        tab:         tab.clone(),
-        media_type:  e.media_type,
-        ratings:     e.ratings,
-        imdb_id:     e.imdb_id,
-        tmdb_id:     e.tmdb_id,
-        mal_id:      e.mal_id,
-        // CatalogEntry doesn't carry anilist/kitsu ids; they're a
-        // pre-merge enrichment input, not part of the merged shape.
-        anilist_id:  None,
-        kitsu_id:    None,
-        original_language: e.original_language,
-        kind:        Default::default(),
-        source:      String::new(),
-        artist_name: e.artist,
-        album_name:  None,
-        track_number: None,
-        season:      None,
-        episode:     None,
-        season_count: None,
-        has_specials: false,
-    }).collect()
+    entries
+        .into_iter()
+        .map(|e| MediaEntry {
+            id: e.id,
+            title: e.title,
+            year: e.year,
+            genre: e.genre,
+            rating: e.rating,
+            description: e.description,
+            poster_url: e.poster_url,
+            provider: e.provider,
+            tab: tab.clone(),
+            media_type: e.media_type,
+            ratings: e.ratings,
+            imdb_id: e.imdb_id,
+            tmdb_id: e.tmdb_id,
+            mal_id: e.mal_id,
+            // CatalogEntry doesn't carry anilist/kitsu ids; they're a
+            // pre-merge enrichment input, not part of the merged shape.
+            anilist_id: None,
+            kitsu_id: None,
+            original_language: e.original_language,
+            kind: Default::default(),
+            source: String::new(),
+            artist_name: e.artist,
+            album_name: None,
+            track_number: None,
+            season: None,
+            episode: None,
+            season_count: None,
+            has_specials: false,
+        })
+        .collect()
 }
 
 // ── Engine ───────────────────────────────────────────────────────────────────
@@ -426,20 +430,20 @@ impl std::fmt::Display for PluginCallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::PluginNotFound(id) => write!(f, "plugin '{}' not found", id),
-            Self::UnsupportedScope   => write!(f, "plugin does not support this scope"),
-            Self::Timeout            => write!(f, "plugin call timed out"),
-            Self::Other(msg)         => write!(f, "{}", msg),
+            Self::UnsupportedScope => write!(f, "plugin does not support this scope"),
+            Self::Timeout => write!(f, "plugin call timed out"),
+            Self::Other(msg) => write!(f, "{}", msg),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Engine {
-    registry:     Arc<RwLock<PluginRegistry>>,
-    cache_dir:    std::path::PathBuf,
-    data_dir:     std::path::PathBuf,
+    registry: Arc<RwLock<PluginRegistry>>,
+    cache_dir: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
     /// In-memory TTL caches for search results, metadata, and stream URLs.
-    pub cache:    RuntimeCache,
+    pub cache: RuntimeCache,
     /// Per-scope plugin dispatch map, rebuilt after every load/unload.
     dispatch_map: Arc<RwLock<DispatchMap>>,
     /// Foreground plugin-call semaphore (user-initiated work).
@@ -530,7 +534,8 @@ impl Engine {
         if fanart.is_none() {
             tracing::debug!("fanart: no FANART_PROJECT_KEY in secrets — source disabled");
         }
-        let rating_aggregator = crate::rating_aggregator::RatingAggregatorClient::new().map(Arc::new);
+        let rating_aggregator =
+            crate::rating_aggregator::RatingAggregatorClient::new().map(Arc::new);
         // On-disk response cache (Phase 2). Survives daemon restart so the
         // catalog grid doesn't re-fetch providers for fresh-TTL keys. If the
         // DB can't be opened, fall back to mem-only — the runtime still works.
@@ -546,13 +551,15 @@ impl Engine {
         // never blocks engine startup beyond the snapshot read.
         let anime_bridge = crate::anime_bridge::AnimeBridge::new();
         Self {
-            registry:     Arc::new(RwLock::new(PluginRegistry::default())),
+            registry: Arc::new(RwLock::new(PluginRegistry::default())),
             cache_dir,
             data_dir,
             cache,
             dispatch_map: Arc::new(RwLock::new(DispatchMap::default())),
             plugin_semaphore_fg: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PLUGIN_CALLS)),
-            plugin_semaphore_bg: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BG_PLUGIN_CALLS)),
+            plugin_semaphore_bg: Arc::new(tokio::sync::Semaphore::new(
+                MAX_CONCURRENT_BG_PLUGIN_CALLS,
+            )),
             anime_ratio: anime_ratio.clamp(0.0, 1.0),
             tvdb,
             mdblist,
@@ -611,10 +618,7 @@ impl Engine {
     /// current values. Existing in-memory plugin instances are NOT
     /// re-initialised — that requires an explicit reload (TODO: hot-reload
     /// on settings change rather than next restart).
-    pub async fn update_user_plugin_config(
-        &self,
-        plugins: crate::config::types::PluginConfig,
-    ) {
+    pub async fn update_user_plugin_config(&self, plugins: crate::config::types::PluginConfig) {
         *self.user_plugin_config.write().await = plugins;
     }
 
@@ -751,9 +755,11 @@ impl Engine {
             }
         };
 
-        let sup = sup.ok_or_else(|| PluginCallError::Other(
-            format!("no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"),
-        ))?;
+        let sup = sup.ok_or_else(|| {
+            PluginCallError::Other(format!(
+                "no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"
+            ))
+        })?;
 
         // The ABI SearchRequest now carries scope directly (Task 7.0 sync).
         let req = crate::abi::SearchRequest {
@@ -777,7 +783,8 @@ impl Engine {
                 .unwrap_or_else(|| plugin_id.to_string())
         };
 
-        let entries = resp.items
+        let entries = resp
+            .items
             .into_iter()
             .map(|e| abi_entry_to_media_entry(e, &provider_name))
             .collect();
@@ -803,7 +810,7 @@ impl Engine {
         call: F,
     ) -> Result<R, PluginCallError>
     where
-        F:   FnOnce(Arc<WasmSupervisor>) -> Fut,
+        F: FnOnce(Arc<WasmSupervisor>) -> Fut,
         Fut: std::future::Future<Output = Result<R, crate::abi::types::AbiError>>,
     {
         // Acquire a priority-matched permit before touching any plugin.
@@ -820,9 +827,11 @@ impl Engine {
             }
         };
 
-        let sup = sup.ok_or_else(|| PluginCallError::Other(
-            format!("no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"),
-        ))?;
+        let sup = sup.ok_or_else(|| {
+            PluginCallError::Other(format!(
+                "no WASM supervisor for plugin '{plugin_id}' — non-WASM or load failed"
+            ))
+        })?;
 
         call(sup).await.map_err(map_abi_error)
     }
@@ -868,10 +877,7 @@ impl Engine {
     /// new ratings/metadata plugin is zero-code on the runtime
     /// side. Filters: enabled-only, typed catalog capability,
     /// kind in `kinds`, enrich verb is enabled and not stubbed.
-    pub async fn enrich_plugins_for_kind(
-        &self,
-        kind: stui_plugin_sdk::EntryKind,
-    ) -> Vec<String> {
+    pub async fn enrich_plugins_for_kind(&self, kind: stui_plugin_sdk::EntryKind) -> Vec<String> {
         use stui_plugin_sdk::CatalogCapability;
         let reg = self.registry.read().await;
         reg.all()
@@ -905,14 +911,19 @@ impl Engine {
         reg.all()
             .filter(|p| p.enabled)
             .filter_map(|p| {
-                let CatalogCapability::Typed { kinds, bulk_enrich, .. } =
-                    &p.manifest.capabilities.catalog
+                let CatalogCapability::Typed {
+                    kinds, bulk_enrich, ..
+                } = &p.manifest.capabilities.catalog
                 else {
                     return None;
                 };
-                if !kinds.contains(&kind) { return None; }
+                if !kinds.contains(&kind) {
+                    return None;
+                }
                 let cfg = bulk_enrich.as_ref()?;
-                if !cfg.is_enabled() || cfg.is_stub() { return None; }
+                if !cfg.is_enabled() || cfg.is_stub() {
+                    return None;
+                }
                 Some(p.manifest.plugin.name.clone())
             })
             .collect()
@@ -928,9 +939,11 @@ impl Engine {
         req: crate::abi::types::ArtworkRequest,
         prio: CallPriority,
     ) -> Result<crate::abi::types::ArtworkResponse, PluginCallError> {
-        self.call_plugin_verb(plugin_id, prio, |sup| async move {
-            sup.get_artwork(&req).await
-        })
+        self.call_plugin_verb(
+            plugin_id,
+            prio,
+            |sup| async move { sup.get_artwork(&req).await },
+        )
         .await
     }
 
@@ -943,9 +956,11 @@ impl Engine {
         req: crate::abi::types::CreditsRequest,
         prio: CallPriority,
     ) -> Result<crate::abi::types::CreditsResponse, PluginCallError> {
-        self.call_plugin_verb(plugin_id, prio, |sup| async move {
-            sup.get_credits(&req).await
-        })
+        self.call_plugin_verb(
+            plugin_id,
+            prio,
+            |sup| async move { sup.get_credits(&req).await },
+        )
         .await
     }
 
@@ -1037,9 +1052,11 @@ impl Engine {
         req: stui_plugin_sdk::BulkEnrichRequest,
         prio: CallPriority,
     ) -> Result<stui_plugin_sdk::BulkEnrichResponse, PluginCallError> {
-        self.call_plugin_verb(plugin_id, prio, |sup| async move {
-            sup.bulk_enrich(&req).await
-        })
+        self.call_plugin_verb(
+            plugin_id,
+            prio,
+            |sup| async move { sup.bulk_enrich(&req).await },
+        )
         .await
     }
 
@@ -1081,10 +1098,13 @@ impl Engine {
     /// Called after every `load_plugin` / `unload_plugin` so that
     /// `dispatch_map` is always consistent with the live plugin set.
     async fn rebuild_dispatch_map(&self, reg: &PluginRegistry) {
-        let infos: Vec<PluginEntryInfo> = reg.all().map(|p| PluginEntryInfo {
-            id:    p.id.clone(),
-            kinds: p.manifest.capabilities.catalog.kinds().to_vec(),
-        }).collect();
+        let infos: Vec<PluginEntryInfo> = reg
+            .all()
+            .map(|p| PluginEntryInfo {
+                id: p.id.clone(),
+                kinds: p.manifest.capabilities.catalog.kinds().to_vec(),
+            })
+            .collect();
         *self.dispatch_map.write().await = DispatchMap::build(&infos);
     }
 
@@ -1119,24 +1139,25 @@ impl Engine {
 
         let mut user_env_overrides: HashMap<String, String> = HashMap::new();
         for field in loaded.manifest.config_fields() {
-            let Some(env_var) = field.env_var.clone() else { continue };
+            let Some(env_var) = field.env_var.clone() else {
+                continue;
+            };
             // Accept either the bare field key (e.g. "api_key") or the fully
             // qualified key (e.g. "plugins.jackett.api_key") — the Settings UI
             // writes via the qualified form, but file edits often use bare keys.
             let full = field.full_key(&loaded.manifest.plugin.name);
-            if let Some(v) = user_config.get(&full).or_else(|| user_config.get(&field.key)) {
+            if let Some(v) = user_config
+                .get(&full)
+                .or_else(|| user_config.get(&field.key))
+            {
                 if !v.is_empty() {
                     user_env_overrides.insert(env_var, v.clone());
                 }
             }
         }
 
-        let ctx = SandboxCtx::new(
-            &loaded,
-            self.cache_dir.clone(),
-            self.data_dir.clone(),
-        )
-        .with_user_env_overrides(user_env_overrides);
+        let ctx = SandboxCtx::new(&loaded, self.cache_dir.clone(), self.data_dir.clone())
+            .with_user_env_overrides(user_env_overrides);
         ctx.ensure_dirs()?;
 
         info!(plugin_id = %id, plugin = %name, "plugin loaded");
@@ -1148,90 +1169,98 @@ impl Engine {
         //    starves every concurrent `list_plugins` / catalog read behind
         //    the ongoing scan. We do the slow work lock-free, then grab
         //    the write lock just long enough to splice the result in. ──
-        let supervisor: Option<Arc<WasmSupervisor>> =
-            if matches!(loaded.mode, ExecutionMode::Wasm) {
-                let mut sup_cfg = WasmSupervisorConfig::default();
-                // Apply per-plugin supervisor tuning from the manifest's
-                // optional `[supervisor]` block. Each field falls through
-                // to the runtime default when absent. The runtime now
-                // treats every timeout as a soft cooldown (no wasm
-                // reload), so the manifest's `slow_upstream` flag is a
-                // no-op — it is still parsed for backward compatibility
-                // with manifests in the wild but no longer load-bearing.
-                if let Some(tune) = loaded.manifest.supervisor.as_ref() {
-                    if let Some(t) = tune.call_timeout_secs {
-                        sup_cfg.call_timeout_secs = t;
-                    }
-                    #[allow(deprecated)]
-                    {
-                        sup_cfg.slow_upstream = tune.slow_upstream;
-                    }
-                    if let Some(c) = tune.cooldown_after_timeout_secs {
-                        sup_cfg.cooldown_after_timeout_secs = c;
-                    }
+        let supervisor: Option<Arc<WasmSupervisor>> = if matches!(loaded.mode, ExecutionMode::Wasm)
+        {
+            let mut sup_cfg = WasmSupervisorConfig::default();
+            // Apply per-plugin supervisor tuning from the manifest's
+            // optional `[supervisor]` block. Each field falls through
+            // to the runtime default when absent. The runtime now
+            // treats every timeout as a soft cooldown (no wasm
+            // reload), so the manifest's `slow_upstream` flag is a
+            // no-op — it is still parsed for backward compatibility
+            // with manifests in the wild but no longer load-bearing.
+            if let Some(tune) = loaded.manifest.supervisor.as_ref() {
+                if let Some(t) = tune.call_timeout_secs {
+                    sup_cfg.call_timeout_secs = t;
                 }
-                let wasm_path = loaded.entrypoint.clone();
-                let pname = name.clone();
-                let sup_ctx = ctx.clone();
-                let sup_rate_limit = loaded.manifest.rate_limit.clone();
+                #[allow(deprecated)]
+                {
+                    sup_cfg.slow_upstream = tune.slow_upstream;
+                }
+                if let Some(c) = tune.cooldown_after_timeout_secs {
+                    sup_cfg.cooldown_after_timeout_secs = c;
+                }
+            }
+            let wasm_path = loaded.entrypoint.clone();
+            let pname = name.clone();
+            let sup_ctx = ctx.clone();
+            let sup_rate_limit = loaded.manifest.rate_limit.clone();
 
-                match WasmSupervisor::load(wasm_path, pname.clone(), sup_ctx, sup_cfg, sup_rate_limit.as_ref()).await {
-                    Ok(sup) => {
-                        // Config/env resolution uses the four-level precedence
-                        // from `plugin::state::resolve_config`; TUI overrides
-                        // will land in a later chunk via StateStore. The
-                        // effective map is surfaced as both `env` (string) and
-                        // `config` (JSON string values) so plugins can read
-                        // either without pulling the `toml` crate.
-                        let resolved = crate::plugin::resolve_config(
-                            &loaded.manifest,
-                            &user_config,
-                            crate::config::secrets::env_lookup,
-                        );
-                        let init_req = crate::abi::InitRequest {
-                            env: resolved.clone(),
-                            config: resolved
-                                .into_iter()
-                                .map(|(k, v)| (k, serde_json::Value::String(v)))
-                                .collect(),
-                            cache_dir: ctx.cache_dir.clone(),
-                        };
-                        match sup.init(&init_req).await {
-                            Ok(()) => {
-                                info!(plugin = %pname, "plugin init ok");
-                                Some(Arc::new(sup))
-                            }
-                            Err(crate::abi::InitError::Plugin(
-                                crate::abi::PluginInitError::MissingConfig { fields, hint },
-                            )) => {
-                                warn!(
-                                    plugin  = %pname,
-                                    missing = ?fields,
-                                    hint    = ?hint,
-                                    "plugin init reports missing config — set fields via TUI then reload"
-                                );
-                                None
-                            }
-                            Err(crate::abi::InitError::Plugin(
-                                crate::abi::PluginInitError::Fatal(msg),
-                            )) => {
-                                warn!(plugin = %pname, err = %msg, "plugin init fatal — unavailable until reload");
-                                None
-                            }
-                            Err(crate::abi::InitError::Abi(abi_err)) => {
-                                warn!(plugin = %pname, err = %abi_err, "plugin init plumbing error — unavailable until reload");
-                                None
-                            }
+            match WasmSupervisor::load(
+                wasm_path,
+                pname.clone(),
+                sup_ctx,
+                sup_cfg,
+                sup_rate_limit.as_ref(),
+            )
+            .await
+            {
+                Ok(sup) => {
+                    // Config/env resolution uses the four-level precedence
+                    // from `plugin::state::resolve_config`; TUI overrides
+                    // will land in a later chunk via StateStore. The
+                    // effective map is surfaced as both `env` (string) and
+                    // `config` (JSON string values) so plugins can read
+                    // either without pulling the `toml` crate.
+                    let resolved = crate::plugin::resolve_config(
+                        &loaded.manifest,
+                        &user_config,
+                        crate::config::secrets::env_lookup,
+                    );
+                    let init_req = crate::abi::InitRequest {
+                        env: resolved.clone(),
+                        config: resolved
+                            .into_iter()
+                            .map(|(k, v)| (k, serde_json::Value::String(v)))
+                            .collect(),
+                        cache_dir: ctx.cache_dir.clone(),
+                    };
+                    match sup.init(&init_req).await {
+                        Ok(()) => {
+                            info!(plugin = %pname, "plugin init ok");
+                            Some(Arc::new(sup))
+                        }
+                        Err(crate::abi::InitError::Plugin(
+                            crate::abi::PluginInitError::MissingConfig { fields, hint },
+                        )) => {
+                            warn!(
+                                plugin  = %pname,
+                                missing = ?fields,
+                                hint    = ?hint,
+                                "plugin init reports missing config — set fields via TUI then reload"
+                            );
+                            None
+                        }
+                        Err(crate::abi::InitError::Plugin(crate::abi::PluginInitError::Fatal(
+                            msg,
+                        ))) => {
+                            warn!(plugin = %pname, err = %msg, "plugin init fatal — unavailable until reload");
+                            None
+                        }
+                        Err(crate::abi::InitError::Abi(abi_err)) => {
+                            warn!(plugin = %pname, err = %abi_err, "plugin init plumbing error — unavailable until reload");
+                            None
                         }
                     }
-                    Err(e) => {
-                        warn!(plugin = %pname, err = %e, "WASM supervisor load failed — plugin unavailable until reload");
-                        None
-                    }
                 }
-            } else {
-                None
-            };
+                Err(e) => {
+                    warn!(plugin = %pname, err = %e, "WASM supervisor load failed — plugin unavailable until reload");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // ── Fast path: take the write lock only long enough to splice
         //    the finished plugin + supervisor into the registry. ──
@@ -1314,11 +1343,18 @@ impl Engine {
                 name: p.manifest.plugin.name.clone(),
                 version: p.manifest.plugin.version.clone(),
                 plugin_type: p.manifest.plugin.plugin_type_str(),
-                status: if p.enabled { PluginStatus::Loaded } else { PluginStatus::Disabled },
+                status: if p.enabled {
+                    PluginStatus::Loaded
+                } else {
+                    PluginStatus::Disabled
+                },
                 enabled: p.enabled,
                 tags: p.manifest.plugin.tags.clone(),
                 description: p.manifest.plugin.description.clone().unwrap_or_default(),
-                author: p.manifest.meta.as_ref()
+                author: p
+                    .manifest
+                    .meta
+                    .as_ref()
                     .and_then(|m| m.author.as_deref())
                     .unwrap_or_default()
                     .to_string(),
@@ -1376,7 +1412,7 @@ impl Engine {
         // keeping the derivation here too lets the cache key be computed
         // before any spawn/dispatch.
         let scope = match tab {
-            crate::ipc::MediaTab::Music  => stui_plugin_sdk::SearchScope::Album,
+            crate::ipc::MediaTab::Music => stui_plugin_sdk::SearchScope::Album,
             crate::ipc::MediaTab::Movies => stui_plugin_sdk::SearchScope::Movie,
             crate::ipc::MediaTab::Series => stui_plugin_sdk::SearchScope::Series,
             _ => stui_plugin_sdk::SearchScope::Track,
@@ -1516,10 +1552,7 @@ impl Engine {
                             let cache_key_for_task = cache_key.clone();
                             let slug_for_task = slug.clone();
                             set.spawn(async move {
-                                let items = match mdblist
-                                    .fetch_list(&slug_for_task, kind)
-                                    .await
-                                {
+                                let items = match mdblist.fetch_list(&slug_for_task, kind).await {
                                     Ok(v) => v,
                                     Err(e) => {
                                         return (
@@ -1541,10 +1574,7 @@ impl Engine {
                                             .clone()
                                             .map(|t| format!("tmdb-{t}"))
                                             .or_else(|| {
-                                                item.ids
-                                                    .imdb
-                                                    .clone()
-                                                    .map(|i| format!("imdb-{i}"))
+                                                item.ids.imdb.clone().map(|i| format!("imdb-{i}"))
                                             })
                                             .unwrap_or_else(|| format!("mdblist-{}", item.title)),
                                         title: item.title,
@@ -1590,7 +1620,12 @@ impl Engine {
         for plugin in &providers {
             // Skip plugins tagged "adult" when adult content is disabled.
             if !options.adult_content_enabled
-                && plugin.manifest.plugin.tags.iter().any(|t| t.eq_ignore_ascii_case("adult"))
+                && plugin
+                    .manifest
+                    .plugin
+                    .tags
+                    .iter()
+                    .any(|t| t.eq_ignore_ascii_case("adult"))
             {
                 continue;
             }
@@ -1614,7 +1649,7 @@ impl Engine {
                     let sup = reg.wasm_supervisor_for(&plugin_clone.id);
                     if let Some(sup) = sup {
                         let provider = plugin_clone.manifest.plugin.name.clone();
-                        let tab_out  = t.clone();
+                        let tab_out = t.clone();
                         let pname = provider.clone();
                         let sem = Arc::clone(&sem);
                         let cache = self.cache.search.clone();
@@ -1625,9 +1660,15 @@ impl Engine {
                             let result = std::panic::AssertUnwindSafe(async move {
                                 // Derive scope from tab; catalog walk uses Track as default.
                                 let scope = match t {
-                                    crate::ipc::MediaTab::Music    => stui_plugin_sdk::SearchScope::Album,
-                                    crate::ipc::MediaTab::Movies   => stui_plugin_sdk::SearchScope::Movie,
-                                    crate::ipc::MediaTab::Series   => stui_plugin_sdk::SearchScope::Series,
+                                    crate::ipc::MediaTab::Music => {
+                                        stui_plugin_sdk::SearchScope::Album
+                                    }
+                                    crate::ipc::MediaTab::Movies => {
+                                        stui_plugin_sdk::SearchScope::Movie
+                                    }
+                                    crate::ipc::MediaTab::Series => {
+                                        stui_plugin_sdk::SearchScope::Series
+                                    }
                                     _ => stui_plugin_sdk::SearchScope::Track,
                                 };
                                 let req = SearchRequest {
@@ -1638,58 +1679,78 @@ impl Engine {
                                     per_scope_limit: None,
                                     locale: None,
                                 };
-                                sup.search(&req).await
-                                    .map(|r| r.items.into_iter().map(|e| {
-                                        // tmdb_id precedence:
-                                        //   1. external_ids["tmdb"] — explicit cross-id
-                                        //      (any provider that knows the tmdb id is
-                                        //      expected to set this).
-                                        //   2. fall back to e.id when provider is tmdb,
-                                        //      since TMDB's primary id IS the tmdb id
-                                        //      and the plugin doesn't echo it via
-                                        //      external_ids.
-                                        // Without this, TMDB-sourced Series entries had
-                                        // tmdb_id=None and the new Western-spine
-                                        // dedup_key fell through to title:year — so
-                                        // anime cours from anilist (with bridge-set
-                                        // tmdb_id) couldn't collapse against the TMDB
-                                        // sibling.
-                                        let tmdb_id = e.external_ids.get("tmdb").cloned()
-                                            .or_else(|| if provider == "tmdb" { Some(e.id.clone()) } else { None });
-                                        MediaEntry {
-                                        id:          e.id,
-                                        title:       e.title,
-                                        year:        e.year.map(|y| y.to_string()),
-                                        genre:       e.genre,
-                                        rating:      e.rating.map(|r| r.to_string()),
-                                        description: e.description,
-                                        poster_url:  e.poster_url,
-                                        provider:    provider.clone(),
-                                        tab:         tab_out.clone(),
-                                        media_type:  crate::ipc::MediaType::default(),
-                                        ratings:     std::collections::HashMap::new(),
-                                        imdb_id:     e.imdb_id,
-                                        tmdb_id,
-                                        mal_id:      e.external_ids.get("myanimelist").cloned(),
-                                        // anilist/kitsu ids feed the bridge enrichment
-                                        // so kitsu-only entries (no MAL mapping
-                                        // surfaced by the plugin) can still resolve to
-                                        // a Fribb record via their kitsu id and pick
-                                        // up tmdb_id for the Series-tab spine merge.
-                                        anilist_id:  e.external_ids.get("anilist").cloned(),
-                                        kitsu_id:    e.external_ids.get("kitsu").cloned(),
-                                        original_language: e.original_language,
-                                        kind:        e.kind,
-                                        source:      e.source,
-                                        artist_name: e.artist_name,
-                                        album_name:  e.album_name,
-                                        track_number: e.track_number,
-                                        season:      e.season,
-                                        episode:     e.episode,
-                                        season_count: e.season_count,
-                                        has_specials: e.has_specials,
-                                    }
-                                    }).collect::<Vec<_>>())
+                                sup.search(&req)
+                                    .await
+                                    .map(|r| {
+                                        r.items
+                                            .into_iter()
+                                            .map(|e| {
+                                                // tmdb_id precedence:
+                                                //   1. external_ids["tmdb"] — explicit cross-id
+                                                //      (any provider that knows the tmdb id is
+                                                //      expected to set this).
+                                                //   2. fall back to e.id when provider is tmdb,
+                                                //      since TMDB's primary id IS the tmdb id
+                                                //      and the plugin doesn't echo it via
+                                                //      external_ids.
+                                                // Without this, TMDB-sourced Series entries had
+                                                // tmdb_id=None and the new Western-spine
+                                                // dedup_key fell through to title:year — so
+                                                // anime cours from anilist (with bridge-set
+                                                // tmdb_id) couldn't collapse against the TMDB
+                                                // sibling.
+                                                let tmdb_id =
+                                                    e.external_ids.get("tmdb").cloned().or_else(
+                                                        || {
+                                                            if provider == "tmdb" {
+                                                                Some(e.id.clone())
+                                                            } else {
+                                                                None
+                                                            }
+                                                        },
+                                                    );
+                                                MediaEntry {
+                                                    id: e.id,
+                                                    title: e.title,
+                                                    year: e.year.map(|y| y.to_string()),
+                                                    genre: e.genre,
+                                                    rating: e.rating.map(|r| r.to_string()),
+                                                    description: e.description,
+                                                    poster_url: e.poster_url,
+                                                    provider: provider.clone(),
+                                                    tab: tab_out.clone(),
+                                                    media_type: crate::ipc::MediaType::default(),
+                                                    ratings: std::collections::HashMap::new(),
+                                                    imdb_id: e.imdb_id,
+                                                    tmdb_id,
+                                                    mal_id: e
+                                                        .external_ids
+                                                        .get("myanimelist")
+                                                        .cloned(),
+                                                    // anilist/kitsu ids feed the bridge enrichment
+                                                    // so kitsu-only entries (no MAL mapping
+                                                    // surfaced by the plugin) can still resolve to
+                                                    // a Fribb record via their kitsu id and pick
+                                                    // up tmdb_id for the Series-tab spine merge.
+                                                    anilist_id: e
+                                                        .external_ids
+                                                        .get("anilist")
+                                                        .cloned(),
+                                                    kitsu_id: e.external_ids.get("kitsu").cloned(),
+                                                    original_language: e.original_language,
+                                                    kind: e.kind,
+                                                    source: e.source,
+                                                    artist_name: e.artist_name,
+                                                    album_name: e.album_name,
+                                                    track_number: e.track_number,
+                                                    season: e.season,
+                                                    episode: e.episode,
+                                                    season_count: e.season_count,
+                                                    has_specials: e.has_specials,
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
                                     .map_err(|e| anyhow::anyhow!("{e}"))
                             })
                             .catch_unwind()
@@ -1716,9 +1777,12 @@ impl Engine {
                         set.spawn(async move {
                             let _permit = sem.acquire_owned().await;
                             use futures::FutureExt as _;
-                            let result = std::panic::AssertUnwindSafe(
-                                scraper::search(&ctx, &plugin_clone, &q, &t)
-                            )
+                            let result = std::panic::AssertUnwindSafe(scraper::search(
+                                &ctx,
+                                &plugin_clone,
+                                &q,
+                                &t,
+                            ))
                             .catch_unwind()
                             .await
                             .unwrap_or_else(|_| Err(anyhow::anyhow!("provider task panicked")));
@@ -1773,30 +1837,33 @@ impl Engine {
         // cours never collapsed even with the bridge enrichment in
         // place.
         let tab_media_type = crate::ipc::MediaType::from_tab(&tab);
-        let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items.into_iter().map(|e| {
-            let (genre, original_language) =
-                stamp_anime_fields(&e.provider, e.genre, e.original_language);
-            crate::catalog::CatalogEntry {
-                id:          e.id,
-                title:       e.title,
-                year:        e.year,
-                genre,
-                rating:      e.rating,
-                description: e.description,
-                poster_url:  e.poster_url,
-                poster_art:  None,
-                provider:    e.provider,
-                tab:         tab_str.clone(),
-                artist:      e.artist_name.clone(),
-                imdb_id:     e.imdb_id,
-                tmdb_id:     e.tmdb_id,
-                mal_id:      e.mal_id,
-                media_type:  tab_media_type,
-                ratings:     e.ratings,
-                rating_votes: std::collections::HashMap::new(),
-                original_language,
-            }
-        }).collect();
+        let raw_entries: Vec<crate::catalog::CatalogEntry> = all_items
+            .into_iter()
+            .map(|e| {
+                let (genre, original_language) =
+                    stamp_anime_fields(&e.provider, e.genre, e.original_language);
+                crate::catalog::CatalogEntry {
+                    id: e.id,
+                    title: e.title,
+                    year: e.year,
+                    genre,
+                    rating: e.rating,
+                    description: e.description,
+                    poster_url: e.poster_url,
+                    poster_art: None,
+                    provider: e.provider,
+                    tab: tab_str.clone(),
+                    artist: e.artist_name.clone(),
+                    imdb_id: e.imdb_id,
+                    tmdb_id: e.tmdb_id,
+                    mal_id: e.mal_id,
+                    media_type: tab_media_type,
+                    ratings: e.ratings,
+                    rating_votes: std::collections::HashMap::new(),
+                    original_language,
+                }
+            })
+            .collect();
 
         // Merge: dedup by IMDB id / title+year, fill sparse fields, compute
         // weighted-median composite rating from all per-source scores.
@@ -1830,20 +1897,13 @@ impl Engine {
         skip(self),
         fields(entry_id = %entry_id, provider = %provider_name, req_id = %req_id),
     )]
-    pub async fn resolve(
-        &self,
-        req_id: &str,
-        entry_id: &str,
-        provider_name: &str,
-    ) -> Response {
+    pub async fn resolve(&self, req_id: &str, entry_id: &str, provider_name: &str) -> Response {
         let reg = self.registry.read().await;
         let found = reg
             .all()
             .find(|p| p.manifest.plugin.name == provider_name)
             .cloned();
-        let ctx = found
-            .as_ref()
-            .and_then(|p| reg.sandbox_for(&p.id).cloned());
+        let ctx = found.as_ref().and_then(|p| reg.sandbox_for(&p.id).cloned());
         let wasm_sup = found.as_ref().and_then(|p| {
             if matches!(p.mode, ExecutionMode::Wasm) {
                 reg.wasm_supervisor_for(&p.id)
@@ -1854,50 +1914,52 @@ impl Engine {
         drop(reg);
 
         match (found, ctx) {
-            (Some(plugin), _) if matches!(plugin.mode, ExecutionMode::Wasm) => {
-                match wasm_sup {
-                    Some(sup) => {
-                        let req = crate::abi::ResolveRequest { entry_id: entry_id.to_string() };
-                        match sup.resolve(&req).await {
-                            Ok(r) => Response::ResolveResult(ResolveResponse {
-                                id: req_id.to_string(),
-                                stream_url: r.stream_url,
-                                quality: r.quality,
-                                subtitles: r.subtitles.into_iter().map(|s| crate::ipc::SubtitleTrack {
+            (Some(plugin), _) if matches!(plugin.mode, ExecutionMode::Wasm) => match wasm_sup {
+                Some(sup) => {
+                    let req = crate::abi::ResolveRequest {
+                        entry_id: entry_id.to_string(),
+                    };
+                    match sup.resolve(&req).await {
+                        Ok(r) => Response::ResolveResult(ResolveResponse {
+                            id: req_id.to_string(),
+                            stream_url: r.stream_url,
+                            quality: r.quality,
+                            subtitles: r
+                                .subtitles
+                                .into_iter()
+                                .map(|s| crate::ipc::SubtitleTrack {
                                     language: s.language,
                                     url: s.url,
                                     format: s.format,
-                                }).collect(),
-                            }),
-                            Err(e) => Response::error(
-                                Some(req_id.to_string()),
-                                ErrorCode::ResolveFailed,
-                                e.to_string(),
-                            ),
-                        }
+                                })
+                                .collect(),
+                        }),
+                        Err(e) => Response::error(
+                            Some(req_id.to_string()),
+                            ErrorCode::ResolveFailed,
+                            e.to_string(),
+                        ),
                     }
-                    None => Response::error(
-                        Some(req_id.to_string()),
-                        ErrorCode::ResolveFailed,
-                        format!("WASM supervisor unavailable for '{provider_name}'"),
-                    ),
                 }
-            }
-            (Some(plugin), Some(ctx)) => {
-                match resolver::resolve(&ctx, &plugin, entry_id).await {
-                    Ok(resp) => Response::ResolveResult(ResolveResponse {
-                        id: req_id.to_string(),
-                        stream_url: resp.stream_url,
-                        quality: resp.quality,
-                        subtitles: resp.subtitles,
-                    }),
-                    Err(e) => Response::error(
-                        Some(req_id.to_string()),
-                        ErrorCode::ResolveFailed,
-                        e.to_string(),
-                    ),
-                }
-            }
+                None => Response::error(
+                    Some(req_id.to_string()),
+                    ErrorCode::ResolveFailed,
+                    format!("WASM supervisor unavailable for '{provider_name}'"),
+                ),
+            },
+            (Some(plugin), Some(ctx)) => match resolver::resolve(&ctx, &plugin, entry_id).await {
+                Ok(resp) => Response::ResolveResult(ResolveResponse {
+                    id: req_id.to_string(),
+                    stream_url: resp.stream_url,
+                    quality: resp.quality,
+                    subtitles: resp.subtitles,
+                }),
+                Err(e) => Response::error(
+                    Some(req_id.to_string()),
+                    ErrorCode::ResolveFailed,
+                    e.to_string(),
+                ),
+            },
             _ => Response::error(
                 Some(req_id.to_string()),
                 ErrorCode::PluginNotFound,
@@ -1918,9 +1980,7 @@ impl Engine {
             .all()
             .find(|p| p.manifest.plugin.name == provider_name)
             .cloned();
-        let ctx = found
-            .as_ref()
-            .and_then(|p| reg.sandbox_for(&p.id).cloned());
+        let ctx = found.as_ref().and_then(|p| reg.sandbox_for(&p.id).cloned());
         let wasm_sup = found.as_ref().and_then(|p| {
             if matches!(p.mode, ExecutionMode::Wasm) {
                 reg.wasm_supervisor_for(&p.id)
@@ -1931,33 +1991,36 @@ impl Engine {
         drop(reg);
 
         match found {
-            Some(plugin) if matches!(plugin.mode, ExecutionMode::Wasm) => {
-                match wasm_sup {
-                    Some(sup) => {
-                        let req = crate::abi::ResolveRequest { entry_id: entry_id.to_string() };
-                        sup.resolve(&req).await
-                            .map(|r| resolver::StreamResult {
-                                stream_url: r.stream_url,
-                                quality:    r.quality,
-                                subtitles:  r.subtitles.into_iter().map(|s| crate::ipc::SubtitleTrack {
-                                    language: s.language,
-                                    url:      s.url,
-                                    format:   s.format,
-                                }).collect(),
-                            })
-                            .map_err(|e| e.to_string())
-                    }
-                    None => Err(format!("WASM supervisor unavailable for '{provider_name}'")),
-                }
-            }
-            Some(plugin) => {
-                match ctx {
-                    Some(ctx) => resolver::resolve(&ctx, &plugin, entry_id)
+            Some(plugin) if matches!(plugin.mode, ExecutionMode::Wasm) => match wasm_sup {
+                Some(sup) => {
+                    let req = crate::abi::ResolveRequest {
+                        entry_id: entry_id.to_string(),
+                    };
+                    sup.resolve(&req)
                         .await
-                        .map_err(|e| e.to_string()),
-                    None => Err(format!("No sandbox context for '{provider_name}'")),
+                        .map(|r| resolver::StreamResult {
+                            stream_url: r.stream_url,
+                            quality: r.quality,
+                            subtitles: r
+                                .subtitles
+                                .into_iter()
+                                .map(|s| crate::ipc::SubtitleTrack {
+                                    language: s.language,
+                                    url: s.url,
+                                    format: s.format,
+                                })
+                                .collect(),
+                        })
+                        .map_err(|e| e.to_string())
                 }
-            }
+                None => Err(format!("WASM supervisor unavailable for '{provider_name}'")),
+            },
+            Some(plugin) => match ctx {
+                Some(ctx) => resolver::resolve(&ctx, &plugin, entry_id)
+                    .await
+                    .map_err(|e| e.to_string()),
+                None => Err(format!("No sandbox context for '{provider_name}'")),
+            },
             None => Err(format!("No provider plugin named '{provider_name}'")),
         }
     }
@@ -1974,17 +2037,18 @@ impl Engine {
     pub async fn ranked_streams(
         &self,
         entry_id: &str,
-        policy:   &crate::quality::RankingPolicy,
+        policy: &crate::quality::RankingPolicy,
         built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
     ) -> Vec<crate::quality::StreamCandidate> {
-        self.ranked_streams_with_circuit_breaker(entry_id, policy, built_in, None).await
+        self.ranked_streams_with_circuit_breaker(entry_id, policy, built_in, None)
+            .await
     }
 
     /// Ranked streams with optional circuit breaker for failure tracking.
     pub async fn ranked_streams_with_circuit_breaker(
         &self,
         entry_id: &str,
-        policy:   &crate::quality::RankingPolicy,
+        policy: &crate::quality::RankingPolicy,
         built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
         circuit_breaker: Option<&crate::providers::CircuitBreaker>,
     ) -> Vec<crate::quality::StreamCandidate> {
@@ -2055,7 +2119,10 @@ impl Engine {
         }
 
         // Populate stream cache
-        self.cache.streams.insert(entry_id, all_streams.clone()).await;
+        self.cache
+            .streams
+            .insert(entry_id, all_streams.clone())
+            .await;
 
         // Use health-blended ranking when health data is available.
         // The HealthRegistry is injected here if the caller has one.
@@ -2075,7 +2142,7 @@ impl Engine {
     /// rather than returned directly, keeping this call non-blocking.
     pub async fn get_catalog(
         &self,
-        tab:     &crate::ipc::MediaTab,
+        tab: &crate::ipc::MediaTab,
         catalog: std::sync::Arc<crate::catalog::Catalog>,
     ) {
         catalog.refresh_tab(tab.clone()).await;
@@ -2093,7 +2160,7 @@ impl Engine {
     pub async fn resolve_best_stream(
         &self,
         entry_id: &str,
-        policy:   &crate::quality::RankingPolicy,
+        policy: &crate::quality::RankingPolicy,
         built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
     ) -> Option<crate::providers::Stream> {
         self.ranked_streams(entry_id, policy, built_in)
@@ -2109,9 +2176,9 @@ impl Engine {
     /// Providers with low scores are penalised even if they offer higher quality.
     pub async fn ranked_streams_with_health(
         &self,
-        entry_id:   &str,
-        policy:     &crate::quality::RankingPolicy,
-        built_in:   &[std::sync::Arc<dyn crate::providers::Provider>],
+        entry_id: &str,
+        policy: &crate::quality::RankingPolicy,
+        built_in: &[std::sync::Arc<dyn crate::providers::Provider>],
         health_map: std::collections::HashMap<String, f64>,
     ) -> Vec<crate::quality::StreamCandidate> {
         // Check cache first
@@ -2123,8 +2190,8 @@ impl Engine {
         let mut set = tokio::task::JoinSet::new();
         let sem = Arc::new(tokio::sync::Semaphore::new(8)); // Limit concurrent stream requests
         for provider in built_in.iter().filter(|p| p.has_streams()) {
-            let p             = std::sync::Arc::clone(provider);
-            let id            = entry_id.to_string();
+            let p = std::sync::Arc::clone(provider);
+            let id = entry_id.to_string();
             let provider_name = provider.name().to_string();
             let sem = Arc::clone(&sem);
             set.spawn(async move {
@@ -2140,15 +2207,17 @@ impl Engine {
         let mut all_streams = vec![];
         while let Some(result) = set.join_next().await {
             match result {
-                Ok((_, Ok(mut s)))         => all_streams.append(&mut s),
-                Ok((provider, Err(e)))     => warn!(provider = %provider, "stream provider error: {e}"),
-                Err(e)                     => warn!("stream task aborted: {e}"),
+                Ok((_, Ok(mut s))) => all_streams.append(&mut s),
+                Ok((provider, Err(e))) => warn!(provider = %provider, "stream provider error: {e}"),
+                Err(e) => warn!("stream task aborted: {e}"),
             }
         }
-        self.cache.streams.insert(entry_id, all_streams.clone()).await;
+        self.cache
+            .streams
+            .insert(entry_id, all_streams.clone())
+            .await;
         crate::quality::rank_with_health(all_streams, policy, Some(&health_map))
     }
-
 }
 
 // ── Free helpers for supervisor_search ───────────────────────────────────────
@@ -2187,7 +2256,7 @@ fn map_abi_error(e: crate::abi::types::AbiError) -> PluginCallError {
 /// default `EntryKind` (Track), that is a visible bug that forces the plugin
 /// author to migrate.
 fn abi_entry_to_media_entry(
-    e:             crate::abi::types::PluginEntry,
+    e: crate::abi::types::PluginEntry,
     provider_name: &str,
 ) -> crate::ipc::MediaEntry {
     // Derive MediaEntry.tab from the plugin-supplied kind so the TUI
@@ -2195,10 +2264,11 @@ fn abi_entry_to_media_entry(
     let tab = match e.kind {
         stui_plugin_sdk::EntryKind::Artist
         | stui_plugin_sdk::EntryKind::Album
-        | stui_plugin_sdk::EntryKind::Track  => crate::ipc::MediaTab::Music,
-        stui_plugin_sdk::EntryKind::Movie    => crate::ipc::MediaTab::Movies,
-        stui_plugin_sdk::EntryKind::Series
-        | stui_plugin_sdk::EntryKind::Episode => crate::ipc::MediaTab::Series,
+        | stui_plugin_sdk::EntryKind::Track => crate::ipc::MediaTab::Music,
+        stui_plugin_sdk::EntryKind::Movie => crate::ipc::MediaTab::Movies,
+        stui_plugin_sdk::EntryKind::Series | stui_plugin_sdk::EntryKind::Episode => {
+            crate::ipc::MediaTab::Series
+        }
     };
 
     let (genre, original_language) =
@@ -2226,36 +2296,41 @@ fn abi_entry_to_media_entry(
     // to e.id for the TMDB plugin (its primary id IS the tmdb id).
     // Computed before the struct literal so e.id can still be moved
     // into the `id` field below.
-    let tmdb_id = e.external_ids.get("tmdb").cloned()
-        .or_else(|| if provider_name == "tmdb" { Some(e.id.clone()) } else { None });
-    let mal_id     = e.external_ids.get("myanimelist").cloned();
+    let tmdb_id = e.external_ids.get("tmdb").cloned().or_else(|| {
+        if provider_name == "tmdb" {
+            Some(e.id.clone())
+        } else {
+            None
+        }
+    });
+    let mal_id = e.external_ids.get("myanimelist").cloned();
     let anilist_id = e.external_ids.get("anilist").cloned();
-    let kitsu_id   = e.external_ids.get("kitsu").cloned();
+    let kitsu_id = e.external_ids.get("kitsu").cloned();
     crate::ipc::MediaEntry {
-        id:           e.id,
-        title:        e.title,
-        year:         e.year.map(|y| y.to_string()),
+        id: e.id,
+        title: e.title,
+        year: e.year.map(|y| y.to_string()),
         genre,
-        rating:       e.rating.map(|r| r.to_string()),
-        description:  e.description,
-        poster_url:   e.poster_url,
-        provider:     provider_name.to_string(),
+        rating: e.rating.map(|r| r.to_string()),
+        description: e.description,
+        poster_url: e.poster_url,
+        provider: provider_name.to_string(),
         tab,
         media_type,
         ratings,
-        imdb_id:      e.imdb_id,
+        imdb_id: e.imdb_id,
         tmdb_id,
         mal_id,
         anilist_id,
         kitsu_id,
         original_language,
-        kind:         e.kind,
-        source:       e.source,
-        artist_name:  e.artist_name,
-        album_name:   e.album_name,
+        kind: e.kind,
+        source: e.source,
+        artist_name: e.artist_name,
+        album_name: e.album_name,
         track_number: e.track_number,
-        season:       e.season,
-        episode:      e.episode,
+        season: e.season,
+        episode: e.episode,
         season_count: e.season_count,
         has_specials: e.has_specials,
     }
@@ -2272,10 +2347,14 @@ mod supervisor_search_tests {
 
     #[test]
     fn map_abi_error_unsupported_scope() {
-        let e = crate::abi::types::AbiError::Execution(
-            format!("{}: track scope unsupported", stui_plugin_sdk::error_codes::UNSUPPORTED_SCOPE),
-        );
-        assert!(matches!(map_abi_error(e), PluginCallError::UnsupportedScope));
+        let e = crate::abi::types::AbiError::Execution(format!(
+            "{}: track scope unsupported",
+            stui_plugin_sdk::error_codes::UNSUPPORTED_SCOPE
+        ));
+        assert!(matches!(
+            map_abi_error(e),
+            PluginCallError::UnsupportedScope
+        ));
     }
 
     #[test]
@@ -2305,16 +2384,16 @@ mod supervisor_search_tests {
     #[test]
     fn abi_entry_maps_fields_correctly() {
         let entry = crate::abi::types::PluginEntry {
-            id:          "tt1234".into(),
-            kind:        stui_plugin_sdk::EntryKind::Track,
-            title:       "Creep".into(),
-            source:      "lastfm".into(),
-            year:        Some(1993),
-            genre:       Some("Rock".into()),
-            rating:      Some(9.0),
+            id: "tt1234".into(),
+            kind: stui_plugin_sdk::EntryKind::Track,
+            title: "Creep".into(),
+            source: "lastfm".into(),
+            year: Some(1993),
+            genre: Some("Rock".into()),
+            rating: Some(9.0),
             description: Some("A song".into()),
-            poster_url:  None,
-            imdb_id:     Some("tt1234".into()),
+            poster_url: None,
+            imdb_id: Some("tt1234".into()),
             ..Default::default()
         };
         let me = abi_entry_to_media_entry(entry, "lastfm");
@@ -2333,8 +2412,8 @@ mod supervisor_search_tests {
     #[test]
     fn abi_entry_movie_kind_gets_movies_tab() {
         let entry = crate::abi::types::PluginEntry {
-            id:    "m1".into(),
-            kind:  stui_plugin_sdk::EntryKind::Movie,
+            id: "m1".into(),
+            kind: stui_plugin_sdk::EntryKind::Movie,
             title: "Interstellar".into(),
             source: "tmdb".into(),
             ..Default::default()
@@ -2347,8 +2426,8 @@ mod supervisor_search_tests {
     #[test]
     fn abi_entry_series_kind_gets_series_tab() {
         let entry = crate::abi::types::PluginEntry {
-            id:    "s1".into(),
-            kind:  stui_plugin_sdk::EntryKind::Series,
+            id: "s1".into(),
+            kind: stui_plugin_sdk::EntryKind::Series,
             title: "Breaking Bad".into(),
             source: "tmdb".into(),
             ..Default::default()
@@ -2361,18 +2440,18 @@ mod supervisor_search_tests {
     #[test]
     fn abi_entry_per_kind_fields_forwarded() {
         let entry = crate::abi::types::PluginEntry {
-            id:           "t1".into(),
-            kind:         stui_plugin_sdk::EntryKind::Track,
-            title:        "My Song".into(),
-            source:       "musicplugin".into(),
-            artist_name:  Some("Radiohead".into()),
-            album_name:   Some("OK Computer".into()),
+            id: "t1".into(),
+            kind: stui_plugin_sdk::EntryKind::Track,
+            title: "My Song".into(),
+            source: "musicplugin".into(),
+            artist_name: Some("Radiohead".into()),
+            album_name: Some("OK Computer".into()),
             track_number: Some(3),
             ..Default::default()
         };
         let me = abi_entry_to_media_entry(entry, "musicplugin");
         assert_eq!(me.artist_name, Some("Radiohead".into()));
-        assert_eq!(me.album_name,  Some("OK Computer".into()));
+        assert_eq!(me.album_name, Some("OK Computer".into()));
         assert_eq!(me.track_number, Some(3));
     }
 
@@ -2413,7 +2492,10 @@ mod supervisor_search_tests {
     fn resolve_id_returns_uuid_on_direct_match() {
         let mut reg = PluginRegistry::default();
         let loaded = mini_loaded_plugin("uuid-a", "tmdb");
-        reg.insert(loaded.clone(), SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()));
+        reg.insert(
+            loaded.clone(),
+            SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()),
+        );
         assert_eq!(reg.resolve_id("uuid-a"), Some("uuid-a"));
     }
 
@@ -2421,7 +2503,10 @@ mod supervisor_search_tests {
     fn resolve_id_falls_back_to_manifest_name() {
         let mut reg = PluginRegistry::default();
         let loaded = mini_loaded_plugin("uuid-a", "tmdb");
-        reg.insert(loaded.clone(), SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()));
+        reg.insert(
+            loaded.clone(),
+            SandboxCtx::new(&loaded, "/tmp".into(), "/tmp".into()),
+        );
         // "tmdb" is not a UUID key → fall back to name lookup → returns UUID.
         assert_eq!(reg.resolve_id("tmdb"), Some("uuid-a"));
     }
@@ -2482,8 +2567,14 @@ mod supervisor_search_tests {
         let clone = engine.clone();
         // Both lanes are shared by Arc identity across clones, so a
         // permit acquired by one clone counts against the other.
-        assert!(Arc::ptr_eq(engine.plugin_semaphore_fg(), clone.plugin_semaphore_fg()));
-        assert!(Arc::ptr_eq(engine.plugin_semaphore_bg(), clone.plugin_semaphore_bg()));
+        assert!(Arc::ptr_eq(
+            engine.plugin_semaphore_fg(),
+            clone.plugin_semaphore_fg()
+        ));
+        assert!(Arc::ptr_eq(
+            engine.plugin_semaphore_bg(),
+            clone.plugin_semaphore_bg()
+        ));
     }
 
     #[test]
@@ -2530,7 +2621,14 @@ mod supervisor_search_tests {
             0.4,
             std::collections::HashMap::new(),
         );
-        let result = engine.supervisor_search("nonexistent-id", "test", SearchScope::Track, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_search(
+                "nonexistent-id",
+                "test",
+                SearchScope::Track,
+                CallPriority::Foreground,
+            )
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
         if let Err(PluginCallError::PluginNotFound(id)) = result {
             assert_eq!(id, "nonexistent-id");
@@ -2548,13 +2646,15 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::LookupRequest {
-            id:        "tt1234".into(),
+            id: "tt1234".into(),
             id_source: "imdb".into(),
-            kind:      stui_plugin_sdk::EntryKind::Track,
-            locale:    None,
+            kind: stui_plugin_sdk::EntryKind::Track,
+            locale: None,
             force_refresh: false,
         };
-        let result = engine.supervisor_lookup("no-such-plugin", req, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_lookup("no-such-plugin", req, CallPriority::Foreground)
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
         if let Err(PluginCallError::PluginNotFound(id)) = result {
             assert_eq!(id, "no-such-plugin");
@@ -2570,11 +2670,13 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::EnrichRequest {
-            partial:          crate::abi::types::PluginEntry::default(),
+            partial: crate::abi::types::PluginEntry::default(),
             prefer_id_source: None,
-            force_refresh:    false,
+            force_refresh: false,
         };
-        let result = engine.supervisor_enrich("no-such-plugin", req, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_enrich("no-such-plugin", req, CallPriority::Foreground)
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2587,13 +2689,15 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::ArtworkRequest {
-            id:            "e1".into(),
-            id_source:     "tmdb".into(),
-            kind:          stui_plugin_sdk::EntryKind::Album,
-            size:          crate::abi::types::ArtworkSize::Any,
+            id: "e1".into(),
+            id_source: "tmdb".into(),
+            kind: stui_plugin_sdk::EntryKind::Album,
+            size: crate::abi::types::ArtworkSize::Any,
             force_refresh: false,
         };
-        let result = engine.supervisor_get_artwork("no-such-plugin", req, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_get_artwork("no-such-plugin", req, CallPriority::Foreground)
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2606,12 +2710,14 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::CreditsRequest {
-            id:            "e1".into(),
-            id_source:     "tmdb".into(),
-            kind:          stui_plugin_sdk::EntryKind::Movie,
+            id: "e1".into(),
+            id_source: "tmdb".into(),
+            kind: stui_plugin_sdk::EntryKind::Movie,
             force_refresh: false,
         };
-        let result = engine.supervisor_get_credits("no-such-plugin", req, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_get_credits("no-such-plugin", req, CallPriority::Foreground)
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2624,14 +2730,16 @@ mod supervisor_search_tests {
             std::collections::HashMap::new(),
         );
         let req = crate::abi::types::RelatedRequest {
-            id:            "e1".into(),
-            id_source:     "tmdb".into(),
-            kind:          stui_plugin_sdk::EntryKind::Track,
-            relation:      crate::abi::types::RelationKind::Any,
-            limit:         10,
+            id: "e1".into(),
+            id_source: "tmdb".into(),
+            kind: stui_plugin_sdk::EntryKind::Track,
+            relation: crate::abi::types::RelationKind::Any,
+            limit: 10,
             force_refresh: false,
         };
-        let result = engine.supervisor_related("no-such-plugin", req, CallPriority::Foreground).await;
+        let result = engine
+            .supervisor_related("no-such-plugin", req, CallPriority::Foreground)
+            .await;
         assert!(matches!(result, Err(PluginCallError::PluginNotFound(_))));
     }
 
@@ -2642,51 +2750,80 @@ mod supervisor_search_tests {
 
     #[allow(dead_code)]
     fn _type_check_verb_signatures(engine: &Engine) {
-        use std::future::Future;
         use crate::abi::types::{
-            LookupRequest, EnrichRequest, ArtworkRequest, ArtworkSize,
-            CreditsRequest, RelatedRequest, RelationKind,
-            PluginEntry, ArtworkResponse, CreditsResponse,
+            ArtworkRequest, ArtworkResponse, ArtworkSize, CreditsRequest, CreditsResponse,
+            EnrichRequest, LookupRequest, PluginEntry, RelatedRequest, RelationKind,
         };
+        use std::future::Future;
 
         fn _lookup(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
-            e.supervisor_lookup("p", LookupRequest {
-                id: "".into(), id_source: "".into(),
-                kind: stui_plugin_sdk::EntryKind::Track, locale: None,
-                force_refresh: false,
-            }, CallPriority::Foreground)
+            e.supervisor_lookup(
+                "p",
+                LookupRequest {
+                    id: "".into(),
+                    id_source: "".into(),
+                    kind: stui_plugin_sdk::EntryKind::Track,
+                    locale: None,
+                    force_refresh: false,
+                },
+                CallPriority::Foreground,
+            )
         }
         fn _enrich(e: &Engine) -> impl Future<Output = Result<PluginEntry, PluginCallError>> + '_ {
-            e.supervisor_enrich("p", EnrichRequest {
-                partial: PluginEntry::default(),
-                prefer_id_source: None,
-                force_refresh: false,
-            }, CallPriority::Foreground)
+            e.supervisor_enrich(
+                "p",
+                EnrichRequest {
+                    partial: PluginEntry::default(),
+                    prefer_id_source: None,
+                    force_refresh: false,
+                },
+                CallPriority::Foreground,
+            )
         }
-        fn _artwork(e: &Engine) -> impl Future<Output = Result<ArtworkResponse, PluginCallError>> + '_ {
-            e.supervisor_get_artwork("p", ArtworkRequest {
-                id: "".into(), id_source: "".into(),
-                kind: stui_plugin_sdk::EntryKind::Track,
-                size: ArtworkSize::Any,
-                force_refresh: false,
-            }, CallPriority::Foreground)
+        fn _artwork(
+            e: &Engine,
+        ) -> impl Future<Output = Result<ArtworkResponse, PluginCallError>> + '_ {
+            e.supervisor_get_artwork(
+                "p",
+                ArtworkRequest {
+                    id: "".into(),
+                    id_source: "".into(),
+                    kind: stui_plugin_sdk::EntryKind::Track,
+                    size: ArtworkSize::Any,
+                    force_refresh: false,
+                },
+                CallPriority::Foreground,
+            )
         }
-        fn _credits(e: &Engine) -> impl Future<Output = Result<CreditsResponse, PluginCallError>> + '_ {
-            e.supervisor_get_credits("p", CreditsRequest {
-                id: "".into(), id_source: "".into(),
-                kind: stui_plugin_sdk::EntryKind::Track,
-                force_refresh: false,
-            }, CallPriority::Foreground)
+        fn _credits(
+            e: &Engine,
+        ) -> impl Future<Output = Result<CreditsResponse, PluginCallError>> + '_ {
+            e.supervisor_get_credits(
+                "p",
+                CreditsRequest {
+                    id: "".into(),
+                    id_source: "".into(),
+                    kind: stui_plugin_sdk::EntryKind::Track,
+                    force_refresh: false,
+                },
+                CallPriority::Foreground,
+            )
         }
-        fn _related(e: &Engine) -> impl Future<Output = Result<Vec<PluginEntry>, PluginCallError>> + '_ {
-            e.supervisor_related("p", RelatedRequest {
-                id: "".into(), id_source: "".into(),
-                kind: stui_plugin_sdk::EntryKind::Track,
-                relation: RelationKind::Any,
-                limit: 10,
-                force_refresh: false,
-            }, CallPriority::Foreground)
+        fn _related(
+            e: &Engine,
+        ) -> impl Future<Output = Result<Vec<PluginEntry>, PluginCallError>> + '_ {
+            e.supervisor_related(
+                "p",
+                RelatedRequest {
+                    id: "".into(),
+                    id_source: "".into(),
+                    kind: stui_plugin_sdk::EntryKind::Track,
+                    relation: RelationKind::Any,
+                    limit: 10,
+                    force_refresh: false,
+                },
+                CallPriority::Foreground,
+            )
         }
     }
 }
-

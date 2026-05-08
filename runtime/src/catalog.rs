@@ -44,13 +44,13 @@ fn cache_ttl() -> u64 {
 
 fn tab_key(tab: &MediaTab) -> &'static str {
     match tab {
-        MediaTab::Movies   => "movies",
-        MediaTab::Series   => "series",
-        MediaTab::Music    => "music",
-        MediaTab::Library  => "library",
-        MediaTab::Radio    => "radio",
+        MediaTab::Movies => "movies",
+        MediaTab::Series => "series",
+        MediaTab::Music => "music",
+        MediaTab::Library => "library",
+        MediaTab::Radio => "radio",
         MediaTab::Podcasts => "podcasts",
-        MediaTab::Videos   => "videos",
+        MediaTab::Videos => "videos",
     }
 }
 
@@ -203,10 +203,7 @@ impl CatalogEntry {
         // imdb_id on AniList cour entries from the Fribb dataset, so
         // every cour of a multi-season show ends up keyed to the
         // same tmdb id and merges into one card.
-        let series_spine = matches!(
-            self.media_type,
-            MediaType::Series | MediaType::Episode,
-        );
+        let series_spine = matches!(self.media_type, MediaType::Series | MediaType::Episode,);
         if series_spine {
             if let Some(tmdb) = self.tmdb_id.as_deref().filter(|s| !s.is_empty()) {
                 return format!("tmdb:{tmdb}");
@@ -349,7 +346,7 @@ impl Catalog {
 
     pub async fn start(self: Arc<Self>) {
         let tabs = vec![MediaTab::Movies, MediaTab::Series, MediaTab::Music];
-        
+
         let handles: Vec<_> = tabs
             .into_iter()
             .map(|tab| {
@@ -359,7 +356,7 @@ impl Catalog {
                 })
             })
             .collect();
-        
+
         for handle in handles {
             if let Err(e) = handle.await {
                 warn!(error = %e, "catalog tab task panicked");
@@ -391,7 +388,8 @@ impl Catalog {
                 grids.insert(tab_key(&tab).to_string(), cached.entries.clone());
             }
 
-            self.emit_update(&tab, cached.entries.clone(), GridUpdateSource::Cache).await;
+            self.emit_update(&tab, cached.entries.clone(), GridUpdateSource::Cache)
+                .await;
 
             // Stale-while-revalidate threshold: if the cache is within the
             // first half of its TTL, treat it as genuinely fresh and don't
@@ -401,11 +399,19 @@ impl Catalog {
             // fresher data. After hard ttl, same fall-through applies.
             let soft_ttl = ttl / 2;
             if age < soft_ttl {
-                debug!(tab = tab_key(&tab), age_secs = age, "cache is fresh, skipping refresh");
+                debug!(
+                    tab = tab_key(&tab),
+                    age_secs = age,
+                    "cache is fresh, skipping refresh"
+                );
                 return;
             }
             if age < ttl {
-                debug!(tab = tab_key(&tab), age_secs = age, "cache is soft-stale — kicking background refresh");
+                debug!(
+                    tab = tab_key(&tab),
+                    age_secs = age,
+                    "cache is soft-stale — kicking background refresh"
+                );
             }
         }
 
@@ -442,14 +448,17 @@ impl Catalog {
 
         // Fan out an empty query (= trending) across all Catalog-capable plugins.
         // search_catalog_entries already deduplicates and merges provider results.
-        let merged = self.engine.search_catalog_entries(
-            "",    // empty query = trending
-            &tab,
-            crate::engine::SearchOptions::default(),
-            // Catalog grid refresh is background work — must never block
-            // a user clicking into Streams or the search bar.
-            CallPriority::Background,
-        ).await;
+        let merged = self
+            .engine
+            .search_catalog_entries(
+                "", // empty query = trending
+                &tab,
+                crate::engine::SearchOptions::default(),
+                // Catalog grid refresh is background work — must never block
+                // a user clicking into Streams or the search bar.
+                CallPriority::Background,
+            )
+            .await;
 
         if merged.is_empty() {
             warn!(tab = tab_str, "engine search returned empty results");
@@ -476,7 +485,8 @@ impl Catalog {
             warn!(tab = tab_str, error = %e, "failed to write cache");
         }
 
-        self.emit_update(&tab, merged.clone(), GridUpdateSource::Live).await;
+        self.emit_update(&tab, merged.clone(), GridUpdateSource::Live)
+            .await;
 
         // ── Progressive enrichment pass ─────────────────────────────
         // Music: lastfm albums arrive without year/rating; fan out to
@@ -489,7 +499,10 @@ impl Catalog {
         // entries so cards repaint in waves rather than after the
         // whole pass completes; HTTP responses are cached in sqlite,
         // so subsequent boots are effectively free.
-        enum EnrichKind { Music, Video }
+        enum EnrichKind {
+            Music,
+            Video,
+        }
         let enrich_kind = match tab {
             MediaTab::Music => Some(EnrichKind::Music),
             MediaTab::Movies | MediaTab::Series => Some(EnrichKind::Video),
@@ -519,7 +532,8 @@ impl Catalog {
                             count = snapshot.len(),
                             "enrich: progressive snapshot",
                         );
-                        this.emit_update(&tab, snapshot, GridUpdateSource::Live).await;
+                        this.emit_update(&tab, snapshot, GridUpdateSource::Live)
+                            .await;
                     }
                 };
                 match kind {
@@ -528,14 +542,16 @@ impl Catalog {
                             this.engine.clone(),
                             merged,
                             on_progress,
-                        ).await;
+                        )
+                        .await;
                     }
                     EnrichKind::Video => {
                         crate::engine::video_enrich::enrich_grid_progressive(
                             this.engine.clone(),
                             merged,
                             on_progress,
-                        ).await;
+                        )
+                        .await;
                     }
                 }
             });
@@ -639,7 +655,7 @@ mod tests {
                 original_language: None,
             },
         ];
-        
+
         let result = dedup_and_merge(entries);
         assert_eq!(result.len(), 1, "dedup should keep only one entry");
     }
@@ -657,7 +673,7 @@ mod tests {
             poster_art: None,
             provider: "tmdb".to_string(),
             tab: "movies".to_string(),
-                artist: None,
+            artist: None,
             imdb_id: Some("tt0001".to_string()),
             tmdb_id: None,
             mal_id: None,
@@ -683,7 +699,7 @@ mod tests {
             poster_art: None,
             provider: "tmdb".to_string(),
             tab: "movies".to_string(),
-                artist: None,
+            artist: None,
             imdb_id: None,
             tmdb_id: None,
             mal_id: None,
@@ -710,8 +726,11 @@ mod tests {
             id: format!("anilist-{mal}"),
             title: "Attack on Titan".to_string(),
             year: Some("2013".to_string()),
-            genre: None, rating: None, description: None,
-            poster_url: None, poster_art: None,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
             provider: "anilist".to_string(),
             tab: "series".to_string(),
             artist: None,
@@ -724,7 +743,7 @@ mod tests {
             original_language: Some("ja".to_string()),
         };
 
-        let s1   = cour("16498");
+        let s1 = cour("16498");
         let s4p1 = cour("38524");
         let s4p2 = cour("48583");
 
@@ -744,8 +763,11 @@ mod tests {
             id: "anilist-199".to_string(),
             title: "Spirited Away".to_string(),
             year: Some("2001".to_string()),
-            genre: None, rating: None, description: None,
-            poster_url: None, poster_art: None,
+            genre: None,
+            rating: None,
+            description: None,
+            poster_url: None,
+            poster_art: None,
             provider: "anilist".to_string(),
             tab: "movies".to_string(),
             artist: None,

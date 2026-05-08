@@ -44,11 +44,11 @@ type MpdSearchReq struct {
 // MpdArtist / MpdAlbum / MpdSong are the same wire shapes used elsewhere in
 // the MPD library — no separate *Wire alias is needed.
 type MpdSearchResult struct {
-	ID      string       `json:"id"`
-	QueryID uint64       `json:"query_id"`
-	Artists []MpdArtist  `json:"artists"`
-	Albums  []MpdAlbum   `json:"albums"`
-	Tracks  []MpdSong    `json:"tracks"`
+	ID      string        `json:"id"`
+	QueryID uint64        `json:"query_id"`
+	Artists []MpdArtist   `json:"artists"`
+	Albums  []MpdAlbum    `json:"albums"`
+	Tracks  []MpdSong     `json:"tracks"`
 	Error   *MpdSearchErr `json:"error,omitempty"`
 }
 

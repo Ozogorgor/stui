@@ -4,9 +4,9 @@
 //
 //   - "off"   — no processing; text rendered as-is
 //   - "auto"  — detect directionality and adjust lipgloss alignment only;
-//               relies on terminal/font BiDi rendering (default)
+//     relies on terminal/font BiDi rendering (default)
 //   - "force" — full in-app visual reordering via golang.org/x/text/unicode/bidi
-//               for terminals that don't do BiDi (Alacritty, tmux, etc.)
+//     for terminals that don't do BiDi (Alacritty, tmux, etc.)
 //
 // # Usage
 //

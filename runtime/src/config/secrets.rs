@@ -315,7 +315,10 @@ EMPTY_KEY=
         let content = "TMDB_API_KEY=enc:not-real-base64-or-cipher\nOTHER=plain\n";
         let vars = parse_env_content(content).unwrap();
         env::remove_var("STUI_MACHINE_ID");
-        assert!(!vars.contains_key("TMDB_API_KEY"), "corrupt enc value should be dropped");
+        assert!(
+            !vars.contains_key("TMDB_API_KEY"),
+            "corrupt enc value should be dropped"
+        );
         assert_eq!(vars.get("OTHER"), Some(&"plain".to_string()));
     }
 

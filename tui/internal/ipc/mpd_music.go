@@ -24,13 +24,13 @@ import (
 
 // MpdTrack is one song in the MPD playback queue.
 type MpdTrack struct {
-	ID       uint32  `json:"id"`               // MPD song ID (stable within a queue session)
-	Pos      uint32  `json:"pos"`              // 0-based queue position
+	ID       uint32  `json:"id"`  // MPD song ID (stable within a queue session)
+	Pos      uint32  `json:"pos"` // 0-based queue position
 	Title    string  `json:"title"`
 	Artist   string  `json:"artist"`
 	Album    string  `json:"album"`
-	Duration float64 `json:"duration"`         // seconds; 0 if unknown
-	File     string  `json:"file"`             // path relative to MPD music root
+	Duration float64 `json:"duration"` // seconds; 0 if unknown
+	File     string  `json:"file"`     // path relative to MPD music root
 }
 
 // MpdQueueResultMsg is dispatched when MpdGetQueue completes.
@@ -74,12 +74,12 @@ func (c *Client) MpdGetQueue() {
 
 // MpdDirEntry is one item returned by an MPD directory browse request.
 type MpdDirEntry struct {
-	Name     string  `json:"name"`
-	IsDir    bool    `json:"is_dir"`
-	File     string  `json:"file,omitempty"`
-	Title    string  `json:"title,omitempty"`
-	Artist   string  `json:"artist,omitempty"`
-	Album    string  `json:"album,omitempty"`
+	Name      string  `json:"name"`
+	IsDir     bool    `json:"is_dir"`
+	File      string  `json:"file,omitempty"`
+	Title     string  `json:"title,omitempty"`
+	Artist    string  `json:"artist,omitempty"`
+	Album     string  `json:"album,omitempty"`
 	Duration  float64 `json:"duration,omitempty"`
 	RawArtist string  `json:"raw_artist,omitempty"`
 	RawAlbum  string  `json:"raw_album,omitempty"`
@@ -88,7 +88,7 @@ type MpdDirEntry struct {
 
 // MpdDirResultMsg is dispatched when MpdBrowseDir completes.
 type MpdDirResultMsg struct {
-	Path    string       // the path that was browsed
+	Path    string // the path that was browsed
 	Entries []MpdDirEntry
 	Err     error
 }
@@ -138,8 +138,8 @@ type MpdArtist struct {
 // `Date:` tag value (e.g. "1996-11-01") and is used to disambiguate
 // multiple releases of the same album when listing that release's tracks.
 type MpdAlbum struct {
-	Title  string `json:"title"`
-	Artist string `json:"artist"`
+	Title     string `json:"title"`
+	Artist    string `json:"artist"`
 	Year      string `json:"year"`
 	Date      string `json:"date"`
 	RawArtist string `json:"raw_artist,omitempty"`
@@ -157,9 +157,9 @@ func (a MpdAlbum) MpdTitle() string {
 
 // MpdSong is one entry in the library track list or a saved playlist.
 type MpdSong struct {
-	Title    string  `json:"title"`
-	Artist   string  `json:"artist"`
-	Album    string  `json:"album"`
+	Title     string  `json:"title"`
+	Artist    string  `json:"artist"`
+	Album     string  `json:"album"`
 	Duration  float64 `json:"duration"` // seconds
 	File      string  `json:"file"`
 	RawArtist string  `json:"raw_artist,omitempty"`
@@ -437,7 +437,7 @@ func (c *Client) GetAlbumArt(file string) {
 
 // TagWriteScope defines what scope to normalize.
 type TagWriteScope struct {
-	Kind   string `json:"kind"`             // "album" | "artist" | "library"
+	Kind   string `json:"kind"` // "album" | "artist" | "library"
 	Artist string `json:"artist,omitempty"`
 	Album  string `json:"album,omitempty"`
 	Date   string `json:"date,omitempty"`

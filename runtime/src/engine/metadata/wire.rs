@@ -192,10 +192,7 @@ mod tests {
             cast: vec![],
             crew: vec![],
         });
-        assert_eq!(
-            p,
-            MetadataPayload::Credits(CreditsData::default())
-        );
+        assert_eq!(p, MetadataPayload::Credits(CreditsData::default()));
     }
 
     #[test]
@@ -261,7 +258,10 @@ mod tests {
 
     #[test]
     fn crew_role_snake_cases_enum() {
-        assert_eq!(crew_role_to_str(&CrewRole::AnimationDirector), "animation_director");
+        assert_eq!(
+            crew_role_to_str(&CrewRole::AnimationDirector),
+            "animation_director"
+        );
         assert_eq!(crew_role_to_str(&CrewRole::Director), "director");
         assert_eq!(crew_role_to_str(&CrewRole::Other("sound".into())), "sound");
     }

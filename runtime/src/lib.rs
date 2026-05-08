@@ -15,11 +15,13 @@
 //! | `wasm-host` | Enable full WASM plugin execution via wasmtime |
 
 pub mod abi;
+pub mod anime_bridge;
 pub mod cache;
 pub mod catalog;
 pub mod catalog_engine;
 pub mod config;
 pub mod discovery;
+pub mod dsp;
 pub mod engine;
 pub mod error;
 pub mod events;
@@ -30,6 +32,7 @@ pub mod lastfm;
 pub mod logging;
 pub mod mdblist;
 pub mod media;
+pub mod mediacache;
 pub mod mpd_bridge;
 pub mod player;
 pub mod plugin;
@@ -37,32 +40,28 @@ pub mod providers;
 pub mod quality;
 pub mod rating_aggregator;
 pub mod resolver;
+pub mod roon;
 pub mod sandbox;
 pub mod scraper;
+pub mod storage;
 pub mod stremio;
 pub mod torrent_engine;
 pub mod tvdb;
-pub mod anime_bridge;
-pub mod storage;
 pub mod watchhistory;
-pub mod mediacache;
-pub mod dsp;
-pub mod roon;
 
 // `pipeline` ties the stages together into a single orchestrated flow.
+pub mod auth;
 pub mod pipeline;
 pub mod plugin_rpc;
 pub mod registry;
 pub mod skipper;
-pub mod auth;
-
 
 // Re-export the most commonly used types at crate root for convenience.
+pub use config::ConfigManager;
 pub use config::RuntimeConfig;
 pub use engine::Engine;
-pub use error::StuidError;
 pub use engine::Pipeline;
+pub use error::StuidError;
 pub use events::{EventBus, RuntimeEvent};
-pub use config::ConfigManager;
 #[allow(unused_imports)]
 pub use providers::{HealthRegistry, ProviderThrottle};

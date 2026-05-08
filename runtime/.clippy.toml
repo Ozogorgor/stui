@@ -13,10 +13,7 @@ cognitive-complexity-threshold = 30
 # MSRV for this project (matches stable)
 msrv = "1.80"
 
-# Allow these specific warnings that are acceptable
-allow = [
-    "clippy::field_reassign_with_default",
-    "clippy::len_zero",
-    "clippy::len_without_is_empty",
-    "clippy::unused_fields",
-]
+# NOTE: `.clippy.toml` only accepts tunable thresholds, not lint
+# allow/deny lists. Per-lint allows now live in `runtime/Cargo.toml`
+# under `[lints.clippy]` (added 2026-05-08 to fix CI's clippy step
+# from blowing up on an unknown-field config error).

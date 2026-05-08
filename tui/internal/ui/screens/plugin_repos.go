@@ -48,7 +48,6 @@ type PluginReposScreen struct {
 	adding bool
 	addBuf string
 
-
 	spinner components.Spinner
 }
 

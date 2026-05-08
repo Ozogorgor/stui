@@ -18,19 +18,16 @@ use crate::abi::types::{
     ArtworkRequest, ArtworkResponse, CreditsRequest, CreditsResponse, EnrichRequest,
     EnrichResponse, PluginEntry, RelatedRequest,
 };
-use stui_plugin_sdk::{
-    TrailersRequest, TrailersResponse,
-    ReleaseInfoRequest, ReleaseInfoResponse,
-    KeywordsRequest, KeywordsResponse,
-    BoxOfficeRequest, BoxOfficeResponse,
-    AlternativeTitlesRequest, AlternativeTitlesResponse,
-    BulkEnrichRequest, BulkEnrichResponse,
-};
 use crate::cache::metadata::MetadataCache;
 use crate::cache::metadata_key::MetadataVerb;
 use crate::config::types::MetadataSources;
 use crate::engine::{CallPriority, Engine};
 use crate::plugin::PluginMetaExt;
+use stui_plugin_sdk::{
+    AlternativeTitlesRequest, AlternativeTitlesResponse, BoxOfficeRequest, BoxOfficeResponse,
+    BulkEnrichRequest, BulkEnrichResponse, KeywordsRequest, KeywordsResponse, ReleaseInfoRequest,
+    ReleaseInfoResponse, TrailersRequest, TrailersResponse,
+};
 
 use super::sources::{SourceCapabilityProbe, SourceResolver};
 use super::MetadataDispatch;
@@ -132,7 +129,13 @@ impl ManifestCapabilityProbe {
                 std::collections::HashMap::new();
 
             if let stui_plugin_sdk::manifest::CatalogCapability::Typed {
-                search, lookup, enrich, artwork, credits, related, ..
+                search,
+                lookup,
+                enrich,
+                artwork,
+                credits,
+                related,
+                ..
             } = &caps
             {
                 verbs.search = search.unwrap_or(false);
