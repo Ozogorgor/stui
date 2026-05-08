@@ -143,12 +143,13 @@ jobs:
 
       # golangci-lint v6's `latest` tag was built against Go 1.24 —
       # incompatible with our `go 1.25.5` directive (transitive
-      # requirement from bubbletea v2). v2.0+ is built against
-      # Go 1.25 and supports the newer module schema.
+      # requirement from bubbletea v2). v2.x is built against
+      # Go 1.25 and supports the newer module schema. Pinned to a
+      # specific release so reruns are deterministic.
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.5.0
+          version: v2.12.2
           working-directory: tui
           args: --timeout=5m
 
