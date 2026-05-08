@@ -222,11 +222,11 @@ jobs:
         run: go build -o stui-test ./cmd/stui
 
       - name: Test runtime help
-        run: ./runtime/target/release/stui-runtime --help
+        run: ./target/release/stui-runtime --help
 
       - name: Test IPC handshake
         # Runtime reads from stdin in IPC mode; timeout kills it (exit 124) — that's expected.
-        run: timeout 2 ./runtime/target/release/stui-runtime; code=$?; [[ $code -eq 0 || $code -eq 124 ]]
+        run: timeout 2 ./target/release/stui-runtime; code=$?; [[ $code -eq 0 || $code -eq 124 ]]
 
       - name: Cleanup
         run: rm -f tui/stui-test
