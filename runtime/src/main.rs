@@ -1052,6 +1052,7 @@ fn catalog_entry_to_media_entry(e: &catalog::CatalogEntry) -> ipc::MediaEntry {
         season: None,
         episode: None,
         season_count: None,
+        has_specials: false,
     }
 }
 
