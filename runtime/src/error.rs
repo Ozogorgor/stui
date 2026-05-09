@@ -63,9 +63,6 @@ pub enum StuidError {
     #[error("mpv error: {0}")]
     Mpv(String),
 
-    #[error("aria2 error: {0}")]
-    Aria2(String),
-
     // ── Config ───────────────────────────────────────────────────────────
     #[error("config error: {0}")]
     Config(String),

@@ -325,7 +325,7 @@ pub struct FindStreamsResponse {
 ///
 /// `url` is the playable / fetchable URL — `magnet:?xt=urn:btih:…` for
 /// torrents, `https://…` for direct streams. The runtime decides what
-/// to do with it based on the URL scheme (`magnet:` → aria2, `https:` →
+/// to do with it based on the URL scheme (`magnet:` → librqbit, `https:` →
 /// mpv direct, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Stream {

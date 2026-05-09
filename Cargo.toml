@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "runtime",
     "sdk",
-    "aria2",
     "cli",
     "plugins/*",
 ]
@@ -28,7 +27,7 @@ tracing    = "0.1"
 reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # ── Workspace-wide profiles ───────────────────────────────────────────────────
-# Release profile for runtime, sdk, and aria2 (optimized for speed)
+# Release profile for runtime + sdk (optimized for speed)
 [profile.release]
 opt-level     = 3
 lto           = true
@@ -41,6 +40,6 @@ strip         = true
 # nightly `panic_immediate_abort` path on stable.
 panic         = "abort"
 
-# Dev profile for runtime, sdk, and aria2
+# Dev profile for runtime + sdk
 [profile.dev]
 opt-level = 1

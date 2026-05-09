@@ -333,7 +333,7 @@ func (c *Client) PlayFrom(entryID, provider, imdbID string, tab MediaTab, startP
 	}()
 }
 
-// PlayerStop sends a stop command to the runtime (kills mpv + aria2 GID).
+// PlayerStop sends a stop command to the runtime (kills mpv + active torrent).
 func (c *Client) PlayerStop() {
 	go func() {
 		_ = c.sendRaw(map[string]any{"type": "player_stop"})
@@ -475,7 +475,7 @@ func (c *Client) FindStreams(req FindStreamsRequest) {
 	}()
 }
 
-// DownloadStream starts an aria2 download without launching mpv.
+// DownloadStream starts a torrent download without launching mpv.
 func (c *Client) DownloadStream(url, title string) {
 	go func() {
 		_ = c.sendRaw(map[string]any{
@@ -486,7 +486,7 @@ func (c *Client) DownloadStream(url, title string) {
 	}()
 }
 
-// CancelDownload asks aria2 to abort the download identified by gid.
+// CancelDownload asks the torrent engine to abort the download identified by id.
 func (c *Client) CancelDownload(gid string) {
 	go func() {
 		_ = c.sendRaw(map[string]any{

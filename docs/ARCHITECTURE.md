@@ -66,7 +66,7 @@ stui is a plugin-driven terminal streaming platform built from two processes tha
   │  │  IPC socket    │    │  queue_and_play  │                    │
   │  └────────────────┘    └──────────────────┘                    │
   │                                                                 │
-  │  aria2c  ·  Skipper (intro/credits detector)                    │
+  │  librqbit (torrent engine)  ·  Skipper (intro/credits detector) │
   │  ~/.stui/cache/   ~/.stui/config/stui.toml                      │
   └─────────────────────────────────────────────────────────────────┘
 ```
@@ -155,7 +155,7 @@ Settings change
 │   commands.rs   ← PlayerCommand enum (22 typed variants)     │
 │   mpv.rs        ← MpvPlayer: IPC socket, TracksUpdated event │
 │   manager.rs    ← handle_command(), try_next_candidate()     │
-│   bridge.rs     ← URL → aria2 or mpv routing                │
+│   bridge.rs     ← URL → torrent engine or mpv routing        │
 │                                                              │
 │  quality/                                                    │
 │   mod.rs        ← rank() / rank_with_health()               │
@@ -196,8 +196,8 @@ Settings change
 │  plugin_rpc/    ← Language-agnostic JSON-RPC plugin system   │
 └──────────────────────────────────────────────────────────────┘
          │               │              │
-      aria2c           mpv          plugins
-  (torrent DL)    (playback)   (Python/Go/Node/Rust)
+   librqbit (in-proc)   mpv          plugins
+   (torrent DL)     (playback)   (Python/Go/Node/Rust)
 ```
 
 ---
@@ -226,7 +226,7 @@ User presses enter on item
     → fan-out to stream providers (capabilities-filtered)
     → rank_with_health(streams, policy, health_map)
        blend = 0.75 × quality_score + 0.25 × reliability
-  → best URL → PlayerBridge → mpv or aria2
+  → best URL → PlayerBridge → mpv (direct) or librqbit (torrents) → mpv
   → player_started → PlayerStartedMsg → NowPlayingState → HUD
 ```
 

@@ -569,7 +569,7 @@ async fn run_ipc_loop<R, W>(
     trace: &Arc<TraceEmitter>,
     tag_job_store: &Arc<mediacache::tag_write_job::JobStore>,
     tag_job_registry: &Arc<mediacache::tag_write_job::JobRegistry>,
-    // Receiver for async events pushed by background tasks (player, aria2, registry, …).
+    // Receiver for async events pushed by background tasks (player, torrent engine, registry, …).
     event_rx: &mut tokio::sync::mpsc::Receiver<String>,
     // Sender used to push responses from background-spawned tasks back into the loop.
     event_tx: tokio::sync::mpsc::Sender<String>,
@@ -808,7 +808,7 @@ where
                 }
             }
 
-            // aria2 + mpv player events (progress, complete, started, ended …)
+            // torrent + mpv player events (progress, complete, started, ended …)
             Some(event_msg) = event_rx.recv() => {
                 let mut line = event_msg;
                 if !line.ends_with('\n') { line.push('\n'); }

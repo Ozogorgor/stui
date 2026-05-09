@@ -8,7 +8,7 @@
 //!
 //! | Module     | Description |
 //! |------------|-------------|
-//! | `torrent`  | Generic torrent/magnet bridge (plugs into aria2) |
+//! | `torrent`  | Generic torrent/magnet bridge (plugs into the librqbit engine) |
 //! | `direct`   | Direct HTTP video URLs (CDN-hosted or yt-dlp-resolved) |
 //! | `vod`      | VOD/streaming service bridges (future: Jellyfin, Plex) |
 //!

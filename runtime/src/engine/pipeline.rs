@@ -51,7 +51,7 @@ pub struct Pipeline {
     pub cache: RuntimeCache,
     pub policy: RankingPolicy,
 
-    /// Player bridge — routes URLs to aria2 or mpv.
+    /// Player bridge — routes URLs to the torrent engine or mpv.
     pub player: Arc<PlayerBridge>,
 
     /// Language-agnostic RPC plugin manager (Python, Go, JS, Rust, …).

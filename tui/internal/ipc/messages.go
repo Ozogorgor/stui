@@ -459,7 +459,7 @@ type CatalogLoadedMsg struct {
 	Tab string `json:"tab"`
 }
 
-// DownloadEntry tracks the live state of a single aria2 managed download.
+// DownloadEntry tracks the live state of a single managed torrent download.
 type DownloadEntry struct {
 	GID      string
 	Title    string
@@ -472,7 +472,7 @@ type DownloadEntry struct {
 	Error    string
 }
 
-// DownloadStartedMsg is pushed by the runtime when aria2 begins a new download.
+// DownloadStartedMsg is pushed by the runtime when the torrent engine begins a new download.
 type DownloadStartedMsg struct {
 	GID   string `json:"gid"`
 	Title string `json:"title"`
@@ -495,7 +495,7 @@ type DownloadCompleteMsg struct {
 	Files []string `json:"files"`
 }
 
-// DownloadErrorMsg is pushed when an aria2 download fails.
+// DownloadErrorMsg is pushed when a torrent download fails.
 type DownloadErrorMsg struct {
 	GID     string `json:"gid"`
 	Message string `json:"message"`

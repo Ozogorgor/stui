@@ -7,7 +7,6 @@
 #   ./scripts/build.sh --wasm-host       # runtime with full WASM execution support
 #   ./scripts/build.sh --clean           # nuke caches first (cargo clean + go clean -cache)
 #   ./scripts/build.sh tmdb              # pass plugin filter through to build-plugins.sh
-#   ARIA2_SECRET=x ./scripts/build.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,8 +88,3 @@ echo "✓ Build complete"
 echo ""
 echo "Run:  $DIST/stui"
 echo "      $DIST/stui --no-runtime   # UI-only (no downloads)"
-echo ""
-echo "aria2c daemon (needed for downloads):"
-echo '  aria2c --enable-rpc --rpc-secret=mystui \
-    --seed-time=0 --dir="$HOME/Downloads/stui" --daemon'
-echo "  export ARIA2_SECRET=mystui"

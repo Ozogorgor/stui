@@ -89,7 +89,7 @@ use crate::providers::{HealthRegistry, StreamBenchmarker};
 /// the optional-quality string into the typed `StreamQuality` enum
 /// and detects torrent-vs-https from the URL scheme to set
 /// `protocol` correctly so downstream playback can pick the right
-/// transport (aria2 vs mpv-direct).
+/// transport (torrent engine vs mpv-direct).
 fn plugin_stream_to_provider(s: crate::abi::types::Stream) -> crate::providers::Stream {
     let quality_label = s.quality.clone().unwrap_or_else(|| "Unknown".to_string());
     let protocol = if s.url.starts_with("magnet:") {

@@ -183,7 +183,7 @@ type Model struct {
 	// PlayerEndedMsg.
 	terminalVOActive bool
 
-	// Torrent / aria2 download tracking.
+	// Torrent download tracking.
 	// downloadOrder preserves insertion order; downloadMap is for O(1) lookup.
 	downloadOrder []string // GIDs in arrival order
 	downloadMap   map[string]*ipc.DownloadEntry

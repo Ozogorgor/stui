@@ -8,10 +8,9 @@ This guide covers setting up a local development environment for stui.
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Go | 1.22+ | TUI frontend |
+| Go | 1.25+ | TUI frontend |
 | Rust | 1.75+ | Runtime backend |
 | mpv | latest | Media playback |
-| aria2c | latest | Torrent download |
 | git | latest | Version control |
 
 ### Optional Dependencies
@@ -32,7 +31,6 @@ sudo apt install -y \
     git \
     golang-go \
     mpv \
-    aria2 \
     pkg-config \
     libssl-dev
 ```
@@ -150,9 +148,6 @@ cargo audit
 ### Development Helpers
 
 ```bash
-# Start aria2c daemon (required for torrent streaming)
-./scripts/aria2c-start.sh
-
 # Watch mode for Go (requires fswatch)
 # cd tui && fswatch -r . | xargs -I{} sh -c 'go build ./...'
 
@@ -181,7 +176,6 @@ export OMDB_API_KEY=your_omdb_key
 export LASTFM_API_KEY=your_lastfm_key
 export OPENSUBTITLES_API_KEY=your_os_key
 export PROWLARR_API_KEY=your_prowlarr_key
-export ARIA2_SECRET=your_aria2_secret
 ```
 
 ## Project Structure

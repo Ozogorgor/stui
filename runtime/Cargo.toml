@@ -18,7 +18,7 @@ path = "src/main.rs"
 #   cargo build --no-default-features --features "anime"  (anime-only runtime)
 default = ["torrent", "music", "anime", "radio", "wasm-host"]
 
-# Torrent / magnet stream resolution (TorrentProvider + aria2 bridge).
+# Torrent / magnet stream resolution via embedded librqbit + mpv.
 torrent = []
 
 # Music catalog providers (Last.fm + MusicBrainz).
@@ -59,7 +59,6 @@ tokio-util        = { version = "0.7", features = ["codec", "io"] }
 axum              = "0.8"
 http              = "1"
 futures           = "0.3"
-stui-aria2        = { path = "../aria2" }
 stui-plugin-sdk   = { path = "../sdk" }
 # tracing-subscriber-utils: required for librqbit's http-api log streaming endpoint
 librqbit          = { version = "8.1.1", default-features = false, features = ["http-api", "rust-tls", "tracing-subscriber-utils"] }

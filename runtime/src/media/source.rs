@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// Used to:
 /// - Filter which providers are queried for a given search
 /// - Determine the TUI tab a `MediaItem` belongs to
-/// - Route to the right player strategy (aria2 for torrents, mpv for streams)
+/// - Route to the right player strategy (torrent engine for torrents, mpv for streams)
 ///
 /// New variants can be added here freely; existing providers return
 /// `supported_sources()` to declare what they serve.

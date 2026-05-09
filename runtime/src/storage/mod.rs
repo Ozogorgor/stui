@@ -20,7 +20,7 @@ pub struct MediaStorage {
     base_anime: PathBuf,
     base_music: PathBuf,
     base_podcasts: PathBuf,
-    /// Maps aria2 original paths → user-visible organized paths (not persisted)
+    /// Maps torrent-engine original paths → user-visible organized paths (not persisted)
     #[allow(dead_code)] // internal: field retained for future path translation
     path_translator: Arc<RwLock<HashMap<PathBuf, PathBuf>>>,
 }
@@ -235,9 +235,9 @@ impl MediaStorage {
         parent.join(filename)
     }
 
-    // ── Aria2 Translation Layer ─────────────────────────────────────────────
+    // ── Torrent Path Translation Layer ─────────────────────────────────────────────
 
-    /// Register a mapping from aria2's original path to our organized path.
+    /// Register a mapping from the torrent engine's original path to our organized path.
     /// This is called when a download starts to track the translation.
     pub async fn register_translation(&self, original: PathBuf, organized: PathBuf) {
         let mut translator = self.path_translator.write().await;
@@ -249,7 +249,7 @@ impl MediaStorage {
         );
     }
 
-    /// Get the organized path for an aria2 original path.
+    /// Get the organized path for a torrent-engine original path.
     pub async fn get_organized_path(&self, original: &PathBuf) -> Option<PathBuf> {
         let translator = self.path_translator.read().await;
         translator.get(original).cloned()
