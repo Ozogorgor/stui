@@ -56,10 +56,7 @@ impl StreamingServer {
         let state = AppState { api };
 
         let app = Router::new()
-            .route(
-                "/torrents/{id}/stream/{file_idx}",
-                get(stream_handler),
-            )
+            .route("/torrents/{id}/stream/{file_idx}", get(stream_handler))
             .with_state(state);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -93,8 +90,7 @@ async fn stream_handler(
                 file_idx,
                 "stream open failed: {e:#}"
             );
-            return (StatusCode::NOT_FOUND, format!("stream not found: {e}"))
-                .into_response();
+            return (StatusCode::NOT_FOUND, format!("stream not found: {e}")).into_response();
         }
     };
 
@@ -124,8 +120,7 @@ async fn stream_handler(
             );
             out.insert(
                 header::CONTENT_RANGE,
-                HeaderValue::from_str(&format!("bytes {start}-{end}/{total_len}"))
-                    .unwrap(),
+                HeaderValue::from_str(&format!("bytes {start}-{end}/{total_len}")).unwrap(),
             );
             (StatusCode::PARTIAL_CONTENT, start, Some(len))
         }

@@ -165,7 +165,10 @@ impl PlayerManager {
             }
 
             SwitchStream { url } => {
-                info!("manager: switching stream to {}", super::bridge::short(&url, 80));
+                info!(
+                    "manager: switching stream to {}",
+                    super::bridge::short(&url, 80)
+                );
                 self.bus.emit(RuntimeEvent::StreamSwitchRequested {
                     entry_id: url.clone(),
                 });

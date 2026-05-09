@@ -115,10 +115,12 @@ impl TorrentEngine {
         );
         let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
             .await
-            .map_err(|_| anyhow!(
-                "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
-                METADATA_TIMEOUT.as_secs()
-            ))?
+            .map_err(|_| {
+                anyhow!(
+                    "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
+                    METADATA_TIMEOUT.as_secs()
+                )
+            })?
             .context("adding torrent to librqbit session")?;
 
         resp.into_handle()
@@ -145,8 +147,8 @@ impl TorrentEngine {
             })
             .context("reading torrent metadata for file list")?;
 
-        let file_idx = pick_video_file(&files)
-            .ok_or_else(|| anyhow!("no playable video file in torrent"))?;
+        let file_idx =
+            pick_video_file(&files).ok_or_else(|| anyhow!("no playable video file in torrent"))?;
 
         // librqbit's HTTP stream endpoint returns 500 while the torrent is in
         // `Initializing` (e.g. checksum-validating already-downloaded pieces
@@ -157,10 +159,12 @@ impl TorrentEngine {
         // URL back to the caller (who will `loadfile_replace` mpv into it).
         tokio::time::timeout(METADATA_TIMEOUT, handle.wait_until_initialized())
             .await
-            .map_err(|_| anyhow!(
-                "torrent initialization timed out after {}s",
-                METADATA_TIMEOUT.as_secs()
-            ))?
+            .map_err(|_| {
+                anyhow!(
+                    "torrent initialization timed out after {}s",
+                    METADATA_TIMEOUT.as_secs()
+                )
+            })?
             .context("waiting for librqbit torrent to leave Initializing state")?;
 
         // Persistence-restored torrents come back in their previous
@@ -407,7 +411,10 @@ async fn probe_http_endpoint(url: &str) -> Result<()> {
             target: "torrent_engine",
             "HTTP warmup probe attempt {attempt}/{ATTEMPTS} failed; retrying"
         );
-        tokio::time::sleep(Duration::from_millis(500_u64.saturating_mul(attempt as u64))).await;
+        tokio::time::sleep(Duration::from_millis(
+            500_u64.saturating_mul(attempt as u64),
+        ))
+        .await;
     }
 
     Err(anyhow!(

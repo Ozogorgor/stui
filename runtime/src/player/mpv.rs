@@ -25,9 +25,9 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -70,7 +70,10 @@ fn overlay_script_path() -> Option<&'static PathBuf> {
     PATH.get_or_init(|| {
         let dir = dirs::cache_dir()?.join("stui").join("scripts");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            error!("mpv: failed to create overlay script dir {}: {e}", dir.display());
+            error!(
+                "mpv: failed to create overlay script dir {}: {e}",
+                dir.display()
+            );
             return None;
         }
         let path = dir.join("stui-overlay.lua");
@@ -81,13 +84,17 @@ fn overlay_script_path() -> Option<&'static PathBuf> {
             .unwrap_or(true);
         if needs_write {
             if let Err(e) = std::fs::write(&path, OVERLAY_LUA) {
-                error!("mpv: failed to write overlay script {}: {e}", path.display());
+                error!(
+                    "mpv: failed to write overlay script {}: {e}",
+                    path.display()
+                );
                 return None;
             }
             info!("mpv: overlay script written to {}", path.display());
         }
         Some(path)
-    }).as_ref()
+    })
+    .as_ref()
 }
 
 use super::state::TrackInfo;
@@ -102,25 +109,25 @@ use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
 pub struct PlayerStartedEvent {
-    pub title:    String,
-    pub path:     String,
+    pub title: String,
+    pub path: String,
     pub duration: f64,
 }
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // pub API: used by TUI / IPC layer
 pub struct PlayerProgressEvent {
-    pub position:       f64,
-    pub duration:       f64,
-    pub paused:         bool,
-    pub cache_percent:  f64,
+    pub position: f64,
+    pub duration: f64,
+    pub paused: bool,
+    pub cache_percent: f64,
     // Extended fields (populated once mpv reports them)
-    pub audio_track:    Option<i64>,
+    pub audio_track: Option<i64>,
     pub subtitle_track: Option<i64>,
     pub subtitle_delay: f64,
-    pub audio_delay:    f64,
-    pub volume:         f64,
-    pub muted:          bool,
+    pub audio_delay: f64,
+    pub volume: f64,
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -147,10 +154,10 @@ pub struct MpvPlayer {
 }
 
 struct MpvInner {
-    sock_path:  PathBuf,
-    req_id:     AtomicU64,
+    sock_path: PathBuf,
+    req_id: AtomicU64,
     // locked while a process is alive
-    proc:       Mutex<Option<Child>>,
+    proc: Mutex<Option<Child>>,
     // write half of the Unix socket — None until connected.
     // Bumps each time a new mpv is spawned (play / play_idle / stop). The
     // value of `ipc_epoch` at the moment a `run_ipc_loop` task was spawned
@@ -159,9 +166,9 @@ struct MpvInner {
     // an older loop racing against a newer `play_idle` would clear the
     // writer the new loop just installed — every subsequent IPC command
     // would then fall through to the fresh-connect fallback.
-    sock_tx:    Mutex<Option<tokio::net::unix::OwnedWriteHalf>>,
-    ipc_epoch:  AtomicU64,
-    event_tx:   broadcast::Sender<MpvEvent>,
+    sock_tx: Mutex<Option<tokio::net::unix::OwnedWriteHalf>>,
+    ipc_epoch: AtomicU64,
+    event_tx: broadcast::Sender<MpvEvent>,
 }
 
 impl Default for MpvPlayer {
@@ -330,7 +337,7 @@ impl MpvPlayer {
 
         // Spawn socket connector + event reader
         let player = self.clone();
-        let url_owned  = url.to_string();
+        let url_owned = url.to_string();
         let title_owned = title.to_string();
         tokio::spawn(async move {
             player.run_ipc_loop(epoch, url_owned, title_owned).await;
@@ -487,7 +494,9 @@ impl MpvPlayer {
     /// the next `play()` call gets a clean spawn.
     pub async fn is_running(&self) -> bool {
         let mut guard = self.inner.proc.lock().await;
-        let Some(child) = guard.as_mut() else { return false; };
+        let Some(child) = guard.as_mut() else {
+            return false;
+        };
         match child.try_wait() {
             Ok(None) => true,
             Ok(Some(_)) => {
@@ -504,7 +513,8 @@ impl MpvPlayer {
         let msg = serde_json::to_string(&json!({
             "command": cmd,
             "request_id": req_id,
-        })).map_err(|e| e.to_string())?;
+        }))
+        .map_err(|e| e.to_string())?;
         let mut line = msg;
         line.push('\n');
 
@@ -577,7 +587,8 @@ impl MpvPlayer {
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_pause(&self, paused: bool) -> Result<(), String> {
-        self.send_command(&json!(["set_property", "pause", paused])).await
+        self.send_command(&json!(["set_property", "pause", paused]))
+            .await
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
@@ -597,7 +608,8 @@ impl MpvPlayer {
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn set_volume(&self, level: f64) -> Result<(), String> {
-        self.send_command(&json!(["set_property", "volume", level])).await
+        self.send_command(&json!(["set_property", "volume", level]))
+            .await
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
@@ -619,7 +631,8 @@ impl MpvPlayer {
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn disable_subtitles(&self) -> Result<(), String> {
-        self.send_command(&json!(["set_property", "sid", "no"])).await
+        self.send_command(&json!(["set_property", "sid", "no"]))
+            .await
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
@@ -634,7 +647,8 @@ impl MpvPlayer {
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn reset_sub_delay(&self) -> Result<(), String> {
-        self.send_command(&json!(["set_property", "sub-delay", 0.0])).await
+        self.send_command(&json!(["set_property", "sub-delay", 0.0]))
+            .await
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
@@ -656,19 +670,22 @@ impl MpvPlayer {
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn adjust_audio_delay(&self, delta: f64) -> Result<(), String> {
-        self.send_command(&json!(["add", "audio-delay", delta])).await
+        self.send_command(&json!(["add", "audio-delay", delta]))
+            .await
     }
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn reset_audio_delay(&self) -> Result<(), String> {
-        self.send_command(&json!(["set_property", "audio-delay", 0.0])).await
+        self.send_command(&json!(["set_property", "audio-delay", 0.0]))
+            .await
     }
 
     // ── Stream switching ──────────────────────────────────────────────────
 
     #[allow(dead_code)] // pub API: used by TUI / IPC layer
     pub async fn loadfile_replace(&self, url: &str) -> Result<(), String> {
-        self.send_command(&json!(["loadfile", url, "replace"])).await
+        self.send_command(&json!(["loadfile", url, "replace"]))
+            .await
     }
 
     // ── Display ───────────────────────────────────────────────────────────
@@ -691,9 +708,12 @@ impl MpvPlayer {
             Some(s) => s,
             None => {
                 error!("mpv: socket never appeared — mpv may have failed to start");
-                let _ = self.inner.event_tx.send(MpvEvent::Ended(
-                    PlayerEndedReason::Error("mpv socket timeout".into())
-                ));
+                let _ = self
+                    .inner
+                    .event_tx
+                    .send(MpvEvent::Ended(PlayerEndedReason::Error(
+                        "mpv socket timeout".into(),
+                    )));
                 return;
             }
         };
@@ -704,43 +724,49 @@ impl MpvPlayer {
         // Subscribe to all properties we care about.
         // IDs are stable — used to quickly identify events in the loop below.
         for (prop, id) in &[
-            ("time-pos",              1u64),
-            ("duration",              2),
-            ("pause",                 3),
+            ("time-pos", 1u64),
+            ("duration", 2),
+            ("pause", 3),
             ("cache-buffering-state", 4),
-            ("media-title",           5),
-            ("aid",                   6),   // active audio track
-            ("sid",                   7),   // active subtitle track
-            ("sub-delay",             8),
-            ("audio-delay",           9),
-            ("volume",               10),
-            ("mute",                 11),
-            ("track-list",           12),   // full track list (parsed separately)
+            ("media-title", 5),
+            ("aid", 6), // active audio track
+            ("sid", 7), // active subtitle track
+            ("sub-delay", 8),
+            ("audio-delay", 9),
+            ("volume", 10),
+            ("mute", 11),
+            ("track-list", 12), // full track list (parsed separately)
         ] {
-            let _ = self.send_command(&json!(["observe_property", id, prop])).await;
+            let _ = self
+                .send_command(&json!(["observe_property", id, prop]))
+                .await;
         }
 
         info!("mpv: IPC connected — reading events");
 
         // State tracked across events — mirrors PlaybackState
-        let mut position      = 0f64;
-        let mut duration      = 0f64;
-        let mut paused        = false;
-        let mut cache_pct     = 100f64;
-        let mut audio_track:   Option<i64> = None;
-        let mut sub_track:     Option<i64> = None;
-        let mut sub_delay      = 0f64;
-        let mut audio_delay    = 0f64;
-        let mut volume         = 100f64;
-        let mut muted          = false;
-        let mut media_title   = if title.is_empty() { url.clone() } else { title.clone() };
-        let mut started_sent   = false;
+        let mut position = 0f64;
+        let mut duration = 0f64;
+        let mut paused = false;
+        let mut cache_pct = 100f64;
+        let mut audio_track: Option<i64> = None;
+        let mut sub_track: Option<i64> = None;
+        let mut sub_delay = 0f64;
+        let mut audio_delay = 0f64;
+        let mut volume = 100f64;
+        let mut muted = false;
+        let mut media_title = if title.is_empty() {
+            url.clone()
+        } else {
+            title.clone()
+        };
+        let mut started_sent = false;
 
         let mut lines = BufReader::new(rx_half).lines();
 
         while let Ok(Some(line)) = lines.next_line().await {
             let val: Value = match serde_json::from_str(&line) {
-                Ok(v)  => v,
+                Ok(v) => v,
                 Err(_) => continue,
             };
 
@@ -781,10 +807,10 @@ impl MpvPlayer {
                                 started_sent = true;
                                 let _ = self.inner.event_tx.send(MpvEvent::Started(
                                     PlayerStartedEvent {
-                                        title:    media_title.clone(),
-                                        path:     url.clone(),
+                                        title: media_title.clone(),
+                                        path: url.clone(),
                                         duration: d,
-                                    }
+                                    },
                                 ));
                             }
                         }
@@ -802,10 +828,10 @@ impl MpvPlayer {
                                 started_sent = true;
                                 let _ = self.inner.event_tx.send(MpvEvent::Started(
                                     PlayerStartedEvent {
-                                        title:    media_title.clone(),
-                                        path:     url.clone(),
+                                        title: media_title.clone(),
+                                        path: url.clone(),
                                         duration,
-                                    }
+                                    },
                                 ));
                             }
                         }
@@ -832,15 +858,25 @@ impl MpvPlayer {
                     "track-list" => {
                         // Parse the full track list when mpv reports it
                         if let Some(arr) = data.as_array() {
-                            let tracks: Vec<TrackInfo> = arr.iter().filter_map(|t| {
-                                let id         = t["id"].as_i64()?;
-                                let track_type = t["type"].as_str()?.to_string();
-                                let lang       = t["lang"].as_str().unwrap_or("").to_string();
-                                let title      = t["title"].as_str().unwrap_or("").to_string();
-                                let selected   = t["selected"].as_bool().unwrap_or(false);
-                                let external   = t["external"].as_bool().unwrap_or(false);
-                                Some(TrackInfo { id, track_type, lang, title, selected, external })
-                            }).collect();
+                            let tracks: Vec<TrackInfo> = arr
+                                .iter()
+                                .filter_map(|t| {
+                                    let id = t["id"].as_i64()?;
+                                    let track_type = t["type"].as_str()?.to_string();
+                                    let lang = t["lang"].as_str().unwrap_or("").to_string();
+                                    let title = t["title"].as_str().unwrap_or("").to_string();
+                                    let selected = t["selected"].as_bool().unwrap_or(false);
+                                    let external = t["external"].as_bool().unwrap_or(false);
+                                    Some(TrackInfo {
+                                        id,
+                                        track_type,
+                                        lang,
+                                        title,
+                                        selected,
+                                        external,
+                                    })
+                                })
+                                .collect();
                             // Emit a special tracks event
                             let _ = self.inner.event_tx.send(MpvEvent::TracksUpdated(tracks));
                         }
@@ -850,18 +886,21 @@ impl MpvPlayer {
 
                 // Push a full progress snapshot whenever position or pause state changes
                 if name == "time-pos" || name == "pause" {
-                    let _ = self.inner.event_tx.send(MpvEvent::Progress(PlayerProgressEvent {
-                        position,
-                        duration,
-                        paused,
-                        cache_percent: cache_pct,
-                        audio_track,
-                        subtitle_track: sub_track,
-                        subtitle_delay: sub_delay,
-                        audio_delay,
-                        volume,
-                        muted,
-                    }));
+                    let _ = self
+                        .inner
+                        .event_tx
+                        .send(MpvEvent::Progress(PlayerProgressEvent {
+                            position,
+                            duration,
+                            paused,
+                            cache_percent: cache_pct,
+                            audio_track,
+                            subtitle_track: sub_track,
+                            subtitle_delay: sub_delay,
+                            audio_delay,
+                            volume,
+                            muted,
+                        }));
                 }
 
                 continue;
@@ -882,9 +921,9 @@ impl MpvPlayer {
             if val.get("event").and_then(|e| e.as_str()) == Some("end-file") {
                 let reason = val.get("reason").and_then(|r| r.as_str()).unwrap_or("eof");
                 let ended = match reason {
-                    "eof"  => PlayerEndedReason::Eof,
+                    "eof" => PlayerEndedReason::Eof,
                     "quit" => PlayerEndedReason::Quit,
-                    other  => PlayerEndedReason::Error(other.to_string()),
+                    other => PlayerEndedReason::Error(other.to_string()),
                 };
                 let _ = self.inner.event_tx.send(MpvEvent::Ended(ended));
                 started_sent = false;
@@ -892,17 +931,17 @@ impl MpvPlayer {
             }
 
             // ── file-loaded — send started if duration wasn't seen yet ────
-            if val.get("event").and_then(|e| e.as_str()) == Some("file-loaded")
-                && !started_sent {
-                    started_sent = true;
-                    let _ = self.inner.event_tx.send(MpvEvent::Started(
-                        PlayerStartedEvent {
-                            title:    media_title.clone(),
-                            path:     url.clone(),
-                            duration,
-                        }
-                    ));
-                }
+            if val.get("event").and_then(|e| e.as_str()) == Some("file-loaded") && !started_sent {
+                started_sent = true;
+                let _ = self
+                    .inner
+                    .event_tx
+                    .send(MpvEvent::Started(PlayerStartedEvent {
+                        title: media_title.clone(),
+                        path: url.clone(),
+                        duration,
+                    }));
+            }
         }
 
         // Clean up process entry — but only if we're still the *current*
