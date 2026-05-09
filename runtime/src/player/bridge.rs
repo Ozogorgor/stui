@@ -382,11 +382,11 @@ impl PlayerBridge {
         // → 60 s metadata timeout), short-circuit instead of spawning mpv for
         // another full timeout cycle. Surface the cached error to the TUI so
         // the user sees "stream unreachable" and picks a different one.
-        {
-            let mut guard = self
-                .failed_magnets
-                .lock()
-                .expect("failed_magnets mutex poisoned");
+        // Swallow poison: the negative cache is best-effort, and a
+        // poisoned mutex from one panic shouldn't tear down the whole
+        // bridge task. Matches the policy used on the insert side
+        // (`if let Ok(mut guard) = self.failed_magnets.lock()` below).
+        if let Ok(mut guard) = self.failed_magnets.lock() {
             let now = Instant::now();
             guard.retain(|_, (at, _)| now.duration_since(*at) < FAILED_MAGNET_TTL);
             if let Some((_, err)) = guard.get(url) {
@@ -404,9 +404,10 @@ impl PlayerBridge {
 
         // Dedup window: if the same URL was just accepted, drop this call.
         // Lock is held only long enough to read+write the slot (no .await
-        // inside), so a `std::sync::Mutex` is fine.
-        {
-            let mut guard = self.last_switch.lock().expect("last_switch mutex poisoned");
+        // inside), so a `std::sync::Mutex` is fine. Swallow poison for the
+        // same reason as failed_magnets above — losing one dedup decision
+        // is better than tearing down the bridge task.
+        if let Ok(mut guard) = self.last_switch.lock() {
             let now = Instant::now();
             if let Some((prev_url, prev_at)) = guard.as_ref() {
                 if prev_url == url && now.duration_since(*prev_at) < SWITCH_DEDUP_WINDOW {
