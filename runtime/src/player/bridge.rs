@@ -386,7 +386,7 @@ impl PlayerBridge {
             let mut guard = self
                 .failed_magnets
                 .lock()
-                .expect("failed_magnets mutex poisoned");
+                .unwrap_or_else(|e| e.into_inner());
             let now = Instant::now();
             guard.retain(|_, (at, _)| now.duration_since(*at) < FAILED_MAGNET_TTL);
             if let Some((_, err)) = guard.get(url) {
@@ -406,7 +406,7 @@ impl PlayerBridge {
         // Lock is held only long enough to read+write the slot (no .await
         // inside), so a `std::sync::Mutex` is fine.
         {
-            let mut guard = self.last_switch.lock().expect("last_switch mutex poisoned");
+            let mut guard = self.last_switch.lock().unwrap_or_else(|e| e.into_inner());
             let now = Instant::now();
             if let Some((prev_url, prev_at)) = guard.as_ref() {
                 if prev_url == url && now.duration_since(*prev_at) < SWITCH_DEDUP_WINDOW {
