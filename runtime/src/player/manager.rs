@@ -165,7 +165,10 @@ impl PlayerManager {
             }
 
             SwitchStream { url } => {
-                info!("manager: switching stream to {}", &url[..url.len().min(80)]);
+                info!(
+                    "manager: switching stream to {}",
+                    super::bridge::short(&url, 80)
+                );
                 self.bus.emit(RuntimeEvent::StreamSwitchRequested {
                     entry_id: url.clone(),
                 });
@@ -213,7 +216,7 @@ impl PlayerManager {
             "manager: switching to candidate {}/{}: {}",
             new_idx + 1,
             total,
-            &url[..url.len().min(80)]
+            super::bridge::short(&url, 80)
         );
         let _ = self.bridge.mpv().loadfile_replace(&url).await;
     }

@@ -74,16 +74,37 @@ impl TorrentEngine {
         &self.staging_dir
     }
 
-    /// Add a torrent and return an HTTP URL pointing at the largest video
-    /// file inside it. mpv plays this URL directly with seek support via
-    /// HTTP Range requests; librqbit prioritises pieces ahead of the read
-    /// cursor automatically once mpv connects.
-    pub async fn start_stream(&self, magnet_or_url: &str) -> Result<String> {
-        use librqbit::{AddTorrent, AddTorrentOptions};
+    /// Add a torrent to the session, or return the existing handle if a
+    /// torrent with the same info_hash is already managed.
+    ///
+    /// Re-adding a magnet that's already in the session causes
+    /// `librqbit::Session::add_torrent` to re-run the metadata handshake
+    /// against peers, which hangs when those peers are saturated by the
+    /// existing torrent's stream. The fast path here parses the magnet
+    /// URI, looks up the info_hash in the session, and short-circuits
+    /// before calling `add_torrent`. Non-magnet inputs fall through to
+    /// the slow path (we still bound it with `METADATA_TIMEOUT`).
+    async fn add_or_reuse_handle(
+        &self,
+        magnet_or_url: &str,
+    ) -> Result<Arc<librqbit::ManagedTorrent>> {
+        use librqbit::{AddTorrent, AddTorrentOptions, Magnet};
 
-        // For magnets, `add_torrent` blocks until the metadata handshake
-        // completes, so the returned handle always has `metadata` populated.
-        // Dead/poorly-seeded magnets would hang forever — bound the wait.
+        if let Ok(magnet) = Magnet::parse(magnet_or_url) {
+            if let Some(info_hash) = magnet.as_id20() {
+                if let Some(existing) = self.session.with_torrents(|torrents| {
+                    for (_, t) in torrents {
+                        if t.info_hash() == info_hash {
+                            return Some(t.clone());
+                        }
+                    }
+                    None
+                }) {
+                    return Ok(existing);
+                }
+            }
+        }
+
         let add_fut = self.session.add_torrent(
             AddTorrent::from_url(magnet_or_url),
             Some(AddTorrentOptions {
@@ -102,9 +123,16 @@ impl TorrentEngine {
             })?
             .context("adding torrent to librqbit session")?;
 
-        let handle = resp
-            .into_handle()
-            .ok_or_else(|| anyhow!("librqbit returned a list-only response, not a handle"))?;
+        resp.into_handle()
+            .ok_or_else(|| anyhow!("librqbit returned a list-only response, not a handle"))
+    }
+
+    /// Add a torrent and return an HTTP URL pointing at the largest video
+    /// file inside it. mpv plays this URL directly with seek support via
+    /// HTTP Range requests; librqbit prioritises pieces ahead of the read
+    /// cursor automatically once mpv connects.
+    pub async fn start_stream(&self, magnet_or_url: &str) -> Result<String> {
+        let handle = self.add_or_reuse_handle(magnet_or_url).await?;
         let id = handle.id();
 
         // Snapshot file list out of the metadata lock so we can run the
@@ -122,7 +150,71 @@ impl TorrentEngine {
         let file_idx =
             pick_video_file(&files).ok_or_else(|| anyhow!("no playable video file in torrent"))?;
 
-        Ok(stream_url_for(&self.base_url, id, file_idx))
+        // librqbit's HTTP stream endpoint returns 500 while the torrent is in
+        // `Initializing` (e.g. checksum-validating already-downloaded pieces
+        // from a previous session). mpv only retries a fetch a few times
+        // before giving up — if it hits 500s during this window the player
+        // ends up showing a stuck black screen with no data flowing. Wait
+        // for the state machine to leave `Initializing` before we hand the
+        // URL back to the caller (who will `loadfile_replace` mpv into it).
+        tokio::time::timeout(METADATA_TIMEOUT, handle.wait_until_initialized())
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "torrent initialization timed out after {}s",
+                    METADATA_TIMEOUT.as_secs()
+                )
+            })?
+            .context("waiting for librqbit torrent to leave Initializing state")?;
+
+        // Persistence-restored torrents come back in their previous
+        // `Paused`/`Live` state. `wait_until_initialized` is satisfied by
+        // either, but a `Paused` torrent's HTTP stream endpoint accepts
+        // connections and then hangs without writing — its `FileStream`
+        // poll-read returns `Pending` because the chunk_tracker hasn't
+        // been hydrated yet, and nothing wakes the waker without active
+        // peer fetching. mpv reads no bytes, gives up, and the user sees
+        // a black window with our "Fetching torrent metadata…" OSD frozen.
+        // Force-unpause and wait for `Live` before serving.
+        if handle.live().is_none() {
+            // `Session::unpause` errors with "torrent is already live" if it
+            // races with a previous unpause; that's fine to ignore.
+            let _ = self.session.unpause(&handle).await;
+            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while handle.live().is_none() {
+                if std::time::Instant::now() >= live_deadline {
+                    return Err(anyhow!(
+                        "torrent did not transition to Live state within 10s"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        let stream_url = stream_url_for(&self.base_url, id, file_idx);
+
+        // Even after Live, the streaming path can take seconds to wire
+        // up its chunk_tracker so reads beyond piece 0 don't return
+        // Pending forever. We saw clicks 1–2 fail and click 3 work after
+        // a 3 min gap, with no `Cannot load libcuda.so.1` (mpv decoder
+        // entry) until the click that succeeded. Probing the file
+        // *in-process* via `ManagedTorrent::stream` exercises the real
+        // piece-fetch path that mpv would use over HTTP, but without
+        // competing for HTTP slots or being subject to mpv's stingy
+        // retry budget — once 16 MiB flows, mpv reading the same URL
+        // also flows.
+        probe_via_in_process_stream(&handle, file_idx).await?;
+
+        // The HTTP server (librqbit's `HttpApi`) is a separate path from
+        // the in-process FileStream above; mpv only ever talks to it via
+        // HTTP. On the very first call after engine boot the HTTP server
+        // can hold the first request for several seconds — long enough
+        // for mpv to give up and leave the user with a blank window —
+        // even when the underlying piece path is hot. Hit the endpoint
+        // ourselves so its first-request warmup is on us, not on mpv.
+        probe_http_endpoint(&stream_url).await?;
+
+        Ok(stream_url)
     }
 
     /// Add a torrent for bulk download and return a [`DownloadHandle`]
@@ -134,30 +226,27 @@ impl TorrentEngine {
     /// keybind workflow where the user wants the full torrent before
     /// playback/organisation.
     pub async fn start_download(&self, magnet_or_url: &str) -> Result<DownloadHandle> {
-        use librqbit::{AddTorrent, AddTorrentOptions};
-
-        let add_fut = self.session.add_torrent(
-            AddTorrent::from_url(magnet_or_url),
-            Some(AddTorrentOptions {
-                paused: false,
-                overwrite: true,
-                ..Default::default()
-            }),
-        );
-        let resp = tokio::time::timeout(METADATA_TIMEOUT, add_fut)
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "torrent metadata fetch timed out after {}s — magnet has no reachable peers",
-                    METADATA_TIMEOUT.as_secs()
-                )
-            })?
-            .context("adding torrent to librqbit session")?;
-
-        let handle = resp
-            .into_handle()
-            .ok_or_else(|| anyhow!("librqbit returned a list-only response, not a handle"))?;
+        let handle = self.add_or_reuse_handle(magnet_or_url).await?;
         let torrent_id = handle.id();
+
+        // A persistence-restored handle starts paused (Session::Json
+        // remembers the paused state across restarts). The download
+        // path doesn't probe via `ManagedTorrent::stream` like
+        // start_stream does, so without an explicit unpause here the
+        // translator would just wait on `wait_until_completed` forever
+        // while live() stays None.
+        if handle.live().is_none() {
+            let _ = self.session.unpause(&handle).await;
+            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while handle.live().is_none() {
+                if std::time::Instant::now() >= live_deadline {
+                    return Err(anyhow!(
+                        "torrent did not transition to Live state within 10s"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
 
         // Largest file → the "main" payload the download_translator will
         // later move into the user's library.
@@ -186,6 +275,152 @@ impl TorrentEngine {
             completion: rx,
         })
     }
+}
+
+/// Pull bytes from the file *in process* via librqbit's `FileStream`,
+/// bypassing the HTTP layer entirely. This forces the real piece-fetch
+/// path that mpv will use to wake up and confirms reads flow past the
+/// first piece — a pure-HTTP probe that only reads piece 0 has been
+/// observed to succeed while mpv (which reads further) still hangs,
+/// because chunk_tracker hadn't yet caught up on subsequent pieces.
+///
+/// Returns Ok once `MIN_BYTES_TO_FLOW` have been read, or the stream
+/// reaches EOF (whichever first). Returns Err on read error/timeout.
+async fn probe_via_in_process_stream(
+    handle: &Arc<librqbit::ManagedTorrent>,
+    file_id: usize,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    // 16 MiB picks up several pieces on typical torrents (256 KiB–4 MiB
+    // pieces) so we exercise more than just piece 0.
+    const MIN_BYTES_TO_FLOW: usize = 16 * 1024 * 1024;
+    const READ_DEADLINE: Duration = Duration::from_secs(15);
+
+    let mut fs = handle
+        .clone()
+        .stream(file_id)
+        .context("opening librqbit FileStream for warmup probe")?;
+
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut total_read: usize = 0;
+
+    let result = tokio::time::timeout(READ_DEADLINE, async {
+        while total_read < MIN_BYTES_TO_FLOW {
+            let n = fs
+                .read(&mut buf)
+                .await
+                .context("FileStream read errored during warmup")?;
+            if n == 0 {
+                // EOF before reaching MIN_BYTES_TO_FLOW means the file is
+                // smaller than 16 MiB. That's fine — we've drained the
+                // whole file successfully.
+                break;
+            }
+            total_read = total_read.saturating_add(n);
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            tracing::info!(
+                target: "torrent_engine",
+                bytes_read = total_read,
+                "warmup probe drained librqbit FileStream"
+            );
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(anyhow!(
+            "warmup probe timed out after {}s with only {total_read} bytes read",
+            READ_DEADLINE.as_secs()
+        )),
+    }
+}
+
+/// Hit our HTTP stream endpoint with a small windowed `Range` GET and
+/// confirm both that the first chunk flows AND the server returns
+/// `206 Partial Content` (i.e. actually honours the Range header).
+///
+/// The 206 check is load-bearing: librqbit 8.1.1 upstream answered
+/// windowed ranges (`bytes=N-M`) with `200 OK` and the full file body
+/// from offset zero. mpv's MKV demuxer issues exactly that shape of
+/// request to read the SeekHead at the end of the file, saw a server
+/// claiming `accept-ranges: bytes` but ignoring the actual Range, and
+/// emitted `end-file=error` ~3 ms after `start-file`. Our replacement
+/// server in `http_server.rs` parses windowed ranges correctly; this
+/// probe defends that contract so a future regression — ours or
+/// upstream's — fails loudly instead of silently breaking playback.
+///
+/// We deliberately do NOT call `resp.bytes()` — reading just the first
+/// chunk and dropping the response is enough to confirm the path is hot
+/// without monopolising the connection, freeing librqbit to serve mpv's
+/// own fetch a moment later.
+async fn probe_http_endpoint(url: &str) -> Result<()> {
+    const ATTEMPTS: u32 = 5;
+    const PER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
+
+    let client = reqwest::Client::builder()
+        .build()
+        .context("building reqwest client for HTTP warmup probe")?;
+
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 1..=ATTEMPTS {
+        let send_fut = client
+            .get(url)
+            .header("Range", "bytes=0-65535")
+            .timeout(PER_ATTEMPT_TIMEOUT)
+            .send();
+
+        match tokio::time::timeout(PER_ATTEMPT_TIMEOUT, send_fut).await {
+            Ok(Ok(mut resp)) if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT => {
+                let chunk_fut = resp.chunk();
+                match tokio::time::timeout(PER_ATTEMPT_TIMEOUT, chunk_fut).await {
+                    Ok(Ok(Some(b))) if !b.is_empty() => {
+                        tracing::info!(
+                            target: "torrent_engine",
+                            attempt,
+                            chunk_bytes = b.len(),
+                            "HTTP warmup probe succeeded (206 Partial Content)"
+                        );
+                        // Drop `resp` so the connection closes and
+                        // librqbit stops serving body bytes we don't
+                        // need. mpv will open its own connection next.
+                        drop(resp);
+                        return Ok(());
+                    }
+                    Ok(Ok(_)) => last_err = Some(anyhow!("HTTP probe got empty body")),
+                    Ok(Err(e)) => last_err = Some(anyhow!("HTTP probe chunk error: {e}")),
+                    Err(_) => last_err = Some(anyhow!("HTTP probe chunk read timed out")),
+                }
+            }
+            Ok(Ok(resp)) => {
+                last_err = Some(anyhow!(
+                    "HTTP probe got status {} (expected 206 Partial Content; \
+                     server may be ignoring the Range header)",
+                    resp.status()
+                ))
+            }
+            Ok(Err(e)) => last_err = Some(anyhow!("HTTP probe send error: {e}")),
+            Err(_) => last_err = Some(anyhow!("HTTP probe request timed out")),
+        }
+
+        tracing::debug!(
+            target: "torrent_engine",
+            "HTTP warmup probe attempt {attempt}/{ATTEMPTS} failed; retrying"
+        );
+        tokio::time::sleep(Duration::from_millis(
+            500_u64.saturating_mul(attempt as u64),
+        ))
+        .await;
+    }
+
+    Err(anyhow!(
+        "HTTP stream endpoint never served bytes after {ATTEMPTS} attempts: {}",
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    ))
 }
 
 /// Pick the largest file with a known video extension. Returns its index in

@@ -30,6 +30,7 @@ use crate::ipc::{
     PlayerCommandRequest, Response,
 };
 use crate::mpd_bridge::MpdBridge;
+use crate::player::bridge::{is_magnet, is_torrent_url};
 use crate::player::PlayerBridge;
 use crate::skipper::Skipper;
 
@@ -240,6 +241,21 @@ pub async fn run_player_cmd(
             if via_mpd {
                 let title = display_title_from_url(&url);
                 player.switch_stream_mpd(&url, &title).await;
+            } else if is_magnet(&url) || is_torrent_url(&url) {
+                // Magnet/.torrent URLs MUST always go through the bridge's
+                // torrent path so librqbit resolves them to a streamable
+                // HTTP URL before mpv sees them. mpv can't open `magnet:`
+                // directly: a duplicate SwitchStream that arrives 50 ms
+                // after the cold-start path has already sent loadfile
+                // would otherwise hit the hot path here, send the raw
+                // magnet via `loadfile … replace`, clobber the http URL
+                // mpv had just queued, and drop mpv into end-file=error
+                // ("Cannot open file 'magnet:...': File name too long").
+                tracing::info!(
+                    "playback: switch_stream torrent path url={}",
+                    &url[..url.len().min(80)]
+                );
+                player.start_stream_for_switch(&url).await;
             } else if player.mpv().is_running().await {
                 player
                     .send_command("loadfile", &[json!(url), json!("replace")])

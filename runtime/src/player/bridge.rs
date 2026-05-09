@@ -27,8 +27,30 @@
 //   {"type":"player_progress",    "position":42.1,"duration":5400.0,"paused":false,"cache_percent":100}
 //   {"type":"player_ended",       "reason":"eof"|"quit"|"error","error":"…"}
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::time::{Duration, Instant};
+
+/// Window during which a repeat `SwitchStream` for the same URL is treated as
+/// a duplicate firing of one user action and silently dropped. The TUI has
+/// been observed to send two SwitchStream commands ~50–300 ms apart for one
+/// click; without this gate, the second one tears down the just-spawned mpv
+/// (`play_idle` calls `stop()` which SIGKILLs the prior child) and respawns
+/// it, racing the first cold-start to completion and producing a visible
+/// flicker — or, worse, killing playback that has already started if the
+/// duplicate slips in late. 1 s comfortably covers the observed gap while
+/// staying well under the time it'd take a user to deliberately re-pick the
+/// same stream.
+const SWITCH_DEDUP_WINDOW: Duration = Duration::from_secs(1);
+
+/// Window during which a magnet that already failed (typically: librqbit's
+/// 60 s metadata-fetch timeout, i.e. dead swarm) is short-circuited on
+/// re-attempt instead of spawning another idle mpv and burning another 60 s.
+/// Without this, picking a dead magnet from the stream-picker loops forever
+/// because the TUI re-issues SwitchStream after each `player_ended:error`.
+const FAILED_MAGNET_TTL: Duration = Duration::from_secs(300);
 
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -97,6 +119,14 @@ pub struct PlayerBridge {
     dsp: Option<Arc<tokio::sync::Mutex<DspPipeline>>>,
     /// Tracks whether MPD is the active player (true) or mpv (false).
     mpd_active: Arc<AtomicBool>,
+    /// Last `(url, timestamp)` accepted by `start_stream_for_switch`, used to
+    /// dedupe rapid-fire duplicate SwitchStream events for the same URL.
+    last_switch: Arc<StdMutex<Option<(String, Instant)>>>,
+    /// Negative cache of magnet/torrent URLs whose last attempt failed (e.g.
+    /// librqbit's metadata-fetch timeout on a dead swarm). Entries TTL out
+    /// after `FAILED_MAGNET_TTL`; while live, repeat picks short-circuit
+    /// straight to `player_ended:error` without spawning mpv.
+    failed_magnets: Arc<StdMutex<HashMap<String, (Instant, String)>>>,
 }
 
 impl PlayerBridge {
@@ -134,6 +164,8 @@ impl PlayerBridge {
             playback_cfg,
             dsp,
             mpd_active: Arc::new(AtomicBool::new(false)),
+            last_switch: Arc::new(StdMutex::new(None)),
+            failed_magnets: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -346,11 +378,55 @@ impl PlayerBridge {
     /// catalog context here; subtitles are skipped (no imdb_id to
     /// drive the auto-download flow).
     pub async fn start_stream_for_switch(&self, url: &str) {
+        // Negative cache: if this magnet failed recently (typically dead swarm
+        // → 60 s metadata timeout), short-circuit instead of spawning mpv for
+        // another full timeout cycle. Surface the cached error to the TUI so
+        // the user sees "stream unreachable" and picks a different one.
+        // Swallow poison: the negative cache is best-effort, and a
+        // poisoned mutex from one panic shouldn't tear down the whole
+        // bridge task. Matches the policy used on the insert side
+        // (`if let Ok(mut guard) = self.failed_magnets.lock()` below).
+        if let Ok(mut guard) = self.failed_magnets.lock() {
+            let now = Instant::now();
+            guard.retain(|_, (at, _)| now.duration_since(*at) < FAILED_MAGNET_TTL);
+            if let Some((_, err)) = guard.get(url) {
+                let cached = err.clone();
+                drop(guard);
+                info!(
+                    "player_bridge: rejecting recently-failed magnet url={} err={}",
+                    short(url, 80),
+                    cached,
+                );
+                self.push_ended("error", &cached).await;
+                return;
+            }
+        }
+
+        // Dedup window: if the same URL was just accepted, drop this call.
+        // Lock is held only long enough to read+write the slot (no .await
+        // inside), so a `std::sync::Mutex` is fine. Swallow poison for the
+        // same reason as failed_magnets above — losing one dedup decision
+        // is better than tearing down the bridge task.
+        if let Ok(mut guard) = self.last_switch.lock() {
+            let now = Instant::now();
+            if let Some((prev_url, prev_at)) = guard.as_ref() {
+                if prev_url == url && now.duration_since(*prev_at) < SWITCH_DEDUP_WINDOW {
+                    info!(
+                        "player_bridge: dropping duplicate switch_stream within {:?} url={}",
+                        SWITCH_DEDUP_WINDOW,
+                        short(url, 80)
+                    );
+                    return;
+                }
+            }
+            *guard = Some((url.to_string(), now));
+        }
+
         let title = title_from_url(url);
         let entry_id = format!("switch_stream|{title}");
         info!(
             "player_bridge: cold-starting playback for switch_stream url={}",
-            &url[..url.len().min(80)]
+            short(url, 80)
         );
         self.start_stream(&entry_id, url, &title, None, None, None)
             .await;
@@ -394,9 +470,16 @@ impl PlayerBridge {
         }
     }
 
-    /// Stream a torrent/magnet by handing librqbit's HTTP URL straight to
-    /// mpv. mpv handles its own buffering against librqbit's Range-supporting
-    /// HTTP server, so the old preroll / stall-guard machinery is gone.
+    /// Stream a torrent/magnet by handing librqbit's HTTP URL to mpv.
+    /// mpv buffers against librqbit's Range-supporting HTTP server.
+    ///
+    /// **Spawn order matters for UX:** mpv launches idle FIRST so the
+    /// window appears within ~100 ms of Enter, then librqbit's metadata
+    /// fetch (which can take 1–60 s on cold magnets) runs in the
+    /// foreground while mpv displays an OSD spinner. Only after
+    /// `start_stream` resolves do we `loadfile_replace` into the actual
+    /// stream URL. The earlier "fetch first, then spawn" order made
+    /// users think their click had been dropped.
     async fn play_via_torrent(
         &self,
         entry_id: &str,
@@ -408,18 +491,79 @@ impl PlayerBridge {
     ) {
         self.mpd_active.store(false, Ordering::Relaxed);
 
+        if !self.playback_cfg.terminal_vo.is_empty() {
+            self.push_terminal_takeover().await;
+        }
+        let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
+        extra_flags.extend(self.mpv_dsp_flags().await);
+
+        // 1) Bring up mpv idle — instant window so the user knows the click landed.
+        if let Err(e) = self
+            .mpv
+            .play_idle(
+                title,
+                sub,
+                &self.data_dir,
+                &extra_flags,
+                &self.playback_cfg.terminal_vo,
+            )
+            .await
+        {
+            error!("player_bridge: mpv idle launch failed: {e}");
+            self.push_ended("error", &e).await;
+            return;
+        }
+        // Hand status to our Lua overlay (script: stui-overlay.lua) so it
+        // renders centred + spinner instead of mpv's small top-left
+        // show-text. Falls through silently if the script isn't loaded.
+        let _ = self
+            .mpv
+            .send_command(&serde_json::json!([
+                "script-message",
+                "stui-status",
+                "Fetching torrent metadata…"
+            ]))
+            .await;
+        let _ = self
+            .mpv
+            .send_command(&serde_json::json!(["script-message", "stui-busy", "on"]))
+            .await;
+
+        // 2) Resolve the real stream URL (slow path: peer-side metadata exchange).
         let stream_url = match self.torrents.start_stream(uri).await {
             Ok(u) => u,
             Err(e) => {
+                let err_msg = format!("torrent error: {e}");
                 error!("player_bridge: torrent_engine.start_stream failed: {e:#}");
-                self.push_ended("error", &format!("torrent error: {e}"))
+                let _ = self
+                    .mpv
+                    .send_command(&serde_json::json!(["script-message", "stui-busy", "off"]))
                     .await;
+                let _ = self
+                    .mpv
+                    .send_command(&serde_json::json!([
+                        "script-message",
+                        "stui-status",
+                        format!("Torrent failed: {e}")
+                    ]))
+                    .await;
+                if let Ok(mut guard) = self.failed_magnets.lock() {
+                    guard.insert(uri.to_string(), (Instant::now(), err_msg.clone()));
+                }
+                self.push_ended("error", &err_msg).await;
+                // Hold mpv open for ~3s so the user actually reads the
+                // centred "Torrent failed: …" overlay before the window
+                // disappears. Without this delay the message and the
+                // window vanish together within ~50 ms — too fast to
+                // notice that anything failed at all.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                self.mpv.stop().await;
                 return;
             }
         };
 
         // Emit a UI event so the TUI can show "Buffering…" until mpv
-        // reports playback_restart. No preroll wait on our side.
+        // reports playback_restart.
         let started = serde_json::to_string(&serde_json::json!({
             "type":  "download_started",
             "title": title,
@@ -429,30 +573,13 @@ impl PlayerBridge {
         let _ = self.ipc_tx.send(started).await;
 
         info!("player_bridge: streaming {title} via torrent_engine ({stream_url})");
-
-        // Update watch history with the streaming URL so resume works.
         self.watch_history
             .update_file_path(entry_id, &stream_url)
             .await;
 
-        if !self.playback_cfg.terminal_vo.is_empty() {
-            self.push_terminal_takeover().await;
-        }
-        let mut extra_flags = self.playback_cfg.mpv_extra_flags.clone();
-        extra_flags.extend(self.mpv_dsp_flags().await);
-        if let Err(e) = self
-            .mpv
-            .play(
-                &stream_url,
-                title,
-                sub,
-                &self.data_dir,
-                &extra_flags,
-                &self.playback_cfg.terminal_vo,
-            )
-            .await
-        {
-            error!("player_bridge: mpv failed: {e}");
+        // 3) Re-target the idle mpv to the real stream URL.
+        if let Err(e) = self.mpv.loadfile_replace(&stream_url).await {
+            error!("player_bridge: loadfile_replace failed: {e}");
             self.push_ended("error", &e).await;
         }
     }
@@ -647,11 +774,28 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn is_magnet(url: &str) -> bool {
+/// Returns a prefix of `s` up to `max` bytes, cut at a valid UTF-8 boundary.
+/// If `s` is shorter than `max`, returns the whole string.
+///
+/// Hand-rolled with `is_char_boundary` (stable since 1.43) instead of
+/// `str::floor_char_boundary` (only stable since 1.91, Oct 2025) so the
+/// crate keeps compiling on older stable toolchains.
+pub(crate) fn short(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+pub(crate) fn is_magnet(url: &str) -> bool {
     url.starts_with("magnet:")
 }
 
-fn is_torrent_url(url: &str) -> bool {
+pub(crate) fn is_torrent_url(url: &str) -> bool {
     let u = url.to_lowercase();
     u.ends_with(".torrent") || u.contains("/download/torrent/") || u.contains("/torrent/download")
 }
