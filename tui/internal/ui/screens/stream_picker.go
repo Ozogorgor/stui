@@ -113,13 +113,21 @@ func qualityScore(q string) int {
 	return 0
 }
 
-// streamBadge builds the quality+score display label for a stream row.
-// Example: "1080p ★ 87"
+// streamBadge builds the quality+codec+score display label for a stream row.
+// Example: "1080p HEVC ★ 87" or "1080p ★ 87" when codec is unknown.
 func streamBadge(s ipc.StreamInfo) string {
-	if s.Quality == "" {
+	label := s.Quality
+	if s.Codec != "" {
+		if label == "" {
+			label = s.Codec
+		} else {
+			label = label + " " + s.Codec
+		}
+	}
+	if label == "" {
 		return fmt.Sprintf("★ %d", s.Score)
 	}
-	return fmt.Sprintf("%s ★ %d", s.Quality, s.Score)
+	return fmt.Sprintf("%s ★ %d", label, s.Score)
 }
 
 // BestStreamForTier returns the stream with the highest Score

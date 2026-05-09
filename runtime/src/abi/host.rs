@@ -399,8 +399,28 @@ mod inner_impl {
             // remains as a fallback for headless / dev workflows.
             let mut kv = std::collections::HashMap::new();
             for (var, default_val) in &ctx.env_defaults {
-                let value =
-                    crate::config::secrets::env_lookup(var).unwrap_or_else(|| default_val.clone());
+                let from_secrets = crate::config::secrets::env_lookup(var);
+                let value = from_secrets.clone().unwrap_or_else(|| default_val.clone());
+                // Diagnostic: surface where each env var resolved from + a
+                // redacted preview. Otherwise a key collision between
+                // secrets.env / user overrides / manifest defaults (or a
+                // missing key that fell through to the default) is invisible
+                // until a downstream API rejects it. Debug-level: fires on
+                // every plugin call so an info-level log would swamp normal
+                // runs (~thousands of lines per session).
+                let source = if from_secrets.is_some() {
+                    "secrets.env/env"
+                } else {
+                    "manifest default"
+                };
+                tracing::debug!(
+                    plugin = %ctx.plugin_name,
+                    var = %var,
+                    source = source,
+                    redacted = %crate::config::secrets::redact(&value),
+                    len = value.len(),
+                    "plugin env: resolved"
+                );
                 kv.insert(format!("__env:{}", var), value);
             }
             // Layer user overrides last so they win over both the manifest
@@ -409,6 +429,14 @@ mod inner_impl {
             // its api key only via `[[config]] env_var = "X"` (no `[env] X = ""`)
             // still gets the user's value here.
             for (var, value) in &ctx.user_env_overrides {
+                tracing::debug!(
+                    plugin = %ctx.plugin_name,
+                    var = %var,
+                    source = "user override",
+                    redacted = %crate::config::secrets::redact(value),
+                    len = value.len(),
+                    "plugin env: resolved (user override)"
+                );
                 kv.insert(format!("__env:{}", var), value.clone());
             }
 
@@ -602,14 +630,32 @@ mod inner_impl {
                             .and_then(|m| m.remove("__stui_headers"))
                             .unwrap_or_default();
 
+                        // Decide whether the plugin already specified a
+                        // Content-Type. reqwest's `.header()` *appends*
+                        // rather than replacing, so unconditionally setting
+                        // a default JSON Content-Type and then layering the
+                        // plugin's `application/x-www-form-urlencoded` on
+                        // top results in a request with TWO Content-Type
+                        // headers; some servers (Orion's Apache) pick the
+                        // first one, try to parse a urlencoded body as
+                        // JSON, fail silently to extract any param, and
+                        // return "Invalid App API Key" — which made
+                        // orionoid look like a credentials issue when the
+                        // real bug was here.
+                        let plugin_sets_content_type = headers_val
+                            .as_object()
+                            .map(|m| m.keys().any(|k| k.eq_ignore_ascii_case("content-type")))
+                            .unwrap_or(false);
+
                         let client = reqwest::Client::builder()
                             .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
                             .user_agent(PLUGIN_USER_AGENT)
                             .build()
                             .unwrap_or_else(|_| reqwest::Client::new());
-                        let mut req = client.post(&url)
-                            .header("Content-Type", "application/json")
-                            .body(body);
+                        let mut req = client.post(&url).body(body);
+                        if !plugin_sets_content_type {
+                            req = req.header("Content-Type", "application/json");
+                        }
 
                         // Apply plugin-declared headers
                         if let Some(h_map) = headers_val.as_object() {
