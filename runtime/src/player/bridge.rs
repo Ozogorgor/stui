@@ -775,12 +775,19 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
 
 /// Returns a prefix of `s` up to `max` bytes, cut at a valid UTF-8 boundary.
 /// If `s` is shorter than `max`, returns the whole string.
+///
+/// Hand-rolled with `is_char_boundary` (stable since 1.43) instead of
+/// `str::floor_char_boundary` (only stable since 1.91, Oct 2025) so the
+/// crate keeps compiling on older stable toolchains.
 pub(crate) fn short(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
     }
-    // floor_char_boundary is stable since Rust 1.59
-    &s[..s.floor_char_boundary(max)]
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 pub(crate) fn is_magnet(url: &str) -> bool {
