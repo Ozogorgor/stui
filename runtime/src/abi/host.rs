@@ -21,9 +21,12 @@ use tracing::{debug, info};
 use super::types::*;
 use crate::sandbox::SandboxCtx;
 use stui_plugin_sdk::{
-    AlternativeTitlesRequest, AlternativeTitlesResponse, BoxOfficeRequest, BoxOfficeResponse,
-    BulkEnrichRequest, BulkEnrichResponse, KeywordsRequest, KeywordsResponse, ReleaseInfoRequest,
-    ReleaseInfoResponse, TrailersRequest, TrailersResponse,
+    TrailersRequest, TrailersResponse,
+    ReleaseInfoRequest, ReleaseInfoResponse,
+    KeywordsRequest, KeywordsResponse,
+    BoxOfficeRequest, BoxOfficeResponse,
+    AlternativeTitlesRequest, AlternativeTitlesResponse,
+    BulkEnrichRequest, BulkEnrichResponse,
 };
 
 // Plugin HTTP fetches go through reqwest with this ceiling. Set high
@@ -39,7 +42,8 @@ const WASM_HTTP_TIMEOUT_SECS: u64 = 45;
 /// blank UA, citing "your application has not identified itself". This
 /// default keeps every plugin honest by default; plugins that need a
 /// per-service UA can still override via __stui_headers on stui_http_post.
-const PLUGIN_USER_AGENT: &str = "stui-runtime/0.1.0 ( https://github.com/stui/stui )";
+const PLUGIN_USER_AGENT: &str =
+    "stui-runtime/0.1.0 ( https://github.com/stui/stui )";
 
 // ── Public interface ──────────────────────────────────────────────────────────
 
@@ -64,7 +68,7 @@ impl WasmInstance {
         let raw = self.inner.call_export(fn_name, &json).await?;
         let result: PluginResult<Resp> = serde_json::from_str(&raw)?;
         match result {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
     }
@@ -83,7 +87,7 @@ impl WasmInstance {
         Resp: for<'de> serde::Deserialize<'de>,
     {
         match self.call_export_envelope::<Resp>(fn_name, json).await? {
-            PluginResult::Ok(r) => Ok(r),
+            PluginResult::Ok(r)  => Ok(r),
             PluginResult::Err(e) => Err(AbiError::Execution(format!("{}: {}", e.code, e.message))),
         }
     }
@@ -119,13 +123,10 @@ impl WasmInstance {
     /// (missing config).
     pub async fn init(&mut self, req: &InitRequest) -> Result<(), InitError> {
         let json = serde_json::to_string(req).map_err(AbiError::Serde)?;
-        let raw = self
-            .inner
-            .call_export("stui_init", &json)
-            .await
+        let raw = self.inner.call_export("stui_init", &json).await
             .map_err(InitError::Abi)?;
-        let env: InitResultEnvelope =
-            serde_json::from_str(&raw).map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
         match Result::<(), PluginInitError>::from(env) {
             Ok(()) => Ok(()),
             Err(e) => Err(InitError::Plugin(e)),
@@ -136,14 +137,14 @@ impl WasmInstance {
     /// supervisor can pre-serialize the request before acquiring the
     /// instance lock, avoiding cross-await borrow issues. Callers should
     /// prefer [`WasmInstance::init`].
-    pub(super) async fn call_init_with_json(&mut self, json: &str) -> Result<(), InitError> {
-        let raw = self
-            .inner
-            .call_export("stui_init", json)
-            .await
+    pub(super) async fn call_init_with_json(
+        &mut self,
+        json: &str,
+    ) -> Result<(), InitError> {
+        let raw = self.inner.call_export("stui_init", json).await
             .map_err(InitError::Abi)?;
-        let env: InitResultEnvelope =
-            serde_json::from_str(&raw).map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
+        let env: InitResultEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| InitError::Abi(AbiError::Serde(e)))?;
         match Result::<(), PluginInitError>::from(env) {
             Ok(()) => Ok(()),
             Err(e) => Err(InitError::Plugin(e)),
@@ -186,58 +187,37 @@ impl WasmInstance {
     }
 
     /// Call the plugin's `stui_get_trailers` export.
-    pub async fn get_trailers(
-        &mut self,
-        req: &TrailersRequest,
-    ) -> Result<TrailersResponse, AbiError> {
+    pub async fn get_trailers(&mut self, req: &TrailersRequest) -> Result<TrailersResponse, AbiError> {
         self.call_verb("stui_get_trailers", req).await
     }
 
     /// Call the plugin's `stui_get_release_info` export.
-    pub async fn get_release_info(
-        &mut self,
-        req: &ReleaseInfoRequest,
-    ) -> Result<ReleaseInfoResponse, AbiError> {
+    pub async fn get_release_info(&mut self, req: &ReleaseInfoRequest) -> Result<ReleaseInfoResponse, AbiError> {
         self.call_verb("stui_get_release_info", req).await
     }
 
     /// Call the plugin's `stui_get_keywords` export.
-    pub async fn get_keywords(
-        &mut self,
-        req: &KeywordsRequest,
-    ) -> Result<KeywordsResponse, AbiError> {
+    pub async fn get_keywords(&mut self, req: &KeywordsRequest) -> Result<KeywordsResponse, AbiError> {
         self.call_verb("stui_get_keywords", req).await
     }
 
     /// Call the plugin's `stui_get_box_office` export.
-    pub async fn get_box_office(
-        &mut self,
-        req: &BoxOfficeRequest,
-    ) -> Result<BoxOfficeResponse, AbiError> {
+    pub async fn get_box_office(&mut self, req: &BoxOfficeRequest) -> Result<BoxOfficeResponse, AbiError> {
         self.call_verb("stui_get_box_office", req).await
     }
 
     /// Call the plugin's `stui_get_alternative_titles` export.
-    pub async fn get_alternative_titles(
-        &mut self,
-        req: &AlternativeTitlesRequest,
-    ) -> Result<AlternativeTitlesResponse, AbiError> {
+    pub async fn get_alternative_titles(&mut self, req: &AlternativeTitlesRequest) -> Result<AlternativeTitlesResponse, AbiError> {
         self.call_verb("stui_get_alternative_titles", req).await
     }
 
     /// Call the plugin's `stui_find_streams` export.
-    pub async fn find_streams(
-        &mut self,
-        req: &FindStreamsRequest,
-    ) -> Result<FindStreamsResponse, AbiError> {
+    pub async fn find_streams(&mut self, req: &FindStreamsRequest) -> Result<FindStreamsResponse, AbiError> {
         self.call_verb("stui_find_streams", req).await
     }
 
     /// Call the plugin's `stui_bulk_enrich` export.
-    pub async fn bulk_enrich(
-        &mut self,
-        req: &BulkEnrichRequest,
-    ) -> Result<BulkEnrichResponse, AbiError> {
+    pub async fn bulk_enrich(&mut self, req: &BulkEnrichRequest) -> Result<BulkEnrichResponse, AbiError> {
         self.call_verb("stui_bulk_enrich", req).await
     }
 }
@@ -256,9 +236,9 @@ impl WasmHost {
     /// Returns a `WasmInstance` ready to call, or an `AbiError` explaining
     /// exactly why loading failed.
     pub async fn load(
-        wasm_path: &Path,
-        plugin_name: &str,
-        ctx: &SandboxCtx,
+        wasm_path:     &Path,
+        plugin_name:   &str,
+        ctx:           &SandboxCtx,
         max_memory_mb: u64,
     ) -> Result<WasmInstance, AbiError> {
         info!(plugin = %plugin_name, path = %wasm_path.display(), max_memory_mb, "loading WASM plugin");
@@ -291,8 +271,8 @@ impl WasmHost {
 mod inner_impl {
     use tokio::sync::Mutex;
     use wasmtime::*;
-    use wasmtime_wasi::preview1::WasiP1Ctx;
     use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
+    use wasmtime_wasi::preview1::WasiP1Ctx;
 
     use super::*;
     use crate::auth;
@@ -321,7 +301,7 @@ mod inner_impl {
             if desired > self.limit_bytes {
                 warn!(
                     desired_mb = desired / (1024 * 1024),
-                    limit_mb = self.limit_bytes / (1024 * 1024),
+                    limit_mb   = self.limit_bytes / (1024 * 1024),
                     "WASM memory limit exceeded — trapping",
                 );
                 Ok(false)
@@ -355,15 +335,16 @@ mod inner_impl {
 
     impl WasmInner {
         pub async fn load(
-            wasm_path: &Path,
-            _plugin_name: &str,
-            ctx: &SandboxCtx,
+            wasm_path:     &Path,
+            _plugin_name:   &str,
+            ctx:           &SandboxCtx,
             max_memory_mb: u64,
         ) -> Result<Self, AbiError> {
             let mut config = Config::new();
             config.async_support(true);
             config.wasm_memory64(false);
-            let engine = Engine::new(&config).map_err(|e| AbiError::Execution(e.to_string()))?;
+            let engine = Engine::new(&config)
+                .map_err(|e| AbiError::Execution(e.to_string()))?;
 
             let wasm_bytes = std::fs::read(wasm_path)
                 .map_err(|e| AbiError::Execution(format!("read wasm: {e}")))?;
@@ -399,8 +380,24 @@ mod inner_impl {
             // remains as a fallback for headless / dev workflows.
             let mut kv = std::collections::HashMap::new();
             for (var, default_val) in &ctx.env_defaults {
-                let value =
-                    crate::config::secrets::env_lookup(var).unwrap_or_else(|| default_val.clone());
+                let from_secrets = crate::config::secrets::env_lookup(var);
+                let value = from_secrets.clone().unwrap_or_else(|| default_val.clone());
+                // Diagnostic: surface where each env var resolved from + a
+                // redacted preview. Otherwise a key collision between
+                // secrets.env / user overrides / manifest defaults (or a
+                // missing key that fell through to the default) is invisible
+                // until a downstream API rejects it. Debug-level: fires on
+                // every plugin call so an info-level log would swamp normal
+                // runs (~thousands of lines per session).
+                let source = if from_secrets.is_some() { "secrets.env/env" } else { "manifest default" };
+                tracing::debug!(
+                    plugin = %ctx.plugin_name,
+                    var = %var,
+                    source = source,
+                    redacted = %crate::config::secrets::redact(&value),
+                    len = value.len(),
+                    "plugin env: resolved"
+                );
                 kv.insert(format!("__env:{}", var), value);
             }
             // Layer user overrides last so they win over both the manifest
@@ -409,6 +406,14 @@ mod inner_impl {
             // its api key only via `[[config]] env_var = "X"` (no `[env] X = ""`)
             // still gets the user's value here.
             for (var, value) in &ctx.user_env_overrides {
+                tracing::debug!(
+                    plugin = %ctx.plugin_name,
+                    var = %var,
+                    source = "user override",
+                    redacted = %crate::config::secrets::redact(value),
+                    len = value.len(),
+                    "plugin env: resolved (user override)"
+                );
                 kv.insert(format!("__env:{}", var), value.clone());
             }
 
@@ -432,35 +437,22 @@ mod inner_impl {
                 .map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // stui_log(level: i32, ptr: i32, len: i32)
-            linker
-                .func_wrap(
-                    "stui",
-                    "stui_log",
-                    |mut caller: Caller<HostState>, level: i32, ptr: i32, len: i32| {
-                        if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory())
-                        {
-                            let data = mem.data(&caller);
-                            if let Some(slice) = data.get(ptr as usize..(ptr + len) as usize) {
-                                if let Ok(msg) = std::str::from_utf8(slice) {
-                                    match LogLevel::from_i32(level) {
-                                        LogLevel::Error => {
-                                            tracing::error!(plugin = "wasm", "{msg}")
-                                        }
-                                        LogLevel::Warn => tracing::warn!(plugin = "wasm", "{msg}"),
-                                        LogLevel::Debug => {
-                                            tracing::debug!(plugin = "wasm", "{msg}")
-                                        }
-                                        LogLevel::Trace => {
-                                            tracing::trace!(plugin = "wasm", "{msg}")
-                                        }
-                                        LogLevel::Info => tracing::info!(plugin = "wasm", "{msg}"),
-                                    }
-                                }
+            linker.func_wrap("stui", "stui_log", |mut caller: Caller<HostState>, level: i32, ptr: i32, len: i32| {
+                if let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    let data = mem.data(&caller);
+                    if let Some(slice) = data.get(ptr as usize..(ptr + len) as usize) {
+                        if let Ok(msg) = std::str::from_utf8(slice) {
+                            match LogLevel::from_i32(level) {
+                                LogLevel::Error => tracing::error!(plugin = "wasm", "{msg}"),
+                                LogLevel::Warn  => tracing::warn!(plugin = "wasm", "{msg}"),
+                                LogLevel::Debug => tracing::debug!(plugin = "wasm", "{msg}"),
+                                LogLevel::Trace => tracing::trace!(plugin = "wasm", "{msg}"),
+                                LogLevel::Info  => tracing::info!(plugin = "wasm", "{msg}"),
                             }
                         }
-                    },
-                )
-                .map_err(|e| AbiError::Execution(e.to_string()))?;
+                    }
+                }
+            }).map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // ── stui_http_get(url_ptr, url_len) -> i64 ────────────────────
             // Makes a sandboxed GET; the host checks network_hosts from manifest.
@@ -602,14 +594,32 @@ mod inner_impl {
                             .and_then(|m| m.remove("__stui_headers"))
                             .unwrap_or_default();
 
+                        // Decide whether the plugin already specified a
+                        // Content-Type. reqwest's `.header()` *appends*
+                        // rather than replacing, so unconditionally setting
+                        // a default JSON Content-Type and then layering the
+                        // plugin's `application/x-www-form-urlencoded` on
+                        // top results in a request with TWO Content-Type
+                        // headers; some servers (Orion's Apache) pick the
+                        // first one, try to parse a urlencoded body as
+                        // JSON, fail silently to extract any param, and
+                        // return "Invalid App API Key" — which made
+                        // orionoid look like a credentials issue when the
+                        // real bug was here.
+                        let plugin_sets_content_type = headers_val
+                            .as_object()
+                            .map(|m| m.keys().any(|k| k.eq_ignore_ascii_case("content-type")))
+                            .unwrap_or(false);
+
                         let client = reqwest::Client::builder()
                             .timeout(std::time::Duration::from_secs(WASM_HTTP_TIMEOUT_SECS))
                             .user_agent(PLUGIN_USER_AGENT)
                             .build()
                             .unwrap_or_else(|_| reqwest::Client::new());
-                        let mut req = client.post(&url)
-                            .header("Content-Type", "application/json")
-                            .body(body);
+                        let mut req = client.post(&url).body(body);
+                        if !plugin_sets_content_type {
+                            req = req.header("Content-Type", "application/json");
+                        }
 
                         // Apply plugin-declared headers
                         if let Some(h_map) = headers_val.as_object() {
@@ -746,56 +756,44 @@ mod inner_impl {
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // ── stui_cache_get(key_ptr, key_len) -> i64 ───────────────────
-            linker
-                .func_wrap_async(
-                    "stui",
-                    "stui_cache_get",
-                    |mut caller: Caller<HostState>, (key_ptr, key_len): (i32, i32)| {
-                        Box::new(async move {
-                            let key = read_str_from_memory(&mut caller, key_ptr, key_len)?;
-                            let value = caller.data().kv.get(&key).cloned().unwrap_or_default();
-                            if value.is_empty() {
-                                return Ok::<i64, wasmtime::Error>(0);
-                            }
-                            write_bytes_to_memory(&mut caller, value.as_bytes()).await
-                        })
-                    },
-                )
-                .map_err(|e| AbiError::Execution(e.to_string()))?;
+            linker.func_wrap_async("stui", "stui_cache_get",
+                |mut caller: Caller<HostState>, (key_ptr, key_len): (i32, i32)| {
+                    Box::new(async move {
+                        let key = read_str_from_memory(&mut caller, key_ptr, key_len)?;
+                        let value = caller.data().kv.get(&key).cloned().unwrap_or_default();
+                        if value.is_empty() {
+                            return Ok::<i64, wasmtime::Error>(0);
+                        }
+                        write_bytes_to_memory(&mut caller, value.as_bytes()).await
+                    })
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // ── stui_cache_set(key_ptr, key_len, val_ptr, val_len) ────────
-            linker
-                .func_wrap(
-                    "stui",
-                    "stui_cache_set",
-                    |mut caller: Caller<HostState>, kp: i32, kl: i32, vp: i32, vl: i32| {
-                        let key = read_str_from_memory(&mut caller, kp, kl)
-                            .unwrap_or_default()
-                            .to_string();
-                        let val = read_str_from_memory(&mut caller, vp, vl)
-                            .unwrap_or_default()
-                            .to_string();
-                        if !key.is_empty() {
-                            caller.data_mut().kv.insert(key, val);
-                        }
-                    },
-                )
-                .map_err(|e| AbiError::Execution(e.to_string()))?;
+            linker.func_wrap("stui", "stui_cache_set",
+                |mut caller: Caller<HostState>, kp: i32, kl: i32, vp: i32, vl: i32| {
+                    let key = read_str_from_memory(&mut caller, kp, kl)
+                        .unwrap_or_default()
+                        .to_string();
+                    let val = read_str_from_memory(&mut caller, vp, vl)
+                        .unwrap_or_default()
+                        .to_string();
+                    if !key.is_empty() {
+                        caller.data_mut().kv.insert(key, val);
+                    }
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // ── stui_now_unix() -> i64 ────────────────────────────────────────────────
-            linker
-                .func_wrap(
-                    "stui",
-                    "stui_now_unix",
-                    |_caller: Caller<HostState>| -> i64 {
-                        use std::time::{SystemTime, UNIX_EPOCH};
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0)
-                    },
-                )
-                .map_err(|e| AbiError::Execution(e.to_string()))?;
+            linker.func_wrap("stui", "stui_now_unix",
+                |_caller: Caller<HostState>| -> i64 {
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0)
+                }
+            ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
             // ── stui_auth_allocate_port() -> i32 ──────────────────────────────────────
             // Starts the callback server. Returns port. Replaces any existing receiver.
@@ -942,9 +940,7 @@ mod inner_impl {
                 }
             ).map_err(|e| AbiError::Execution(e.to_string()))?;
 
-            let instance = linker
-                .instantiate_async(&mut store, &module)
-                .await
+            let instance = linker.instantiate_async(&mut store, &module).await
                 .map_err(|e| AbiError::Execution(format!("instantiate: {e}")))?;
 
             Ok(WasmInner {
@@ -959,10 +955,7 @@ mod inner_impl {
         /// makes sync `call()` panic at the wasmtime layer.
         pub async fn abi_version(&self) -> i32 {
             let mut store = self.store.lock().await;
-            match self
-                .instance
-                .get_typed_func::<(), i32>(&mut *store, "stui_abi_version")
-            {
+            match self.instance.get_typed_func::<(), i32>(&mut *store, "stui_abi_version") {
                 Ok(f) => f.call_async(&mut *store, ()).await.unwrap_or(-1),
                 Err(_) => -1,
             }
@@ -995,54 +988,40 @@ mod inner_impl {
             }
         }
 
-        pub async fn call_export(
-            &self,
-            fn_name: &str,
-            json_input: &str,
-        ) -> Result<String, AbiError> {
+        pub async fn call_export(&self, fn_name: &str, json_input: &str) -> Result<String, AbiError> {
             let input_bytes = json_input.as_bytes();
             let input_len = input_bytes.len() as i32;
-            let mut store = self.store.lock().await; // async lock
+            let mut store = self.store.lock().await;          // async lock
 
-            let alloc = self
-                .instance
+            let alloc = self.instance
                 .get_typed_func::<i32, i32>(&mut *store, "stui_alloc")
                 .map_err(|_| AbiError::MissingExport("stui_alloc".into()))?;
-            let input_ptr = alloc
-                .call_async(&mut *store, input_len)
-                .await
+            let input_ptr = alloc.call_async(&mut *store, input_len).await
                 .map_err(|e| AbiError::Execution(e.to_string()))?;
 
-            let memory = self
-                .instance
+            let memory = self.instance
                 .get_memory(&mut *store, "memory")
                 .ok_or_else(|| AbiError::MissingExport("memory".into()))?;
-            memory
-                .write(&mut *store, input_ptr as usize, input_bytes)
+            memory.write(&mut *store, input_ptr as usize, input_bytes)
                 .map_err(|e| AbiError::Memory(e.to_string()))?;
 
-            let func = self
-                .instance
+            let func = self.instance
                 .get_typed_func::<(i32, i32), i64>(&mut *store, fn_name)
                 .map_err(|_| AbiError::MissingExport(fn_name.to_string()))?;
-            let packed = func
-                .call_async(&mut *store, (input_ptr, input_len))
-                .await
+            let packed = func.call_async(&mut *store, (input_ptr, input_len)).await
                 .map_err(|e| AbiError::Execution(e.to_string()))?;
 
             let out_ptr = ((packed >> 32) & 0xFFFFFFFF) as usize;
             let out_len = (packed & 0xFFFFFFFF) as usize;
 
             let data = memory.data(&*store);
-            let slice = data
-                .get(out_ptr..out_ptr + out_len)
+            let slice = data.get(out_ptr..out_ptr + out_len)
                 .ok_or_else(|| AbiError::Memory("result ptr out of bounds".into()))?;
             let result = std::str::from_utf8(slice)
                 .map_err(|e| AbiError::Memory(e.to_string()))?
                 .to_string();
 
-            let free = self
-                .instance
+            let free = self.instance
                 .get_typed_func::<(i32, i32), ()>(&mut *store, "stui_free")
                 .map_err(|_| AbiError::MissingExport("stui_free".into()))?;
             let _ = free.call_async(&mut *store, (input_ptr, input_len)).await;
@@ -1059,13 +1038,11 @@ mod inner_impl {
         ptr: i32,
         len: i32,
     ) -> wasmtime::Result<String> {
-        let mem = caller
-            .get_export("memory")
+        let mem = caller.get_export("memory")
             .and_then(|e| e.into_memory())
             .ok_or_else(|| wasmtime::Error::msg("no memory export"))?;
         let data = mem.data(&*caller);
-        let slice = data
-            .get(ptr as usize..(ptr + len) as usize)
+        let slice = data.get(ptr as usize..(ptr + len) as usize)
             .ok_or_else(|| wasmtime::Error::msg("ptr out of bounds"))?;
         std::str::from_utf8(slice)
             .map(|s| s.to_string())
@@ -1078,17 +1055,13 @@ mod inner_impl {
         bytes: &[u8],
     ) -> wasmtime::Result<i64> {
         let len = bytes.len() as i32;
-        let alloc = caller
-            .get_export("stui_alloc")
+        let alloc = caller.get_export("stui_alloc")
             .and_then(|e| e.into_func())
             .ok_or_else(|| wasmtime::Error::msg("missing stui_alloc"))?;
         let mut results = vec![Val::I32(0)];
-        alloc
-            .call_async(caller.as_context_mut(), &[Val::I32(len)], &mut results)
-            .await?;
+        alloc.call_async(caller.as_context_mut(), &[Val::I32(len)], &mut results).await?;
         let ptr = results[0].unwrap_i32();
-        let mem = caller
-            .get_export("memory")
+        let mem = caller.get_export("memory")
             .and_then(|e| e.into_memory())
             .ok_or_else(|| wasmtime::Error::msg("no memory export"))?;
         mem.write(caller.as_context_mut(), ptr as usize, bytes)
@@ -1165,9 +1138,7 @@ mod inner_impl {
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build_p1(),
                 ctx: make_test_sandbox_ctx(),
                 kv: std::collections::HashMap::new(),
-                limiter: MemoryLimiter {
-                    limit_bytes: 128 * 1024 * 1024,
-                },
+                limiter: MemoryLimiter { limit_bytes: 128 * 1024 * 1024 },
                 auth_receiver: Some(rx),
             };
             assert!(state.auth_receiver.is_some());
@@ -1194,9 +1165,9 @@ mod stub_impl {
 
     impl WasmInner {
         pub async fn load(
-            _wasm_path: &Path,
-            plugin_name: &str,
-            _ctx: &SandboxCtx,
+            _wasm_path:     &Path,
+            plugin_name:    &str,
+            _ctx:           &SandboxCtx,
             _max_memory_mb: u64,
         ) -> Result<Self, AbiError> {
             // Inform the caller clearly that the feature is not compiled in.
@@ -1205,9 +1176,7 @@ mod stub_impl {
                 plugin = %plugin_name,
                 "WASM host not compiled in — rebuild with `--features wasm-host`"
             );
-            Ok(WasmInner {
-                plugin_name: plugin_name.to_string(),
-            })
+            Ok(WasmInner { plugin_name: plugin_name.to_string() })
         }
 
         pub async fn abi_version(&self) -> i32 {

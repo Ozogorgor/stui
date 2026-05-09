@@ -1,16 +1,80 @@
 //! Stream-resolution pipeline — rank candidates and map to wire types.
 
+use std::sync::{Arc, LazyLock, Mutex};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::stream::{FuturesUnordered, StreamExt};
+
+/// Short-lived cache of `find_streams` results keyed by
+/// (entry_id, season, episode). Stream-picker re-opens within the TTL
+/// replay the cached partials instead of re-running the ~30 s provider
+/// fan-out (jackett/rutracker timeouts dominate fresh runs even when
+/// torrentio responds in ~300 ms).
+///
+/// 5 min was chosen empirically: long enough to cover "user closes the
+/// picker, scrolls, re-opens" cycles; short enough that the cache
+/// won't mask provider configuration changes between sessions.
+const STREAMS_CACHE_TTL: Duration = Duration::from_secs(300);
+
+struct StreamsCacheEntry {
+    inserted: Instant,
+    partials: Vec<StreamsPartialWire>,
+}
+
+static STREAMS_CACHE: LazyLock<Mutex<HashMap<String, StreamsCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Build a stable cache key for a `find_streams` request. The previous
+/// `(entry_id, season, episode)` tuple collapsed to `("", 0, 0)` for every
+/// movie whose TUI request omitted `entry_id`, so all movies shared one slot
+/// and the first cached fetch poisoned every subsequent picker open with the
+/// wrong title's results. Identifier preference, most stable first:
+///
+///   1. `imdb_id` — globally unique, stable across catalogs.
+///   2. `external_ids["imdb"]` — same identity, sometimes carried here.
+///   3. `tmdb_id` — TMDB-only but still globally unique.
+///   4. `entry_id` — internal, only when non-empty.
+///   5. `(title, year, kind)` — last-resort hash; titles are repeated across
+///      reboots and remakes share titles, but combined with year+kind the
+///      collision rate is low enough to be useful.
+///
+/// Returns `None` when nothing identifying is present — caller should skip
+/// caching rather than store under a degenerate key.
+fn streams_cache_key(r: &GetStreamsRequest) -> Option<String> {
+    let season = r.season.unwrap_or(0);
+    let episode = r.episode.unwrap_or(0);
+    let suffix = format!("|s{season}|e{episode}");
+
+    if let Some(id) = r.imdb_id.as_deref().filter(|s| !s.is_empty()) {
+        return Some(format!("imdb:{id}{suffix}"));
+    }
+    if let Some(id) = r.external_ids.get("imdb").map(|s| s.as_str()).filter(|s| !s.is_empty()) {
+        return Some(format!("imdb:{id}{suffix}"));
+    }
+    if let Some(id) = r.tmdb_id.as_deref().filter(|s| !s.is_empty()) {
+        return Some(format!("tmdb:{id}{suffix}"));
+    }
+    if !r.entry_id.is_empty() {
+        return Some(format!("eid:{}{suffix}", r.entry_id));
+    }
+    if !r.title.is_empty() {
+        let year = r.year.map(|y| y.to_string()).unwrap_or_default();
+        let kind = r.kind.as_deref().unwrap_or("");
+        return Some(format!(
+            "title:{}|y:{year}|k:{kind}{suffix}",
+            r.title.to_lowercase()
+        ));
+    }
+    None
+}
 
 use crate::catalog::Catalog;
 use crate::config::ConfigManager;
 use crate::engine::{CallPriority, Engine, TraceEmitter};
 use crate::ipc::{
-    GetStreamsRequest, Response, StreamInfoWire, StreamsCompleteWire, StreamsPartialWire,
-    StreamsResponse,
+    GetStreamsRequest, Response, StreamInfoWire, StreamsCompleteWire,
+    StreamsPartialWire, StreamsResponse,
 };
 use crate::providers::{HealthRegistry, StreamBenchmarker};
 
@@ -77,6 +141,26 @@ fn stream_to_wire(stream: crate::providers::Stream, score: u32) -> StreamInfoWir
 
 /// Round-robin pick from quality buckets, best-first within each, until
 /// `max_total` is reached. Input is assumed already ranked best-first
+/// Build a stable dedup key for a stream URL. For magnet URIs we extract
+/// the BitTorrent infohash (`xt=urn:btih:HASH`) and lowercase it so
+/// case-only differences between providers don't produce two keys for the
+/// same torrent. For HTTP/HTTPS URLs we use the full URL as-is — different
+/// CDN paths or query strings legitimately point at different resources.
+fn stream_dedup_key(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("magnet:?") {
+        for kv in rest.split('&') {
+            if let Some(value) = kv.strip_prefix("xt=urn:btih:") {
+                return value.to_ascii_lowercase();
+            }
+        }
+        // No btih param — fall back to the full URL so we still dedup
+        // exact-match magnets even when the standard xt is missing.
+        url.to_string()
+    } else {
+        url.to_string()
+    }
+}
+
 /// inside each quality (which is true after `quality::rank`).
 ///
 /// The result keeps a balanced spread across resolutions instead of
@@ -92,15 +176,10 @@ fn diversify_by_quality(
     // BTreeMap<Reverse<StreamQuality>> iterates buckets best-quality
     // first (Uhd4k → Hd1080 → Hd720 → Unknown → Sd) so the round-robin
     // hands out 4K, then 1080p, then 720p, … on the first pass.
-    let mut by_quality: BTreeMap<
-        Reverse<crate::providers::StreamQuality>,
-        Vec<crate::quality::StreamCandidate>,
-    > = BTreeMap::new();
+    let mut by_quality: BTreeMap<Reverse<crate::providers::StreamQuality>, Vec<crate::quality::StreamCandidate>>
+        = BTreeMap::new();
     for c in candidates {
-        by_quality
-            .entry(Reverse(c.stream.quality.clone()))
-            .or_default()
-            .push(c);
+        by_quality.entry(Reverse(c.stream.quality.clone())).or_default().push(c);
     }
 
     let mut iters: Vec<_> = by_quality.into_values().map(Vec::into_iter).collect();
@@ -111,14 +190,10 @@ fn diversify_by_quality(
             if let Some(item) = it.next() {
                 result.push(item);
                 any = true;
-                if result.len() >= max_total {
-                    break 'outer;
-                }
+                if result.len() >= max_total { break 'outer; }
             }
         }
-        if !any {
-            break;
-        }
+        if !any { break; }
     }
     result
 }
@@ -145,19 +220,63 @@ async fn run_find_streams_streaming(
     let cfg = config.snapshot().await;
     let health_map = health.all_reliability_scores();
 
+    // ── streams cache fast-path ────────────────────────────────────────
+    // Re-opening the picker for the same identifier within the TTL replays
+    // cached partials instead of rerunning the provider fan-out. The cache
+    // key prefers globally-unique IDs (imdb_id → tmdb_id → entry_id →
+    // title+year+kind) — a previous `(entry_id, season, episode)` tuple
+    // collapsed to `("", 0, 0)` for every movie whose TUI request omitted
+    // entry_id, poisoning the picker with the first movie's results for
+    // every subsequent title.
+    let cache_key = streams_cache_key(r);
+    let cached_partials: Option<Vec<StreamsPartialWire>> = match &cache_key {
+        Some(key) => {
+            let mut cache = STREAMS_CACHE.lock().expect("streams cache mutex");
+            cache.retain(|_, e| e.inserted.elapsed() < STREAMS_CACHE_TTL);
+            cache.get(key).map(|e| e.partials.clone())
+        }
+        None => None,
+    };
+    if let Some(partials) = cached_partials {
+        tracing::info!(
+            cache_key = %cache_key.as_deref().unwrap_or(""),
+            entry_id = %r.entry_id,
+            season = r.season.unwrap_or(0),
+            episode = r.episode.unwrap_or(0),
+            partial_count = partials.len(),
+            "find_streams: cache hit — replaying"
+        );
+        for partial in partials {
+            if let Ok(line) = Response::StreamsPartial(partial).to_wire() {
+                if event_tx.send(line).await.is_err() {
+                    return;
+                }
+            }
+        }
+        let complete = StreamsCompleteWire {
+            entry_id: r.entry_id.clone(),
+            season: r.season.unwrap_or(0),
+            episode: r.episode.unwrap_or(0),
+            error: None,
+        };
+        if let Ok(line) = Response::StreamsComplete(complete).to_wire() {
+            let _ = event_tx.send(line).await;
+        }
+        return;
+    }
+
     let reg = engine.registry().read().await;
-    let provider_names: Vec<String> = reg
-        .find_stream_providers()
+    let provider_names: Vec<String> = reg.find_stream_providers()
         .into_iter()
         .map(|p| p.manifest.plugin.name.clone())
         .collect();
     drop(reg);
 
     let kind = match r.kind.as_deref() {
-        Some("Movie") => stui_plugin_sdk::EntryKind::Movie,
-        Some("Series") => stui_plugin_sdk::EntryKind::Series,
+        Some("Movie")   => stui_plugin_sdk::EntryKind::Movie,
+        Some("Series")  => stui_plugin_sdk::EntryKind::Series,
         Some("Episode") => stui_plugin_sdk::EntryKind::Episode,
-        _ => stui_plugin_sdk::EntryKind::Movie,
+        _               => stui_plugin_sdk::EntryKind::Movie,
     };
 
     // ── imdb_id late resolution ────────────────────────────────────────
@@ -206,8 +325,8 @@ async fn run_find_streams_streaming(
     let start = std::time::Instant::now();
     let overall_deadline = start + OVERALL_BUDGET;
     let entry_id = r.entry_id.clone();
-    let season = r.season.unwrap_or(0);
-    let episode = r.episode.unwrap_or(0);
+    let season   = r.season.unwrap_or(0);
+    let episode  = r.episode.unwrap_or(0);
     let max_candidates = cfg.streaming.max_candidates.max(1);
 
     let mut futures = FuturesUnordered::new();
@@ -216,9 +335,7 @@ async fn run_find_streams_streaming(
         let req = req.clone();
         let engine = engine.clone();
         futures.push(async move {
-            let result = engine
-                .supervisor_find_streams(&plugin_name, req, CallPriority::Foreground)
-                .await;
+            let result = engine.supervisor_find_streams(&plugin_name, req, CallPriority::Foreground).await;
             (plugin_name, result)
         });
     }
@@ -226,43 +343,34 @@ async fn run_find_streams_streaming(
     let mut had_any_results = false;
     let mut errors_text: Vec<String> = Vec::new();
     let mut pending: HashSet<String> = provider_names.iter().cloned().collect();
+    let mut partials_buffer: Vec<StreamsPartialWire> = Vec::new();
+    // Cross-provider dedup: torrentio, torapi, rutracker etc. routinely
+    // return the same release, so without this the picker shows the same
+    // magnet 2-3 times in a row. Keyed on btih infohash for magnets and on
+    // the full URL for direct HTTP. First provider to return a given key
+    // wins (FuturesUnordered yields in completion order, so whichever
+    // responded fastest gets to keep its metadata in the picker).
+    let mut seen_keys: HashSet<String> = HashSet::new();
 
     while !futures.is_empty() {
         let now = std::time::Instant::now();
         let timeout_remaining = overall_deadline.saturating_duration_since(now);
-        if timeout_remaining.is_zero() {
-            break;
-        }
+        if timeout_remaining.is_zero() { break; }
 
         match tokio::time::timeout(timeout_remaining, futures.next()).await {
             Ok(Some((plugin_name, Ok(plugin_streams)))) => {
                 pending.remove(&plugin_name);
-                if plugin_streams.is_empty() {
-                    continue;
-                }
+                if plugin_streams.is_empty() { continue; }
 
                 // Convert + rank within just this provider's batch.
                 // Cross-provider re-ranking would require a final
                 // pass — but the streaming UX shows results as they
                 // arrive, and the per-provider rank is enough for
                 // each batch to be meaningful on its own.
-                let provider_streams: Vec<crate::providers::Stream> = plugin_streams
-                    .into_iter()
-                    .map(plugin_stream_to_provider)
-                    .collect();
+                let provider_streams: Vec<crate::providers::Stream> =
+                    plugin_streams.into_iter().map(plugin_stream_to_provider).collect();
 
-                let policy = match cfg.streaming.ranking_preset.as_str() {
-                    "bandwidth_saver" => crate::quality::RankingPolicy::bandwidth_saver(),
-                    "fastest_start" => crate::quality::RankingPolicy::fastest_start(),
-                    "balanced" | "" => crate::quality::RankingPolicy::default(),
-                    other => {
-                        tracing::warn!(
-                            preset = %other,
-                            "unknown streaming.ranking_preset; falling back to `balanced`"
-                        );
-                        crate::quality::RankingPolicy::default()
-                    }
-                };
+                let policy = crate::quality::RankingPolicy::default();
                 let candidates = if !health_map.is_empty() {
                     crate::quality::rank_with_health(provider_streams, &policy, Some(&health_map))
                 } else {
@@ -279,13 +387,13 @@ async fn run_find_streams_streaming(
                 // through default off: useful as a debug toggle when a
                 // plugin's results don't surface seeders and you want
                 // to see them disappear from the picker.
-                let min_seeders = cfg.streaming.min_seeders;
-                let require_seeders = cfg.streaming.require_seeders;
+                let min_seeders        = cfg.streaming.min_seeders;
+                let require_seeders    = cfg.streaming.require_seeders;
                 let require_resolution = cfg.streaming.require_resolution;
-                let allow_4k = cfg.streaming.allow_4k;
-                let allow_1080p = cfg.streaming.allow_1080p;
-                let allow_720p = cfg.streaming.allow_720p;
-                let allow_sd = cfg.streaming.allow_sd;
+                let allow_4k           = cfg.streaming.allow_4k;
+                let allow_1080p        = cfg.streaming.allow_1080p;
+                let allow_720p         = cfg.streaming.allow_720p;
+                let allow_sd           = cfg.streaming.allow_sd;
                 tracing::info!(
                     plugin = %plugin_name,
                     min_seeders, require_seeders, require_resolution,
@@ -293,30 +401,37 @@ async fn run_find_streams_streaming(
                     candidate_count = candidates.len(),
                     "find_streams: filter inputs"
                 );
+                // Per-gate counters so we can tell at a glance whether
+                // an empty picker is the seeder floor, the tier
+                // allowlist, the unknown-resolution gate, or our cross-
+                // provider dedup eating everything. Without this it took
+                // a guess + a config audit to figure out which gate was
+                // dropping torrentio's 35 candidates to zero.
+                let pre_filter = candidates.len();
+                let mut dropped_seeders     = 0usize;
+                let mut dropped_tier        = 0usize;
+                let mut dropped_unknown_res = 0usize;
+                let mut dropped_dedup       = 0usize;
                 let wire: Vec<StreamInfoWire> = candidates
                     .iter()
                     .filter(|c| {
                         // Seeder gate
                         let seeders_ok = match c.stream.seeders {
                             Some(n) => min_seeders == 0 || n > min_seeders,
-                            None => !require_seeders,
+                            None    => !require_seeders,
                         };
-                        if !seeders_ok {
-                            return false;
-                        }
+                        if !seeders_ok { dropped_seeders += 1; return false; }
                         // Per-tier resolution allowlist. Unknown is
                         // governed by `require_resolution` below.
                         use crate::providers::StreamQuality;
                         let tier_ok = match c.stream.quality {
-                            StreamQuality::Uhd4k => allow_4k,
-                            StreamQuality::Hd1080 => allow_1080p,
-                            StreamQuality::Hd720 => allow_720p,
-                            StreamQuality::Sd => allow_sd,
+                            StreamQuality::Uhd4k   => allow_4k,
+                            StreamQuality::Hd1080  => allow_1080p,
+                            StreamQuality::Hd720   => allow_720p,
+                            StreamQuality::Sd      => allow_sd,
                             StreamQuality::Unknown => true,
                         };
-                        if !tier_ok {
-                            return false;
-                        }
+                        if !tier_ok { dropped_tier += 1; return false; }
                         // Resolution gate — drop StreamQuality::Unknown
                         // when require_resolution is enabled. The
                         // ranker maps a missing/unparsed quality tag
@@ -326,17 +441,42 @@ async fn run_find_streams_streaming(
                         if require_resolution
                             && matches!(c.stream.quality, crate::providers::StreamQuality::Unknown)
                         {
+                            dropped_unknown_res += 1;
                             return false;
                         }
                         true
+                    })
+                    .filter_map(|c| {
+                        let key = stream_dedup_key(&c.stream.url);
+                        if seen_keys.insert(key.clone()) {
+                            Some(c)
+                        } else {
+                            dropped_dedup += 1;
+                            tracing::info!(
+                                plugin = %plugin_name,
+                                key = %key,
+                                name = %c.stream.name,
+                                "find_streams: dropping duplicate stream (already seen from earlier provider)"
+                            );
+                            None
+                        }
                     })
                     .take(max_candidates)
                     .map(|c| stream_to_wire(c.stream.clone(), c.score.total()))
                     .collect();
 
-                if wire.is_empty() {
-                    continue;
-                }
+                tracing::info!(
+                    plugin = %plugin_name,
+                    pre_filter,
+                    kept = wire.len(),
+                    dropped_seeders,
+                    dropped_tier,
+                    dropped_unknown_res,
+                    dropped_dedup,
+                    "find_streams: filter outputs"
+                );
+
+                if wire.is_empty() { continue; }
 
                 had_any_results = true;
                 let partial = StreamsPartialWire {
@@ -346,6 +486,7 @@ async fn run_find_streams_streaming(
                     provider: plugin_name.clone(),
                     streams: wire,
                 };
+                partials_buffer.push(partial.clone());
                 if let Ok(line) = Response::StreamsPartial(partial).to_wire() {
                     if event_tx.send(line).await.is_err() {
                         // TUI hung up — no point continuing the fan-out.
@@ -379,8 +520,8 @@ async fn run_find_streams_streaming(
 
     // Final marker. Carry an error string ONLY when the user got
     // nothing at all — partial successes don't need a banner.
-    let all_timed_out =
-        !errors_text.is_empty() && errors_text.iter().all(|e| e.ends_with(": timed out"));
+    let all_timed_out = !errors_text.is_empty()
+        && errors_text.iter().all(|e| e.ends_with(": timed out"));
     let error = if had_any_results {
         None
     } else if all_timed_out {
@@ -396,6 +537,18 @@ async fn run_find_streams_streaming(
     };
     if !had_any_results {
         trace.fallback("no streams after streaming fan-out");
+    } else if let Some(key) = cache_key {
+        // Only cache successful runs whose request had something
+        // identifying. A run where every provider timed out or errored
+        // shouldn't poison the next 5 minutes; a request without a stable
+        // identifier shouldn't be cached at all (otherwise different
+        // titles would collide on a degenerate key and the picker would
+        // replay the wrong movie's results).
+        let mut cache = STREAMS_CACHE.lock().expect("streams cache mutex");
+        cache.insert(key, StreamsCacheEntry {
+            inserted: Instant::now(),
+            partials: partials_buffer,
+        });
     }
     let complete = StreamsCompleteWire {
         entry_id,
@@ -435,12 +588,11 @@ async fn resolve_imdb_id(
         _ => return None,
     };
 
-    let tmdb_id = r.tmdb_id.clone().filter(|s| !s.is_empty()).or_else(|| {
-        r.external_ids
-            .get("tmdb")
-            .cloned()
-            .filter(|s| !s.is_empty())
-    });
+    let tmdb_id = r
+        .tmdb_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| r.external_ids.get("tmdb").cloned().filter(|s| !s.is_empty()));
 
     // Without at least a TMDB id or a non-empty title there's nothing for
     // the plugin to anchor a lookup on.
@@ -473,13 +625,10 @@ async fn resolve_imdb_id(
     .await;
 
     match result {
-        Ok(Ok(entry)) => entry.imdb_id.filter(|s| !s.is_empty()).or_else(|| {
-            entry
-                .external_ids
-                .get("imdb")
-                .cloned()
-                .filter(|s| !s.is_empty())
-        }),
+        Ok(Ok(entry)) => entry
+            .imdb_id
+            .filter(|s| !s.is_empty())
+            .or_else(|| entry.external_ids.get("imdb").cloned().filter(|s| !s.is_empty())),
         Ok(Err(e)) => {
             tracing::debug!(err = %e, "find_streams: tmdb enrich for imdb_id failed");
             None
@@ -506,8 +655,7 @@ pub async fn run_get_streams(
     let health_map = health.all_reliability_scores();
 
     let reg = engine.registry().read().await;
-    let provider_names: Vec<String> = reg
-        .find_stream_providers()
+    let provider_names: Vec<String> = reg.find_stream_providers()
         .into_iter()
         .map(|p| p.manifest.plugin.name.clone())
         .collect();
@@ -532,7 +680,9 @@ pub async fn run_get_streams(
         "get_streams: dispatching"
     );
     if use_find_streams {
-        run_find_streams_streaming(engine, config, health, &event_tx, trace, &r).await;
+        run_find_streams_streaming(
+            engine, config, health, &event_tx, trace, &r,
+        ).await;
         // Streaming path emits its own StreamsPartial / StreamsComplete
         // events via `event_tx`; the synchronous response is just an
         // ack so the TUI's request-id correlation channel unblocks.
@@ -546,10 +696,7 @@ pub async fn run_get_streams(
     for plugin_name in &provider_names {
         match engine.resolve_raw(&r.entry_id, plugin_name).await {
             Ok(result) => {
-                let quality_label = result
-                    .quality
-                    .clone()
-                    .unwrap_or_else(|| "Unknown".to_string());
+                let quality_label = result.quality.clone().unwrap_or_else(|| "Unknown".to_string());
                 let stream = crate::providers::Stream {
                     id: result.stream_url.clone(),
                     name: quality_label.clone(),
@@ -607,17 +754,10 @@ pub async fn run_get_streams(
     // Apply health-based re-ranking if health data available
     let candidates = if !health_map.is_empty() {
         use crate::quality::rank_with_health;
-        rank_with_health(
-            all_streams.clone(),
-            &crate::quality::RankingPolicy::default(),
-            Some(&health_map),
-        )
+        rank_with_health(all_streams.clone(), &crate::quality::RankingPolicy::default(), Some(&health_map))
     } else {
         use crate::quality::rank;
-        rank(
-            all_streams.clone(),
-            &crate::quality::RankingPolicy::default(),
-        )
+        rank(all_streams.clone(), &crate::quality::RankingPolicy::default())
     };
 
     // Apply speed-based re-ranking if benchmarking enabled
@@ -633,11 +773,7 @@ pub async fn run_get_streams(
             rank_with_health_and_speed(
                 all_streams,
                 &crate::quality::RankingPolicy::default(),
-                if health_map.is_empty() {
-                    None
-                } else {
-                    Some(&health_map)
-                },
+                if health_map.is_empty() { None } else { Some(&health_map) },
                 Some(&speed_map),
             )
         } else {
@@ -670,8 +806,7 @@ pub async fn run_get_streams(
     if streams.is_empty() {
         trace.fallback("no streams after bench");
     } else {
-        let best_score = candidates
-            .first()
+        let best_score = candidates.first()
             .map(|c| c.score.total() as f64 / 100.0)
             .unwrap_or(0.0);
         trace.rank(1, best_score);
