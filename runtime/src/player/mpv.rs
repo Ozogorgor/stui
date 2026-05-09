@@ -326,7 +326,7 @@ impl MpvPlayer {
         *self.inner.proc.lock().await = Some(child);
         let epoch = self.inner.ipc_epoch.fetch_add(1, Ordering::SeqCst) + 1;
 
-        info!("mpv: spawned for {:?}", &url[..url.len().min(80)]);
+        info!("mpv: spawned for {:?}", super::bridge::short(url, 80));
 
         // Spawn socket connector + event reader
         let player = self.clone();

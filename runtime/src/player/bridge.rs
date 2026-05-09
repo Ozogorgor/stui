@@ -345,7 +345,7 @@ impl PlayerBridge {
                 drop(guard);
                 info!(
                     "player_bridge: rejecting recently-failed magnet url={} err={}",
-                    &url[..url.len().min(80)],
+                    short(url, 80),
                     cached,
                 );
                 self.push_ended("error", &cached).await;
@@ -364,7 +364,7 @@ impl PlayerBridge {
                     info!(
                         "player_bridge: dropping duplicate switch_stream within {:?} url={}",
                         SWITCH_DEDUP_WINDOW,
-                        &url[..url.len().min(80)]
+                        short(url, 80)
                     );
                     return;
                 }
@@ -374,7 +374,7 @@ impl PlayerBridge {
 
         let title = title_from_url(url);
         let entry_id = format!("switch_stream|{title}");
-        info!("player_bridge: cold-starting playback for switch_stream url={}", &url[..url.len().min(80)]);
+        info!("player_bridge: cold-starting playback for switch_stream url={}", short(url, 80));
         self.start_stream(&entry_id, url, &title, None, None, None).await;
     }
 
@@ -672,6 +672,16 @@ async fn run_mpv_event_forwarder(mpv: MpvPlayer, tx: mpsc::Sender<String>) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Returns a prefix of `s` up to `max` bytes, cut at a valid UTF-8 boundary.
+/// If `s` is shorter than `max`, returns the whole string.
+pub(crate) fn short(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    // floor_char_boundary is stable since Rust 1.59
+    &s[..s.floor_char_boundary(max)]
+}
 
 pub(crate) fn is_magnet(url: &str)     -> bool { url.starts_with("magnet:") }
 
