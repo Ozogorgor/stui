@@ -8,7 +8,7 @@
 //!   state.rs    - PlaybackState: authoritative model of what mpv is doing
 //!   commands.rs - PlayerCommand: typed control API (pause/seek/sub-delay/...)
 //!   mpv.rs      - MpvPlayer: spawn, IPC socket, event broadcast
-//!   bridge.rs   - PlayerBridge: route stream_url to aria2 or mpv
+//!   bridge.rs   - PlayerBridge: route stream_url to the torrent engine or mpv
 //!   manager.rs  - PlayerManager: queue, candidates, command dispatch
 //! ```
 //!

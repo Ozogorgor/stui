@@ -82,9 +82,9 @@ pub enum Request {
     /// (enrich, credits, artwork, related) through the source-priority list.
     /// Partials stream back as `Response::DetailMetadataPartial` events.
     GetDetailMetadata(GetDetailMetadataRequest),
-    /// Resolve + hand off to the player (aria2 → mpv, or direct mpv).
+    /// Resolve + hand off to the player (torrent engine → mpv, or direct mpv).
     Play(PlayRequest),
-    /// Stop current playback; kills mpv and the active aria2 GID.
+    /// Stop current playback; kills mpv and any active torrent.
     PlayerStop,
     /// Send a raw mpv IPC command (e.g. `{"cmd":"cycle","args":["pause"]}`).
     PlayerCommand(PlayerCommandRequest),

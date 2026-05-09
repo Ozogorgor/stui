@@ -88,7 +88,7 @@ type Settings struct {
 	AutoplayNext      bool // default false — initialises bingeEnabled on EpisodeScreen
 	AutoplayCountdown int  // seconds; 0 treated as 5 in countdown logic
 
-	// Downloads — directory paths for aria2 downloads.
+	// Downloads — directory paths for torrent downloads.
 	VideoDownloadDir string // default ~/Videos
 	MusicDownloadDir string // default ~/Music
 }

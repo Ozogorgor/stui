@@ -10,10 +10,10 @@
 //     │
 //     ▼
 //   classify stream_url:
-//     magnet/torrent → aria2 start  →  Streamer.wait_for_preroll()
+//     magnet/torrent → librqbit add  →  Streamer.wait_for_preroll()
 //                                         measures speed, computes pre-roll,
 //                                         waits until buffer is safe to play
-//                                   →  mpv.play(local_file)
+//                                   →  mpv.play(http_stream_url)
 //                                   →  Streamer.run_stall_guard() (concurrent)
 //     http/https direct → mpv.play(url)
 //     yt-dlp URL        → mpv.play(url --ytdl)
@@ -892,8 +892,8 @@ impl PlayerBridge {
         let file_name = format!("{lang}.srt");
         let file_path = format!("{sub_dir}/{file_name}");
 
-        // 3. HTTP GET — 15s cap. Subtitle files are typically <100KB;
-        // aria2 is overkill for a one-shot fetch.
+        // 3. HTTP GET — 15s cap. Subtitle files are typically <100KB, so a
+        // direct reqwest fetch is fine (no need to involve the torrent engine).
         let bytes = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             reqwest::get(&url)
                 .await

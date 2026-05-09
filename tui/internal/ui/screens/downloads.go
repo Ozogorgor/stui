@@ -1,6 +1,6 @@
 package screens
 
-// downloads.go — DownloadsScreen: live view of all aria2 torrent downloads.
+// downloads.go — DownloadsScreen: live view of all torrent downloads.
 //
 // Open with:  screen.TransitionCmd(screens.NewDownloadsScreen(client, entries), true)
 //
@@ -23,7 +23,7 @@ import (
 	"github.com/stui/stui/pkg/theme"
 )
 
-// DownloadsScreen lists active and completed aria2 downloads.
+// DownloadsScreen lists active and completed torrent downloads.
 type DownloadsScreen struct {
 	Dims
 	client  *ipc.Client

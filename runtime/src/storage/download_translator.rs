@@ -2,7 +2,7 @@
 //!
 //! ## Problem
 //!
-//! Downloaders (aria2, librqbit, etc.) need to retain original file names in their
+//! Downloaders (librqbit) need to retain original file names in their
 //! working directory to:
 //! - Continue incomplete downloads
 //! - Seed torrents properly
@@ -40,7 +40,7 @@ use tracing::{debug, error, info, warn};
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct DownloadTranslator {
-    /// Maps download id (e.g. aria2 GID, librqbit torrent id) → DownloadSession
+    /// Maps download id (librqbit torrent id) → DownloadSession
     pub sessions: Arc<RwLock<HashMap<String, DownloadSession>>>,
     /// Persisted path for saving/loading translations
     persist_path: PathBuf,
@@ -273,7 +273,7 @@ impl DownloadTranslator {
 /// Represents a single download session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DownloadSession {
-    /// Downloader id (e.g. aria2 GID, librqbit torrent id) for this download.
+    /// Downloader id (librqbit torrent id) for this download.
     pub gid: String,
     /// The torrent/magnet name or selected content name.
     pub name: String,

@@ -22,13 +22,13 @@ use serde::{Deserialize, Serialize};
 /// Wire protocol of a playable stream.
 ///
 /// The player bridge uses this to decide which path to take:
-/// - `Torrent` / `Magnet` → aria2c download → mpv
+/// - `Torrent` / `Magnet` → embedded librqbit engine → HTTP stream URL → mpv
 /// - `Http` / `Hls` / `Dash` → mpv directly (or yt-dlp pre-pass)
 /// - `Direct` → passed to mpv unchanged
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamProtocol {
-    /// BitTorrent: `.torrent` file URL (aria2 will fetch + seed)
+    /// BitTorrent: `.torrent` file URL (librqbit fetches + serves)
     Torrent,
     /// BitTorrent: `magnet:?xt=urn:btih:…` URI
     Magnet,
@@ -69,8 +69,9 @@ impl StreamProtocol {
         StreamProtocol::Unknown
     }
 
-    /// True if this stream requires aria2c to download before mpv can open it.
-    pub fn needs_aria2(&self) -> bool {
+    /// True if this stream needs the embedded torrent engine (librqbit) to
+    /// fetch and serve before mpv can open it.
+    pub fn needs_torrent_engine(&self) -> bool {
         matches!(self, StreamProtocol::Torrent | StreamProtocol::Magnet)
     }
 
@@ -178,8 +179,8 @@ impl StreamCandidate {
         }
     }
 
-    /// True if this stream needs aria2c (torrent or magnet).
-    pub fn needs_aria2(&self) -> bool {
-        self.protocol.needs_aria2()
+    /// True if this stream needs the embedded torrent engine (torrent or magnet).
+    pub fn needs_torrent_engine(&self) -> bool {
+        self.protocol.needs_torrent_engine()
     }
 }

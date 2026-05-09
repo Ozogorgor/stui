@@ -150,10 +150,6 @@ echo ""
 
 if [[ "$INSTALL" == "true" ]]; then
     echo "Next steps:"
-    echo "  1. Start aria2c (for download/stream):"
-    echo "     aria2c --enable-rpc --rpc-secret=mystui --daemon"
-    echo "     export ARIA2_SECRET=mystui"
-    echo ""
-    echo "  2. Launch stui:"
+    echo "  Launch stui:"
     echo "     ./dist/stui"
 fi

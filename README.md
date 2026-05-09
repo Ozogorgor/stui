@@ -166,7 +166,6 @@ Opt-in feature that cleans up messy tag metadata in your MPD library:
 * Linux (Wayland or X11)
 * `mpv` (required)
 * `mpd` (required)
-* `aria2c` (required for torrent streaming)
 * `python3` (for some plugins)
 
 Optional:
@@ -183,10 +182,6 @@ Optional:
 ```bash
 # Build everything
 ./scripts/build.sh
-
-# Start aria2c (required for torrent streaming)
-./scripts/aria2c-start.sh
-export ARIA2_SECRET=<printed secret>
 
 # Optional: API keys
 export TMDB_API_KEY=<key>
