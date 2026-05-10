@@ -113,6 +113,12 @@ pub struct MpdBridge {
     pub(super) conn: Arc<Mutex<Option<MpdConnection>>>,
     ipc_tx: tokio::sync::mpsc::Sender<String>,
     normalize_cfg: MusicNormalizeConfig,
+    /// Per-track librqbit HTTP URLs of the currently-queued music torrent
+    /// album, in queue order. Populated by [`queue_and_play_many`] and read
+    /// by the idle loop's prefetch warmer on every song-pos change. A `std`
+    /// mutex (not `tokio`) because the lock is held only for the duration of
+    /// a `Vec<String>` clone — no `.await` inside.
+    album_warm_targets: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl MpdBridge {
@@ -128,9 +134,21 @@ impl MpdBridge {
             conn: Arc::new(Mutex::new(None)),
             ipc_tx,
             normalize_cfg,
+            album_warm_targets: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         bridge.start_idle_loop();
         bridge
+    }
+
+    /// Replace the prefetch warmer's target list. The mpd idle loop will
+    /// fire a [`Range: bytes=0-65535`] probe at `urls[song_pos + 1]` every
+    /// time mpd advances, biasing librqbit's per-file piece scheduler so
+    /// the next track has data ready before mpd opens it. Pass an empty
+    /// slice to disable.
+    fn set_album_warm_targets(&self, urls: Vec<String>) {
+        if let Ok(mut guard) = self.album_warm_targets.lock() {
+            *guard = urls;
+        }
     }
 
     // ── Public playback API ───────────────────────────────────────────────
@@ -140,6 +158,9 @@ impl MpdBridge {
         self.cmd("clear").await?;
         self.cmd(&format!("add {url}")).await?;
         self.cmd("play").await?;
+        // Single-URL queue → no album context; clear stale warm targets so
+        // we don't prefetch into URLs that are no longer queued.
+        self.set_album_warm_targets(Vec::new());
         info!(url, "mpd: queued and playing");
         Ok(())
     }
@@ -159,6 +180,14 @@ impl MpdBridge {
             self.cmd(&format!("add {}", quote_mpd(url))).await?;
         }
         self.cmd("play").await?;
+        self.set_album_warm_targets(urls.to_vec());
+        // Warm track 2 immediately rather than waiting for mpd's first
+        // song-change event from the idle loop — that event won't fire
+        // until mpd actually transitions, by which point we've lost the
+        // entire duration of track 1 as pre-buffer headroom.
+        if let Some(next) = urls.get(1) {
+            spawn_warm_probe(next.clone());
+        }
         info!(track_count = urls.len(), "mpd: queued album and playing");
         Ok(())
     }
@@ -1000,10 +1029,11 @@ impl MpdBridge {
     fn start_idle_loop(&self) {
         let config = self.config.clone();
         let ipc_tx = self.ipc_tx.clone();
+        let warm_targets = self.album_warm_targets.clone();
 
         tokio::spawn(async move {
             loop {
-                match run_idle_loop(&config, &ipc_tx).await {
+                match run_idle_loop(&config, &ipc_tx, &warm_targets).await {
                     Ok(()) => {}
                     Err(e) => {
                         warn!("mpd idle loop error: {e} — reconnecting in 5s");
@@ -1015,9 +1045,32 @@ impl MpdBridge {
     }
 }
 
+/// Fire-and-forget Range probe on the given URL, used by the music-torrent
+/// prefetch warmer. Reads the first 64 KiB of the file via librqbit's HTTP
+/// streaming endpoint so its piece scheduler bumps the file's priority
+/// before mpd actually opens it. Body is dropped — we just want the read
+/// to register. Capped at 5s so a dead URL doesn't leak a hung task.
+fn spawn_warm_probe(url: String) {
+    tokio::spawn(async move {
+        let client = match reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let _ = client
+            .get(&url)
+            .header("Range", "bytes=0-65535")
+            .send()
+            .await;
+    });
+}
+
 async fn run_idle_loop(
     config: &MpdConfig,
     ipc_tx: &tokio::sync::mpsc::Sender<String>,
+    warm_targets: &Arc<std::sync::Mutex<Vec<String>>>,
 ) -> Result<()> {
     let mut conn =
         MpdConnection::connect(&config.host, config.port, config.password.as_deref()).await?;
@@ -1029,6 +1082,10 @@ async fn run_idle_loop(
         MpdConnection::connect(&config.host, config.port, config.password.as_deref()).await?;
 
     let mut last_state: Option<String> = None;
+    // Tracks mpd's queue position across iterations so the prefetch warmer
+    // can fire only on song-change events rather than every idle wakeup
+    // (which also fires on volume / pause / xfade etc.).
+    let mut last_song_pos: Option<i32> = None;
 
     loop {
         let changed = conn
@@ -1085,6 +1142,22 @@ async fn run_idle_loop(
             .get("songid")
             .and_then(|v| v.parse::<i32>().ok())
             .unwrap_or(0);
+
+        // Music-torrent prefetch warmer: when mpd advances to a new queue
+        // position and we have an active album's per-track URLs registered,
+        // fire a fire-and-forget Range probe on the *next* track. Skipped
+        // when warm_targets is empty (non-music or single-URL queue) and
+        // when song_pos is unchanged from the previous idle wakeup.
+        if last_song_pos != Some(song_pos) && song_pos >= 0 {
+            let next_url = warm_targets
+                .lock()
+                .ok()
+                .and_then(|g| g.get(song_pos as usize + 1).cloned());
+            if let Some(url) = next_url {
+                spawn_warm_probe(url);
+            }
+        }
+        last_song_pos = Some(song_pos);
         let consume = status.get("consume").map(|v| v == "1").unwrap_or(false);
         let random = status.get("random").map(|v| v == "1").unwrap_or(false);
         let repeat = status.get("repeat").map(|v| v == "1").unwrap_or(false);
