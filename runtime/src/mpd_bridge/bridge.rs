@@ -156,7 +156,7 @@ impl MpdBridge {
         }
         self.cmd("clear").await?;
         for url in urls {
-            self.cmd(&format!("add {url}")).await?;
+            self.cmd(&format!("add {}", quote_mpd(url))).await?;
         }
         self.cmd("play").await?;
         info!(track_count = urls.len(), "mpd: queued album and playing");

@@ -280,13 +280,19 @@ async fn run_find_streams_streaming(
     }
 
     let kind = match r.kind.as_deref() {
-        Some("Movie") => stui_plugin_sdk::EntryKind::Movie,
-        Some("Series") => stui_plugin_sdk::EntryKind::Series,
-        Some("Episode") => stui_plugin_sdk::EntryKind::Episode,
-        Some("Album") => stui_plugin_sdk::EntryKind::Album,
-        Some("Track") => stui_plugin_sdk::EntryKind::Track,
-        Some("Artist") => stui_plugin_sdk::EntryKind::Artist,
-        _ => stui_plugin_sdk::EntryKind::Movie,
+        Some(k) => {
+            let normalized = k.to_lowercase().replace(&['-', '_', ' '][..], "");
+            match normalized.as_str() {
+                "movie" => stui_plugin_sdk::EntryKind::Movie,
+                "series" => stui_plugin_sdk::EntryKind::Series,
+                "episode" => stui_plugin_sdk::EntryKind::Episode,
+                "album" => stui_plugin_sdk::EntryKind::Album,
+                "track" | "albumtrack" => stui_plugin_sdk::EntryKind::Track,
+                "artist" => stui_plugin_sdk::EntryKind::Artist,
+                _ => stui_plugin_sdk::EntryKind::Movie,
+            }
+        }
+        None => stui_plugin_sdk::EntryKind::Movie,
     };
     let is_music = matches!(
         kind,

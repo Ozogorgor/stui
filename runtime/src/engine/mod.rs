@@ -178,11 +178,14 @@ impl PluginRegistry {
                     return false;
                 }
                 let tags = &p.manifest.plugin.tags;
-                let has_any_media_tag = tags.iter().any(|t| MEDIA_TAGS.contains(&t.as_str()));
+                let has_any_media_tag = tags.iter().any(|t| {
+                    let t_lower = t.to_lowercase();
+                    MEDIA_TAGS.contains(&t_lower.as_str())
+                });
                 if !has_any_media_tag {
                     return true; // legacy manifest — include in every fan-out
                 }
-                tags.iter().any(|t| t == target)
+                tags.iter().any(|t| t.eq_ignore_ascii_case(target))
             })
             .collect()
     }

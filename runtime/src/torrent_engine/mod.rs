@@ -90,6 +90,24 @@ impl TorrentEngine {
         })
     }
 
+    /// Ensure a torrent is in the Live state, unpausing and waiting if needed.
+    /// Returns Err if the torrent does not transition to Live within 10 seconds.
+    async fn ensure_torrent_live(&self, handle: &Arc<librqbit::ManagedTorrent>) -> Result<()> {
+        if handle.live().is_none() {
+            let _ = self.session.unpause(handle).await;
+            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while handle.live().is_none() {
+                if std::time::Instant::now() >= live_deadline {
+                    return Err(anyhow!(
+                        "torrent did not transition to Live state within 10s"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+        Ok(())
+    }
+
     /// Directory librqbit writes torrent payloads into. Callers join
     /// [`DownloadHandle::final_path`] onto this to get an absolute path
     /// suitable for `MpdBridge::queue_and_play` or the download translator.
@@ -199,20 +217,7 @@ impl TorrentEngine {
         // peer fetching. mpv reads no bytes, gives up, and the user sees
         // a black window with our "Fetching torrent metadata…" OSD frozen.
         // Force-unpause and wait for `Live` before serving.
-        if handle.live().is_none() {
-            // `Session::unpause` errors with "torrent is already live" if it
-            // races with a previous unpause; that's fine to ignore.
-            let _ = self.session.unpause(&handle).await;
-            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while handle.live().is_none() {
-                if std::time::Instant::now() >= live_deadline {
-                    return Err(anyhow!(
-                        "torrent did not transition to Live state within 10s"
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }
+        self.ensure_torrent_live(&handle).await?;
 
         let stream_url = stream_url_for(&self.base_url, id, file_idx);
 
@@ -258,18 +263,7 @@ impl TorrentEngine {
         // start_stream does, so without an explicit unpause here the
         // translator would just wait on `wait_until_completed` forever
         // while live() stays None.
-        if handle.live().is_none() {
-            let _ = self.session.unpause(&handle).await;
-            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while handle.live().is_none() {
-                if std::time::Instant::now() >= live_deadline {
-                    return Err(anyhow!(
-                        "torrent did not transition to Live state within 10s"
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }
+        self.ensure_torrent_live(&handle).await?;
 
         // Largest file → the "main" payload the download_translator will
         // later move into the user's library.
@@ -322,18 +316,7 @@ impl TorrentEngine {
         // Same persistence-paused unpause + wait-for-Live dance as
         // start_stream / start_download — without it, opening a track URL
         // would hang on a paused torrent.
-        if handle.live().is_none() {
-            let _ = self.session.unpause(&handle).await;
-            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
-            while handle.live().is_none() {
-                if std::time::Instant::now() >= live_deadline {
-                    return Err(anyhow!(
-                        "torrent did not transition to Live state within 10s"
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }
+        self.ensure_torrent_live(&handle).await?;
 
         let files: Vec<(usize, PathBuf, u64)> = handle
             .with_metadata(|m| {
@@ -532,8 +515,8 @@ fn pick_video_file(files: &[(usize, PathBuf, u64)]) -> Option<usize> {
 /// Steps:
 ///   1. filter to known audio extensions ([`AUDIO_EXTS`]),
 ///   2. if any `.flac` is present, drop everything else (prefer-lossless),
-///   3. sort by full relative path so multi-disc albums interleave correctly
-///      (`CD1/01.flac`, `CD1/02.flac`, …, `CD2/01.flac`).
+///   3. sort by full relative path with natural ordering so multi-disc albums
+///      interleave correctly (e.g., `CD2` before `CD10`).
 ///
 /// Returns `(file_idx, path, size)` triples in queue order.
 fn pick_album_tracks(files: &[(usize, PathBuf, u64)]) -> Vec<(usize, PathBuf, u64)> {
@@ -541,6 +524,63 @@ fn pick_album_tracks(files: &[(usize, PathBuf, u64)]) -> Vec<(usize, PathBuf, u6
         p.extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase())
+    }
+
+    /// Natural-order comparator for paths: splits trailing numeric components
+    /// and compares them numerically so "CD2" < "CD10".
+    fn natural_cmp(a: &PathBuf, b: &PathBuf) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        fn parse_trailing_number(s: &str) -> (String, Option<u64>) {
+            let mut last_digit_end = s.len();
+            for (i, c) in s.char_indices().rev() {
+                if !c.is_ascii_digit() {
+                    last_digit_end = i + c.len_utf8();
+                    break;
+                }
+            }
+            if last_digit_end == s.len() && !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+                // Entire string is numeric
+                return (String::new(), s.parse::<u64>().ok());
+            }
+            if last_digit_end < s.len() {
+                let prefix = &s[..last_digit_end];
+                let num_part = &s[last_digit_end..];
+                (prefix.to_string(), num_part.parse::<u64>().ok())
+            } else {
+                (s.to_string(), None)
+            }
+        }
+
+        // Split both paths into components
+        let a_comps: Vec<_> = a.iter().collect();
+        let b_comps: Vec<_> = b.iter().collect();
+
+        for (ac, bc) in a_comps.iter().zip(b_comps.iter()) {
+            let a_str = ac.to_string_lossy();
+            let b_str = bc.to_string_lossy();
+            let (a_prefix, a_num) = parse_trailing_number(&a_str);
+            let (b_prefix, b_num) = parse_trailing_number(&b_str);
+
+            match a_prefix.cmp(&b_prefix) {
+                Ordering::Equal => {
+                    match (a_num, b_num) {
+                        (Some(an), Some(bn)) => {
+                            match an.cmp(&bn) {
+                                Ordering::Equal => continue,
+                                other => return other,
+                            }
+                        }
+                        (Some(_), None) => return Ordering::Greater,
+                        (None, Some(_)) => return Ordering::Less,
+                        (None, None) => continue,
+                    }
+                }
+                other => return other,
+            }
+        }
+
+        a_comps.len().cmp(&b_comps.len())
     }
 
     let audio: Vec<&(usize, PathBuf, u64)> = files
@@ -568,7 +608,7 @@ fn pick_album_tracks(files: &[(usize, PathBuf, u64)]) -> Vec<(usize, PathBuf, u6
         .cloned()
         .collect();
 
-    picked.sort_by(|a, b| a.1.cmp(&b.1));
+    picked.sort_by(|a, b| natural_cmp(&a.1, &b.1));
     picked
 }
 
