@@ -237,8 +237,28 @@ pub async fn run_player_cmd(
                     .await;
             }
         }
-        PlayerCmd::SwitchStream { url } => {
-            if via_mpd {
+        PlayerCmd::SwitchStream { url, kind } => {
+            let is_music_kind = kind
+                .as_deref()
+                .map(|k| matches!(k, "Album" | "Track" | "Artist"))
+                .unwrap_or(false);
+            if is_music_kind && (is_magnet(&url) || is_torrent_url(&url)) {
+                // Music-torrent path: librqbit resolves the magnet to a list
+                // of per-track HTTP URLs which we hand to mpd. Bypasses the
+                // mpv/video pipeline entirely.
+                if let Some(m) = mpd {
+                    match player.start_album_stream(&url).await {
+                        Ok(track_urls) => {
+                            if let Err(e) = m.queue_and_play_many(&track_urls).await {
+                                warn!("mpd queue_and_play_many failed: {e}");
+                            }
+                        }
+                        Err(e) => warn!("torrent_engine: start_album_stream failed: {e}"),
+                    }
+                } else {
+                    warn!("music-torrent SwitchStream but mpd bridge unavailable");
+                }
+            } else if via_mpd {
                 let title = display_title_from_url(&url);
                 player.switch_stream_mpd(&url, &title).await;
             } else if is_magnet(&url) || is_torrent_url(&url) {

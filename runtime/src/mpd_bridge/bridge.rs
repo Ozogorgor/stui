@@ -144,6 +144,25 @@ impl MpdBridge {
         Ok(())
     }
 
+    /// Clear the queue, add every URL in `urls` in order, and start playing
+    /// from the first. Used by the music-torrent path to push an album's
+    /// tracks (per-file librqbit HTTP URLs) into mpd in a single call.
+    ///
+    /// Returns Err if `urls` is empty (otherwise we'd just clear-and-play
+    /// nothing, which silently stops whatever was playing).
+    pub async fn queue_and_play_many(&self, urls: &[String]) -> Result<()> {
+        if urls.is_empty() {
+            return Err(anyhow::anyhow!("queue_and_play_many: no URLs"));
+        }
+        self.cmd("clear").await?;
+        for url in urls {
+            self.cmd(&format!("add {}", quote_mpd(url))).await?;
+        }
+        self.cmd("play").await?;
+        info!(track_count = urls.len(), "mpd: queued album and playing");
+        Ok(())
+    }
+
     /// Get the duration of the current song in seconds, or 0.0 if unavailable.
     pub async fn current_song_duration(&self) -> f64 {
         match self.cmd_with_kv("currentsong").await {

@@ -313,6 +313,13 @@ pub enum PlayerCmd {
     ResetAudioDelay,
     SwitchStream {
         url: String,
+        /// Optional media kind hint from the picker that emitted this command.
+        /// Used by the playback router to distinguish a music-torrent magnet
+        /// (→ librqbit album-stream + mpd queue) from the default video path
+        /// (→ librqbit single-file stream + mpv). Absent for video pickers
+        /// and any pre-existing call site, so the field is a strict addition.
+        #[serde(default)]
+        kind: Option<String>,
     },
     NextStreamCandidate,
     ToggleFullscreen,
