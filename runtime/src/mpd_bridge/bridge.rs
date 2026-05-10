@@ -1261,3 +1261,308 @@ fn apply_song_normalize(
         *title = n.title;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    /// Create a minimal MpdBridge backed by a no-op IPC channel.
+    /// The idle loop it spawns will fail to connect to MPD and retry in the
+    /// background — that is expected and harmless in tests.
+    fn make_bridge() -> MpdBridge {
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        MpdBridge {
+            config: MpdConfig::default(),
+            conn: Arc::new(Mutex::new(None)),
+            ipc_tx: tx,
+            normalize_cfg: MusicNormalizeConfig::default(),
+            album_warm_targets: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Read the current warm-targets list from a bridge (snapshot).
+    fn read_targets(bridge: &MpdBridge) -> Vec<String> {
+        bridge
+            .album_warm_targets
+            .lock()
+            .expect("warm_targets mutex poisoned")
+            .clone()
+    }
+
+    // ── album_warm_targets initialisation ─────────────────────────────────
+
+    #[test]
+    fn warm_targets_initialized_empty() {
+        let bridge = make_bridge();
+        assert!(
+            read_targets(&bridge).is_empty(),
+            "album_warm_targets should start as an empty Vec"
+        );
+    }
+
+    // ── set_album_warm_targets ─────────────────────────────────────────────
+
+    #[test]
+    fn set_album_warm_targets_stores_urls() {
+        let bridge = make_bridge();
+        let urls = vec![
+            "http://localhost:3030/track1.flac".to_string(),
+            "http://localhost:3030/track2.flac".to_string(),
+            "http://localhost:3030/track3.flac".to_string(),
+        ];
+        bridge.set_album_warm_targets(urls.clone());
+        assert_eq!(read_targets(&bridge), urls);
+    }
+
+    #[test]
+    fn set_album_warm_targets_replaces_existing() {
+        let bridge = make_bridge();
+        bridge.set_album_warm_targets(vec!["http://localhost/old.flac".to_string()]);
+        let new_urls = vec![
+            "http://localhost/new1.flac".to_string(),
+            "http://localhost/new2.flac".to_string(),
+        ];
+        bridge.set_album_warm_targets(new_urls.clone());
+        assert_eq!(read_targets(&bridge), new_urls);
+    }
+
+    #[test]
+    fn set_album_warm_targets_clear_with_empty_vec() {
+        let bridge = make_bridge();
+        bridge.set_album_warm_targets(vec!["http://localhost/track.flac".to_string()]);
+        bridge.set_album_warm_targets(Vec::new());
+        assert!(
+            read_targets(&bridge).is_empty(),
+            "passing an empty Vec should clear the warm targets"
+        );
+    }
+
+    #[test]
+    fn set_album_warm_targets_single_url() {
+        let bridge = make_bridge();
+        let url = "http://192.168.1.10:3030/only.flac".to_string();
+        bridge.set_album_warm_targets(vec![url.clone()]);
+        assert_eq!(read_targets(&bridge), vec![url]);
+    }
+
+    // ── Warm probe target-selection logic ─────────────────────────────────
+    //
+    // The idle loop selects `warm_targets[song_pos + 1]` whenever song_pos
+    // changes.  We replicate that indexing logic here in pure, synchronous
+    // form so it can be tested without a real MPD connection.
+
+    /// Simulate one idle-loop iteration: returns the URL that would be probed
+    /// (if any) and the new last_song_pos value.
+    fn simulate_idle_probe(
+        targets: &Arc<std::sync::Mutex<Vec<String>>>,
+        last_song_pos: Option<i32>,
+        song_pos: i32,
+    ) -> (Option<String>, Option<i32>) {
+        let probed = if last_song_pos != Some(song_pos) && song_pos >= 0 {
+            targets
+                .lock()
+                .ok()
+                .and_then(|g| g.get(song_pos as usize + 1).cloned())
+        } else {
+            None
+        };
+        (probed, Some(song_pos))
+    }
+
+    #[test]
+    fn idle_probe_fires_for_first_song_pos_change() {
+        let targets = Arc::new(std::sync::Mutex::new(vec![
+            "http://host/t0.flac".to_string(),
+            "http://host/t1.flac".to_string(),
+            "http://host/t2.flac".to_string(),
+        ]));
+        // First wakeup: last_song_pos was None, current is 0.
+        // Should probe targets[0 + 1] = "http://host/t1.flac".
+        let (probed, new_pos) = simulate_idle_probe(&targets, None, 0);
+        assert_eq!(probed.as_deref(), Some("http://host/t1.flac"));
+        assert_eq!(new_pos, Some(0));
+    }
+
+    #[test]
+    fn idle_probe_fires_on_song_advance() {
+        let targets = Arc::new(std::sync::Mutex::new(vec![
+            "http://host/t0.flac".to_string(),
+            "http://host/t1.flac".to_string(),
+            "http://host/t2.flac".to_string(),
+        ]));
+        // Advance from song 0 to song 1 → probe targets[2].
+        let (probed, _) = simulate_idle_probe(&targets, Some(0), 1);
+        assert_eq!(probed.as_deref(), Some("http://host/t2.flac"));
+    }
+
+    #[test]
+    fn idle_probe_skips_when_song_pos_unchanged() {
+        let targets = Arc::new(std::sync::Mutex::new(vec![
+            "http://host/t0.flac".to_string(),
+            "http://host/t1.flac".to_string(),
+        ]));
+        // Same song_pos as last wakeup (e.g. volume change) → no probe.
+        let (probed, _) = simulate_idle_probe(&targets, Some(0), 0);
+        assert!(
+            probed.is_none(),
+            "no probe when song_pos is unchanged between idle wakeups"
+        );
+    }
+
+    #[test]
+    fn idle_probe_skips_negative_song_pos() {
+        let targets = Arc::new(std::sync::Mutex::new(vec![
+            "http://host/t0.flac".to_string(),
+        ]));
+        // song_pos == -1 means MPD has no current song (stopped/idle).
+        let (probed, _) = simulate_idle_probe(&targets, None, -1);
+        assert!(
+            probed.is_none(),
+            "negative song_pos must not trigger a warm probe"
+        );
+    }
+
+    #[test]
+    fn idle_probe_skips_empty_targets() {
+        let targets = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        // Even if song_pos changed, empty targets → nothing to probe.
+        let (probed, _) = simulate_idle_probe(&targets, None, 0);
+        assert!(probed.is_none(), "empty warm_targets must yield no probe");
+    }
+
+    #[test]
+    fn idle_probe_skips_at_last_track() {
+        let targets = Arc::new(std::sync::Mutex::new(vec![
+            "http://host/t0.flac".to_string(),
+            "http://host/t1.flac".to_string(),
+        ]));
+        // song_pos == 1 (last track): targets[2] does not exist → no probe.
+        let (probed, _) = simulate_idle_probe(&targets, Some(0), 1);
+        assert!(
+            probed.is_none(),
+            "no probe when song_pos+1 is beyond the end of warm_targets"
+        );
+    }
+
+    #[test]
+    fn idle_probe_updates_last_song_pos_regardless_of_probe() {
+        let targets = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        // No probe (empty targets), but last_song_pos must still advance.
+        let (_, new_pos) = simulate_idle_probe(&targets, None, 3);
+        assert_eq!(new_pos, Some(3));
+    }
+
+    #[test]
+    fn idle_probe_correct_index_mid_album() {
+        let targets = Arc::new(std::sync::Mutex::new(
+            (0..10)
+                .map(|i| format!("http://host/t{i}.flac"))
+                .collect::<Vec<_>>(),
+        ));
+        // Playing track 5 (0-indexed) → probe track 6.
+        let (probed, _) = simulate_idle_probe(&targets, Some(4), 5);
+        assert_eq!(probed.as_deref(), Some("http://host/t6.flac"));
+    }
+
+    // ── spawn_warm_probe ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn spawn_warm_probe_does_not_panic_with_unreachable_url() {
+        // Points at a port that is almost certainly not listening.
+        // The probe must not panic; it silently times out or fails.
+        spawn_warm_probe("http://127.0.0.1:19999/no-server.flac".to_string());
+        // Give the spawned task a moment to start (not strictly required).
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn spawn_warm_probe_sends_range_header() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        // Bind an ephemeral local port to capture the incoming HTTP request.
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral port");
+        let addr = listener.local_addr().expect("local_addr");
+
+        let url = format!("http://{addr}/stream.flac");
+        spawn_warm_probe(url);
+
+        // Accept the connection with a generous timeout so the test doesn't
+        // hang if the probe fails to connect for any reason.
+        let accept = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            listener.accept(),
+        )
+        .await;
+
+        let Ok(Ok((mut socket, _))) = accept else {
+            panic!("warm probe did not connect within 5 s");
+        };
+
+        // Read the raw HTTP request bytes.
+        let mut buf = vec![0u8; 4096];
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            socket.read(&mut buf),
+        )
+        .await
+        .expect("read timeout")
+        .expect("socket read");
+
+        let request = String::from_utf8_lossy(&buf[..n]);
+
+        assert!(
+            request.contains("Range: bytes=0-65535"),
+            "warm probe must send 'Range: bytes=0-65535'; got:\n{request}"
+        );
+        assert!(
+            request.starts_with("GET "),
+            "warm probe must use GET method; got:\n{request}"
+        );
+    }
+
+    // ── Regression: set_album_warm_targets is called in correct order ─────
+
+    #[test]
+    fn warm_targets_shared_across_clones() {
+        // MpdBridge derives Clone; the album_warm_targets Arc must be shared,
+        // not duplicated, so that the idle loop (which holds a clone of the
+        // Arc) sees updates made via set_album_warm_targets on the original.
+        let bridge = make_bridge();
+        let clone = bridge.clone();
+
+        bridge.set_album_warm_targets(vec!["http://host/t0.flac".to_string()]);
+
+        // The clone should observe the change because both hold the same Arc.
+        let seen = clone
+            .album_warm_targets
+            .lock()
+            .expect("lock")
+            .clone();
+        assert_eq!(
+            seen,
+            vec!["http://host/t0.flac".to_string()],
+            "cloned bridge must share album_warm_targets Arc"
+        );
+    }
+
+    // ── Boundary: large album ─────────────────────────────────────────────
+
+    #[test]
+    fn warm_targets_accepts_large_album() {
+        let bridge = make_bridge();
+        let urls: Vec<String> = (0..100)
+            .map(|i| format!("http://host/track{i:03}.flac"))
+            .collect();
+        bridge.set_album_warm_targets(urls.clone());
+        let stored = read_targets(&bridge);
+        assert_eq!(stored.len(), 100);
+        assert_eq!(stored[0], "http://host/track000.flac");
+        assert_eq!(stored[99], "http://host/track099.flac");
+    }
+}
