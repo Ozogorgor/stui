@@ -179,8 +179,13 @@ impl MpdBridge {
         for url in urls {
             self.cmd(&format!("add {}", quote_mpd(url))).await?;
         }
-        self.cmd("play").await?;
+        // Register warm targets BEFORE `play` so the idle loop's first
+        // wakeup after mpd starts sees the new album. If the previous
+        // album left a stale warm-targets list, deferring this until
+        // after `play` would race the idle loop into prefetching the
+        // wrong URL on the song-pos = 0 transition.
         self.set_album_warm_targets(urls.to_vec());
+        self.cmd("play").await?;
         // Warm track 2 immediately rather than waiting for mpd's first
         // song-change event from the idle loop — that event won't fire
         // until mpd actually transitions, by which point we've lost the
