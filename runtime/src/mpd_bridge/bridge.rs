@@ -1415,7 +1415,7 @@ mod tests {
     #[test]
     fn idle_probe_skips_negative_song_pos() {
         let targets = Arc::new(std::sync::Mutex::new(vec![
-            "http://host/t0.flac".to_string(),
+            "http://host/t0.flac".to_string()
         ]));
         // song_pos == -1 means MPD has no current song (stopped/idle).
         let (probed, _) = simulate_idle_probe(&targets, None, -1);
@@ -1494,11 +1494,8 @@ mod tests {
 
         // Accept the connection with a generous timeout so the test doesn't
         // hang if the probe fails to connect for any reason.
-        let accept = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            listener.accept(),
-        )
-        .await;
+        let accept =
+            tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept()).await;
 
         let Ok(Ok((mut socket, _))) = accept else {
             panic!("warm probe did not connect within 5 s");
@@ -1506,18 +1503,19 @@ mod tests {
 
         // Read the raw HTTP request bytes.
         let mut buf = vec![0u8; 4096];
-        let n = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            socket.read(&mut buf),
-        )
-        .await
-        .expect("read timeout")
-        .expect("socket read");
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut buf))
+            .await
+            .expect("read timeout")
+            .expect("socket read");
 
         let request = String::from_utf8_lossy(&buf[..n]);
 
+        // reqwest lowercases header names on the wire (HTTP/2 style), so
+        // match case-insensitively rather than asserting the literal `Range:`
+        // pretty-form.
+        let request_lower = request.to_lowercase();
         assert!(
-            request.contains("Range: bytes=0-65535"),
+            request_lower.contains("range: bytes=0-65535"),
             "warm probe must send 'Range: bytes=0-65535'; got:\n{request}"
         );
         assert!(
@@ -1539,11 +1537,7 @@ mod tests {
         bridge.set_album_warm_targets(vec!["http://host/t0.flac".to_string()]);
 
         // The clone should observe the change because both hold the same Arc.
-        let seen = clone
-            .album_warm_targets
-            .lock()
-            .expect("lock")
-            .clone();
+        let seen = clone.album_warm_targets.lock().expect("lock").clone();
         assert_eq!(
             seen,
             vec!["http://host/t0.flac".to_string()],
