@@ -563,19 +563,15 @@ fn pick_album_tracks(files: &[(usize, PathBuf, u64)]) -> Vec<(usize, PathBuf, u6
             let (b_prefix, b_num) = parse_trailing_number(&b_str);
 
             match a_prefix.cmp(&b_prefix) {
-                Ordering::Equal => {
-                    match (a_num, b_num) {
-                        (Some(an), Some(bn)) => {
-                            match an.cmp(&bn) {
-                                Ordering::Equal => continue,
-                                other => return other,
-                            }
-                        }
-                        (Some(_), None) => return Ordering::Greater,
-                        (None, Some(_)) => return Ordering::Less,
-                        (None, None) => continue,
-                    }
-                }
+                Ordering::Equal => match (a_num, b_num) {
+                    (Some(an), Some(bn)) => match an.cmp(&bn) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    },
+                    (Some(_), None) => return Ordering::Greater,
+                    (None, Some(_)) => return Ordering::Less,
+                    (None, None) => continue,
+                },
                 other => return other,
             }
         }
