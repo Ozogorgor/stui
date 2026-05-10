@@ -377,6 +377,19 @@ impl PlayerBridge {
     /// provider row. Title is derived from the URL since we have no
     /// catalog context here; subtitles are skipped (no imdb_id to
     /// drive the auto-download flow).
+    /// Add a music-album magnet through the embedded torrent engine and
+    /// return the list of per-track HTTP stream URLs (one per audio file).
+    /// The pipeline router hands these to mpd via
+    /// [`MpdBridge::queue_and_play_many`].
+    ///
+    /// Pure pass-through to [`TorrentEngine::start_album_stream`] — kept on
+    /// `PlayerBridge` so callers in `pipeline::playback` don't need a
+    /// separate `Arc<TorrentEngine>` handle.
+    pub async fn start_album_stream(&self, magnet_or_url: &str) -> anyhow::Result<Vec<String>> {
+        let album = self.torrents.start_album_stream(magnet_or_url).await?;
+        Ok(album.tracks.into_iter().map(|t| t.url).collect())
+    }
+
     pub async fn start_stream_for_switch(&self, url: &str) {
         // Negative cache: if this magnet failed recently (typically dead swarm
         // → 60 s metadata timeout), short-circuit instead of spawning mpv for

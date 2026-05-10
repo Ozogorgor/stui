@@ -507,14 +507,27 @@ func (c *Client) PlayFile(path, title string) {
 	}()
 }
 
-// SwitchStream sends a stream-switch command to mpv.
+// SwitchStream sends a stream-switch command for the default video path
+// (mpv). Use SwitchStreamWithKind from the music picker so the runtime
+// routes the magnet through the album-stream + mpd queue path instead.
 func (c *Client) SwitchStream(url string) {
+	c.SwitchStreamWithKind(url, "")
+}
+
+// SwitchStreamWithKind variants the IPC payload with the picker's media
+// kind ("Album"/"Track"/"Artist" for music; "" preserves the legacy video
+// path). The runtime branches on this in pipeline::playback::run_player_cmd.
+func (c *Client) SwitchStreamWithKind(url, kind string) {
 	go func() {
-		_ = c.sendRaw(map[string]any{
+		payload := map[string]any{
 			"type": "cmd",
 			"cmd":  "switch_stream",
 			"url":  url,
-		})
+		}
+		if kind != "" {
+			payload["kind"] = kind
+		}
+		_ = c.sendRaw(payload)
 	}()
 }
 

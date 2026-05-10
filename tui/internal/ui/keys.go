@@ -556,6 +556,29 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				true,
 			)
 			return m, tea.Batch(detailCmd, pickerCmd)
+		case "T":
+			// Music-tab torrent picker. Distinct from `p` because `p` is
+			// always taken by MPD prev-track when audio is playing. Sends
+			// the rich FindStreams (kind="Album") path so torrent indexers
+			// see the album title instead of an MBID.
+			if m.state.ActiveTab != state.TabMusic || m.cwFocused || m.client == nil {
+				return m, nil
+			}
+			idx := m.gridCursor.Index(components.CardColumns)
+			if idx < 0 || idx >= len(entries) {
+				return m, nil
+			}
+			entry := entries[idx]
+			return m, screen.TransitionCmd(
+				screens.NewStreamPickerScreenForKind(
+					m.client,
+					entry.Title,
+					entry.ID,
+					"Album",
+					m.state.Settings.BenchmarkStreams,
+				),
+				true,
+			)
 		case "i":
 			if m.cwFocused {
 				cwItems := m.cwCurrentItems()

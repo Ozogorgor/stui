@@ -197,6 +197,12 @@ type StreamPickerScreen struct {
 	title   string
 	entryID string
 	streams []ipc.StreamInfo // sorted copy
+	// EntryKind ("Album"/"Track"/"Artist"/"Movie"/"Series"/"Episode") used
+	// to decide between legacy Resolve and rich FindStreams, and forwarded
+	// on SwitchStream so the runtime routes music magnets to mpd. Empty
+	// string preserves the legacy behaviour for video pickers.
+	kind string
+
 	cursor  int
 	loading bool
 
@@ -217,11 +223,24 @@ type StreamPickerScreen struct {
 }
 
 func NewStreamPickerScreen(client *ipc.Client, title, entryID string, benchEnabled bool) StreamPickerScreen {
+	return NewStreamPickerScreenForKind(client, title, entryID, "", benchEnabled)
+}
+
+// NewStreamPickerScreenForKind is the kind-aware variant used by the music
+// browse path. When `kind` is "Album"/"Track"/"Artist", the picker dispatches
+// the rich `FindStreams` IPC instead of the legacy entry-id-only `Resolve`,
+// and forwards `kind` on the eventual `SwitchStream` so the runtime can
+// route a magnet through the album-stream + mpd queue path.
+//
+// Pass `kind = ""` for video — behaviour stays identical to the previous
+// constructor (legacy Resolve, mpv playback).
+func NewStreamPickerScreenForKind(client *ipc.Client, title, entryID, kind string, benchEnabled bool) StreamPickerScreen {
 	dimStyle := lipgloss.NewStyle().Foreground(theme.T.TextDim())
 	return StreamPickerScreen{
 		client:       client,
 		title:        title,
 		entryID:      entryID,
+		kind:         kind,
 		loading:      true,
 		sortCol:      sortByQuality,
 		sortDesc:     true,
@@ -234,8 +253,19 @@ func NewStreamPickerScreen(client *ipc.Client, title, entryID string, benchEnabl
 func (s StreamPickerScreen) Init() tea.Cmd {
 	s.spinner.Start()
 	if s.client != nil {
-		if s.entryID != "" {
-			s.client.Resolve(s.entryID, "")
+		switch s.kind {
+		case "Album", "Track", "Artist":
+			// Music: dispatch the rich FindStreams path. Music entry IDs
+			// (MBIDs etc.) aren't recognised by torrent indexers, so the
+			// title is the load-bearing field for downstream Torznab fan-out.
+			s.client.FindStreams(ipc.FindStreamsRequest{
+				Title: s.title,
+				Kind:  s.kind,
+			})
+		default:
+			if s.entryID != "" {
+				s.client.Resolve(s.entryID, "")
+			}
 		}
 		s.client.GetStreamPolicy()
 	}
@@ -260,36 +290,21 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 	case ipc.StreamsResolvedMsg:
 		if m.EntryID == s.entryID {
-			s.streams = sortStreams(m.Streams, s.sortCol, s.sortDesc)
-			s.loading = false
-			s.spinner.Stop()
-			s.cursor = 0
+			cmd := s.populateStreams(m.Streams)
+			if cmd != nil {
+				return s, cmd
+			}
+		}
 
-			// Pre-populate benchmark results from Rust if available
-			if s.benchEnabled {
-				for _, st := range s.streams {
-					if st.SpeedMbps > 0 || st.LatencyMs > 0 {
-						// Rust already provided benchmark data
-						s.benchResults[st.URL] = &benchState{
-							speedMbps: st.SpeedMbps,
-							latencyMs: st.LatencyMs,
-							estimated: isTorrentStream(st),
-							done:      true,
-						}
-					}
-				}
-				// Count streams that still need probing
-				pending := 0
-				for _, st := range s.streams {
-					if _, exists := s.benchResults[st.URL]; !exists {
-						pending++
-					}
-				}
-				if pending > 0 {
-					s.benchPending = pending
-					s.benchTotal = pending
-					return s, s.makeBenchCmds(s.streams)
-				}
+	case ipc.EpisodeStreamsLoadedMsg:
+		// FindStreams (music path + episode lookups) delivers via this msg
+		// rather than StreamsResolvedMsg. There's no per-message entry-id
+		// filter; the picker is single-screen so any episode-streams reply
+		// here belongs to us.
+		if s.kind == "Album" || s.kind == "Track" || s.kind == "Artist" {
+			cmd := s.populateStreams(m.Streams)
+			if cmd != nil {
+				return s, cmd
 			}
 		}
 
@@ -342,7 +357,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			switch key {
 			case "enter":
 				if len(s.autoRanked) > 0 && s.client != nil {
-					s.client.SwitchStream(s.autoRanked[0].Stream.URL)
+					s.client.SwitchStreamWithKind(s.autoRanked[0].Stream.URL, s.kind)
 					return s, func() tea.Msg { return screen.PopMsg{} }
 				}
 			case "esc", "q":
@@ -412,7 +427,7 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		if !s.loading && len(s.streams) > 0 {
 			if tier, ok := qualityKeys[key]; ok {
 				if best := BestStreamForTier(s.streams, tier.rank); best != nil && s.client != nil {
-					s.client.SwitchStream(best.URL)
+					s.client.SwitchStreamWithKind(best.URL, s.kind)
 					return s, func() tea.Msg { return screen.PopMsg{} }
 				}
 				return s, func() tea.Msg {
@@ -433,13 +448,52 @@ func (s StreamPickerScreen) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 				}
 			case actions.ActionSelect:
 				if len(s.streams) > 0 && s.client != nil {
-					s.client.SwitchStream(s.streams[s.cursor].URL)
+					s.client.SwitchStreamWithKind(s.streams[s.cursor].URL, s.kind)
 					return s, func() tea.Msg { return screen.PopMsg{} }
 				}
 			}
 		}
 	}
 	return s, nil
+}
+
+// populateStreams installs the resolved stream list on the picker, drives
+// any pre-populated benchmark snapshot, and returns a non-nil tea.Cmd if
+// the picker still needs to fan out probe requests.
+//
+// Shared by StreamsResolvedMsg (legacy Resolve / video) and
+// EpisodeStreamsLoadedMsg (rich FindStreams / music + TV episodes).
+func (s *StreamPickerScreen) populateStreams(streams []ipc.StreamInfo) tea.Cmd {
+	s.streams = sortStreams(streams, s.sortCol, s.sortDesc)
+	s.loading = false
+	s.spinner.Stop()
+	s.cursor = 0
+
+	if !s.benchEnabled {
+		return nil
+	}
+	for _, st := range s.streams {
+		if st.SpeedMbps > 0 || st.LatencyMs > 0 {
+			s.benchResults[st.URL] = &benchState{
+				speedMbps: st.SpeedMbps,
+				latencyMs: st.LatencyMs,
+				estimated: isTorrentStream(st),
+				done:      true,
+			}
+		}
+	}
+	pending := 0
+	for _, st := range s.streams {
+		if _, exists := s.benchResults[st.URL]; !exists {
+			pending++
+		}
+	}
+	if pending == 0 {
+		return nil
+	}
+	s.benchPending = pending
+	s.benchTotal = pending
+	return s.makeBenchCmds(s.streams)
 }
 
 // makeBenchCmds returns one tea.Cmd per stream in the list.

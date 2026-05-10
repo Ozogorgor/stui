@@ -38,6 +38,29 @@ pub use url::stream_url_for;
 /// File extensions we treat as the streaming target. Lowercase, no dot.
 const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "webm", "avi", "mov", "ts", "m4v"];
 
+/// Audio extensions for per-track album streaming. Lowercase, no dot. Order is
+/// not significant — preference (e.g. lossless first) is applied separately
+/// in [`pick_album_tracks`].
+const AUDIO_EXTS: &[&str] = &["flac", "mp3", "m4a", "aac", "ogg", "opus", "wav"];
+
+/// One playable track in a music album torrent. The runtime hands these to
+/// `MpdBridge::queue_and_play_many` so mpd opens the librqbit-served HTTP
+/// URLs in order.
+#[derive(Debug, Clone)]
+pub struct TrackStream {
+    pub url: String,
+    pub filename: String,
+    pub size_bytes: u64,
+}
+
+/// Result of [`TorrentEngine::start_album_stream`]. Holds the torrent id so
+/// later phases (prefetch warmer, cancellation) can reference it.
+#[derive(Debug, Clone)]
+pub struct AlbumStream {
+    pub torrent_id: usize,
+    pub tracks: Vec<TrackStream>,
+}
+
 pub struct TorrentEngine {
     pub(crate) session: Arc<librqbit::Session>,
     pub(crate) base_url: String,
@@ -275,6 +298,71 @@ impl TorrentEngine {
             completion: rx,
         })
     }
+
+    /// Add a music torrent and return per-track HTTP stream URLs.
+    ///
+    /// Behaviour mirrors [`start_stream`](Self::start_stream) — adds the
+    /// torrent, waits for metadata, force-unpauses + waits for `Live` so
+    /// the streaming HTTP path can serve reads — but instead of picking the
+    /// single largest video file it returns every audio file in the torrent
+    /// as an [`AlbumStream`].
+    ///
+    /// Audio file selection (see [`pick_album_tracks`]):
+    ///   1. natural-sort by full relative path so multi-disc albums (`CD1/`,
+    ///      `CD2/`) interleave correctly,
+    ///   2. prefer FLAC: if any `.flac` files are present, return only those;
+    ///      otherwise return all audio files. mpd handles format diversity
+    ///      natively, so the fallback path "just works" on lossy-only
+    ///      torrents — this is purely about avoiding showing both the
+    ///      lossless and lossy copies of the same album as a 24-track queue.
+    pub async fn start_album_stream(&self, magnet_or_url: &str) -> Result<AlbumStream> {
+        let handle = self.add_or_reuse_handle(magnet_or_url).await?;
+        let torrent_id = handle.id();
+
+        // Same persistence-paused unpause + wait-for-Live dance as
+        // start_stream / start_download — without it, opening a track URL
+        // would hang on a paused torrent.
+        if handle.live().is_none() {
+            let _ = self.session.unpause(&handle).await;
+            let live_deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while handle.live().is_none() {
+                if std::time::Instant::now() >= live_deadline {
+                    return Err(anyhow!(
+                        "torrent did not transition to Live state within 10s"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        let files: Vec<(usize, PathBuf, u64)> = handle
+            .with_metadata(|m| {
+                m.file_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, fi)| (i, fi.relative_filename.clone(), fi.len))
+                    .collect()
+            })
+            .context("reading torrent metadata for album track list")?;
+
+        let picked = pick_album_tracks(&files);
+        if picked.is_empty() {
+            return Err(anyhow!(
+                "no audio files (flac/mp3/m4a/aac/ogg/opus/wav) in torrent"
+            ));
+        }
+
+        let tracks = picked
+            .into_iter()
+            .map(|(file_idx, path, size)| TrackStream {
+                url: stream_url_for(&self.base_url, torrent_id, file_idx),
+                filename: path.display().to_string(),
+                size_bytes: size,
+            })
+            .collect();
+
+        Ok(AlbumStream { torrent_id, tracks })
+    }
 }
 
 /// Pull bytes from the file *in process* via librqbit's `FileStream`,
@@ -439,6 +527,51 @@ fn pick_video_file(files: &[(usize, PathBuf, u64)]) -> Option<usize> {
         .map(|(idx, _, _)| *idx)
 }
 
+/// Pick audio files for album streaming, sorted into playback order.
+///
+/// Steps:
+///   1. filter to known audio extensions ([`AUDIO_EXTS`]),
+///   2. if any `.flac` is present, drop everything else (prefer-lossless),
+///   3. sort by full relative path so multi-disc albums interleave correctly
+///      (`CD1/01.flac`, `CD1/02.flac`, …, `CD2/01.flac`).
+///
+/// Returns `(file_idx, path, size)` triples in queue order.
+fn pick_album_tracks(files: &[(usize, PathBuf, u64)]) -> Vec<(usize, PathBuf, u64)> {
+    fn ext_of(p: &PathBuf) -> Option<String> {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+    }
+
+    let audio: Vec<&(usize, PathBuf, u64)> = files
+        .iter()
+        .filter(|(_, p, _)| {
+            ext_of(p)
+                .map(|e| AUDIO_EXTS.contains(&e.as_str()))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let has_flac = audio
+        .iter()
+        .any(|(_, p, _)| ext_of(p).map(|e| e == "flac").unwrap_or(false));
+
+    let mut picked: Vec<(usize, PathBuf, u64)> = audio
+        .into_iter()
+        .filter(|(_, p, _)| {
+            if has_flac {
+                ext_of(p).map(|e| e == "flac").unwrap_or(false)
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
+    picked.sort_by(|a, b| a.1.cmp(&b.1));
+    picked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +596,66 @@ mod tests {
     fn picker_is_case_insensitive_on_extension() {
         let files = vec![(0, "MOVIE.MKV".into(), 1_000)];
         assert_eq!(pick_video_file(&files), Some(0));
+    }
+
+    #[test]
+    fn album_picker_prefers_flac_when_mixed() {
+        let files = vec![
+            (0, "01.mp3".into(), 5_000_000),
+            (1, "02.mp3".into(), 5_000_000),
+            (2, "01.flac".into(), 30_000_000),
+            (3, "02.flac".into(), 30_000_000),
+            (4, "cover.jpg".into(), 200_000),
+        ];
+        let picked = pick_album_tracks(&files);
+        let names: Vec<String> = picked
+            .iter()
+            .map(|(_, p, _)| p.display().to_string())
+            .collect();
+        assert_eq!(names, vec!["01.flac", "02.flac"]);
+    }
+
+    #[test]
+    fn album_picker_falls_back_when_no_flac() {
+        let files = vec![
+            (0, "track2.mp3".into(), 5_000_000),
+            (1, "track1.mp3".into(), 5_000_000),
+        ];
+        let picked = pick_album_tracks(&files);
+        let names: Vec<String> = picked
+            .iter()
+            .map(|(_, p, _)| p.display().to_string())
+            .collect();
+        // sorted by path
+        assert_eq!(names, vec!["track1.mp3", "track2.mp3"]);
+    }
+
+    #[test]
+    fn album_picker_interleaves_multi_disc() {
+        let files = vec![
+            (0, "CD2/01.flac".into(), 30_000_000),
+            (1, "CD1/02.flac".into(), 30_000_000),
+            (2, "CD1/01.flac".into(), 30_000_000),
+            (3, "CD2/02.flac".into(), 30_000_000),
+        ];
+        let picked = pick_album_tracks(&files);
+        let names: Vec<String> = picked
+            .iter()
+            .map(|(_, p, _)| p.display().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["CD1/01.flac", "CD1/02.flac", "CD2/01.flac", "CD2/02.flac"]
+        );
+    }
+
+    #[test]
+    fn album_picker_returns_empty_when_no_audio() {
+        let files = vec![
+            (0, "movie.mkv".into(), 1_000_000),
+            (1, "readme.txt".into(), 100),
+        ];
+        assert!(pick_album_tracks(&files).is_empty());
     }
 
     /// Smoke test: hits the public ubuntu .iso magnet, so it touches the

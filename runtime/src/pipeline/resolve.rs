@@ -279,20 +279,29 @@ async fn run_find_streams_streaming(
         return;
     }
 
-    let reg = engine.registry().read().await;
-    let provider_names: Vec<String> = reg
-        .find_stream_providers()
-        .into_iter()
-        .map(|p| p.manifest.plugin.name.clone())
-        .collect();
-    drop(reg);
-
     let kind = match r.kind.as_deref() {
         Some("Movie") => stui_plugin_sdk::EntryKind::Movie,
         Some("Series") => stui_plugin_sdk::EntryKind::Series,
         Some("Episode") => stui_plugin_sdk::EntryKind::Episode,
+        Some("Album") => stui_plugin_sdk::EntryKind::Album,
+        Some("Track") => stui_plugin_sdk::EntryKind::Track,
+        Some("Artist") => stui_plugin_sdk::EntryKind::Artist,
         _ => stui_plugin_sdk::EntryKind::Movie,
     };
+    let is_music = matches!(
+        kind,
+        stui_plugin_sdk::EntryKind::Album
+            | stui_plugin_sdk::EntryKind::Track
+            | stui_plugin_sdk::EntryKind::Artist
+    );
+
+    let reg = engine.registry().read().await;
+    let provider_names: Vec<String> = reg
+        .find_stream_providers_for_kind(kind)
+        .into_iter()
+        .map(|p| p.manifest.plugin.name.clone())
+        .collect();
+    drop(reg);
 
     // ── imdb_id late resolution ────────────────────────────────────────
     // Without an IMDb id, torrentio (the fastest stream provider, ~300ms)
@@ -304,7 +313,10 @@ async fn run_find_streams_streaming(
     // second hot, ~1s cold; well below the overall 45s find_streams budget.
     let mut external_ids = r.external_ids.clone();
     let mut imdb_id = r.imdb_id.clone().filter(|s| !s.is_empty());
-    if imdb_id.is_none() {
+    // imdb_id only matters for video plugins (torrentio, orionoid, …).
+    // Skipping for music shaves ~1-4s off the cold path and avoids tmdb
+    // searches that would never match an album anyway.
+    if !is_music && imdb_id.is_none() {
         if let Some(id) = external_ids.get("imdb").filter(|s| !s.is_empty()).cloned() {
             imdb_id = Some(id);
         } else if let Some(resolved) = resolve_imdb_id(engine, r, kind).await {

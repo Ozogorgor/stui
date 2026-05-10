@@ -151,6 +151,42 @@ impl PluginRegistry {
         self.find_by_capability(crate::plugin::PluginCapability::Streams)
     }
 
+    /// Find stream providers that match a given media kind, by manifest tag.
+    ///
+    /// A plugin is included when its manifest declares the matching media-type
+    /// tag (`movies` / `tv` / `anime` / `music`). Plugins that declare no
+    /// media-type tag at all (legacy manifests with only e.g. `["streams"]`)
+    /// are included as a fallback so we don't silently drop them; once every
+    /// stream plugin has explicit media-type tags, this fallback becomes
+    /// redundant.
+    pub fn find_stream_providers_for_kind(
+        &self,
+        kind: stui_plugin_sdk::EntryKind,
+    ) -> Vec<&LoadedPlugin> {
+        const MEDIA_TAGS: &[&str] = &["movies", "tv", "anime", "music"];
+        let target = match kind {
+            stui_plugin_sdk::EntryKind::Movie => "movies",
+            stui_plugin_sdk::EntryKind::Series | stui_plugin_sdk::EntryKind::Episode => "tv",
+            stui_plugin_sdk::EntryKind::Album
+            | stui_plugin_sdk::EntryKind::Track
+            | stui_plugin_sdk::EntryKind::Artist => "music",
+        };
+        self.plugins
+            .values()
+            .filter(|p| {
+                if !p.enabled || !p.has_capability(crate::plugin::PluginCapability::Streams) {
+                    return false;
+                }
+                let tags = &p.manifest.plugin.tags;
+                let has_any_media_tag = tags.iter().any(|t| MEDIA_TAGS.contains(&t.as_str()));
+                if !has_any_media_tag {
+                    return true; // legacy manifest — include in every fan-out
+                }
+                tags.iter().any(|t| t == target)
+            })
+            .collect()
+    }
+
     /// Find all plugins that can provide subtitle tracks.
     pub fn find_subtitle_providers(&self) -> Vec<&LoadedPlugin> {
         self.find_by_capability(crate::plugin::PluginCapability::Subtitles)
